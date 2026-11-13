@@ -4,9 +4,9 @@ import {
   createCourseViaApi,
   expectResultCount,
   getStudentViaApi,
-  TEACHER_LOGIN_NAME,
   TEACHER_PASSWORD,
   teacherApiLogin,
+  teacherLoginViaApi,
   uniqueSuffix,
 } from "./helpers";
 
@@ -69,6 +69,34 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
     // —— 造数（教师 API）：专属课程 + 判断/fill 两题单元 + 学生 + 按课布置作业 ——
     await teacherApiLogin(request);
     const suffix = uniqueSuffix();
+    const teacherName = `fill-mark-${suffix}`;
+    const teacher = await request.post("/api/admin/teachers", {
+      data: { loginName: teacherName, password: TEACHER_PASSWORD },
+    });
+    expect(teacher.ok()).toBe(true);
+    await teacherLoginViaApi(request, teacherName, TEACHER_PASSWORD);
+    await page.goto("/t/login");
+    await page.fill("#login-name", teacherName);
+    await page.fill("#login-password", TEACHER_PASSWORD);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    await page.waitForURL(/\/t\/students(\/|$)/);
+    await page.goto("/t/settings?section=teaching");
+    const selfReview = page.getByRole("checkbox", { name: "允许学生对照自评" });
+    await expect(selfReview).toBeChecked();
+    await selfReview.uncheck();
+    const saved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/settings/practice-feedback") &&
+        response.request().method() === "PUT",
+    );
+    await page
+      .locator(".teacher-config-section")
+      .filter({ has: selfReview })
+      .getByRole("button", { name: "保存更改" })
+      .click();
+    expect((await saved).ok()).toBe(true);
+    await page.reload();
+    await expect(selfReview).not.toBeChecked();
     const courseName = `e2e填空批改课程${suffix}`;
     const unitName = `分数加法批改小练${suffix}`;
     const assignmentTitle = `E2E填空批改作业${suffix}`;
@@ -156,12 +184,7 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", {
       ).toBeVisible();
       expect(leak.violations().join("\n")).toBe("");
 
-      // —— 教师端 UI：登录 → 待批队列按学生筛出该填空题 → 键盘 1 批对 ——
-      await page.goto("/t/login");
-      await page.fill("#login-name", TEACHER_LOGIN_NAME);
-      await page.fill("#login-password", TEACHER_PASSWORD);
-      await page.getByRole("button", { name: "登录", exact: true }).click();
-      await page.waitForURL(/\/t\/students(\/|$)/);
+      // —— 教师端 UI：待批队列按学生筛出该填空题 → 键盘 1 批对 ——
 
       await page.goto("/t/data/pending");
       await page

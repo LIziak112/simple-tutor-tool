@@ -164,11 +164,12 @@ describe("GET/PUT /api/teacher/settings/practice-feedback（M1b）", () => {
     ).toBe(401);
   });
 
-  it("GET 未配置 → null；PUT 写入读回；两教师互不影响", async () => {
+  it("默认开启；部分更新保留练习反馈策略；两教师互不影响", async () => {
     const { app, cookieA, cookieB } = await makeEnv();
     const before = await app.request(PATH, { headers: { cookie: cookieA } });
     expect(((await before.json()) as { data: unknown }).data).toEqual({
       practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
     });
     const put = await app.request(PATH, {
       method: "PUT",
@@ -176,13 +177,21 @@ describe("GET/PUT /api/teacher/settings/practice-feedback（M1b）", () => {
       body: JSON.stringify({ practiceFeedbackPolicy: "after_attempt" }),
     });
     expect(put.status).toBe(200);
+    const disable = await app.request(PATH, {
+      method: "PUT",
+      headers: { cookie: cookieA, "content-type": "application/json" },
+      body: JSON.stringify({ studentSelfReviewEnabled: false }),
+    });
+    expect(disable.status).toBe(200);
     const after = await app.request(PATH, { headers: { cookie: cookieA } });
     expect(((await after.json()) as { data: unknown }).data).toEqual({
       practiceFeedbackPolicy: "after_attempt",
+      studentSelfReviewEnabled: false,
     });
     const b = await app.request(PATH, { headers: { cookie: cookieB } });
     expect(((await b.json()) as { data: unknown }).data).toEqual({
       practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
     });
   });
 
@@ -190,6 +199,7 @@ describe("GET/PUT /api/teacher/settings/practice-feedback（M1b）", () => {
     const { app, cookieA } = await makeEnv();
     for (const body of [
       { practiceFeedbackPolicy: "on_submit" },
+      { studentSelfReviewEnabled: "false" },
       {},
       { practiceFeedbackPolicy: null },
       { practiceFeedbackPolicy: "after_attempt", steps: true },

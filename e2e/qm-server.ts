@@ -6,10 +6,8 @@ import { fileURLToPath } from "node:url";
 import type { APIRequestContext } from "@playwright/test";
 
 /**
- * QM 专用被测环境（QM-19，决策记录 §5.8.4 发布开关）：共享 webServer 的服务端
- * 不设 NEW_CONTENT_ENABLED——全局开会翻转其他 spec 的 fill 冻结语义（§22.1
- * 收敛口径：e2e 断言基线 = 开关关）。QM 语料（samples/qm 新语法）导入必须
- * 开关开启，故本模块在 spec 内自起一组独立「server + vite dev」进程对：
+ * QM 专用被测环境：共享服务默认关闭新内容导入，本模块启动独立服务
+ * 覆盖新材料和新题型。
  *
  * - server：PORT_QM（默认 8897）、独立临时 DATA_DIR、NEW_CONTENT_ENABLED=true、
  *   PUBLIC_URL 指向 QM web 端、E2E_FAKE_AI_BASE_URL 复用全局假 AI（8898，

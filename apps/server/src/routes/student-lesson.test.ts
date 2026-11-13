@@ -247,7 +247,10 @@ async function importDoc(
 }
 
 /** 组装被测环境：教师 + 课程 + 讲练页导入（courseId 路径：讲义条目可见）+ 成员/非成员 */
-async function makeEnv(options?: { markdown?: string }): Promise<TestEnv> {
+async function makeEnv(options?: {
+  markdown?: string;
+  studentSelfReviewEnabled?: boolean;
+}): Promise<TestEnv> {
   const db = createTestDb();
   const app = createApp({
     isProduction: false,
@@ -262,6 +265,17 @@ async function makeEnv(options?: { markdown?: string }): Promise<TestEnv> {
     body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+  if (options?.studentSelfReviewEnabled === false) {
+    const selfReviewSettings = await app.request(
+      "/api/teacher/settings/practice-feedback",
+      {
+        method: "PUT",
+        headers: { cookie: teacherCookie, "content-type": "application/json" },
+        body: JSON.stringify({ studentSelfReviewEnabled: false }),
+      },
+    );
+    expect(selfReviewSettings.status).toBe(200);
+  }
 
   const created = await app.request("/api/teacher/courses", {
     method: "POST",
@@ -1130,25 +1144,15 @@ interface SubmitBody {
 }
 
 /** 单题提交夹具环境（4 题讲练页 + 成员开卷） */
-/** §5.8.4 发布开关内开卷（冻结 gradingPolicy：auto / reference_self）——
- * 开关关的开卷冻结 null（旧行旧语义），自评相关用例必须走本 helper */
-async function startOkNewContent(env: TestEnv): Promise<StartBody> {
-  const previous = process.env.NEW_CONTENT_ENABLED;
-  process.env.NEW_CONTENT_ENABLED = "true";
-  try {
-    return await startOk(env);
-  } finally {
-    if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
-    else process.env.NEW_CONTENT_ENABLED = previous;
-  }
-}
-
 async function makeSubmitEnv(): Promise<{
   env: TestEnv;
   attemptId: string;
   revisions: Map<string, string>;
 }> {
-  const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
+  const env = await makeEnv({
+    markdown: LESSON_SUBMIT_MD,
+    studentSelfReviewEnabled: false,
+  });
   const started = await startOk(env);
   return {
     env,
@@ -1634,7 +1638,10 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
   });
 
   it("非 lesson 来源 404（单题提交是讲练专属入口；assignment 草稿卷不开放）", async () => {
-    const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
+    const env = await makeEnv({
+      markdown: LESSON_SUBMIT_MD,
+      studentSelfReviewEnabled: false,
+    });
     // 直插一份 assignment 来源草稿卷（归属成员本人；evidence 夹具四件套）
     const fabricated = frozenDraftAttempt(env.db, env.memberStudentId, [
       {
@@ -1960,7 +1967,10 @@ describe("最后一题单题提交自动收尾（Review Focus 3：与「完成�
   });
 
   it("口径对照：同一份卷「全部单题提交」与「整卷收尾」的 scoreAuto/状态一致", async () => {
-    const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
+    const env = await makeEnv({
+      markdown: LESSON_SUBMIT_MD,
+      studentSelfReviewEnabled: false,
+    });
     // 第二位学生（成员）走整卷收尾路径
     const second = await createStudentAndLogin(
       env.app,
@@ -2454,11 +2464,9 @@ describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题
 
 describe("讲练自评与无参考答案行（QM 口径）", () => {
   it("讲练提交后可立即自评（verdict=wrong、CAS 基线、教师未判）；无参考答案行逐题提交不阻塞、走教师待批", async () => {
-    // 发布开关开启开卷：fill（有参考答案）冻结 reference_self 才可自评；
-    // 开关关时该行为 null 旧行 → 403 SELF_REVIEW_NOT_ALLOWED（专测见
-    // student-self-review.test「旧行（NULL 策略）→ 403」）
+    // 使用默认自评设置，有参考答案的填空可在提交后自评。
     const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
-    const started = await startOkNewContent(env);
+    const started = await startOk(env);
     const attemptId = started.data.attempt.id;
     const revisions = new Map(
       started.data.questions.map((q) => [q.id, q.questionRevisionId]),
@@ -2988,14 +2996,14 @@ topic: 单题自评
 const SR = { choice: "自评讲练-1", fill: "自评讲练-2" } as const;
 
 describe("QM-12：reference_self 行讲练自评与汇总口径（P3-1 对齐）", () => {
-  /** 开关开启开卷的自评夹具（gradingPolicy 冻结 auto / reference_self） */
+  /** 自评夹具（gradingPolicy 冻结 auto / reference_self） */
   async function makeSelfReviewEnv(): Promise<{
     env: TestEnv;
     attemptId: string;
     revisions: Map<string, string>;
   }> {
     const env = await makeEnv({ markdown: LESSON_SELF_REVIEW_MD });
-    const started = await startOkNewContent(env);
+    const started = await startOk(env);
     return {
       env,
       attemptId: started.data.attempt.id,
@@ -3225,7 +3233,7 @@ it-1
     };
   }
 
-  /** 导入（需发布开关）+ 成员开卷（开卷冻结 gradingPolicy 同需开关） */
+  /** 导入（需发布开关）并以默认自评设置开卷。 */
   async function makeQmEnv(): Promise<{
     env: TestEnv;
     body: QmStartBody;

@@ -43,6 +43,7 @@ import { openedHintEcho } from "./hint-service";
 import { pickEmbeddedUnits } from "./lesson-embedded";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { pendingMarkCounts } from "./pending-mark";
+import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import type { Tx } from "./question-sync";
 import { attemptResultCounts, resultCountsSummary } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
@@ -190,7 +191,13 @@ function createLessonAttempt(
           ),
         );
   tx.insert(attempts).values(attempt).run();
-  insertFrozenResponses(tx, attempt.id, liveRows, knowledgeByQuestion);
+  insertFrozenResponses(
+    tx,
+    attempt.id,
+    liveRows,
+    knowledgeByQuestion,
+    studentSelfReviewEnabledOf(db, teacherId),
+  );
   freezeAttemptContextSnapshotsWithin(
     tx,
     attempt.id,

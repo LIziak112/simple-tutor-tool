@@ -27,7 +27,7 @@ export function usePracticeFeedbackSettings() {
   });
 }
 
-/** 保存策略（二选一覆盖；返回服务端确认值） */
+/** 保存教师作答设置（返回服务端确认值） */
 export function useSavePracticeFeedbackSettings() {
   const queryClient = useQueryClient();
   return useMutation({

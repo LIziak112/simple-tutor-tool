@@ -32,8 +32,8 @@ import { snapshotOfRow } from "./snapshot";
  * 3. 已提交 + 公布 gate（practiceQuestionFeedbackStateOf 四态单一出处复用，
  *    lesson 恒当题释放；非 released → 403 SELF_REVIEW_NOT_RELEASED，不泄露
  *    答案状态细节）；
- * 4. 行策略 reference_self（§5.8.2——auto 客观行无自评入口、manual_only 无
- *    参考不可自评、旧行 NULL 历史不开放；→ 403 SELF_REVIEW_NOT_ALLOWED）；
+ * 4. 行策略 reference_self（auto、manual_only 和历史 NULL 行均返回
+ *    403 SELF_REVIEW_NOT_ALLOWED）；
  * 5. 参考材料可用（冻结快照可解析且有参考答案——policy 冻结时点有参考，
  *    此处防御异常数据；不可用 → 403 SELF_REVIEW_NOT_ALLOWED）；
  * 6. 教师未判（teacherMark 非空 → 409 SELF_REVIEW_TEACHER_MARKED——教师
@@ -107,11 +107,7 @@ export function submitSelfReview(
   }
   // 4. 行策略：仅 reference_self 行有自评入口
   if (row.gradingPolicy !== "reference_self") {
-    throw new HttpError(
-      403,
-      "SELF_REVIEW_NOT_ALLOWED",
-      "这道题不支持自评（客观题自动判定或无参考答案由老师批改）",
-    );
+    throw new HttpError(403, "SELF_REVIEW_NOT_ALLOWED", "这道题不支持自评");
   }
   // 5. 参考材料可用（冻结快照可解析且有参考答案——防御异常数据）
   const snapshot = snapshotOfRow(row);

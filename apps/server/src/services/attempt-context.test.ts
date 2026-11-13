@@ -11,6 +11,7 @@ import {
   materialRefs as materialRefsTable,
   responses,
   students,
+  teachers,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import type { HttpError } from "../lib/http-error.ts";
@@ -28,7 +29,7 @@ import { startWrongPractice } from "./wrong-practice.ts";
 /**
  * QM-06（tt-07a）开卷依赖冻结服务层测试：依赖闭包计算（题级引用 ∪ 组成员
  * → 组引用）、公开投影条目形态、同事务冻结接线（gradingPolicy 行级策略随
- * §5.6 开卷写入、受 §5.8.4 发布开关控制）、缺依赖 fail closed、冻结中断
+ * 开卷冻结教师自评设置）、缺依赖 fail closed、冻结中断
  * 零残留（真实查库）。路由层泄露/归属测试见 routes/attempt-context.test.ts。
  */
 
@@ -346,16 +347,9 @@ describe("contextEntriesOf：冻结条目 = 公开投影 + 来源版本", () => 
 });
 
 describe("开卷同事务冻结接线（startCourseAttempt 全链路）", () => {
-  it("开关开启：gradingPolicy 按快照逐行写入 + 材料/组快照同事务冻结", () => {
+  it("默认开启自评：gradingPolicy 按快照逐行写入 + 材料/组快照同事务冻结", () => {
     const { db, unitId } = makeEnv();
-    const started = startCourseAttempt(
-      db,
-      STUDENT_ID,
-      COURSE_ID,
-      unitId,
-      {},
-      true,
-    );
+    const started = startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId);
     const rows = db
       .select()
       .from(responses)
@@ -379,37 +373,38 @@ describe("开卷同事务冻结接线（startCourseAttempt 全链路）", () => 
     expect(snapshots.filter((row) => row.kind === "group")).toHaveLength(1);
   });
 
-  it("开关关闭：gradingPolicy 全部 NULL（旧行旧语义，§5.8.4）", () => {
+  it("教师关闭自评：客观题自动判定，其余由教师批改", () => {
     const { db, unitId } = makeEnv();
-    const started = startCourseAttempt(
-      db,
-      STUDENT_ID,
-      COURSE_ID,
-      unitId,
-      {},
-      false,
-    );
+    db.update(teachers)
+      .set({ studentSelfReviewEnabled: false })
+      .where(eq(teachers.id, TEST_TEACHER_ID))
+      .run();
+    const started = startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId);
     const rows = db
       .select()
       .from(responses)
       .where(eq(responses.attemptId, started.id))
       .all();
     expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((row) => row.gradingPolicy === null)).toBe(true);
+    expect(
+      Object.fromEntries(
+        rows.map((row) => [row.questionId, row.gradingPolicy]),
+      ),
+    ).toEqual({
+      "资料分析-1": "auto",
+      "资料分析-2": "auto",
+      "资料分析-3": "manual_only",
+      "资料分析-4": "manual_only",
+      "资料分析-5": "manual_only",
+      "资料分析-6": "manual_only",
+    });
     // 快照照常冻结（材料/组冻结与判分策略开关解耦——冻结闭包不受开关限制）
     expect(contextRows(db, started.id).length).toBe(3);
   });
 
   it("responses.id / 题序 / 单元归属 / CAS 基线保留", () => {
     const { db, unitId } = makeEnv();
-    const started = startCourseAttempt(
-      db,
-      STUDENT_ID,
-      COURSE_ID,
-      unitId,
-      {},
-      true,
-    );
+    const started = startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId);
     const rows = db
       .select()
       .from(responses)
@@ -434,14 +429,7 @@ describe("开卷同事务冻结接线（startCourseAttempt 全链路）", () => 
 
   it("教师随后修改材料（version+1）→ 旧卷快照不变；新卷冻结新版（去重键含版本身份）", () => {
     const { db, unitId } = makeEnv();
-    const first = startCourseAttempt(
-      db,
-      STUDENT_ID,
-      COURSE_ID,
-      unitId,
-      {},
-      true,
-    );
+    const first = startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId);
     db.$client
       .prepare(
         "UPDATE materials SET source_md = source_md || char(10) || char(10) || '追加一段。', version = version + 1 WHERE teacher_id = ? AND id = ?",
@@ -453,24 +441,10 @@ describe("开卷同事务冻结接线（startCourseAttempt 全链路）", () => 
     );
     expect(firstSnapshot?.sourceVersion).toBe(1);
     // 同学生再开卷：create-or-return（不另开新卷、幂等）
-    const again = startCourseAttempt(
-      db,
-      STUDENT_ID,
-      COURSE_ID,
-      unitId,
-      {},
-      true,
-    );
+    const again = startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId);
     expect(again.id).toBe(first.id);
     // 另一学生开新卷：冻结新版（同材料不同版本并存，互不覆盖）
-    const second = startCourseAttempt(
-      db,
-      STUDENT_ID_2,
-      COURSE_ID,
-      unitId,
-      {},
-      true,
-    );
+    const second = startCourseAttempt(db, STUDENT_ID_2, COURSE_ID, unitId);
     const secondSnapshot = contextRows(db, second.id).find(
       (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
     );
@@ -480,7 +454,7 @@ describe("开卷同事务冻结接线（startCourseAttempt 全链路）", () => 
   it("开卷途中失败（快照写入抛错）→ attempts/responses/快照零残留（真实查库）", () => {
     const { db, unitId } = freshEnvForRollback();
     expect(() =>
-      startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId, {}, true),
+      startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId),
     ).toThrowError("模拟快照写入中途失败");
     // 三表零残留
     expect(db.select().from(attempts).all()).toEqual([]);
@@ -496,7 +470,7 @@ describe("开卷同事务冻结接线（startCourseAttempt 全链路）", () => 
       )
       .run(NOW, TEST_TEACHER_ID, "mat-资料分析-1");
     expect(() =>
-      startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId, {}, true),
+      startCourseAttempt(db, STUDENT_ID, COURSE_ID, unitId),
     ).toThrowError(/材料已变动/);
     expect(db.select().from(attempts).all()).toEqual([]);
     expect(db.select().from(responses).all()).toEqual([]);
@@ -646,6 +620,50 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
     }
   }
 
+  it("错题重练按新卷的教师自评设置冻结，保留原轮策略", () => {
+    const { db } = makeEnv();
+    const questionId = "资料分析-5";
+    const attemptId = "wrong-self-review-source";
+    seedJudgedSource(db, {
+      attemptId,
+      questionId,
+      snapshotType: "solve",
+      finalCorrect: false,
+      materialSnapshots: [],
+    });
+    db.update(responses)
+      .set({
+        gradingPolicy: "reference_self",
+        autoCorrect: null,
+        finalCorrect: null,
+        selfReviewVerdict: "wrong",
+        selfReviewAt: NOW,
+        selfReviewRevision: 1,
+      })
+      .where(eq(responses.attemptId, attemptId))
+      .run();
+    db.update(teachers)
+      .set({ studentSelfReviewEnabled: false })
+      .where(eq(teachers.id, TEST_TEACHER_ID))
+      .run();
+
+    const { attempt } = startWrongPractice(db, STUDENT_ID, [questionId]);
+    const policies = Object.fromEntries(
+      db
+        .select({
+          attemptId: responses.attemptId,
+          gradingPolicy: responses.gradingPolicy,
+        })
+        .from(responses)
+        .all()
+        .map((row) => [row.attemptId, row.gradingPolicy]),
+    );
+    expect(policies).toEqual({
+      [attemptId]: "reference_self",
+      [attempt.id]: "manual_only",
+    });
+  });
+
   it("来源卷快照优先：教师改材料 v2 后重练 → 新卷冻结来源 v1；gradingPolicy 按快照写入", () => {
     const { db } = makeEnv();
     // 来源卷（开卷于 v1，快照 mat-1@v1 + grp@v1），题 1 判错
@@ -668,13 +686,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE materials SET source_md = source_md || char(10) || char(10) || '教师改稿。', version = version + 1 WHERE teacher_id = ? AND id = ?",
       )
       .run(TEST_TEACHER_ID, "mat-资料分析-1");
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-1"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+    ]);
     // 新卷快照 = 来源卷版本（不是 live v2）
     const materialSnapshot = contextRows(db, started.id).find(
       (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
@@ -712,13 +726,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       finalCorrect: false,
       materialSnapshots: [],
     });
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-1"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+    ]);
     const materialSnapshot = contextRows(db, started.id).find(
       (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
     );
@@ -797,7 +807,6 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       STUDENT_ID,
       ["资料分析-1", "资料分析-5"],
       {},
-      true,
       { kind: "selection", questionCount: 2 },
     );
     const rows = db
@@ -843,13 +852,10 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       snapshotMaterialRefs: [{ material: "mat-资料分析-1" }],
       materialSnapshots: [{ id: "mat-资料分析-1", version: 2 }],
     });
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-1", "资料分析-5"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+      "资料分析-5",
+    ]);
     const versions = contextRows(db, started.id)
       .filter(
         (row) => row.kind === "material" && row.sourceId === "mat-资料分析-1",
@@ -938,13 +944,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'group' AND owner_id = ?",
       )
       .run("mat-资料分析-2", "grp-资料分析-1");
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-1"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+    ]);
     const rows = contextRows(db, started.id);
     // 冻结的是来源卷所见：grp@v1 + mat-1@v1，不带入教师事后改指的 mat-2
     expect(
@@ -985,13 +987,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         'INSERT INTO question_group_members (teacher_id, group_id, question_id, "order") VALUES (?, ?, ?, 0)',
       )
       .run(TEST_TEACHER_ID, "grp-post-hoc", "资料分析-1");
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-1"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+    ]);
     const rows = contextRows(db, started.id);
     // 组边只认来源卷冻结的 grp@v1；live 新组不入卷
     expect(rows.some((row) => row.sourceId === "grp-post-hoc")).toBe(false);
@@ -1018,13 +1016,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
         "UPDATE material_refs SET material_id = ? WHERE owner_kind = 'question' AND owner_id = ?",
       )
       .run("mat-资料分析-1", "资料分析-5");
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-5"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-5",
+    ]);
     const rows = contextRows(db, started.id);
     // 边来自题目快照的引用投影：冻 mat-2@v1（来源卷所见），不带 live 改指的 mat-1
     expect(rows).toHaveLength(1);
@@ -1045,13 +1039,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       // 会冻入 mat-2，而来源卷题目快照表明学生作答时无此依赖）
       materialSnapshots: [{ id: "mat-资料分析-2", version: 1 }],
     });
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-5"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-5",
+    ]);
     // 同源构边不读 live 索引：题 5 开卷时无依赖 → 新卷零上下文条目
     expect(contextRows(db, started.id)).toEqual([]);
   });
@@ -1070,7 +1060,7 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       materialSnapshots: [],
     });
     expect(() =>
-      startWrongPractice(db, STUDENT_ID, ["资料分析-1"], {}, true),
+      startWrongPractice(db, STUDENT_ID, ["资料分析-1"]),
     ).toThrowError("模拟快照写入中途失败");
     // 新 wrong 卷零残留（种子来源行原样保留：无新 attempts/responses、快照空）
     expect(
@@ -1104,13 +1094,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       .get();
     if (sourceRow === undefined) throw new Error("来源行未种入");
 
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-1"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+    ]);
     const newRow = db
       .select()
       .from(responses)
@@ -1181,13 +1167,9 @@ describe("wrong 组卷冻结（来源卷快照优先，设计方案 §5.3）", (
       })
       .run();
 
-    const { attempt: started } = startWrongPractice(
-      db,
-      STUDENT_ID,
-      ["资料分析-1"],
-      {},
-      true,
-    );
+    const { attempt: started } = startWrongPractice(db, STUDENT_ID, [
+      "资料分析-1",
+    ]);
     // 重练卷只有选定题；兄弟题行不复制（答案/详解无携带通道）
     const rows = db
       .select()

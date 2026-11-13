@@ -152,18 +152,25 @@ export const practiceWorkflowUpdateRequestSchema = z
 export const teacherPracticeFeedbackSettingsSchema = z
   .object({
     practiceFeedbackPolicy: teacherPracticeFeedbackPolicySchema.nullable(),
+    studentSelfReviewEnabled: z.boolean(),
   })
   .strict();
 
 /**
- * PUT /api/teacher/settings/practice-feedback 请求体（strict，M1b）：
- * policy 必填枚举——不允许清空回未配置态（保守起见只能二选一）。
+ * PUT /api/teacher/settings/practice-feedback 部分更新，至少提供一项设置。
  */
 export const teacherPracticeFeedbackSettingsUpdateRequestSchema = z
   .object({
-    practiceFeedbackPolicy: teacherPracticeFeedbackPolicySchema,
+    practiceFeedbackPolicy: teacherPracticeFeedbackPolicySchema.optional(),
+    studentSelfReviewEnabled: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.practiceFeedbackPolicy !== undefined ||
+      value.studentSelfReviewEnabled !== undefined,
+    { message: "请提供至少一项设置" },
+  );
 
 /**
  * 建卷可选工作流选项（M1b，2026-10-22 计划 §10.1）：新协议客户端显式携带

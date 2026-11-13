@@ -8,6 +8,7 @@ import {
 import { useSettingsSectionDraft } from "./use-settings-section-draft";
 
 const DRAFT_KEY = ["teacher", "practice-feedback-draft"] as const;
+const SELF_REVIEW_DRAFT_KEY = [...DRAFT_KEY, "student-self-review"] as const;
 
 const OPTIONS = [
   {
@@ -47,7 +48,13 @@ export function PracticeFeedbackSection({
       "practice-feedback",
     );
   // loaded 就绪后 checked 恒有值；?? 兜底仅为类型完备（加载中该区块不渲染）
-  const checkedPolicy = checked ?? "student_choice";
+  const selfReview = useSettingsSectionDraft<boolean>(
+    SELF_REVIEW_DRAFT_KEY,
+    teacherId,
+    settingsQuery.data?.studentSelfReviewEnabled,
+    (a, b) => a === b,
+    "student-self-review",
+  );
   return (
     <div className="teacher-config-section">
       <div>
@@ -118,6 +125,30 @@ export function PracticeFeedbackSection({
               已提交事实保留，已经显示的内容无法撤回。
             </span>
           </p>
+          <label className="flex min-h-11 cursor-pointer items-center justify-between gap-5 rounded-xl border border-border bg-card px-5 py-5 sm:px-7 sm:py-6">
+            <span className="min-w-0">
+              <span className="block text-[0.9375rem] font-semibold">
+                允许学生对照自评
+              </span>
+              <span
+                id="student-self-review-help"
+                className="mt-1 block max-w-[54ch] text-[0.8125rem] leading-relaxed text-muted-foreground"
+              >
+                仅对新开的卷生效。关闭后，原自评题由老师批改，学生仍可查看按原规则公布的答案和解析。
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              aria-label="允许学生对照自评"
+              aria-describedby="student-self-review-help"
+              className="size-5 shrink-0 accent-[var(--color-primary)]"
+              checked={selfReview.checked === true}
+              disabled={saveMutation.isPending}
+              onChange={(event) =>
+                selfReview.setDraft(event.currentTarget.checked)
+              }
+            />
+          </label>
           {saveMutation.isError && (
             <p role="alert" className="text-sm text-destructive">
               {saveMutation.error instanceof Error
@@ -130,7 +161,7 @@ export function PracticeFeedbackSection({
             <p role="status" className="text-xs text-muted-foreground">
               {saveMutation.isPending
                 ? "正在保存…"
-                : dirty
+                : dirty || selfReview.dirty
                   ? "有未保存的更改"
                   : saveMutation.isSuccess
                     ? "更改已保存"
@@ -139,11 +170,21 @@ export function PracticeFeedbackSection({
             <Button
               busy={saveMutation.isPending}
               className="min-h-11 px-5"
-              disabled={saveMutation.isPending}
+              disabled={saveMutation.isPending || (!dirty && !selfReview.dirty)}
               onClick={() =>
                 saveMutation.mutate(
-                  { practiceFeedbackPolicy: checkedPolicy },
-                  { onSuccess: () => setDraft(null) },
+                  {
+                    ...(dirty && { practiceFeedbackPolicy: checked }),
+                    ...(selfReview.dirty && {
+                      studentSelfReviewEnabled: selfReview.checked,
+                    }),
+                  },
+                  {
+                    onSuccess: () => {
+                      setDraft(null);
+                      selfReview.setDraft(null);
+                    },
+                  },
                 )
               }
             >

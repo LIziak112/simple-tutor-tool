@@ -144,12 +144,12 @@ import {
   openedHintEcho,
   resultHintsOpenedOf,
 } from "./hint-service";
-import { newContentEnabledFromEnv } from "./import-qm.ts";
 import {
   freezeAttemptContextSnapshotsWithin,
   listAttemptContextSnapshots,
 } from "./material-repository.ts";
 import { pendingMarkCount } from "./pending-mark";
+import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import {
   answerReleaseProjection,
   attemptAnswersPublished,
@@ -294,7 +294,7 @@ export interface FrozenResponseInsert {
   /**
    * 行级判分策略（tt-07a / QM-06，§5.6）：开卷按题目快照写入
    * （frozenGradingPolicyOf 单一出处）；缺省 null = 旧行旧语义（懒冻结
-   * 补行、开关关闭部署）。
+   * 补行）。
    */
   readonly gradingPolicy?: GradingPolicy | null;
 }
@@ -341,20 +341,15 @@ export function insertFrozenResponse(
  * 冻结时版本与单元归属，逐行插入。建卷时 attempt 行刚插入、responses 必无行，
  * 无需查重（与懒冻结的补写入口 backfillFrozenResponses 相区分）。
  * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（同款冻结语义）。
- * tt-07a（QM-06）：newContentEnabled 控制行级判分策略写入（§5.8.4——开关
- * 关闭的部署 gradingPolicy=NULL 旧行旧语义；缺省读部署 env）。
+ * 教师的自评设置随题目快照一起冻结。
  */
 export function insertFrozenResponses(
   tx: Tx,
   attemptId: string,
   liveRows: readonly QuestionRow[],
   knowledgeByQuestion: ReadonlyMap<string, string[]>,
-  newContentEnabled?: boolean,
+  studentSelfReviewEnabled: boolean,
 ): void {
-  const freezePolicy =
-    newContentEnabled === undefined
-      ? newContentEnabledFromEnv()
-      : newContentEnabled;
   for (const row of liveRows) {
     const snapshot = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
     insertFrozenResponse(tx, {
@@ -363,7 +358,7 @@ export function insertFrozenResponses(
       questionVersion: row.version,
       questionSnapshotJson: JSON.stringify(snapshot),
       unitId: row.unitId,
-      gradingPolicy: frozenGradingPolicyOf(snapshot, freezePolicy),
+      gradingPolicy: frozenGradingPolicyOf(snapshot, studentSelfReviewEnabled),
     });
   }
 }
@@ -1631,8 +1626,6 @@ export function startAttempt(
   studentId: string,
   assignmentId: string,
   options: AttemptWorkflowStartOptions = {},
-  /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
-  newContentEnabled?: boolean,
 ): AttemptStartData {
   const assignment = requireAssignmentVisible(db, studentId, assignmentId);
 
@@ -1691,7 +1684,6 @@ export function startAttempt(
           studentId,
           rows.reduce((max, row) => Math.max(max, row.attemptNo), 0) + 1,
           options,
-          newContentEnabled,
         ),
         assignment.allowRedo,
       );
@@ -1707,15 +1699,7 @@ export function startAttempt(
 
   return withAllowRedo(
     db.transaction((tx) =>
-      createAssignmentAttempt(
-        db,
-        tx,
-        assignment,
-        studentId,
-        1,
-        options,
-        newContentEnabled,
-      ),
+      createAssignmentAttempt(db, tx, assignment, studentId, 1, options),
     ),
     assignment.allowRedo,
   );
@@ -1732,7 +1716,6 @@ function createAssignmentAttempt(
   studentId: string,
   attemptNo: number,
   options: AttemptWorkflowStartOptions,
-  newContentEnabled?: boolean,
 ): AttemptStartData {
   const attempt = newDraftAttempt({
     id: randomUUID(),
@@ -1780,7 +1763,7 @@ function createAssignmentAttempt(
     attempt.id,
     liveRows,
     knowledgeByQuestion,
-    newContentEnabled,
+    studentSelfReviewEnabledOf(db, teacherId),
   );
   freezeAttemptContextSnapshotsWithin(
     tx,
@@ -1809,8 +1792,6 @@ export function startCourseAttempt(
   courseId: string,
   unitId: string,
   options: CourseAttemptStartOptions = {},
-  /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
-  newContentEnabled?: boolean,
 ): AttemptStartData {
   requireVisibleCourseUnit(db, studentId, courseId, unitId);
 
@@ -1887,7 +1868,7 @@ export function startCourseAttempt(
       attempt.id,
       liveRows,
       knowledgeByQuestion,
-      newContentEnabled,
+      studentSelfReviewEnabledOf(db, teacherId),
     );
     freezeAttemptContextSnapshotsWithin(
       tx,

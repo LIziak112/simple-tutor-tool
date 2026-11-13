@@ -202,6 +202,14 @@ describe("QM 迁移 0040/0041：空库、旧库、草稿笔迹库与混合库升
 
     expect(() => runMigrations(db)).not.toThrow();
 
+    expect(
+      db.$client
+        .prepare(
+          "SELECT student_self_review_enabled AS enabled FROM teachers WHERE id = ?",
+        )
+        .get(seeded.teacherId),
+    ).toEqual({ enabled: 1 });
+
     // 存量行完好：题目 id/答案/判定不漂移（修订前的已交卷答案/判定保持原样）
     const row = db.$client
       .prepare(

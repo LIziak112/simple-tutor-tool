@@ -41,9 +41,7 @@ import { jsonOf } from "./snapshot.ts";
  * 缺依赖（索引指向的材料/组不存在或已软删）→ 开卷 fail closed 显式报错
  * （ATTEMPT_CONTEXT_BROKEN），不静默跳过、不拿 live 资源替补旧卷内容。
  *
- * gradingPolicy 行级冻结（决策记录 §5.6）：开卷每行按题目快照内容写入策略
- * （gradingPolicyOf 单一出处），写入受 §5.8.4 发布开关注入参数控制——开关
- * 关闭的部署写 NULL（旧行旧语义，判分行为零变化）。
+ * 开卷按题目快照和所属教师的自评设置冻结 gradingPolicy。历史卷读取原策略。
  */
 
 /** 依赖闭包产物：材料与组行（教师域 live、未软删，按 id 稳定序） */
@@ -219,17 +217,15 @@ function parseColumn<T>(
   }
 }
 
-/**
- * 行级判分策略冻结值（§5.6 D11）：开关开启的开卷按题目快照内容写入
- * gradingPolicyOf（契约单一出处）；开关关闭的部署 → null（旧行旧语义，
- * 判分行为与迁移前完全一致——§5.8.4「新策略写入只发生在开关开启后的题目
- * 开卷时」，题行无导入时点标记，按部署当前开关裁决，见决策记录 tt-07a）。
- */
+/** 新卷按教师设置冻结自评资格，教师关闭时由教师批改适用题。 */
 export function frozenGradingPolicyOf(
   question: Question,
-  newContentEnabled: boolean,
-): GradingPolicy | null {
-  return newContentEnabled ? gradingPolicyOf(question) : null;
+  studentSelfReviewEnabled: boolean,
+): GradingPolicy {
+  const policy = gradingPolicyOf(question);
+  return !studentSelfReviewEnabled && policy === "reference_self"
+    ? "manual_only"
+    : policy;
 }
 
 // ---------- 读路径：冻结快照的学生公开投影（tt-07a / QM-06） ----------

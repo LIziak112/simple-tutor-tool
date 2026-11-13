@@ -46,7 +46,7 @@ export function createTeacherSettingsRoutes(db: Db) {
        * M1b 练习反馈默认策略（2026-10-22 计划 §5.2，独立于 steps/ink 能力开关）：
        * - GET：policy null = 未配置（仅对新普通自由练习按 student_choice 缺省，
        *   设置页展示有效默认值）；异常持久化值服务兜底 after_attempt（保守）；
-       * - PUT：二选一覆盖写，按当前教师会话定位（域隔离）。
+       * - 自评默认开启，开卷时读取；PUT 按当前教师会话部分更新。
        */
       .get("/settings/practice-feedback", (c) => {
         return c.json({

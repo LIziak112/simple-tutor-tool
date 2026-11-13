@@ -19,8 +19,7 @@ import { submitAttemptRequest } from "../test/submit-revisions";
 /**
  * QM-10（TT-09a）服务级验收：取消主观匹配与自评后端。
  * - 细项 1/3：新策略行（开卷冻结 gradingPolicy）fill 与 solve/apply/find-error
- *   交卷不自动匹配（reference 相同/等价/不同/空白恒 null）；旧行（NULL，开关
- *   关闭部署开的卷）solve 等价比较照旧——历史不重释；
+ *   交卷不自动匹配（reference 相同/等价/不同/空白恒 null）；历史 NULL 行保留旧口径；
  * - 细项 7：graded 放宽（§5.5.5：全部行已提交且无教师待处理行即 graded，
  *   不用空值把完成卷改成教师必批）；reference_self 行不进教师待批队列；
  * - 细项 4/5/6：自评端点校验链、CAS/幂等、教师与自评竞争、assertNoLeak。
@@ -33,7 +32,7 @@ const STUDENT_PASSWORD = "stu-pass-10";
 /**
  * 混合练习夹具：choice（客观 auto）+ fill（带参考 reference_self）+ solve
  * （带 :::answer reference_self）+ solve（无参考 manual_only）。旧七型语法，
- * 导入不依赖发布开关；开关只在开卷（冻结 gradingPolicy）时生效。
+ * 导入不依赖发布开关，自评设置只在开卷时读取。
  */
 const QM10_MD = `---
 kind: practice
@@ -193,35 +192,31 @@ async function createAssignment(
   return id;
 }
 
-/** 在开关指定状态下开卷（§5.8.4：gradingPolicy 冻结读开卷时点的部署开关）。
- *  v1=true 显式请求新协议卷（workflowVersion: 1，M1b 建卷口径——不显式
- *  请求按旧协议建卷）；false 开旧协议卷（legacy 对照）。 */
+/** 开作业卷，省略工作流版本时使用旧协议。 */
 async function startAttempt(
   app: App,
   aCookie: string,
   assignmentId: string,
-  newContentEnabled: boolean,
   v1 = true,
 ): Promise<string> {
-  const previous = process.env.NEW_CONTENT_ENABLED;
-  process.env.NEW_CONTENT_ENABLED = newContentEnabled ? "true" : "false";
-  let attemptId: string | undefined;
-  try {
-    const res = await app.request(
-      `/api/student/assignments/${assignmentId}/attempt`,
-      {
-        method: "POST",
-        headers: { cookie: aCookie, "content-type": "application/json" },
-        ...(v1 ? { body: JSON.stringify({ workflowVersion: 1 }) } : {}),
-      },
-    );
-    expect(res.status).toBe(200);
-    attemptId = ((await res.json()) as { data: { id: string } }).data.id;
-  } finally {
-    if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
-    else process.env.NEW_CONTENT_ENABLED = previous;
-  }
-  return attemptId;
+  const res = await app.request(
+    `/api/student/assignments/${assignmentId}/attempt`,
+    {
+      method: "POST",
+      headers: { cookie: aCookie, "content-type": "application/json" },
+      ...(v1 ? { body: JSON.stringify({ workflowVersion: 1 }) } : {}),
+    },
+  );
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { data: { id: string } }).data.id;
+}
+
+/** 模拟升级前已经开出的卷，保留空判分策略。 */
+function makeHistoricalAttempt(db: Db, attemptId: string): void {
+  db.update(responses)
+    .set({ gradingPolicy: null })
+    .where(eq(responses.attemptId, attemptId))
+    .run();
 }
 
 /** PUT 草稿答案（无版本字段 = 旧客户端口径） */
@@ -280,6 +275,67 @@ function rowOf(db: Db, attemptId: string, questionId: string): ResponseRow {
   return row;
 }
 
+it("教师关闭自评只影响新卷，原自评题转待批且参考答案照常公布", async () => {
+  const { app, db, teacherCookie, unitId } = await makeQm10App();
+  const studentId = await createStudent(app, teacherCookie, "张三");
+  const aCookie = await loginStudent(app, "张三");
+  const oldAssignment = await createAssignment(
+    app,
+    teacherCookie,
+    unitId,
+    studentId,
+  );
+  const previous = process.env.NEW_CONTENT_ENABLED;
+  process.env.NEW_CONTENT_ENABLED = "false";
+  const oldAttempt = await startAttempt(app, aCookie, oldAssignment).finally(
+    () => {
+      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
+      else process.env.NEW_CONTENT_ENABLED = previous;
+    },
+  );
+  expect(rowOf(db, oldAttempt, Q.fill).gradingPolicy).toBe("reference_self");
+
+  const saved = await app.request("/api/teacher/settings/practice-feedback", {
+    method: "PUT",
+    headers: { cookie: teacherCookie, "content-type": "application/json" },
+    body: JSON.stringify({ studentSelfReviewEnabled: false }),
+  });
+  expect(saved.status).toBe(200);
+  expect(rowOf(db, oldAttempt, Q.fill).gradingPolicy).toBe("reference_self");
+
+  const assignmentId = await createAssignment(
+    app,
+    teacherCookie,
+    unitId,
+    studentId,
+  );
+  const attemptId = await startAttempt(app, aCookie, assignmentId);
+  expect(rowOf(db, attemptId, Q.choice).gradingPolicy).toBe("auto");
+  expect(rowOf(db, attemptId, Q.fill).gradingPolicy).toBe("manual_only");
+  expect(rowOf(db, attemptId, Q.solveWithRef).gradingPolicy).toBe(
+    "manual_only",
+  );
+  await saveAllAnswers(app, aCookie, attemptId);
+  expect((await submitAttemptRequest(app, aCookie, attemptId)).status).toBe(
+    200,
+  );
+  const questions = await resultQuestionsOf(app, aCookie, attemptId);
+  expect(questions[Q.fill]?.answers).toBeTruthy();
+  expect(questions[Q.solveWithRef]?.solutionMd).toContain("详解哨兵");
+  expect(await pendingMarkQuestionIds(app, teacherCookie)).toEqual(
+    expect.arrayContaining([Q.fill, Q.solveWithRef]),
+  );
+  const rejected = await postSelfReview(app, aCookie, attemptId, Q.fill, {
+    verdict: "correct",
+    mutationId: crypto.randomUUID(),
+    baseRevision: 0,
+  });
+  expect(rejected.status).toBe(403);
+  const body: unknown = await rejected.json();
+  expect(errCodeOf(body)).toBe("SELF_REVIEW_NOT_ALLOWED");
+  assertNoLeak(body, { forbid: ["answers", "solutionMd", "hints"] });
+});
+
 describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不重释", () => {
   it("reference 相同/等价/不同/空白：新策略 fill 与 solve 均 autoCorrect=null", async () => {
     const { app, db, teacherCookie, unitId } = await makeQm10App();
@@ -291,7 +347,7 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
       studentId,
     );
     const aCookie = await loginStudent(app, "张三");
-    const attemptId = await startAttempt(app, aCookie, assignmentId, true);
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
 
     // 冻结策略断言（§5.6 表）：choice=auto、fill/solve 有参考=reference_self、
     // 无参考 solve=manual_only
@@ -327,7 +383,7 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
       studentId,
     );
     const aCookie = await loginStudent(app, "张三");
-    const attemptId = await startAttempt(app, aCookie, assignmentId, true);
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
     // 逐题断言保存成功（P3：防静默丢稿让「等价/不同」前提失效）
     for (const [questionId, answer] of [
       [Q.fill, { kind: "fill", values: ["1/2"] }],
@@ -342,7 +398,7 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
     expect(rowOf(db, attemptId, Q.solveWithRef).autoCorrect).toBeNull();
   });
 
-  it("旧行（开关关闭开的卷，gradingPolicy=NULL）：solve 等价比较照旧、fill 恒 null、choice 照旧", async () => {
+  it("历史行（gradingPolicy=NULL）：solve 等价比较照旧、fill 恒 null、choice 照旧", async () => {
     const { app, db, teacherCookie, unitId } = await makeQm10App();
     const studentId = await createStudent(app, teacherCookie, "李四");
     const assignmentId = await createAssignment(
@@ -352,7 +408,8 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
       studentId,
     );
     const aCookie = await loginStudent(app, "李四");
-    const attemptId = await startAttempt(app, aCookie, assignmentId, false);
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    makeHistoricalAttempt(db, attemptId);
 
     const rows = responseRowsOf(db, attemptId);
     expect(rows.every((r) => r.gradingPolicy === null)).toBe(true);
@@ -425,12 +482,7 @@ async function newPolicySubmittedAttempt(): Promise<
     studentId,
   );
   const aCookie = await loginStudent(fixture.app, "张三");
-  const attemptId = await startAttempt(
-    fixture.app,
-    aCookie,
-    assignmentId,
-    true,
-  );
+  const attemptId = await startAttempt(fixture.app, aCookie, assignmentId);
   await saveAllAnswers(fixture.app, aCookie, attemptId);
   const res = await submitAttemptRequest(fixture.app, aCookie, attemptId);
   expect(res.status).toBe(200);
@@ -526,13 +578,8 @@ describe("QM-10 细项7：graded 放宽与教师待批边界（§5.5.5/§5.5.3�
     );
     const aCookie = await loginStudent(app, "李四");
     // 旧协议卷（不请求 workflowVersion——升级前历史卷的真实形态）
-    const attemptId = await startAttempt(
-      app,
-      aCookie,
-      assignmentId,
-      false,
-      false,
-    );
+    const attemptId = await startAttempt(app, aCookie, assignmentId, false);
+    makeHistoricalAttempt(db, attemptId);
     await saveAllAnswers(app, aCookie, attemptId);
     const res = await submitAttemptRequest(app, aCookie, attemptId);
     expect(res.status).toBe(200);
@@ -547,7 +594,7 @@ describe("QM-10 细项7：graded 放宽与教师待批边界（§5.5.5/§5.5.3�
   });
 });
 
-describe("QM-10 细项7 修复（审查 P1）：legacy 协议+开关开启卷的整卷收尾建模", () => {
+describe("QM-10 细项7 修复（审查 P1）：legacy 协议的新开卷的整卷收尾建模", () => {
   // 缺口形态：行级 submittedAt 仅逐题语义卷写（responses.submittedAt 是逐题
   // 提交列），legacy 协议行恒 null → attemptFinalOutcomeOf 的 allSubmitted 恒
   // false → 整卷交卷后恒 submitted/scoreFinal=null，教师批改重算同病。四态
@@ -568,13 +615,7 @@ describe("QM-10 细项7 修复（审查 P1）：legacy 协议+开关开启卷的
     const aCookie = await loginStudent(app, "王七");
     // legacy 协议（不请求 workflowVersion）+ 开关开启：行冻结 auto，但不启用
     // 逐题提交语义（升级前客户端在开关开启部署开卷的真实形态）
-    const attemptId = await startAttempt(
-      app,
-      aCookie,
-      assignmentId,
-      true,
-      false,
-    );
+    const attemptId = await startAttempt(app, aCookie, assignmentId, false);
     expect(
       responseRowsOf(db, attemptId).every((r) => r.gradingPolicy === "auto"),
     ).toBe(true);
@@ -599,7 +640,7 @@ describe("QM-10 细项7 修复（审查 P1）：legacy 协议+开关开启卷的
     ).toBe(true);
   });
 
-  it("legacy 协议+开关开启混合卷：manual_only 未判仍阻塞 submitted；教师判完 → graded（批改重算链路同修）；清除回落 submitted", async () => {
+  it("legacy 协议的新开混合卷：manual_only 未判仍阻塞 submitted；教师判完 → graded（批改重算链路同修）；清除回落 submitted", async () => {
     const { app, db, teacherCookie, unitId } = await makeQm10App();
     const studentId = await createStudent(app, teacherCookie, "张三");
     const assignmentId = await createAssignment(
@@ -609,13 +650,7 @@ describe("QM-10 细项7 修复（审查 P1）：legacy 协议+开关开启卷的
       studentId,
     );
     const aCookie = await loginStudent(app, "张三");
-    const attemptId = await startAttempt(
-      app,
-      aCookie,
-      assignmentId,
-      true,
-      false,
-    );
+    const attemptId = await startAttempt(app, aCookie, assignmentId, false);
     await saveAllAnswers(app, aCookie, attemptId);
     const res = await submitAttemptRequest(app, aCookie, attemptId);
     expect(res.status).toBe(200);
@@ -770,7 +805,7 @@ describe("QM-10 细项4：自评校验链（登录/归属/子题/已提交/公�
       studentId,
     );
     const aCookie = await loginStudent(app, "张三");
-    const attemptId = await startAttempt(app, aCookie, assignmentId, true);
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
     const { res, body } = await selfReviewJson(
       app,
       aCookie,
@@ -803,7 +838,7 @@ describe("QM-10 细项4：自评校验链（登录/归属/子题/已提交/公�
     ).data.assignments[0]?.id;
     if (assignmentId === undefined) throw new Error("after_due 作业创建失败");
     const aCookie = await loginStudent(app, "张三");
-    const attemptId = await startAttempt(app, aCookie, assignmentId, true);
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
     await saveAllAnswers(app, aCookie, attemptId);
     const submitted = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitted.status).toBe(200);
@@ -850,8 +885,8 @@ describe("QM-10 细项4：自评校验链（登录/归属/子题/已提交/公�
       legacyCookie,
       assignmentId,
       false,
-      false,
     );
+    makeHistoricalAttempt(legacyEnv.db, legacyAttempt);
     await saveAllAnswers(legacyEnv.app, legacyCookie, legacyAttempt);
     expect(
       (await submitAttemptRequest(legacyEnv.app, legacyCookie, legacyAttempt))
@@ -1144,23 +1179,14 @@ topic: 测试
     expect(added.status).toBe(200);
     const aCookie = await loginStudent(app, "赵六");
 
-    // 讲练开卷（开关开启冻结 reference_self）
-    const previous = process.env.NEW_CONTENT_ENABLED;
-    process.env.NEW_CONTENT_ENABLED = "true";
-    let attemptId: string;
-    try {
-      const startRes = await app.request(
-        `/api/student/lectures/${lecture.id}/lesson/start`,
-        { method: "POST", headers: { cookie: aCookie } },
-      );
-      expect(startRes.status).toBe(200);
-      attemptId = (
-        (await startRes.json()) as { data: { attempt: { id: string } } }
-      ).data.attempt.id;
-    } finally {
-      if (previous === undefined) delete process.env.NEW_CONTENT_ENABLED;
-      else process.env.NEW_CONTENT_ENABLED = previous;
-    }
+    const startRes = await app.request(
+      `/api/student/lectures/${lecture.id}/lesson/start`,
+      { method: "POST", headers: { cookie: aCookie } },
+    );
+    expect(startRes.status).toBe(200);
+    const attemptId = (
+      (await startRes.json()) as { data: { attempt: { id: string } } }
+    ).data.attempt.id;
     const lessonRow = rowOf(db, attemptId, "讲练自评-1");
     expect(lessonRow.gradingPolicy).toBe("reference_self");
 
@@ -1198,6 +1224,27 @@ topic: 测试
       value: true,
     });
     assertNoLeak(body, { forbid: ["answers", "solutionMd"] });
+
+    const saved = await app.request("/api/teacher/settings/practice-feedback", {
+      method: "PUT",
+      headers: { cookie: teacherCookie, "content-type": "application/json" },
+      body: JSON.stringify({ studentSelfReviewEnabled: false }),
+    });
+    expect(saved.status).toBe(200);
+    const restart = await app.request(
+      `/api/student/lectures/${lecture.id}/lesson/restart`,
+      { method: "POST", headers: { cookie: aCookie } },
+    );
+    expect(restart.status).toBe(201);
+    const restartedId = (
+      (await restart.json()) as { data: { attempt: { id: string } } }
+    ).data.attempt.id;
+    expect(rowOf(db, restartedId, "讲练自评-1").gradingPolicy).toBe(
+      "manual_only",
+    );
+    expect(rowOf(db, attemptId, "讲练自评-1").selfReviewVerdict).toBe(
+      "correct",
+    );
   });
 });
 
@@ -1297,7 +1344,7 @@ describe("QM-11：结果视图携带 selfReview/gradingPolicy（公布 gate 投�
     ).data.assignments[0]?.id;
     if (assignmentId === undefined) throw new Error("布置作业响应缺少作业 id");
     const aCookie = await loginStudent(app, "钱七");
-    const attemptId = await startAttempt(app, aCookie, assignmentId, true);
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
     await saveAllAnswers(app, aCookie, attemptId);
     const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);

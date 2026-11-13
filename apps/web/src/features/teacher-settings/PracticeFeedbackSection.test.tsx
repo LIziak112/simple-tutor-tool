@@ -48,7 +48,10 @@ beforeEach(() => {
 
 describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
   it("未配置（null）默认勾选「由学生选择」并标注未配置默认", async () => {
-    mockedFetch.mockResolvedValue({ practiceFeedbackPolicy: null });
+    mockedFetch.mockResolvedValue({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
+    });
     renderSection();
     expect(await screen.findByLabelText("由学生选择")).toBeChecked();
     expect(screen.getByText("（未配置时的默认）")).toBeTruthy();
@@ -56,7 +59,10 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
   });
 
   it("已配置 after_attempt 原样回显；切换后显式保存才提交", async () => {
-    mockedFetch.mockResolvedValue({ practiceFeedbackPolicy: "after_attempt" });
+    mockedFetch.mockResolvedValue({
+      practiceFeedbackPolicy: "after_attempt",
+      studentSelfReviewEnabled: true,
+    });
     renderSection();
     expect(await screen.findByLabelText("交卷后公布")).toBeChecked();
     expect(mockedSave).not.toHaveBeenCalled();
@@ -72,8 +78,35 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
     });
   });
 
+  it("自评默认开启，关闭后只保存自评设置", async () => {
+    mockedFetch.mockResolvedValue({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
+    });
+    mockedSave.mockResolvedValue({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: false,
+    });
+    renderSection();
+    const toggle = await screen.findByRole("checkbox", {
+      name: "允许学生对照自评",
+    });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(mockedSave).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存更改" }));
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith({
+        studentSelfReviewEnabled: false,
+      }),
+    );
+  });
+
   it("保存失败保留更改，可重试", async () => {
-    mockedFetch.mockResolvedValue({ practiceFeedbackPolicy: null });
+    mockedFetch.mockResolvedValue({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
+    });
     mockedSave.mockRejectedValue(new Error("网络错误"));
     renderSection();
     fireEvent.click(await screen.findByLabelText("交卷后公布"));
@@ -87,7 +120,10 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    mockedFetch.mockResolvedValue({ practiceFeedbackPolicy: null });
+    mockedFetch.mockResolvedValue({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
+    });
     const first = renderSection(client, "teacher-one");
     fireEvent.click(await screen.findByLabelText("交卷后公布"));
     first.unmount();

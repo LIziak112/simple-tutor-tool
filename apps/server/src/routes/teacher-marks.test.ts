@@ -374,6 +374,15 @@ async function makeEnv(): Promise<TestEnv> {
     password: TEACHER_PASSWORD,
   });
   const cookieA = `tutor_session=${extractSessionToken(setup)}`;
+  const selfReviewSettings = await app.request(
+    "/api/teacher/settings/practice-feedback",
+    {
+      method: "PUT",
+      headers: { cookie: cookieA, "content-type": "application/json" },
+      body: JSON.stringify({ studentSelfReviewEnabled: false }),
+    },
+  );
+  expect(selfReviewSettings.status).toBe(200);
 
   expect(
     (

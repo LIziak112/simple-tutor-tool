@@ -16,8 +16,8 @@ import {
   workflowStartColumns,
 } from "./attempt-service";
 import { createOnce } from "./create-receipt";
-import { newContentEnabledFromEnv } from "./import-qm.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
+import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import { snapshotOfRow } from "./snapshot";
 import { wrongAttemptContextPlan } from "./wrong-attempt-context.ts";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
@@ -40,7 +40,7 @@ import { latestJudgedResponsesByQuestion } from "./wrong-questions";
  *   rowid 升序还原，见 db/schema.ts responses 表注释）。教师此后改题库/软删题
  *   不影响已建的卷与判分（判分输入 = 冻结快照，不查 questions 表）。tt-07a
  *   （QM-06）起材料/组依赖同事务冻结（来源卷快照优先——错题时学生所见的
- *   版本），gradingPolicy 按复制的来源快照逐行写入（§5.6/§5.8.4 开关控制）；
+ *   版本），gradingPolicy 按来源快照和教师自评设置冻结；
  * - attempt 行：sourceType='wrong'、assignmentId/courseId/unitId 恒 null（契约
  *   superRefine 锁定；无课程归属 → **永不失权**，草稿与记录一直可见）；
  *   attemptNo = 该生已有 wrong 来源 attempt 数 + 1（从 1 起）；不限制同时存在
@@ -63,8 +63,6 @@ export function startWrongPractice(
   studentId: string,
   questionIds: readonly string[],
   options: AttemptWorkflowStartOptions = {},
-  /** tt-07a：判分策略写入开关（缺省读部署 env，§5.8.4）；测试显式注入 */
-  newContentEnabled?: boolean,
   /** 建卷范围快照（#6980-2）：随卷落 practice_scope_json，展示「练的是什么」 */
   scope?: WrongPracticeScope | undefined,
   operationId?: string,
@@ -83,7 +81,6 @@ export function startWrongPractice(
           studentId,
           questionIds,
           options,
-          newContentEnabled,
           scope,
         );
         return { id: attempt.id, includedCount };
@@ -132,7 +129,7 @@ export function startWrongPractice(
   }
   assertAttemptQuestionLimit(plan.usable.length);
 
-  const freezePolicy = newContentEnabled ?? newContentEnabledFromEnv();
+  const studentSelfReviewEnabled = studentSelfReviewEnabledOf(db, teacherId);
   // P2（2026-10-28 #38）：selection 范围快照的 questionCount 以服务端实际冻结
   // 题数覆写——契约只校验 questionCount = 去重入参 id 数，服务层静默剔除不在
   // 聚合/快照损坏的题后，客户端的 N 与实际不符，原样落库会把「手选 5 题」和
@@ -186,8 +183,7 @@ export function startWrongPractice(
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
     // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端
     // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）。tt-07a：gradingPolicy
-    // 按复制的来源快照逐行写入（frozenGradingPolicyOf 单一出处，§5.8.4 开关
-    // 控制 NULL=旧语义）——判分策略与题目本体同源自冻结，教师事后改题不影响
+    // 按复制的来源快照与新开卷时的教师设置冻结判分策略。
     for (const source of plan.usable) {
       const snapshotJson = source.questionSnapshotJson;
       const snapshot = snapshotOfRow(source); // pickOf 已校验可解析，防御性收敛
@@ -198,7 +194,10 @@ export function startWrongPractice(
         questionVersion: source.questionVersion,
         questionSnapshotJson: snapshotJson,
         unitId: null,
-        gradingPolicy: frozenGradingPolicyOf(snapshot, freezePolicy),
+        gradingPolicy: frozenGradingPolicyOf(
+          snapshot,
+          studentSelfReviewEnabled,
+        ),
       });
     }
     // 依赖闭包条目（来源卷快照优先）同事务冻结——开卷途中失败全回滚

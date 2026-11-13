@@ -43,6 +43,13 @@ async function prepareResult(
   await isolateRegisterRateLimit(page, `10.239.12.${slot}`);
   await registerTeacherViaUi(page, request, teacherName, teacherPassword);
   await teacherLoginViaApi(request, teacherName, teacherPassword);
+  if (rich) {
+    const settings = await request.put(
+      "/api/teacher/settings/practice-feedback",
+      { data: { studentSelfReviewEnabled: false } },
+    );
+    expect(settings.ok()).toBe(true);
+  }
   const courseId = await createCourseViaApi(request, `回看课程${suffix}`);
   const unitIds: string[] = [];
   const title = `回看长卷${suffix}${long ? "LongTitle".repeat(12) : ""}`.slice(

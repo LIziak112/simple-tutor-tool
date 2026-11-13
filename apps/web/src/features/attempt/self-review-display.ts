@@ -6,7 +6,7 @@ import type { AttemptResultQuestion } from "@tutor/contract";
  * 「已完成、待自评／自评正确／自评错误」，其余行（auto/manual_only/旧行/
  * 教师已判）沿既有 finalCorrect 路径不变（细项 3：完成状态三态明确，
  * 无答案状态不假装可自动判断——manual_only 行徽章仍为待批，另有
- * SelfReviewSection 的「暂无参考答案」提示行）。
+ * SelfReviewSection 的待批提示）。
  *
  * 只读服务端已公布投影（selfReview/gradingPolicy/teacherMark），客户端不
  * 推断未公布答案；聚合口径（reviewCounts/summary）不在本助手范围（QM-12）。

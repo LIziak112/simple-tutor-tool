@@ -1,0 +1,1 @@
+ALTER TABLE `teachers` ADD `student_self_review_enabled` integer DEFAULT true NOT NULL;
