@@ -9,7 +9,13 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, questions, responses, students } from "../db/schema.ts";
+import {
+  attemptContextFreezes,
+  attempts,
+  questions,
+  responses,
+  students,
+} from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
@@ -678,6 +684,10 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
 
     // 模拟旧数据：把挂课程作业 attempt 的冗余列 courseId 置空 → 回退作业行
     // assignments.courseId（口径与 sourceOf 一致，courseName 同处取不受影响）
+    env.db
+      .delete(attemptContextFreezes)
+      .where(eq(attemptContextFreezes.attemptId, a2))
+      .run();
     env.db
       .update(attempts)
       .set({ courseId: null })

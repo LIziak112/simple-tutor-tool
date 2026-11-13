@@ -998,6 +998,8 @@ describe("本次草稿原稿入口（T6R.11）", () => {
         ...DATA.attempt,
         sourceType: "course",
         assignmentId: null,
+        lectureId: null,
+        allowRedo: undefined,
         courseId: "33333333-3333-4333-8333-333333333333",
         unitId: "unit-a",
         attemptNo: 2,
@@ -1018,6 +1020,8 @@ describe("本次草稿原稿入口（T6R.11）", () => {
         ...courseData.attempt,
         sourceType: "wrong",
         assignmentId: null,
+        lectureId: null,
+        allowRedo: undefined,
         courseId: null,
         unitId: null,
         attemptNo: 3,
@@ -1038,6 +1042,7 @@ describe("本次草稿原稿入口（T6R.11）", () => {
         ...DATA.attempt,
         sourceType: "lesson",
         assignmentId: null,
+        allowRedo: undefined,
         lectureId: "77777777-7777-4777-8777-777777777777",
         courseId: null,
         unitId: "随堂讲练",
@@ -1642,7 +1647,10 @@ describe("AttemptResultView 作业重做（hall-15313）", () => {
   it("allowRedo=false 不渲染重做入口（教师显式关闭 → 只读回看）", async () => {
     const data: AttemptResultData = {
       ...DATA,
-      attempt: { ...DATA.attempt, allowRedo: false },
+      attempt:
+        DATA.attempt.sourceType === "assignment"
+          ? { ...DATA.attempt, allowRedo: false }
+          : DATA.attempt,
     };
     render(
       <AttemptResultView

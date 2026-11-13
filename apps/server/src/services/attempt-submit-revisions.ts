@@ -1,5 +1,8 @@
 import type { AttemptSubmitRevision } from "@tutor/contract";
-import { attemptSubmissionConflictSchema } from "@tutor/contract";
+import {
+  attemptSubmissionConflictSchema,
+  frozenQuestionRevisionIdSchema,
+} from "@tutor/contract";
 import type { ResponseRow } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { answerOf } from "./snapshot.ts";
@@ -68,10 +71,10 @@ export function validateSubmitRevisions(
     revisions.map((entry) => [entry.questionId, entry]),
   );
   for (const { response } of frozen) {
-    if (
-      clientByQuestion.get(response.questionId)?.questionRevisionId !==
-      response.id
-    )
+    const revision = frozenQuestionRevisionIdSchema.safeParse(
+      clientByQuestion.get(response.questionId)?.questionRevisionId,
+    );
+    if (!revision.success || revision.data !== response.id)
       throw revisionStale();
   }
   for (const { response } of pending) {

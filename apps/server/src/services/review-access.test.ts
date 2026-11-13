@@ -12,6 +12,7 @@ const attempt = () =>
     studentId: "student",
     sourceType: "course",
     assignmentId: null,
+    lectureId: null,
     courseId: "removed-course",
     unitId: "removed-unit",
     attemptNo: 1,

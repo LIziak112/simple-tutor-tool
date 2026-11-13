@@ -10,7 +10,9 @@
  * 执行）；内存后端注入；复用 note-test-utils 夹具。
  */
 import type { NoteHeadData } from "@tutor/contract";
+import { NOTE_HEADS_MAX_QUESTIONS } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bindDraftSession } from "@/features/attempt/draft-store";
 import { docOf } from "@/features/notes/note-fixtures";
 
 const annotationProblems = vi.hoisted(() =>
@@ -91,6 +93,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   resetNoteSession();
+  bindDraftSession(null);
 });
 
 /** 写入一稿并等本地落盘（上传由 flush 强制追平，不在此等待） */
@@ -127,6 +130,50 @@ function mockHeads(overrides: Record<string, NoteHeadData>): void {
 }
 
 describe("prepareSubmitEvidence：正常固定", () => {
+  it("切换学生账号时不再读取下一批草稿头", async () => {
+    mockHeads({});
+    const first = Promise.withResolvers<NoteHeadData[]>();
+    const received = Promise.withResolvers<void>();
+    headsMock.mockImplementationOnce(() => {
+      received.resolve();
+      return first.promise;
+    });
+    const questionIds = Array.from(
+      { length: NOTE_HEADS_MAX_QUESTIONS + 1 },
+      (_, index) => `历史题-${index}`,
+    );
+    const prep = prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds });
+    const rejection = expect(prep).rejects.toThrow("作答会话已切换");
+    await received.promise;
+    bindDraftSession({ origin: "https://tutor.test", studentId: "next" });
+    first.resolve(
+      questionIds
+        .slice(0, NOTE_HEADS_MAX_QUESTIONS)
+        .map(() => headOf({ note: null })),
+    );
+    await rejection;
+    expect(headsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("超限历史卷分批读取头，顺序与原稿声明一致", async () => {
+    mockHeads({});
+    const questionIds = Array.from(
+      { length: NOTE_HEADS_MAX_QUESTIONS + 1 },
+      (_, index) => `历史题-${index}`,
+    );
+    const prep = await prepareSubmitEvidence({
+      attemptId: ATTEMPT,
+      questionIds,
+    });
+    expect(headsMock.mock.calls.map(([, ids]) => ids.length)).toEqual([
+      NOTE_HEADS_MAX_QUESTIONS,
+      1,
+    ]);
+    expect(prep.declarations?.map(({ questionId }) => questionId)).toEqual(
+      questionIds,
+    );
+  });
+
   it("标画未传完整必须明确确认，确认后不伪造草稿missing声明", async () => {
     mockHeads({});
     annotationProblems.mockResolvedValue([

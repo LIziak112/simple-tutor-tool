@@ -49,7 +49,7 @@ import { HttpError } from "../lib/http-error";
 import { hasUsableQuestionSnapshotSql } from "./attempt-final-outcome.ts";
 import {
   answerOf,
-  assertMcpDraftAnswerShape,
+  assertFrozenAnswerShape,
   attemptQuestionRows,
   attemptResponseRows,
   attemptUnitIds,
@@ -572,7 +572,7 @@ export function editTeacherDraftResponse(
         );
       }
     } else {
-      assertMcpDraftAnswerShape(db, row, original, edit.answer);
+      assertFrozenAnswerShape(db, row, original, edit.answer);
     }
 
     const auditId = randomUUID();

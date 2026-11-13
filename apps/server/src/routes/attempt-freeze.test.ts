@@ -11,7 +11,13 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, questions, responses, students } from "../db/schema";
+import {
+  attemptContextFreezes,
+  attempts,
+  questions,
+  responses,
+  students,
+} from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -330,6 +336,9 @@ async function submitWithCurrentRevisions(
  * 删未作答题的行（升级前行只随存答/解锁提示创建，未作答题没有行）。
  */
 function downgradeToLegacyDraft(db: Db, attemptId: string): void {
+  db.delete(attemptContextFreezes)
+    .where(eq(attemptContextFreezes.attemptId, attemptId))
+    .run();
   db.update(attempts)
     .set({ frozenAt: null, legacyUnverified: false })
     .where(eq(attempts.id, attemptId))
@@ -841,6 +850,9 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
       (await submitWithCurrentRevisions(app, aCookie, attemptId)).status,
     ).toBe(200);
     // 还原升级前形态：已交卷行本就没有冻结标记
+    db.delete(attemptContextFreezes)
+      .where(eq(attemptContextFreezes.attemptId, attemptId))
+      .run();
     db.update(attempts)
       .set({ frozenAt: null, legacyUnverified: false })
       .where(eq(attempts.id, attemptId))
@@ -1284,6 +1296,9 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
       .from(attempts)
       .where(eq(attempts.id, wrongAttemptId))
       .get()?.startedAt;
+    db.delete(attemptContextFreezes)
+      .where(eq(attemptContextFreezes.attemptId, wrongAttemptId))
+      .run();
     db.update(attempts)
       .set({ frozenAt: null, legacyUnverified: false })
       .where(eq(attempts.id, wrongAttemptId))

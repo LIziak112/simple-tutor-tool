@@ -9,7 +9,13 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { assignments, attempts, ink, responses } from "../db/schema.ts";
+import {
+  assignments,
+  attemptContextFreezes,
+  attempts,
+  ink,
+  responses,
+} from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { saveDraftAnswer } from "../services/attempt-service";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
@@ -856,6 +862,10 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
 
   it("未冻结且无 response 的历史草稿也有总题数，读取不会冻结或创建答案", async () => {
     const env = await makeRecordsEnv();
+    env.db
+      .delete(attemptContextFreezes)
+      .where(eq(attemptContextFreezes.attemptId, env.a3AttemptId))
+      .run();
     env.db
       .update(attempts)
       .set({ frozenAt: null })
