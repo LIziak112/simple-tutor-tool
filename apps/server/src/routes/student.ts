@@ -126,8 +126,8 @@ import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
 import { respondAttemptDetail } from "./student-attempt-detail";
-import { createStudentEventRoutes } from "./student-event-routes";
 import { createStudentCreateRoutes } from "./student-create";
+import { createStudentEventRoutes } from "./student-event-routes";
 import { createStudentMemoRoutes } from "./student-memos";
 import { createStudentRubricRoutes } from "./student-rubric";
 
