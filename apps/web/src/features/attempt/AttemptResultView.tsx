@@ -629,22 +629,20 @@ export function AttemptResultView({
         />
       }
       actions={
-        <>
-          <QuestionProcessControls process={questionProcess} />
-          <ResultAiActions
-            attemptId={attempt.id}
-            questions={flatQuestions}
-            released={released}
-            companion={aiCompanion}
-            onOpenAttemptReview={attemptReview.open}
-          />
-        </>
+        <ResultAiActions
+          attemptId={attempt.id}
+          questions={flatQuestions}
+          released={released}
+          companion={aiCompanion}
+          onOpenAttemptReview={attemptReview.open}
+        />
       }
       rootRef={rootRef}
       reviewLocation={reviewLocation}
     >
       {aiCompanion.rail(
         <div className="flex flex-col gap-5">
+          <QuestionProcessControls process={questionProcess} />
           {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
           <section
             aria-labelledby="result-summary"

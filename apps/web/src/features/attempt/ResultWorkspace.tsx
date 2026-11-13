@@ -43,14 +43,7 @@ export function ResultWorkspace({
   onBack(): void;
   backLabel: string;
   children: ReactNode;
-  /** 标题右侧扩展动作位（SAI-22 AI 复盘入口；不传不占位） */
   actions?: ReactNode;
-  /**
-   * 顶栏主动作位（整卷复盘入口）：宽屏排在图标动作前面；窄屏（< lg）单独
-   * 占顶栏第二行，按钮文字完整显示、不和图标挤在一起。渲染为空时不占位。
-   * 里面的元素带 data-attempt-header-compact 时（入口已收起为紧凑形态），
-   * 窄屏不再占第二行，改排在图标动作下方靠右。
-   */
   primaryAction?: ReactNode;
   /** 主区根 ref（调用方持有回看定位时一并传入；缺省内部自建） */
   rootRef?: RefObject<HTMLDivElement | null>;
@@ -81,7 +74,7 @@ export function ResultWorkspace({
     <AttemptWorkspace>
       <header
         data-slot="attempt-header"
-        className="sticky top-0 z-30 -mx-3 flex flex-wrap items-start gap-2 border-b border-border bg-background px-3 py-3 sm:-mx-6 sm:px-6"
+        className="@container/result-header sticky top-0 z-30 -mx-3 flex items-start gap-2 border-b border-border bg-background px-3 py-3 sm:-mx-6 sm:px-6"
       >
         <Button
           variant="ghost"
@@ -90,7 +83,7 @@ export function ResultWorkspace({
           title={backLabel}
           onClick={onBack}
         >
-          <ArrowLeft aria-hidden className="size-5" />
+          <ArrowLeft aria-hidden className="size-5 rtl:rotate-180" />
         </Button>
         <div className="min-w-0 flex-1">
           <h1 className="break-words text-xl leading-snug font-semibold [overflow-wrap:anywhere]">
@@ -104,20 +97,9 @@ export function ResultWorkspace({
                 : "已交卷 · 待批改"}
           </p>
         </div>
-        {/* 右侧动作：缺省不参与布局（contents）——主动作位与图标组各自是顶栏的
-            子项。入口收起时（窄屏）合成右侧一列：图标组在上，紧凑入口在它下方
-            靠右，不占整行、不挤标题 */}
-        <div className="contents max-lg:has-[[data-attempt-header-compact]]:flex max-lg:has-[[data-attempt-header-compact]]:shrink-0 max-lg:has-[[data-attempt-header-compact]]:flex-col max-lg:has-[[data-attempt-header-compact]]:items-end max-lg:has-[[data-attempt-header-compact]]:gap-1.5">
-          <div
-            data-slot="attempt-header-primary"
-            className="order-last flex basis-full justify-end empty:hidden max-lg:has-[[data-attempt-header-compact]]:basis-auto lg:order-none lg:shrink-0 lg:basis-auto"
-          >
-            {primaryAction}
-          </div>
-          <div className="flex shrink-0 items-center">
-            {actions}
-            <MemoQuickCaptureButton />
-          </div>
+        <div className="flex min-w-0 max-w-[60%] items-center gap-1 @min-[40rem]/result-header:max-w-none">
+          {primaryAction}
+          {actions ?? <MemoQuickCaptureButton />}
         </div>
       </header>
       <div ref={root} className="min-w-0">

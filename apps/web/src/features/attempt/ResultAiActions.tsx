@@ -1,7 +1,23 @@
 import type { AttemptResultQuestion } from "@tutor/contract";
-import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
+import { ListPlus, ListTodo, MoreHorizontal, NotebookPen } from "lucide-react";
+import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  MemoQuickCaptureButton,
+  MemoQuickCaptureDialog,
+} from "@/features/memos/MemoQuickCapture";
+import { AiBatchReviewPanel } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
-import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import {
+  AiQueueSheet,
+  AiQueueTrigger,
+} from "@/features/student-ai/AiQueueButton";
 import { HANDWRITTEN_TYPES } from "./answer-format";
 import { verdictBadgeDisplayOf } from "./self-review-display";
 
@@ -9,9 +25,6 @@ import { verdictBadgeDisplayOf } from "./self-review-display";
  * 结果页的逐题 AI 接线：伴学栏（「AI 复盘」绑定回看当前题）与顶栏的逐题
  * 入口组（「批量复盘」「求助记录」）。题号口径只此一处：题号 = 全卷展示序
  * 下标 + 1（与答题卡一致）。
- *
- * 整卷复盘不在这里——它是顶栏主按钮（AttemptReviewTopBarEntry），两类入口
- * 分开摆放，避免把「按整卷出一份报告」和「按题逐条求助」混成一件事。
  */
 
 /**
@@ -72,29 +85,107 @@ export function ResultAiActions({
   companion: ReturnType<typeof useResultAiCompanion>;
   onOpenAttemptReview: (target: string) => void;
 }) {
+  const [open, setOpen] = useState<"batch" | "queue" | "memo" | null>(null);
+  const nextAction = useRef<typeof open>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const restoreMenuFocus = useRef(false);
+  const close = (isOpen: boolean) => {
+    if (isOpen) return;
+    setOpen(null);
+    if (restoreMenuFocus.current) {
+      restoreMenuFocus.current = false;
+      requestAnimationFrame(() => menuTrigger.current?.focus());
+    }
+  };
   return (
     <>
-      {/* SAI-31 批量复盘入口：勾选只进面板，创建走一次确认（B16） */}
-      <AiBatchReviewEntry
-        attemptId={attemptId}
-        questions={questions.map((question, index) => ({
-          questionId: question.questionId,
-          label: `第 ${index + 1} 题`,
-          // QM-12：喂有效判定（教师判 > 自评 > 自动，verdictBadgeDisplayOf
-          // 同口径）——自评「错」进错题组（与服务端批量过滤同口径）；
-          // 未公布时服务端已置 null，这里再按 released 收口（双保险）
-          finalCorrect: released
-            ? verdictBadgeDisplayOf(question).verdict
-            : null,
-        }))}
-        released={released}
-      />
-      <AiQueueButton
+      <div className="hidden items-center gap-1 @min-[40rem]/result-header:flex">
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-11 gap-1.5 px-2"
+          onClick={() => setOpen("batch")}
+        >
+          <ListPlus aria-hidden className="size-5" />
+          批量复盘
+        </Button>
+        <AiQueueTrigger onClick={() => setOpen("queue")} />
+        <MemoQuickCaptureButton />
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            ref={menuTrigger}
+            type="button"
+            variant="ghost"
+            className="size-11 p-0 @min-[40rem]/result-header:hidden"
+            aria-label="更多操作"
+            title="更多操作"
+          >
+            <MoreHorizontal aria-hidden className="size-5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          onCloseAutoFocus={(event) => {
+            if (nextAction.current === null) return;
+            event.preventDefault();
+            restoreMenuFocus.current = true;
+            setOpen(nextAction.current);
+            nextAction.current = null;
+          }}
+        >
+          <DropdownMenuItem
+            onSelect={() => {
+              nextAction.current = "batch";
+            }}
+          >
+            <ListPlus aria-hidden />
+            批量复盘
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              nextAction.current = "queue";
+            }}
+          >
+            <ListTodo aria-hidden />
+            求助记录
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              nextAction.current = "memo";
+            }}
+          >
+            <NotebookPen aria-hidden />
+            随手记
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {open === "batch" && (
+        <AiBatchReviewPanel
+          attemptId={attemptId}
+          questions={questions.map((question, index) => ({
+            questionId: question.questionId,
+            label: `第 ${index + 1} 题`,
+            // 只用已公布的有效判定（教师判 > 自评 > 自动）。
+            finalCorrect: released
+              ? verdictBadgeDisplayOf(question).verdict
+              : null,
+          }))}
+          released={released}
+          open
+          onOpenChange={close}
+        />
+      )}
+      <AiQueueSheet
         currentAttemptId={companion.send.attemptId}
         onOpenTask={companion.openTask}
         onOpenQuestion={companion.openQuestion}
         onOpenAttemptReview={onOpenAttemptReview}
+        open={open === "queue"}
+        onOpenChange={close}
       />
+      <MemoQuickCaptureDialog open={open === "memo"} onOpenChange={close} />
     </>
   );
 }

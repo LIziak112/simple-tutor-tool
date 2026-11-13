@@ -207,9 +207,7 @@ const browserForward = () =>
     screen.getByRole("button", { name: "浏览器前进", hidden: true }),
   );
 const openFromTopBar = async () => {
-  fireEvent.click(
-    await screen.findByRole("button", { name: /查看整卷复盘报告/ }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "整卷复盘" }));
   expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
 };
 
@@ -244,20 +242,18 @@ describe("整卷复盘承载：地址驱动", () => {
     renderAt(`?aiReview=${encodeURIComponent("../../settings?x=")}`);
     // 顶栏入口照常（列表已返回），但没有弹层，也没有按伪造 id 取详情 / 记已读
     expect(
-      await screen.findByRole("button", { name: /查看整卷复盘报告/ }),
+      await screen.findByRole("button", { name: "整卷复盘" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockedDetail).not.toHaveBeenCalled();
     expect(mockedAction).not.toHaveBeenCalled();
   });
 
-  it("顶栏「查看整卷复盘报告」与地址进入打开的是同一份报告", async () => {
+  it("顶栏「整卷复盘」与地址进入打开的是同一份报告", async () => {
     mockedList.mockResolvedValue({ tasks: [taskOf()], nextCursor: null });
     mockedDetail.mockResolvedValue(DETAIL);
     renderAt("");
-    fireEvent.click(
-      await screen.findByRole("button", { name: /查看整卷复盘报告/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "整卷复盘" }));
     expect(searchNow()).toBe(`?aiReview=${TASK_ID}`);
     expect(await screen.findByText("整体基础扎实。")).toBeInTheDocument();
   });
@@ -339,13 +335,10 @@ describe("整卷复盘承载：地址驱动", () => {
       }),
     );
     expect(mockedBatchCreate).not.toHaveBeenCalled();
-    // 顶栏入口随即改报进度（此刻被面板遮住，按隐藏元素查）
+    // 顶栏入口保持原位，面板内显示最新进度。
     expect(
-      await screen.findByRole("button", {
-        name: "整卷复盘 · 等待领取",
-        hidden: true,
-      }),
-    ).toBeInTheDocument();
+      await screen.findByRole("list", { name: "整卷复盘任务" }),
+    ).toHaveTextContent("等待领取");
   });
 
   it("点证据题号：先关报告再定位到那道题", async () => {

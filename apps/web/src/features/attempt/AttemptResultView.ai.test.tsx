@@ -427,9 +427,6 @@ describe("结果页顶栏：整卷复盘入口", () => {
     expect(
       within(headerOf(container)).queryByRole("button", { name: /整卷复盘/ }),
     ).toBeNull();
-    expect(
-      container.querySelector('[data-slot="attempt-header-primary"]'),
-    ).toBeEmptyDOMElement();
   });
 
   it("报告已出：证据题按报告快照的题目 ID 定位，即使当前题序已经变化", async () => {
@@ -463,17 +460,14 @@ describe("结果页顶栏：整卷复盘入口", () => {
     });
     const { container } = renderView();
     const entry = await within(headerOf(container)).findByRole("button", {
-      name: /查看整卷复盘报告/,
+      name: "整卷复盘",
     });
-    // 顶栏主位：独立于图标动作组，文字不随宽度隐藏
+    const batch = within(headerOf(container)).getByRole("button", {
+      name: "批量复盘",
+    });
     expect(
-      entry.closest('[data-slot="attempt-header-primary"]'),
-    ).not.toBeNull();
-    expect(entry.textContent).toContain("查看整卷复盘报告");
-    // 「批量复盘」「求助记录」仍在，名称不变
-    expect(
-      within(headerOf(container)).getByRole("button", { name: "批量复盘" }),
-    ).toBeInTheDocument();
+      entry.compareDocumentPosition(batch) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     fireEvent.click(entry);
     const reader = await screen.findByRole("dialog", { name: "整卷复盘报告" });
@@ -494,20 +488,22 @@ describe("结果页顶栏：整卷复盘入口", () => {
     );
   });
 
-  it("报告未读：主按钮保持整行形态，不声明收起", async () => {
+  it("报告未读：顶栏只显示入口，未读状态在下方卡片", async () => {
     mockedReviewList.mockResolvedValue({
       tasks: [reviewTask],
       nextCursor: null,
     });
     const { container } = renderView();
     const entry = await within(headerOf(container)).findByRole("button", {
-      name: /查看整卷复盘报告/,
+      name: "整卷复盘",
     });
-    expect(entry).not.toHaveAttribute("data-attempt-header-compact");
-    expect(entry).toHaveTextContent("新");
+    expect(entry).toHaveTextContent(/^整卷复盘$/u);
+    expect(screen.getByTestId("attempt-review-hint")).toHaveTextContent(
+      "整卷复盘报告已生成，还没看过",
+    );
   });
 
-  it("报告已读：入口收起为紧凑形态——仍在顶栏主位，带短文字与完整名称，点开还是这份报告", async () => {
+  it("报告已读：顶栏入口仍然打开同一份报告", async () => {
     const readTask = { ...reviewTask, openedAt: "2026-10-16T04:00:00.000Z" };
     mockedReviewList.mockResolvedValue({ tasks: [readTask], nextCursor: null });
     mockedReviewDetail.mockResolvedValue({
@@ -524,18 +520,9 @@ describe("结果页顶栏：整卷复盘入口", () => {
       },
     });
     const { container } = renderView();
-    // 名称不变：读屏与桌面看到的仍是「查看整卷复盘报告」
     const entry = await within(headerOf(container)).findByRole("button", {
-      name: "查看整卷复盘报告",
+      name: "整卷复盘",
     });
-    // 收起由入口自己声明，顶栏据此在窄屏把它排到图标组下方（见 ResultWorkspace）
-    expect(entry).toHaveAttribute("data-attempt-header-compact");
-    expect(
-      entry.closest('[data-slot="attempt-header-primary"]'),
-    ).not.toBeNull();
-    // 窄屏可见的短文字：不是只剩一个图标
-    expect(within(entry).getByText("复盘报告")).toBeInTheDocument();
-    expect(entry).not.toHaveTextContent("新");
 
     fireEvent.click(entry);
     const reader = await screen.findByRole("dialog", { name: "整卷复盘报告" });
