@@ -1,8 +1,13 @@
 import type { AttemptResultCounts } from "@tutor/contract";
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, responses } from "../db/schema";
-import { notSelfReviewPendingRow } from "./pending-mark";
+import {
+  hasUsableQuestionSnapshotSql,
+  needsTeacherMarkSql,
+} from "./attempt-final-outcome.ts";
+import { needsSelfReviewSql } from "./pending-mark";
+import { effectiveVerdictValueSql } from "./response-verdict.ts";
 
 /** 只接收调用方已核验归属的作答；草稿与作废卷不产生整卷结果。 */
 export function attemptResultCounts(
@@ -33,27 +38,17 @@ export function attemptResultCounts(
         // 教师判 > 自评 > 自动；自评 verdict/at 成对判——脏行降级待判，同
         // wrong-questions 已判定轮谓词）。未做行（answered=false）仍进分母，
         // 只是判错不计判对（#6980-3 与判定维度正交）
-        correctCount: sql<number>`sum(case
-          when ${responses.teacherMark} = 'correct' then 1
-          when ${responses.teacherMark} = 'wrong' then 0
-          when ${responses.selfReviewVerdict} is not null and ${responses.selfReviewAt} is not null
-            then case when ${responses.selfReviewVerdict} = 'correct' then 1 else 0 end
-          when ${responses.autoCorrect} is not null
-            then case when ${responses.autoCorrect} = 1 then 1 else 0 end
-          else 0 end)`,
+        correctCount: sql<number>`sum(case when ${effectiveVerdictValueSql} = 1 then 1 else 0 end)`,
         // D4 教师待批（pending-mark 谓词同口径：finalCorrect IS NULL 且非
         // reference_self 行；快照非空已由外层 where 排幽灵行）
-        pendingCount: sql<number>`sum(case when ${isNull(responses.finalCorrect)} and ${notSelfReviewPendingRow()} then 1 else 0 end)`,
+        pendingCount: sql<number>`sum(case when ${needsTeacherMarkSql} then 1 else 0 end)`,
         // 待自评（与 pending-mark.pendingSelfReviewCounts 同语义：reference_self
         // 行且教师未判且学生未自评——有判定来源即归零）
-        pendingSelfReviewCount: sql<number>`sum(case when ${eq(responses.gradingPolicy, "reference_self")} and ${isNull(responses.teacherMark)} and ${isNull(responses.selfReviewVerdict)} then 1 else 0 end)`,
+        pendingSelfReviewCount: sql<number>`sum(case when ${needsSelfReviewSql} then 1 else 0 end)`,
       })
       .from(responses)
       .where(
-        and(
-          inArray(responses.attemptId, chunk),
-          isNotNull(responses.questionSnapshotJson),
-        ),
+        and(inArray(responses.attemptId, chunk), hasUsableQuestionSnapshotSql),
       )
       .groupBy(responses.attemptId)
       .all()) {

@@ -19,7 +19,7 @@ import {
 } from "../db/schema";
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { serializeStudentAnswerOfRow } from "./mark-response";
-import { notSelfReviewPendingRow } from "./pending-mark";
+import { pendingTeacherResponseSql } from "./pending-mark";
 import { countsAsWrong, effectiveVerdictValueSql } from "./response-verdict.ts";
 // 两线收敛接线：v2 错题闭环的轮次可见性守卫（公布/可见性单一出处，note-service
 // 同款复用）——不将 AI 出口授权当成学生读答案权限
@@ -295,11 +295,7 @@ function pendingCountByQuestion(
         and(
           eq(attempts.studentId, studentId),
           ne(attempts.status, "draft"),
-          isNull(responses.finalCorrect),
-          // QM-12：与 D4 谓词同步——reference_self 行待自评不算教师待批；
-          // 幽灵行（快照缺失）不可批不计数
-          notSelfReviewPendingRow(),
-          isNotNull(responses.questionSnapshotJson),
+          pendingTeacherResponseSql,
           releaseGateSql(nowIso),
         ),
       )
