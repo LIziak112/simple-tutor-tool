@@ -4,33 +4,31 @@ import type {
   AttemptContextGroup,
   AttemptContextMaterial,
   GradingPolicy,
-  MaterialPublic,
   Question,
-  QuestionGroupPublic,
 } from "@tutor/contract";
 import {
+  attemptContextGroupSchema,
+  attemptContextMaterialSchema,
   gradingPolicyOf,
-  materialPublicSchema,
-  questionGroupPublicSchema,
 } from "@tutor/contract";
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
+  type AttemptContextSnapshotRow,
   type MaterialRow,
   materialRefs,
   materials,
   type QuestionGroupRow,
   questionGroupMembers,
   questionGroups,
-  type ResponseRow,
 } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   type AttemptContextSnapshotEntry,
-  getMaterial,
-  getQuestionGroup,
+  hasAttemptContextFreeze,
   listAttemptContextSnapshots,
 } from "./material-repository.ts";
+import { jsonOf } from "./snapshot.ts";
 
 /**
  * 开卷依赖冻结（QM-06 / tt-07a）：四来源建卷把「题目 → 题级材料引用 ∪ 所属
@@ -234,166 +232,6 @@ export function frozenGradingPolicyOf(
   return newContentEnabled ? gradingPolicyOf(question) : null;
 }
 
-// ---------- wrong 组卷：来源卷快照优先（设计方案 §5.3「错题重练复制来源
-// 作答的该子题及必要材料/说明」；「同 ID 不同版本并存不覆盖」） ----------
-
-/** wrong 组卷的依赖冻结计划 */
-export interface WrongAttemptContextPlan {
-  /** 依赖可完整冻结的来源行（保持传入顺序） */
-  readonly usable: readonly ResponseRow[];
-  /** 冻结条目（来源卷快照优先 + live 回退；(kind, sourceId, version) 去重） */
-  readonly entries: readonly AttemptContextSnapshotEntry[];
-}
-
-/**
- * wrong 组卷闭包计划（live 读路径，组卷事务外调用）：逐题求依赖边集——
- * **来源卷有冻结快照（tt-07a 后开的卷）时边集与快照内容同源构边**（组快照
- * questionIds 定组归属、组快照 materialRefs 与题目快照 materialRefs 定材料，
- * §16.8 P2-1 / tt-07b C6：教师事后增删 ::ref 或改组成员不再影响组卷边集，
- * 不冻入学生当时未见的依赖、不漏冻当时已见的）；来源卷零快照（升级前旧
- * 服务端开的卷）按 live 引用索引构边（显式 live 回退边界，见决策记录
- * TT-07b）。每个依赖**优先复制来源卷的冻结快照**（错题时学生所见的版本
- * ——同 ID 沿用来源版本），来源卷无该快照回退 live 冻结当前版本；两者皆
- * 不可得（live 已软删/缺失）→ **剔除该题**（与 pickOf「坏快照剔除」同款
- * 语义——学生自助重练不整卷失败，剔完由调用方按 WRONG_PRACTICE_EMPTY
- * 拒绝）。teacherId 为 null（学生无教师域的异常行）→ 依赖为空集，全部
- * 可用、零条目（不阻塞旧数据重练）。
- */
-export function wrongAttemptContextPlan(
-  db: Db,
-  teacherId: string | null,
-  sources: readonly ResponseRow[],
-): WrongAttemptContextPlan {
-  if (teacherId === null) return { usable: sources, entries: [] };
-  // 各来源卷的快照索引：(kind|sourceId) → 条目（一次开卷一次冻结，同键至多
-  // 一条；防御性取末条 = 最高版本）
-  const sourceEntryByAttempt = new Map<
-    string,
-    Map<string, AttemptContextSnapshotEntry>
-  >();
-  const sourceEntriesOf = (attemptId: string) => {
-    const cached = sourceEntryByAttempt.get(attemptId);
-    if (cached !== undefined) return cached;
-    const index = new Map<string, AttemptContextSnapshotEntry>();
-    for (const row of listAttemptContextSnapshots(db, attemptId)) {
-      // 分支构造让 kind 与 snapshot 投影形态在类型层成对（表由冻结入口独写，
-      // snapshotJson 形态即对应 kind 的公开投影）
-      if (row.kind === "material") {
-        index.set(`material|${row.sourceId}`, {
-          kind: row.kind,
-          sourceId: row.sourceId,
-          sourceVersion: row.sourceVersion,
-          snapshot: JSON.parse(row.snapshotJson) as MaterialPublic,
-        });
-      } else {
-        index.set(`group|${row.sourceId}`, {
-          kind: row.kind,
-          sourceId: row.sourceId,
-          sourceVersion: row.sourceVersion,
-          snapshot: JSON.parse(row.snapshotJson) as QuestionGroupPublic,
-        });
-      }
-    }
-    sourceEntryByAttempt.set(attemptId, index);
-    return index;
-  };
-
-  const entryByDedupeKey = new Map<string, AttemptContextSnapshotEntry>();
-  const usable: ResponseRow[] = [];
-
-  for (const source of sources) {
-    const sourceEntries = sourceEntriesOf(source.attemptId);
-    // 依赖图口径（§16.8 P2-1 / tt-07b C6）：有快照同源构边，零快照 live 构边
-    const refs =
-      sourceEntries.size > 0
-        ? frozenRefIdsOf(sourceEntries, source)
-        : closureRefIds(db, teacherId, [source.questionId]);
-    const resolved: AttemptContextSnapshotEntry[] = [];
-    let ok = true;
-    for (const kind of ["group", "material"] as const) {
-      for (const id of kind === "group" ? refs.groupIds : refs.materialIds) {
-        // 来源卷快照优先（错题时学生所见版本）→ live 回退（旧服务端开的卷）
-        const entry =
-          sourceEntries.get(`${kind}|${id}`) ??
-          liveEntryOf(db, teacherId, kind, id);
-        if (entry === null) {
-          ok = false; // 两者皆不可得 → 剔除该题
-          break;
-        }
-        resolved.push(entry);
-      }
-      if (!ok) break;
-    }
-    if (!ok) continue;
-    usable.push(source);
-    for (const entry of resolved) {
-      const key = `${entry.kind}|${entry.sourceId}|${entry.sourceVersion}`;
-      if (!entryByDedupeKey.has(key)) entryByDedupeKey.set(key, entry);
-    }
-  }
-
-  return { usable, entries: [...entryByDedupeKey.values()] };
-}
-
-/**
- * 从来源卷冻结快照同源构边（§16.8 P2-1 / tt-07b C6）：组归属 = 组快照
- * questionIds 含该题（开卷时学生所见的成员关系），组级材料 = 组快照
- * materialRefs，题级材料 = 题目快照 materialRefs（开卷时无题级引用则无键
- * = 无边）。完全不读 live 引用索引——教师事后增删 ::ref / 改组成员只影响
- * 之后的新卷。题目快照由 wrong-practice pickOf 保证可用（坏快照行已被
- * 剔除），此处解析防御性失败按无题级引用处理（组归属不依赖题目快照）；
- * 组快照的 questionIds/materialRefs 防御性空数组回退（条目经 JSON.parse
- * 直转，未经 safeParse）。
- */
-function frozenRefIdsOf(
-  sourceEntries: ReadonlyMap<string, AttemptContextSnapshotEntry>,
-  source: ResponseRow,
-): { groupIds: Set<string>; materialIds: Set<string> } {
-  const groupIds = new Set<string>();
-  const materialIds = new Set<string>();
-  for (const entry of sourceEntries.values()) {
-    if (entry.kind !== "group") continue;
-    if (!(entry.snapshot.questionIds ?? []).includes(source.questionId))
-      continue;
-    groupIds.add(entry.sourceId);
-    for (const ref of entry.snapshot.materialRefs ?? []) {
-      materialIds.add(ref.material);
-    }
-  }
-  if (source.questionSnapshotJson !== null) {
-    try {
-      const parsed = JSON.parse(source.questionSnapshotJson) as {
-        materialRefs?: ReadonlyArray<{ material: string }>;
-      };
-      for (const ref of parsed.materialRefs ?? []) {
-        materialIds.add(ref.material);
-      }
-    } catch {
-      // 题目快照损坏按无题级引用处理（组归属仍来自组快照）
-    }
-  }
-  return { groupIds, materialIds };
-}
-
-/** live 行 → 冻结条目（软删/缺失返回 null；复用 contextEntriesOf 的白名单挑键） */
-function liveEntryOf(
-  db: Db,
-  teacherId: string,
-  kind: "material" | "group",
-  id: string,
-): AttemptContextSnapshotEntry | null {
-  if (kind === "material") {
-    const row = getMaterial(db, teacherId, id);
-    return row === null
-      ? null
-      : (contextEntriesOf({ materials: [row], groups: [] })[0] ?? null);
-  }
-  const row = getQuestionGroup(db, teacherId, id);
-  return row === null
-    ? null
-    : (contextEntriesOf({ materials: [], groups: [row] })[0] ?? null);
-}
-
 // ---------- 读路径：冻结快照的学生公开投影（tt-07a / QM-06） ----------
 
 /**
@@ -411,37 +249,50 @@ export function studentAttemptContext(
   db: Db,
   attemptId: string,
 ): AttemptContextData {
+  const { data, damaged } = readFrozenAttemptContext(db, attemptId);
+  const first = damaged[0];
+  if (first !== undefined) throw brokenSnapshotError(first);
+  return data;
+}
+
+/** 重练按依赖判断损坏条目，公开回看仍由上面的入口统一返回 409。 */
+export function readFrozenAttemptContext(db: Db, attemptId: string) {
   const materialsList: AttemptContextMaterial[] = [];
   const groupsList: AttemptContextGroup[] = [];
-  for (const row of listAttemptContextSnapshots(db, attemptId)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.snapshotJson) as unknown;
-    } catch {
-      parsed = undefined;
-    }
+  const damaged: Pick<AttemptContextSnapshotRow, "kind" | "sourceId">[] = [];
+  const rows = listAttemptContextSnapshots(db, attemptId);
+  for (const row of rows) {
+    const parsed = jsonOf(row.snapshotJson);
+    const input =
+      typeof parsed === "object" && parsed !== null
+        ? { ...parsed, sourceVersion: row.sourceVersion }
+        : parsed;
     if (row.kind === "material") {
-      const material = materialPublicSchema.safeParse(parsed);
-      if (!material.success) throw brokenSnapshotError(row);
-      materialsList.push({
-        ...material.data,
-        sourceVersion: row.sourceVersion,
-      });
+      const material = attemptContextMaterialSchema.safeParse(input);
+      if (material.success && material.data.id === row.sourceId)
+        materialsList.push(material.data);
+      else damaged.push({ kind: row.kind, sourceId: row.sourceId });
     } else {
-      const group = questionGroupPublicSchema.safeParse(parsed);
-      if (!group.success) throw brokenSnapshotError(row);
-      groupsList.push({ ...group.data, sourceVersion: row.sourceVersion });
+      const group = attemptContextGroupSchema.safeParse(input);
+      if (group.success && group.data.id === row.sourceId)
+        groupsList.push(group.data);
+      else damaged.push({ kind: row.kind, sourceId: row.sourceId });
     }
   }
   const byIdThenVersion = (
     a: { id: string; sourceVersion: number },
     b: { id: string; sourceVersion: number },
   ): number => a.id.localeCompare(b.id) || a.sourceVersion - b.sourceVersion;
-  return {
+  const data: AttemptContextData = {
     attemptId,
+    freezeState:
+      rows.length > 0 || hasAttemptContextFreeze(db, attemptId)
+        ? "frozen"
+        : "legacy_unknown",
     materials: materialsList.sort(byIdThenVersion),
     groups: groupsList.sort(byIdThenVersion),
   };
+  return { data, damaged };
 }
 
 /** 坏快照显式报错（按条目定位，供错误消息检索；与缺依赖 409 同码） */
@@ -457,7 +308,7 @@ function brokenSnapshotError(row: {
 }
 
 /** 依赖引用集合（题 → 组 ids + 材料 ids；live 索引，不读实体行） */
-function closureRefIds(
+export function closureRefIds(
   db: Db,
   teacherId: string,
   questionIds: readonly string[],

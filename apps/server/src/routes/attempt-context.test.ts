@@ -297,10 +297,9 @@ describe("GET /api/student/attempts/:id/context（tt-07a 冻结上下文公开�
     const res = await getContext(env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
-    expect(attemptContextOkSchema.safeParse(body).success).toBe(true);
-    const data = (body as { data: { materials: unknown[]; groups: unknown[] } })
-      .data;
+    const { data } = attemptContextOkSchema.parse(body);
 
+    expect(data.freezeState).toBe("frozen");
     // 材料/组条目键集 = 公开投影白名单 + sourceVersion（无 sourceMd 等教师侧键）
     expect(data.materials).toHaveLength(1);
     expect(Object.keys(data.materials[0] ?? {}).sort()).toEqual([
@@ -322,8 +321,7 @@ describe("GET /api/student/attempts/:id/context（tt-07a 冻结上下文公开�
       "sourceVersion",
       "title",
     ]);
-    const group = data.groups[0] as { questionIds: string[] };
-    expect(group.questionIds).toEqual([Q.choice, Q.judge]);
+    expect(data.groups[0]?.questionIds).toEqual([Q.choice, Q.judge]);
 
     // 泄露断言①：assertNoLeak 键名族（answers/solution*/hint*/sourceMd/私注键）
     assertNoLeak(body);
