@@ -1,4 +1,5 @@
 import {
+  DEVICE_ID_HEADER,
   MEMO_OUTBOX_ACCOUNT_CHANGED,
   MEMO_OUTBOX_ACCOUNT_HEADER,
   MEMO_VOICE_MAX_BYTES,
@@ -73,6 +74,7 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
       const result = createTextMemo(db, {
         studentId: c.var.student.id,
         ...body,
+        deviceId: body.deviceId ?? c.req.header(DEVICE_ID_HEADER),
       });
       return c.json(
         { ok: true, data: result.memo },
@@ -102,6 +104,7 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
       const result = createMediaMemo(db, dataDir, {
         studentId: c.var.student.id,
         ...fields,
+        deviceId: fields.deviceId ?? c.req.header(DEVICE_ID_HEADER),
         bytes: new Uint8Array(await file.arrayBuffer()),
       });
       return c.json(
@@ -155,6 +158,8 @@ function multipartFieldsOf(
   const duration = text("durationSec");
   return {
     clientId: text("clientId"),
+    context: json("context"),
+    deviceId: text("deviceId"),
     kind: text("kind"),
     text: text("text"),
     anchor: json("anchor"),

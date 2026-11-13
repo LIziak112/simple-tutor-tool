@@ -5,9 +5,15 @@ import type {
   MemoListData,
   MemoListQuery,
 } from "@tutor/contract";
-import { MEMO_OUTBOX_ACCOUNT_HEADER, memoSchema } from "@tutor/contract";
+import {
+  DEVICE_ID_HEADER,
+  DEVICE_INFO_HEADER,
+  MEMO_OUTBOX_ACCOUNT_HEADER,
+  memoSchema,
+} from "@tutor/contract";
 import { api, callApi } from "@/lib/api";
 import { parseUploadResponse } from "@/lib/api-response";
+import { currentDevice, deviceFetch } from "./device-registration";
 
 /**
  * 随笔（模块 5 第一步）前端 API：
@@ -60,12 +66,13 @@ export class MemoNetworkError extends Error {
 }
 
 /** 媒体随笔上传：file + 文本字段（anchor / tags 以 JSON 串入 multipart） */
-export function uploadMemoMediaApi(
+export async function uploadMemoMediaApi(
   blob: Blob,
   fields: MemoCreateMedia,
   account: string,
   options: UploadMemoMediaOptions = {},
 ): Promise<Memo> {
+  await deviceFetch("/api/student/me");
   return new Promise<Memo>((resolve, reject) => {
     const form = new FormData();
     form.append("file", blob, `${fields.kind}.bin`);
@@ -77,6 +84,9 @@ export function uploadMemoMediaApi(
     if (fields.anchor !== undefined) {
       form.append("anchor", JSON.stringify(fields.anchor));
     }
+    if (fields.context !== undefined)
+      form.append("context", JSON.stringify(fields.context));
+    if (fields.deviceId !== undefined) form.append("deviceId", fields.deviceId);
     if (fields.tags !== undefined) {
       form.append("tags", JSON.stringify(fields.tags));
     }
@@ -90,6 +100,8 @@ export function uploadMemoMediaApi(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/student/memos/media");
     xhr.setRequestHeader(MEMO_OUTBOX_ACCOUNT_HEADER, account);
+    xhr.setRequestHeader(DEVICE_ID_HEADER, currentDevice().deviceId);
+    xhr.setRequestHeader(DEVICE_INFO_HEADER, JSON.stringify(currentDevice()));
     xhr.responseType = "text";
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {

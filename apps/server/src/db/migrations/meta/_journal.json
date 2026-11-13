@@ -456,6 +456,20 @@
       "when": 1794581312717,
       "tag": "0064_lumpy_skullbuster",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "6",
+      "when": 1794590323339,
+      "tag": "0065_nervous_robin_chapel",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "6",
+      "when": 1794590950538,
+      "tag": "0066_lonely_captain_midlands",
+      "breakpoints": true
     }
   ]
 }

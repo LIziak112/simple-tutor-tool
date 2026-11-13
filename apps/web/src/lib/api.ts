@@ -207,8 +207,7 @@ import {
   type WrongPracticeScope,
   type WrongQuestionsData,
 } from "@tutor/contract";
-import { hc } from "hono/client";
-import type { AppType } from "server";
+import { api } from "./api-client";
 import {
   ApiError,
   callApi,
@@ -218,15 +217,8 @@ import {
 import { readAttemptDetail } from "./attempt-detail-read";
 import { withRequestDeadline } from "./request-deadline";
 
+export { api } from "./api-client";
 export { ApiError, callApi } from "./api-response";
-
-/**
- * Hono RPC 类型客户端：路由类型来自 apps/server 的 AppType，端到端类型安全。
- * 基址用相对路径 "/"（mergePath 拼出 "/api/..." 相对地址）：
- * - 开发环境经 Vite 代理转发到 127.0.0.1:8787；
- * - 生产环境与页面同源（apps/server 托管 apps/web/dist），无需任何配置。
- */
-export const api = hc<AppType>("/");
 
 /** health 接口的数据部分 */
 export interface HealthData {

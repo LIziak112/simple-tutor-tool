@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { learningContextSchema } from "./learning-context.ts";
 
 /** 在本文件内把成功响应壳的 data 具体化（不从 index.ts 导入，避免循环依赖） */
 function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
@@ -138,6 +139,10 @@ export type MemoMedia = z.infer<typeof memoMediaSchema>;
 /** 一条随笔（列表 / 创建响应 / MCP 共用） */
 export const memoSchema = z.object({
   id: z.uuid(),
+  /** 本人递增序号；可选以兼容旧服务端与离线缓存。新写入始终有值。 */
+  seq: z.number().int().positive().optional(),
+  context: learningContextSchema.nullable().optional(),
+  deviceId: z.uuid().nullable().optional(),
   kind: memoKindSchema,
   /** 文字随笔的正文；媒体随笔的可选说明（没有为 null） */
   text: z.string().max(MEMO_TEXT_MAX).nullable(),
@@ -158,6 +163,8 @@ export type Memo = z.infer<typeof memoSchema>;
 export const memoCreateBaseSchema = z.object({
   /** 客户端生成的 UUID；(学生, clientId) 幂等键——离线补传重复只落一行 */
   clientId: z.uuid(),
+  context: learningContextSchema.optional(),
+  deviceId: z.uuid().optional(),
   anchor: memoAnchorSchema.optional(),
   tags: memoTagsSchema.optional(),
   device: memoDeviceSchema.optional(),
