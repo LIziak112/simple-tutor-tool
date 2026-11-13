@@ -253,9 +253,10 @@ describe("teachers / sessions 表读写", () => {
       accountKind: "class",
       personalStudentId: null,
     });
+    // 插入时省略设备引用，读回应明确为默认 NULL，其余字段逐项保持一致。
     expect(
       db.select().from(sessions).where(eq(sessions.id, session.id)).get(),
-    ).toEqual(session);
+    ).toEqual({ ...session, deviceId: null });
     db.$client.close();
   });
 
