@@ -570,7 +570,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
     const result = (await submitRes.json()) as {
       data: AttemptResultData;
     };
-    expect(result.data.attempt.status).toBe("submitted");
+    expect(result.data.attempt.status).toBe("graded");
 
     const rows = db.select().from(responses).all();
     const byQuestion = new Map(rows.map((row) => [row.questionId, row]));
@@ -728,7 +728,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
       headers: { cookie: aCookie },
     })) as Response;
     const detail = (await draft.json()) as { data: AttemptDraftData };
-    expect(detail.data.attempt.status).toBe("submitted");
+    expect(detail.data.attempt.status).toBe("graded");
     const rows = db.select().from(responses).all();
     const fill = rows.find((row) => row.questionId === Q.fill);
     expect(fill?.activeSec).toBe(8);

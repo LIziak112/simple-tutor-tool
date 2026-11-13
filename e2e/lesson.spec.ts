@@ -6,9 +6,9 @@ import {
   drawStrokeWithPointerEvents,
   expectResultCount,
   getStudentViaApi,
-  TEACHER_LOGIN_NAME,
   TEACHER_PASSWORD,
   teacherApiLogin,
+  teacherLoginViaApi,
   uniqueSuffix,
 } from "./helpers";
 
@@ -152,6 +152,17 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
     // —— 造数（教师 API）：专属课程 + 讲练文档导入 + 学生入成员 ——
     await teacherApiLogin(request);
     const suffix = uniqueSuffix();
+    const teacherName = `e2e-lesson-t-${suffix}`;
+    const teacher = await request.post("/api/admin/teachers", {
+      data: { loginName: teacherName, password: TEACHER_PASSWORD },
+    });
+    expect(teacher.ok()).toBe(true);
+    await teacherLoginViaApi(request, teacherName, TEACHER_PASSWORD);
+    const settings = await request.put(
+      "/api/teacher/settings/practice-feedback",
+      { data: { studentSelfReviewEnabled: false } },
+    );
+    expect(settings.ok()).toBe(true);
     const courseName = `e2e讲练课程${suffix}`;
     const unitName = `随堂讲练${suffix}`;
     const lectureTitle = `第1讲 相反数讲练${suffix}`;
@@ -184,7 +195,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
 
     // —— 教师端 UI：登录 → 资源库讲义库行「讲练」徽标 ——
     await page.goto("/t/login");
-    await page.fill("#login-name", TEACHER_LOGIN_NAME);
+    await page.fill("#login-name", teacherName);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.waitForURL(/\/t\/students(\/|$)/);
@@ -486,9 +497,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expect(wrongCard.getByText("正确答案：")).toBeVisible();
 
       // —— 教师待批队列：该卷 fill 题出现（讲练徽章 + 讲义标题上下文）→ 标对 ——
-      // e2e 共享服务端不设 NEW_CONTENT_ENABLED（§5.8.4）：fill 冻结旧行语义，
-      // 单题提交后进教师待批（student-lesson.test.ts §2122 在案），教师走待批
-      // 队列批改；作答详情改判入口是补充路径，不在本链路断言。
+      // 本教师关闭自评，已提交的填空可在待批队列处理。
       await page.goto("/t/data/pending");
       await page
         .locator("#pending-student-filter option", { hasText: studentName })

@@ -44,6 +44,7 @@ describe("getPracticeFeedbackSettings", () => {
     const db = createTestDb();
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
     });
   });
 
@@ -52,10 +53,12 @@ describe("getPracticeFeedbackSettings", () => {
     setColumn(db, TEST_TEACHER_ID, "after_attempt");
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "after_attempt",
+      studentSelfReviewEnabled: true,
     });
     setColumn(db, TEST_TEACHER_ID, "student_choice");
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "student_choice",
+      studentSelfReviewEnabled: true,
     });
   });
 
@@ -64,6 +67,7 @@ describe("getPracticeFeedbackSettings", () => {
     setColumn(db, TEST_TEACHER_ID, "everyone_can_see");
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "after_attempt",
+      studentSelfReviewEnabled: true,
     });
   });
 
@@ -82,9 +86,13 @@ describe("updatePracticeFeedbackSettings", () => {
     const updated = updatePracticeFeedbackSettings(db, TEST_TEACHER_ID, {
       practiceFeedbackPolicy: "after_attempt",
     });
-    expect(updated).toEqual({ practiceFeedbackPolicy: "after_attempt" });
+    expect(updated).toEqual({
+      practiceFeedbackPolicy: "after_attempt",
+      studentSelfReviewEnabled: true,
+    });
     expect(getPracticeFeedbackSettings(db, OTHER_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
     });
   });
 
@@ -96,9 +104,13 @@ describe("updatePracticeFeedbackSettings", () => {
     const updated = updatePracticeFeedbackSettings(db, TEST_TEACHER_ID, {
       practiceFeedbackPolicy: "student_choice",
     });
-    expect(updated).toEqual({ practiceFeedbackPolicy: "student_choice" });
+    expect(updated).toEqual({
+      practiceFeedbackPolicy: "student_choice",
+      studentSelfReviewEnabled: true,
+    });
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "student_choice",
+      studentSelfReviewEnabled: true,
     });
   });
 

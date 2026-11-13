@@ -173,6 +173,15 @@ async function makeEnv(): Promise<Env> {
     body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+  const selfReviewSettings = await app.request(
+    "/api/teacher/settings/practice-feedback",
+    {
+      method: "PUT",
+      headers: { cookie: teacherCookie, "content-type": "application/json" },
+      body: JSON.stringify({ studentSelfReviewEnabled: false }),
+    },
+  );
+  expect(selfReviewSettings.status).toBe(200);
   const imported = await app.request("/api/teacher/import/commit", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },

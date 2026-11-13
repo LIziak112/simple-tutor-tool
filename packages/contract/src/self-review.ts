@@ -202,10 +202,8 @@ export type GradingPolicy = z.infer<typeof gradingPolicySchema>;
 /**
  * 开卷冻结规则（§5.6 表）：新建 attempt 每一行按**题目快照内容**写入策略——
  * 旧客观题恒 auto；主观题型按「有参考答案」二分（有=reference_self：grade 恒
- * null 不进 autoCorrect，公布后开放自评；无=manual_only：grade 恒 null，教师
- * 待处理）。判分策略迁移与发布开关解耦（迁移加列可空，旧行 NULL 不依赖开关；
- * 新策略写入只发生在开关开启后导入的题目开卷时）。服务端写入在 QM-06（TT-07
- * 冻结闭包）接线；本函数是单一出处。
+ * null 不进 autoCorrect；无=manual_only：教师待处理）。教师关闭自评时，
+ * 开卷将 reference_self 改冻为 manual_only。历史 NULL 行按旧策略读取。
  */
 export function gradingPolicyOf(
   question: Pick<Question, "type" | "answers">,

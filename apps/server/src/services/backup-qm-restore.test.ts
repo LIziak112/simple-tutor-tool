@@ -771,8 +771,6 @@ describe("QM-18：备份恢复后可续写、看旧卷、重练与导出（新�
       restored,
       source.studentId,
       [Q.judge, Q.matching],
-      {},
-      true,
     );
     const practiceSnapshots = restored
       .select({

@@ -167,14 +167,18 @@ export function SelfReviewSection({
     }
   };
 
-  // manual_only：无参考答案，不假装可自动判断——只提示待老师批改
+  // manual_only 包含无参考答案和教师关闭自评两种情况。
   if (gradingPolicy === "manual_only") {
     return (
       <section
-        aria-label="本题自评"
+        aria-label="批改状态"
         className="flex flex-col gap-1 text-sm text-muted-foreground"
       >
-        <p role="status">暂无参考答案，不能自动判断——待老师批改后显示判定。</p>
+        <p role="status">
+          {question.answers === null
+            ? "暂无参考答案，不能自动判断——待老师批改后显示判定。"
+            : "待老师批改后显示判定。"}
+        </p>
       </section>
     );
   }

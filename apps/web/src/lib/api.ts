@@ -2633,7 +2633,7 @@ export function fetchPracticeFeedbackSettings(): Promise<TeacherPracticeFeedback
   return callApi(() => api.api.teacher.settings["practice-feedback"].$get());
 }
 
-/** 覆盖写入策略（二选一；服务端按教师会话定位，域隔离） */
+/** 按教师会话部分更新作答设置 */
 export function savePracticeFeedbackSettings(
   request: TeacherPracticeFeedbackSettingsUpdateRequest,
 ): Promise<TeacherPracticeFeedbackSettings> {

@@ -10,13 +10,7 @@ import {
   waitForDraftSaved,
 } from "./helpers";
 
-// fixme（2026-10-25，TT-09c 验证留痕）：本 spec 需要 NEW_CONTENT_ENABLED=true
-// 的服务端（开卷才冻结 gradingPolicy：fill=reference_self →「已完成，待自评」、
-// solve=manual_only → 逐题提交走教师待批）。e2e 共享 webServer 恒开发布开关
-// （playwright.config server env 未设 NEW_CONTENT_ENABLED——全局开会翻转其他
-// spec 的旧行语义断言），共享环境下第 1 题永远拿不到待自评徽章。待专用
-// 开关 e2e 项目或 spec 内独立服务拍板（决策记录 §22.2 后续项）后恢复。
-test.fixme("对照自评无需教师确认，单题入错题并可修正；无答案题逐题提交走教师批改", {
+test("对照自评无需教师确认，单题入错题并可修正；无答案题逐题提交走教师批改", {
   tag: ["@student"],
 }, async ({ request, page }) => {
   await teacherApiLogin(request);
@@ -66,6 +60,7 @@ topic: 对照自评
     page.locator('[data-slot="practice-single-workspace"]'),
   ).not.toHaveAttribute("inert", "");
   const q1 = page.locator('article[aria-label="第 1 题"]');
+  const selfReview = q1.getByRole("region", { name: "本题自评" });
   const q2 = page.locator('article[aria-label="第 2 题"]');
   await q1.getByRole("textbox", { name: "第1空" }).fill("3");
   await waitForDraftSaved(page);
@@ -78,7 +73,7 @@ topic: 对照自评
     q2.getByRole("button", { name: "提交", exact: true }),
   ).toBeVisible();
   await q1.getByRole("button", { name: "错了", exact: true }).click();
-  await expect(q1.getByText("自评错误", { exact: true })).toBeVisible();
+  await expect(selfReview.getByText("自评错误", { exact: true })).toBeVisible();
   const wrongResponse = await page.request.get("/api/student/wrong-questions");
   expect(wrongResponse.status()).toBe(200);
   const wrong = (await wrongResponse.json()) as {
@@ -90,19 +85,24 @@ topic: 对照自评
   const pending = await request.get("/api/teacher/pending-marks");
   expect(JSON.stringify(await pending.json())).not.toContain(`自评生${suffix}`);
   await q1.getByRole("button", { name: "对了", exact: true }).click();
-  await expect(q1.getByText("自评正确", { exact: true })).toBeVisible();
+  await expect(selfReview.getByText("自评正确", { exact: true })).toBeVisible();
   const corrected = await page.request.get("/api/student/wrong-questions");
   expect(
     ((await corrected.json()) as { data: { questions: unknown[] } }).data
       .questions,
   ).toHaveLength(0);
   await q1.getByRole("button", { name: "错了", exact: true }).click();
-  await expect(q1.getByText("自评错误", { exact: true })).toBeVisible();
+  await expect(selfReview.getByText("自评错误", { exact: true })).toBeVisible();
   // q2 逐题提交（未作答空答案链）——最后一题提交在事务内自动收尾整卷，
   // 不再出现手动「交卷」确认入口
   await q2.getByRole("button", { name: "提交", exact: true }).click();
+  await page.getByRole("button", { name: "查看本次结果" }).click();
   await expect(page.getByText("批改结果", { exact: true })).toBeVisible();
-  await expect(page.getByText("自评错误", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "本题自评" })
+      .getByText("自评错误", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText("暂无参考答案，不能自动判断——待老师批改后显示判定。", {
       exact: true,

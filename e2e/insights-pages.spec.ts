@@ -75,6 +75,11 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
       throw new Error(`创建学情专属教师失败：HTTP ${created.status()}`);
     }
     await teacherLoginViaApi(request, teacherName, INSIGHTS_TEACHER_PASSWORD);
+    const settings = await request.put(
+      "/api/teacher/settings/practice-feedback",
+      { data: { studentSelfReviewEnabled: false } },
+    );
+    expect(settings.ok()).toBe(true);
 
     const courseName = `e2e学情课程${suffix}`;
     const unitName = `学情小练${suffix}`;
@@ -172,9 +177,7 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      // e2e 共享服务端不设 NEW_CONTENT_ENABLED（决策记录 §5.8.4 发布开关，
-      // 与 student-self-review.spec 的 fixme 同因）：fill 冻结旧行语义 →
-      // 待批改徽章，进教师待批，不出现「已完成，待自评」自评 UI。
+      // 本教师关闭自评，填空进入待批。
       const resultQ1 = studentPage.locator('article[aria-label="第 1 题"]');
       await expect(resultQ1.getByText("待批改", { exact: true })).toBeVisible();
     } finally {

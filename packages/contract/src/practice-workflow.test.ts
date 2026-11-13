@@ -343,38 +343,51 @@ describe("teacherPracticeFeedbackSettingsSchema（M1b）", () => {
     expect(
       teacherPracticeFeedbackSettingsSchema.parse({
         practiceFeedbackPolicy: "after_attempt",
+        studentSelfReviewEnabled: true,
       }),
-    ).toEqual({ practiceFeedbackPolicy: "after_attempt" });
+    ).toEqual({
+      practiceFeedbackPolicy: "after_attempt",
+      studentSelfReviewEnabled: true,
+    });
     expect(
       teacherPracticeFeedbackSettingsSchema.parse({
         practiceFeedbackPolicy: null,
+        studentSelfReviewEnabled: true,
       }),
-    ).toEqual({ practiceFeedbackPolicy: null });
+    ).toEqual({ practiceFeedbackPolicy: null, studentSelfReviewEnabled: true });
     expect(() =>
       teacherPracticeFeedbackSettingsSchema.parse({
         practiceFeedbackPolicy: "on_submit",
+        studentSelfReviewEnabled: true,
       }),
     ).toThrow();
     expect(() =>
       teacherPracticeFeedbackSettingsSchema.parse({
         practiceFeedbackPolicy: null,
+        studentSelfReviewEnabled: true,
         steps: true,
       }),
     ).toThrow();
   });
 
-  it("写入：policy 必填枚举，缺省/未知拒绝", () => {
+  it("写入：允许部分更新，空请求与非法值拒绝", () => {
     expect(
       teacherPracticeFeedbackSettingsUpdateRequestSchema.parse({
         practiceFeedbackPolicy: "student_choice",
       }),
     ).toEqual({ practiceFeedbackPolicy: "student_choice" });
+    expect(
+      teacherPracticeFeedbackSettingsUpdateRequestSchema.parse({
+        studentSelfReviewEnabled: false,
+      }),
+    ).toEqual({ studentSelfReviewEnabled: false });
     expect(() =>
       teacherPracticeFeedbackSettingsUpdateRequestSchema.parse({}),
     ).toThrow();
     expect(() =>
       teacherPracticeFeedbackSettingsUpdateRequestSchema.parse({
         practiceFeedbackPolicy: null,
+        studentSelfReviewEnabled: true,
       }),
     ).toThrow();
   });

@@ -360,7 +360,7 @@ describe("POST /api/student/assignments/:id/attempt：创建与幂等", () => {
     expect(db.select().from(attempts).all().length).toBe(1);
   });
 
-  it("已交卷后再 POST 返回已交的那份（status=submitted，不另开新卷）", async () => {
+  it("已交卷后再 POST 返回已交的那份（status=graded，不另开新卷）", async () => {
     const { app, db, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
@@ -368,7 +368,7 @@ describe("POST /api/student/assignments/:id/attempt：创建与幂等", () => {
 
     const again = await startAttemptOk(app, aCookie, assignmentId);
     expect(again.id).toBe(attemptId);
-    expect(again.status).toBe("submitted");
+    expect(again.status).toBe("graded");
     expect(db.select().from(attempts).all().length).toBe(1);
   });
 
@@ -482,7 +482,7 @@ describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
       "REDO_NOT_ALLOWED",
     );
     const review = await startAttemptOk(app, aCookie, assignmentId);
-    expect(review.status).toBe("submitted");
+    expect(review.status).toBe("graded");
     // 缺省回看路径同样随卷下发 allowRedo=false（与 UI 渲染依据一致）
     expect(review.allowRedo).toBe(false);
 
@@ -1155,6 +1155,10 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     const { app, db, aCookie, assignmentId } = await makeAttemptApp(NO_FILL_MD);
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
+    db.update(responses)
+      .set({ gradingPolicy: null })
+      .where(eq(responses.attemptId, attemptId))
+      .run();
     for (const [questionId, answer] of Object.entries(NO_FILL_ANSWERS)) {
       const res = await putAnswer(app, aCookie, attemptId, questionId, answer);
       expect(res.status, `保存 ${questionId} 失败`).toBe(200);
@@ -1200,6 +1204,10 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     const { app, db, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
+    db.update(responses)
+      .set({ gradingPolicy: null })
+      .where(eq(responses.attemptId, attemptId))
+      .run();
     // 对：judge、solve；错：multi（漏选）；fill 答但部分空错（2026-10-02 起恒 null
     // 不自动判）；未答：choice（D1 判错）、fillMath、apply、findError（null 进待批）
     await putAnswer(app, aCookie, attemptId, Q.judge, {
@@ -1593,7 +1601,7 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
 });
 
 describe("作业状态联动（GET /api/student/assignments）", () => {
-  it("开始作答后 in_progress，交卷后 submitted", async () => {
+  it("开始作答后 in_progress，自评卷交卷后 graded", async () => {
     const { app, aCookie, assignmentId } = await makeAttemptApp();
 
     const before = await listAssignments(app, aCookie);
@@ -1611,7 +1619,7 @@ describe("作业状态联动（GET /api/student/assignments）", () => {
     expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
     const after = await listAssignments(app, aCookie);
     expect(after.assignments.find((a) => a.id === assignmentId)?.status).toBe(
-      "submitted",
+      "graded",
     );
   });
 });
@@ -1948,6 +1956,10 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
       await makeAttemptApp(NO_FILL_MD);
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
+    db.update(responses)
+      .set({ gradingPolicy: null })
+      .where(eq(responses.attemptId, attemptId))
+      .run();
     for (const [questionId, answer] of Object.entries(NO_FILL_ANSWERS)) {
       await putAnswer(app, aCookie, attemptId, questionId, answer);
     }
@@ -2020,6 +2032,10 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
 
     const attemptId = (await startAttemptOk(app, cookie, assignmentId))
       .id as string;
+    db.update(responses)
+      .set({ gradingPolicy: null })
+      .where(eq(responses.attemptId, attemptId))
+      .run();
     for (const [questionId, answer] of Object.entries(NO_FILL_ANSWERS)) {
       await putAnswer(app, cookie, attemptId, questionId, answer);
     }

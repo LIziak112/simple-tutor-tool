@@ -259,7 +259,13 @@ it("教师已判：整块不渲染（教师判定优先，不可被客户端覆�
   expect(screen.queryByRole("region", { name: "本题自评" })).toBeNull();
   unmount();
 
-  renderSection(questionOf({ gradingPolicy: "manual_only", selfReview: null }));
+  renderSection(
+    questionOf({
+      gradingPolicy: "manual_only",
+      selfReview: null,
+      answers: null,
+    }),
+  );
   expect(screen.getByRole("status").textContent).toContain("暂无参考答案");
   expect(screen.queryByRole("button", { name: "对了" })).toBeNull();
 });
@@ -298,6 +304,14 @@ it("教师竞争 409 SELF_REVIEW_TEACHER_MARKED：提示且动作入口收起（
   fireEvent.click(screen.getByRole("button", { name: "对了" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toContain("老师已判定"),
+  );
+  expect(screen.queryByRole("button", { name: "对了" })).toBeNull();
+});
+
+it("教师关闭自评后，有参考答案的待批题显示待批且无自评动作", () => {
+  renderSection(questionOf({ gradingPolicy: "manual_only", selfReview: null }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    /^待老师批改后显示判定。$/,
   );
   expect(screen.queryByRole("button", { name: "对了" })).toBeNull();
 });

@@ -155,7 +155,7 @@ function makeEnv(): Env {
   db.insert(courseStudents)
     .values({ courseId, studentId, joinedAt: now })
     .run();
-  const started = startCourseAttempt(db, studentId, courseId, unitId, {}, true);
+  const started = startCourseAttempt(db, studentId, courseId, unitId);
   return {
     db,
     attemptId: started.id,

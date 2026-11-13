@@ -26,7 +26,6 @@ export function createStudentCreateRoutes(db: Db) {
             workflowVersion: body.workflowVersion,
             feedbackMode: body.feedbackMode,
           },
-          undefined,
           body.scope,
           body.operationId,
         );

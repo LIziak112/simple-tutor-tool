@@ -353,7 +353,11 @@ function downgradeToLegacyDraft(db: Db, attemptId: string): void {
       db.delete(responses).where(eq(responses.id, row.id)).run();
     } else {
       db.update(responses)
-        .set({ questionSnapshotJson: null, questionVersion: 0 })
+        .set({
+          questionSnapshotJson: null,
+          questionVersion: 0,
+          gradingPolicy: null,
+        })
         .where(eq(responses.id, row.id))
         .run();
     }
