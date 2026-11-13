@@ -7,9 +7,16 @@ import type {
   TeacherAssignment,
 } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
-import { ink as inkTable, questions, students, units } from "../db/schema.ts";
+import {
+  ink as inkTable,
+  questions,
+  responses,
+  students,
+  units,
+} from "../db/schema.ts";
 import {
   createTestDb,
   createTestDir,
@@ -305,6 +312,83 @@ describe("learning-record 有材料装配（LR-PR3）", () => {
 });
 
 describe("learning-record 服务（LR-PR3 装配与泄露）", () => {
+  it("学习记录使用当前自评，教师覆盖后可清除，未公布投影隐藏判定和自评时间线", () => {
+    const db = createTestDb();
+    const { studentId, attemptId } = makeSubmittedAttempt(db, {
+      answerRelease: "after_due",
+      dueAt: DUE_AT,
+      submitAt: BEFORE_DUE,
+    });
+    const at = new Date(Date.parse(DUE_AT) + 60_000).toISOString();
+    const set = (values: Partial<typeof responses.$inferInsert>) =>
+      db
+        .update(responses)
+        .set(values)
+        .where(eq(responses.attemptId, attemptId))
+        .run();
+    set({
+      gradingPolicy: "reference_self",
+      autoCorrect: null,
+      finalCorrect: null,
+      selfReviewVerdict: "wrong",
+      selfReviewAt: at,
+      selfReviewRevision: 1,
+    });
+    const teacher = () =>
+      getTeacherLearningRecord(
+        db,
+        "/tmp/unused-data-dir",
+        TEST_TEACHER_ID,
+        attemptId,
+        "lr-q1",
+      );
+    const student = (now: Date) =>
+      getStudentLearningRecord(
+        db,
+        "/tmp/unused-data-dir",
+        studentId,
+        attemptId,
+        "lr-q1",
+        now,
+      );
+    const hidden = student(new Date(BEFORE_DUE));
+    expect(hidden.grading.selfReview).toBeUndefined();
+    expect(hidden.grading.effectiveVerdict).toBeUndefined();
+    expect(
+      hidden.timeline.entries.some((entry) => entry.kind === "self_review"),
+    ).toBe(false);
+    const published = student(new Date(Date.parse(at) + 60_000));
+    expect(published.grading.selfReview).toEqual({
+      verdict: "wrong",
+      at,
+      revision: 1,
+    });
+    expect(published.grading.selfCorrect).toBe(false);
+    expect(published.timeline.entries).toContainEqual(
+      expect.objectContaining({ kind: "self_review", at: Date.parse(at) }),
+    );
+    expect(teacher().grading.effectiveVerdict).toEqual({
+      source: "self",
+      value: false,
+    });
+    set({ teacherMark: "correct", finalCorrect: true });
+    expect(teacher().grading.effectiveVerdict).toEqual({
+      source: "teacher",
+      value: true,
+    });
+    set({ teacherMark: null, finalCorrect: null });
+    expect(teacher().grading.effectiveVerdict).toEqual({
+      source: "self",
+      value: false,
+    });
+    set({ selfReviewVerdict: null, selfReviewAt: null, selfReviewRevision: 2 });
+    expect(teacher().grading.selfReview).toBeNull();
+    expect(teacher().grading.effectiveVerdict).toBeNull();
+    expect(
+      teacher().timeline.entries.some((entry) => entry.kind === "self_review"),
+    ).toBe(false);
+  });
+
   it("学生记录：禁携清单 + 公开投影 + 已公布判定（on_submit）", () => {
     const db = createTestDb();
     const { studentId, attemptId } = makeSubmittedAttempt(db, {
@@ -443,6 +527,18 @@ describe("AI 视角装配与版本钉住（LR-PR5）", () => {
     const { studentId, attemptId } = makeSubmittedAttempt(db, {
       answerRelease: "on_submit",
     });
+    db.update(responses)
+      .set({
+        gradingPolicy: "reference_self",
+        selfReviewVerdict: "wrong",
+        selfReviewAt: T0,
+        selfReviewRevision: 1,
+        teacherMark: "correct",
+        teacherComment: "仅教师可见的评语",
+        finalCorrect: true,
+      })
+      .where(eq(responses.attemptId, attemptId))
+      .run();
     const record = getAiLearningRecord(
       db,
       dataDir,
@@ -460,6 +556,12 @@ describe("AI 视角装配与版本钉住（LR-PR5）", () => {
     expect(record.question.stemMd).not.toContain(ANSWER_TEXT);
     expect(record.grading.teacherMark).toBeUndefined();
     expect(record.grading.teacherComment).toBeUndefined();
+    expect(record.grading.effectiveVerdict).toBeUndefined();
+    expect(record.grading.selfReview).toEqual({
+      verdict: "wrong",
+      at: T0,
+      revision: 1,
+    });
     db.$client.close();
   });
 

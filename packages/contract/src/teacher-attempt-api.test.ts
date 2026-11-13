@@ -415,6 +415,7 @@ describe("teacherMarkErrorCodeSchema", () => {
     expect(teacherMarkErrorCodeSchema.options).toEqual([
       "RESPONSE_NOT_FOUND",
       "NOT_SUBMITTED",
+      "ATTEMPT_ABANDONED",
       "UNAUTHORIZED",
       "VALIDATION_ERROR",
     ]);

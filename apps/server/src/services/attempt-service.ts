@@ -29,7 +29,6 @@ import {
   type CapabilitySwitch,
   type CourseAttemptStartOptions,
   canonicalAssignmentDueAt,
-  type EffectiveVerdict,
   effectiveVerdictOf,
   emptyPublicStructure,
   frozenGradingPolicySchema,
@@ -61,11 +60,9 @@ import {
   questionAnswersSchema,
   questionEvidenceBindings,
   questionSchema,
-  type SelfReviewRecord,
   type StudentAnswer,
   type StudentPaperData,
   type StudentPaperUnit,
-  type TeacherMark,
 } from "@tutor/contract";
 import { gradeResponseRow, isUnanswered } from "@tutor/grading";
 import {
@@ -117,6 +114,13 @@ import {
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
 import {
+  attemptFinalOutcomeOf,
+  type FinalOutcomeRow,
+  hasUsableQuestionSnapshotSql,
+  needsTeacherMark,
+  scoreAutoOf,
+} from "./attempt-final-outcome.ts";
+import {
   assertAttemptQuestionLimit,
   attemptTeacherId,
   attemptUnitIds,
@@ -157,6 +161,10 @@ import {
 } from "./practice-workflow-wiring";
 
 export {
+  attemptFinalOutcomeOf,
+  finalScoreOf,
+} from "./attempt-final-outcome.ts";
+export {
   attemptQuestionRows,
   attemptTeacherId,
   attemptUnitIds,
@@ -164,6 +172,11 @@ export {
 // answersReleased 原定义在本文件（T2A.8），M2 迁入纯裁决器层（题级反馈
 // 四态与 wiring 进度可读性共用）；re-export 保持既有导入路径不变
 export { answersReleased } from "./practice-workflow-service";
+export {
+  effectiveVerdictOfRow,
+  selfReviewRecordOf,
+  teacherMarkOf,
+} from "./response-verdict.ts";
 
 import {
   buildSingleQuestionEvidence,
@@ -176,6 +189,10 @@ import {
 } from "./attempt-submit-revisions.ts";
 import { attemptActivityProjection } from "./question-activity";
 import type { Tx } from "./question-sync";
+import {
+  effectiveVerdictOfRow,
+  selfReviewRecordOf,
+} from "./response-verdict.ts";
 import { rubricReviewOf } from "./rubric-review-read";
 import { answerOf, jsonOf, releaseOfSnapshot, snapshotOfRow } from "./snapshot";
 
@@ -2099,102 +2116,6 @@ interface GradedResponse {
 }
 
 /**
- * scoreAuto 口径：答对数 / 可自动判分数（autoCorrect 非 null），四舍五入百分比；
- * 无可判分为 null。入参结构化（只需 autoCorrect）：交卷链路传判分中间结果，
- * lesson 单题提交自动收尾传事务内重读的冻结行（同口径复用，不复制公式）。
- */
-function scoreAutoOf(
-  graded: readonly { autoCorrect: boolean | null }[],
-): number | null {
-  const autoGradable = graded.filter((g) => g.autoCorrect !== null).length;
-  if (autoGradable === 0) return null;
-  const correct = graded.filter((g) => g.autoCorrect === true).length;
-  return Math.round((correct / autoGradable) * 100);
-}
-
-/**
- * D2/D3 口径的 attempt 级最终得分与状态（T3.2a）：
- * - status=graded 当且仅当全部 finalCorrect 均非 null（此时必写 scoreFinal）；
- * - scoreFinal = round（finalCorrect 为 true 的题数 ÷ 全部题数 × 100）；
- *   任一待批（null）则 status=submitted、scoreFinal=null（批改完成后由 T3.2b 重算）；
- * - 空卷（无题）防御性保持 submitted / null。
- * 交卷链路调用时 finalCorrect=autoCorrect（teacherMark 必空）；backfill 与批改
- * 链路以 teacherMark ?? autoCorrect 为输入复用同一口径。
- */
-export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
-  status: "submitted" | "graded";
-  scoreFinal: number | null;
-} {
-  if (finalCorrects.length === 0 || finalCorrects.some((v) => v === null)) {
-    return { status: "submitted", scoreFinal: null };
-  }
-  const correct = finalCorrects.filter((v) => v === true).length;
-  return {
-    status: "graded",
-    scoreFinal: Math.round((correct / finalCorrects.length) * 100),
-  };
-}
-
-/**
- * 收尾判定的行级输入（attemptFinalOutcomeOf 消费；finalCorrect 为该口径下
- * 的写入后事实值——交卷链路 = autoCorrect，批改链路 = teacherMark ?? autoCorrect）
- */
-export interface FinalOutcomeRow {
-  readonly gradingPolicy: GradingPolicy | null;
-  readonly submittedAt: string | null;
-  /** 教师批改标记（teacher_pending 判定只消费 null 与否，形态由列类型把关） */
-  readonly teacherMark: string | null;
-  readonly finalCorrect: boolean | null;
-}
-
-/**
- * QM-10 细项7（§5.5.5 graded 触发放宽，新行口径单一出处——交卷/自动收尾/
- * 教师批改重算三链路共用）：
- * - **旧行旧口径（历史不重释）**：任一行 gradingPolicy=NULL（升级前开的卷、
- *   开关关闭部署）→ 整卷按 finalScoreOf（D2/D3：全部 finalCorrect 非 null 才
- *   graded）。正常数据新旧不混卷（行策略在开卷时整卷冻结），混卷防御性取
- *   旧口径——与「禁止重释历史」同一保守侧；
- * - **新行口径**：graded ⟺ 全部行已提交 且 无「教师待处理」行
- *   （manual_only 且 teacherMark=null——判定来源枯竭，唯一出口是教师；
- *   reference_self 行自评与否不阻塞，「完成作答不以自评为前提」）；
- * - opts.finalized（整卷已收尾）时全部行按已提交语义参与 allSubmitted（与四态
- *   gate 同口径；legacy 协议行不写行级 submittedAt）；scoreFinal 公式沿用 D3
- *   （round(finalCorrect=true ÷ 全部题数 × 100)，reference_self 行计分母不计分子）；
- * - 空卷防御性保持 submitted/null（finalScoreOf 同款）。
- */
-export function attemptFinalOutcomeOf(
-  rows: readonly FinalOutcomeRow[],
-  opts: { finalized?: boolean } = {},
-): {
-  status: "submitted" | "graded";
-  scoreFinal: number | null;
-} {
-  if (rows.length === 0) return finalScoreOf([]);
-  if (rows.some((row) => row.gradingPolicy === null)) {
-    return finalScoreOf(rows.map((row) => row.finalCorrect));
-  }
-  // P1 修复（审查 TT-09a）：整卷收尾即全部判分行已提交——与四态 gate
-  // （practiceQuestionFeedbackStateOf 的 `row.submittedAt !== null || finalized`）
-  // 同一口径。legacy 协议行不写行级 submittedAt（responses.submittedAt 是逐题
-  // 提交列，协议分野保持），不归一则 legacy+开关开启卷整卷交卷恒 submitted/
-  // scoreFinal=null，教师批改重算同病。finalized 由调用方声明收尾事实：
-  // 交卷链路交卷即收尾、自动收尾正在收尾、markResponse 只对已收尾卷重算
-  const allSubmitted =
-    opts.finalized === true || rows.every((row) => row.submittedAt !== null);
-  const teacherPending = rows.some(
-    (row) => row.gradingPolicy === "manual_only" && row.teacherMark === null,
-  );
-  if (!allSubmitted || teacherPending) {
-    return { status: "submitted", scoreFinal: null };
-  }
-  const correct = rows.filter((row) => row.finalCorrect === true).length;
-  return {
-    status: "graded",
-    scoreFinal: Math.round((correct / rows.length) * 100),
-  };
-}
-
-/**
  * 交卷（服务端权威判分；T6R.3 起三来源统一读冻结快照）：
  * - attempt 不存在 → 404；非本人 → 403；已交卷 → 409 ALREADY_SUBMITTED（验收项）；
  * - 判分输入 = 该 attempt 自有 responses 行的 questionSnapshotJson（建卷/懒冻结
@@ -2306,7 +2227,6 @@ function finalizeWholeAttempt(
       outcomeRows.push({
         gradingPolicy: ownRow.gradingPolicy,
         submittedAt: ownRow.submittedAt,
-        teacherMark: ownRow.teacherMark,
         finalCorrect: ownRow.finalCorrect,
       });
       continue;
@@ -2326,7 +2246,6 @@ function finalizeWholeAttempt(
       // 逐题语义卷的本次判分行提交时刻 = 交卷时刻（rowSubmittedAtPatch 同款
       // 内存镜像口径；历史卷行保持 null——旧行旧口径不消费该键）
       submittedAt: perQuestionAttempt ? nowIso : null,
-      teacherMark: ownRow.teacherMark,
       finalCorrect: entry.autoCorrect,
     });
   }
@@ -2493,10 +2412,7 @@ export function attemptScoreSummaryOf(
   // 漂移（草稿答案也计入 answered、未提交行计入 pending）。
   const rows = db
     .select({
-      hasSnapshot:
-        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
-          Boolean,
-        ),
+      hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
@@ -2584,9 +2500,7 @@ export function scoreSummaryCoreOf(
     }
     // D4 教师待批：finalCorrect IS NULL 且非 reference_self 行（pending-mark.ts
     // 谓词同口径；null 策略旧行不受影响）
-    if (row.finalCorrect === null && row.gradingPolicy !== "reference_self") {
-      pendingCount += 1;
-    }
+    if (needsTeacherMark(row)) pendingCount += 1;
   }
   return {
     total,
@@ -2636,7 +2550,7 @@ export function questionNotFound(): HttpError {
  * 实现，从 submitLessonQuestion 收尾块抽取——计划 §10.2 第 6 步「最后一题
  * 调用共同收尾函数，避免重复公式与双写统计」）：事务内重读全部冻结行（瘦列
  * 投影，不含每题数 KB 的快照原文），全部已提交才收尾——scoreAuto/scoreFinal/
- * status 与整卷交卷同口径复用 scoreAutoOf / finalScoreOf；收尾 UPDATE 带
+ * status 与整卷交卷同口径复用 scoreAutoOf / attemptFinalOutcomeOf；收尾 UPDATE 带
  * WHERE status='draft' 真实 CAS，逐题与整卷并发收尾只成功一次（后到者 no-op，
  * 行集照常返回）。返回瘦行集供 lesson 现算 summary / 题级进度消费，并带回
  * 收尾后的 attempt 新行（no-op 时 null——调用方回落事务内已读行，同步单
@@ -2649,13 +2563,10 @@ function autoFinishPerQuestionAttempt(
 ): { rows: ScoreSummaryRow[]; attempt: Attempt | null } {
   const rowsAfter = tx
     .select({
-      // 快照原文不搬运（每题数 KB，收尾判定只需要存在性）
+      // 在数据库连接内核对快照，仅返回是否可用
       // mapWith(Boolean)：better-sqlite3 对该表达式返回 0/1 整数，归一为真
       // 布尔——严格比较（仓库布尔列惯例）与真值判断都安全
-      hasSnapshot:
-        sql<boolean>`${responses.questionSnapshotJson} IS NOT NULL`.mapWith(
-          Boolean,
-        ),
+      hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
       answerJson: responses.answerJson,
       submittedAt: responses.submittedAt,
       autoCorrect: responses.autoCorrect,
@@ -3453,68 +3364,6 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
  * studentFacingResultOf 整题投影（唯一包装处，不得再各自手写）。2026-10
  * 讲练一体起导出供 lesson-service 复用。
  */
-/**
- * teacherMark 列值的枚举收窄（列无 $type，按 D9 值域收窄给投影用）。原定义在
- * self-review-service（TT-09a），QM-12 移驻本文件：有效判定单一出处需要同一
- * 收窄，教师详情/汇总/错题/学情各消费面不再各写一份。
- */
-export function teacherMarkOf(value: string | null): TeacherMark | null {
-  return value === "correct" || value === "wrong" ? value : null;
-}
-
-/**
- * 行上自评记录的读取投影（QM-10 定义于 self-review-service，TT-09b 移驻本
- * 文件：结果单题投影与自评服务共用同一读取口径，且避免 attempt-service ←→
- * self-review-service 值循环）。verdict 列只存实际判断——undecided 已清除
- * 为 null；revision 的单独下发见 resultQuestionOf。
- * P3-2（TT-09a 审查遗留，本单落地）：脏行防御——verdict 非空而 at 缺失
- * （异常/历史写入）时契约 at min(1) 不成立，按「无记录」降级并 warn 留痕
- * （服务层拿不到 app 层 pino 实例，用固定前缀便于检索），不伪造空时间戳。
- */
-export function selfReviewRecordOf(
-  row: Pick<
-    ResponseRow,
-    "selfReviewVerdict" | "selfReviewAt" | "selfReviewRevision"
-  >,
-): SelfReviewRecord | null {
-  if (row.selfReviewVerdict === null) return null;
-  if (row.selfReviewAt === null) {
-    console.warn(
-      `【数据异常】responses 自评脏行（verdict 非空而 at 缺失），按无记录降级（revision=${row.selfReviewRevision}）`,
-    );
-    return null;
-  }
-  return {
-    verdict: row.selfReviewVerdict,
-    at: row.selfReviewAt,
-    revision: row.selfReviewRevision,
-  };
-}
-
-/**
- * 行级有效判定单一出处（QM-12 细项1：教师判 > 自评 > 自动，与契约
- * effectiveVerdictOf 同序）。服务端各消费面（教师详情计数、错题集合、学情
- * 统计、CSV/材料整理包、AI 复盘过滤）一律经本函数，不再各写
- * `finalCorrect ?? autoCorrect` 之类的快捷回落——该口径对自评行恒漏判
- * （reference_self 行 finalCorrect 恒 null）。
- */
-export function effectiveVerdictOfRow(
-  row: Pick<
-    ResponseRow,
-    | "autoCorrect"
-    | "teacherMark"
-    | "selfReviewVerdict"
-    | "selfReviewAt"
-    | "selfReviewRevision"
-  >,
-): EffectiveVerdict | null {
-  return effectiveVerdictOf(
-    row.autoCorrect,
-    teacherMarkOf(row.teacherMark),
-    selfReviewRecordOf(row),
-  );
-}
-
 export function resultQuestionOf(
   row: ResponseRow,
   snapshot: Question,

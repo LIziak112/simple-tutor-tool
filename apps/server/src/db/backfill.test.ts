@@ -296,6 +296,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
       {
+        key: "reconcile_attempt_outcomes_v1",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
         key: "nested_course_catalog_v1",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
@@ -352,10 +356,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(11);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(11);
   });
 });
 
@@ -510,7 +514,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(11);
     expect(
       db
         .select()
@@ -1354,6 +1358,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
       {
+        key: "reconcile_attempt_outcomes_v1",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
         key: "nested_course_catalog_v1",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
@@ -1410,7 +1418,7 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(10);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(11);
   });
 });
 

@@ -559,6 +559,27 @@ describe("StudentHomePage 指标区", () => {
     expect(within(section).getByText("重做 2 次")).toBeInTheDocument();
   });
 
+  it("教师错题卡显示自评判错及来源", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    mockedReview.mockResolvedValue({
+      total: 1,
+      nextCursor: null,
+      questions: [
+        makeReviewRow({
+          finalCorrect: null,
+          effectiveVerdict: { source: "self", value: false },
+        }),
+      ],
+    });
+    renderPage();
+    const section = await screen.findByRole("region", { name: "错题与存疑" });
+    const card = await within(section).findByRole("link", {
+      name: "查看该题最近一次作答详情",
+    });
+    expect(within(card).getByText("判错")).toBeInTheDocument();
+    expect(within(card).getByText("学生自评")).toBeInTheDocument();
+  });
+
   it("错题与存疑换档：点「自标不会」写 URL ?kind=unsure 并按新 kind 重查", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();

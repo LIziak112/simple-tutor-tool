@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { reviewPackSchema } from "@tutor/contract";
+import { learningRecordSchema, reviewPackSchema } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
@@ -366,6 +366,14 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       .set({ assignmentId })
       .where(eq(attemptsTable.id, world.attemptId))
       .run();
+    db.update(responsesTable)
+      .set({
+        selfReviewVerdict: "wrong",
+        selfReviewAt: "2027-01-01T00:00:00.000Z",
+        selfReviewRevision: 1,
+      })
+      .where(eq(responsesTable.attemptId, world.attemptId))
+      .run();
 
     const studentPreview = previewReviewPack(
       db,
@@ -389,6 +397,53 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     );
     expect(teacherPreview.released).toBe(true);
     expect(teacherPreview.answersIncluded).toBe(true);
+    for (const [now, expectedReview] of [
+      [NOW, undefined],
+      ["2027-01-02T00:00:00.000Z", "wrong"],
+    ] as const) {
+      const zip = await buildReviewPackZip(
+        db,
+        dataDir,
+        studentOf(s1),
+        world.attemptId,
+        QUESTION_ID,
+        { now },
+      );
+      const entries = readZipEntriesMap(Buffer.from(zip.bytes));
+      const pack = packEntryOf(entries, reviewPackSchema);
+      expect(pack.response.selfReview).toBeUndefined();
+      expect(pack.response.effectiveVerdict).toBeUndefined();
+      const raw = entries.get("record.json")?.toString("utf8");
+      if (raw === undefined) throw new Error("学生复盘包缺少学习记录");
+      const record = learningRecordSchema.parse(JSON.parse(raw));
+      expect(record.grading.selfReview?.verdict).toBe(expectedReview);
+      expect(record.grading.effectiveVerdict).toBeUndefined();
+    }
+  });
+
+  it("未提交且未逐题发布的草稿预览显示答案尚未公布", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const studentId = makeStudent(db);
+    const world = makeWorld(db, dataDir, { studentId });
+    db.update(attemptsTable)
+      .set({ sourceType: "wrong", status: "draft", submittedAt: null })
+      .where(eq(attemptsTable.id, world.attemptId))
+      .run();
+    db.update(responsesTable)
+      .set({ submittedAt: null })
+      .where(eq(responsesTable.attemptId, world.attemptId))
+      .run();
+    const preview = previewReviewPack(
+      db,
+      dataDir,
+      studentOf(studentId),
+      world.attemptId,
+      QUESTION_ID,
+      { now: NOW },
+    );
+    expect(preview.released).toBe(false);
+    expect(preview.answersIncluded).toBe(false);
   });
 
   it("无草稿题：evidenceState=not_collected、无 evidence 条目、complete=true（纯文字包）", async () => {
@@ -882,6 +937,11 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     // 同包自洽：reviewSource 已是有效判定口径（self），与 stem.md 同源
     expect(selfPack.response.reviewSource).toBe("self");
     expect(selfPack.response.finalCorrect).toBeNull();
+    expect(selfPack.response.effectiveVerdict).toEqual({
+      source: "self",
+      value: true,
+    });
+    expect(selfPack.response.selfReview?.verdict).toBe("correct");
 
     // 学生自评「错了」：判定=错
     db.update(responsesTable)
@@ -889,6 +949,10 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       .where(eq(responsesTable.attemptId, world.attemptId))
       .run();
     expect(await buildStem()).toContain("**判定**：错");
+    expect((await buildPack()).response.effectiveVerdict).toEqual({
+      source: "self",
+      value: false,
+    });
 
     // 撤回自评（undecided 清除记录）：三源全空 → 待批（不伪造判定）
     db.update(responsesTable)
@@ -896,6 +960,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       .where(eq(responsesTable.attemptId, world.attemptId))
       .run();
     expect(await buildStem()).toContain("**判定**：待批");
+    expect((await buildPack()).response.selfReview).toBeNull();
   });
 
   // —— QM-16 细项 1/5：材料闭包进单题包（学生/教师双角色同节）；材料媒体 ——
