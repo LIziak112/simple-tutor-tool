@@ -20,6 +20,7 @@ import {
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { serializeStudentAnswerOfRow } from "./mark-response";
 import { notSelfReviewPendingRow } from "./pending-mark";
+import { countsAsWrong, effectiveVerdictValueSql } from "./response-verdict.ts";
 // 两线收敛接线：v2 错题闭环的轮次可见性守卫（公布/可见性单一出处，note-service
 // 同款复用）——不将 AI 出口授权当成学生读答案权限
 import { createQuestionReviewReader } from "./review-access";
@@ -121,10 +122,7 @@ function effectiveOfRound(round: JudgedRoundRow) {
 function enteredWrongBook(rounds: readonly JudgedRoundRow[]): boolean {
   return rounds.some(
     (round) =>
-      (effectiveOfRound(round)?.value === false &&
-        (round.answered ||
-          round.teacherMark !== null ||
-          round.selfReviewVerdict !== null)) ||
+      countsAsWrong(effectiveOfRound(round), round.answered) ||
       round.studentFlag === "unsure",
   );
 }
@@ -202,18 +200,7 @@ function judgedRoundsByQuestion(
         // 语义卷进行中（draft）的已单题提交行同样构成轮次（行级 submittedAt
         // 非空——lesson/v1 逐题提交在公布后即可判定）
         or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
-        or(
-          isNotNull(responses.finalCorrect),
-          // 自评分支与读侧 selfReviewRecordOf 脏行降级成对（TT-09c 审查
-          // P2-2）：verdict 非空且 at 非空才算已判定轮——at 与 verdict 恒成对
-          // 写入是 D3 同款不变量，单看 verdict 会放进「verdict 非空而 at
-          // 缺失」的脏行，读侧 effectiveVerdictOfRow 降级为未判断后 correct
-          // =false 冒充错轮、wrongCount 虚增
-          and(
-            isNotNull(responses.selfReviewVerdict),
-            isNotNull(responses.selfReviewAt),
-          ),
-        ),
+        isNotNull(effectiveVerdictValueSql),
         // 公布 gate（answersReleased 的 SQL 化，见 releaseGateSql 注释）
         releaseGateSql(nowIso),
       ),
@@ -558,12 +545,8 @@ export function listWrongQuestions(
       // #6980-3：错次只计「答了且判错」的轮（未做轮不计错次）；判错走 QM-12
       // 有效判定；人工显式判定的未做轮不被掩盖（审查修复 P0-1：老师批错/
       // 自评判错的行照常计错次）
-      wrongCount: rounds.filter(
-        (round) =>
-          effectiveOfRound(round)?.value === false &&
-          (round.answered ||
-            round.teacherMark !== null ||
-            round.selfReviewVerdict !== null),
+      wrongCount: rounds.filter((round) =>
+        countsAsWrong(effectiveOfRound(round), round.answered),
       ).length,
       correctCount: roundsPayload.filter((round) => round.correct).length,
       pendingCount: pendingCounts.get(questionId) ?? 0,

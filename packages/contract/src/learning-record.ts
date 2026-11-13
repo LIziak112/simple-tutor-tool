@@ -14,7 +14,11 @@ import {
 } from "./ink.ts";
 import { noteBackgroundSchema, notePhaseSchema } from "./note.ts";
 import { questionNodeKeySchema, questionNodeSchema } from "./question-node.ts";
-import { selfReviewStateSchema } from "./self-review.ts";
+import {
+  effectiveVerdictSchema,
+  selfReviewRecordSchema,
+  selfReviewStateSchema,
+} from "./self-review.ts";
 import { aiMaterialKindSchema } from "./student-ai.ts";
 
 /**
@@ -255,6 +259,9 @@ export const gradingFacetSchema = z.object({
   autoCorrect: z.boolean().nullable().optional(),
   finalCorrect: z.boolean().nullable().optional(),
   reviewSource: selfReviewStateSchema.shape.source.optional(),
+  /** 教师域的当前有效判定，自评详情按当前公布规则提供。 */
+  effectiveVerdict: effectiveVerdictSchema.nullable().optional(),
+  selfReview: selfReviewRecordSchema.nullable().optional(),
   selfCorrect: z.boolean().nullable().optional(),
   reviewedAt: z.string().min(1).nullable().optional(),
   // —— 教师域键（student superRefine 禁携） ——
@@ -299,6 +306,7 @@ export const learningRecordSchema = z
       [record.grading.teacherMark, ["grading", "teacherMark"]],
       [record.grading.teacherComment, ["grading", "teacherComment"]],
       [record.grading.reviewSource, ["grading", "reviewSource"]],
+      [record.grading.effectiveVerdict, ["grading", "effectiveVerdict"]],
     ];
     for (const [value, path] of forbidden) {
       if (value !== undefined && value !== null) {
