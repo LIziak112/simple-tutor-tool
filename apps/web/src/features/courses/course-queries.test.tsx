@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { contentTreeKey } from "@/features/content/content-queries";
+import { studentCoursesKey } from "@/features/student/student-queries";
 import {
   useCreateCourse,
   useDeleteCourse,
@@ -20,6 +21,7 @@ describe("课程变更刷新内容树", () => {
     async (action) => {
       const client = new QueryClient();
       client.setQueryData(contentTreeKey, { courses: [] });
+      client.setQueryData(studentCoursesKey, { courses: [] });
       const wrapper = ({ children }: { children: React.ReactNode }) => (
         <QueryClientProvider client={client}>{children}</QueryClientProvider>
       );
@@ -42,6 +44,7 @@ describe("课程变更刷新内容树", () => {
           );
       });
       expect(client.getQueryState(contentTreeKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(studentCoursesKey)?.isInvalidated).toBe(true);
       client.clear();
     },
   );

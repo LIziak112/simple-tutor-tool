@@ -35,15 +35,22 @@ export function useLoginPersonal() {
 }
 
 /** 服务端只结束属于本人的会话，按实际结束的角色清理缓存。 */
-export function useLogoutPersonal(role: PersonalSessionRole) {
+export function useLogoutPersonal(
+  role: PersonalSessionRole,
+  onLoggedOut?: () => void,
+) {
   const clearStudent = useClearStudentSession();
   const clearTeacher = useClearTeacherSession();
   return useMutation({
     mutationFn: () => logoutPersonalApi(role),
     onSuccess: async ({ paired }) => {
       await Promise.all([
-        role === "student" || paired ? clearStudent() : undefined,
-        role === "teacher" || paired ? clearTeacher() : undefined,
+        role === "student" || paired
+          ? clearStudent(role === "student" ? onLoggedOut : undefined)
+          : undefined,
+        role === "teacher" || paired
+          ? clearTeacher(role === "teacher" ? onLoggedOut : undefined)
+          : undefined,
       ]);
     },
   });

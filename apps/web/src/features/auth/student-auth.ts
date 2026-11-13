@@ -111,14 +111,17 @@ export function useLoginStudent() {
  * resetNoteSession（T6R.9）——停旧草稿同步队列、中止在途上传、隔离回执；
  * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
  */
-export function useLogoutStudent() {
+export function useLogoutStudent(onLoggedOut?: () => void) {
   const clearSession = useClearStudentSession();
-  return useMutation({ mutationFn: logoutStudentApi, onSuccess: clearSession });
+  return useMutation({
+    mutationFn: logoutStudentApi,
+    onSuccess: () => clearSession(onLoggedOut),
+  });
 }
 
 export function useClearStudentSession() {
   const queryClient = useQueryClient();
-  return async () => {
+  return async (onCleared?: () => void) => {
     bindDraftSession(null);
     bindAiDisplayAccount(null);
     bindPracticePreferenceAccount(null);
@@ -127,6 +130,12 @@ export function useClearStudentSession() {
     resetNoteSession();
     resetAnnotationSession();
     await clearAccountQueries(queryClient, "student");
-    await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
+    const reset = queryClient.resetQueries({
+      queryKey: studentMeKey,
+      exact: true,
+    });
+    // 身份已清空、页面尚未卸载时完成主动退出导航，再等待身份重取。
+    onCleared?.();
+    await reset;
   };
 }
