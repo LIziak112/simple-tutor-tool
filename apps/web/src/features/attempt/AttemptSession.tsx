@@ -1145,22 +1145,21 @@ function AnswerView({
       setKeyboardHelpOpen(true);
     }
   };
-  // T6R.3：交卷原样回传建卷冻结时下发的 questionRevisionId，
-  // 服务端与冻结集合比对，确保判分题目与学生看到的试卷一致。
+  // 冻结题与当前草稿视图的版本基线，提交前叠加本机已收到的保存回执。
   const submitRevisions = useMemo(
     () =>
       flatQuestions.map((question) => ({
         questionId: question.id,
         questionRevisionId: question.questionRevisionId,
+        expectedAnswerRevision: data.draftRevisions?.[question.id] ?? 0,
       })),
-    [flatQuestions],
+    [data.draftRevisions, flatQuestions],
   );
 
   const { inkFlushError, runSubmit, submit, submitAbortedRef } =
     useAttemptSubmitFlow({
       attemptId,
       savedOnly,
-      timed: phase !== null,
       recoveryReady:
         materialRecovery.state === "ready" && !draftSync.recoveryError,
       syncDraft: draftSync.syncNow,
@@ -1168,7 +1167,7 @@ function AnswerView({
       inkControllers,
       questionIds: submitEvidenceQuestionIds,
       revisions: submitRevisions,
-      finalizeEvents: attemptEvents.finalizeSubmit,
+      events: attemptEvents,
       onAnnotationSealFailed,
     });
 
@@ -1211,11 +1210,7 @@ function AnswerView({
 
   // 交卷失败：网络等错误留中文提示；QUESTION_REVISION_STALE（旧标签页/陈旧
   // 页面）由服务端中文 message 直接提示刷新重交（T6R.3）
-  const submitError = submit.isError
-    ? submit.error instanceof Error
-      ? submit.error.message
-      : "交卷失败，请稍后重试"
-    : null;
+  const submitError = submit.error?.message ?? null;
 
   // 离线状态（T2.12）：离线时禁用交卷并提示（作答照常，草稿本地保存）
   const online = useOnlineStatus();
@@ -2084,6 +2079,7 @@ function AnswerView({
           savedOnly={savedOnly}
           unansweredCount={unanswered}
           submitting={submit.isPending}
+          verificationRequired={submit.verificationRequired}
           preparing={notePrep.kind === "preparing"}
           noteSummary={noteSummary}
           noteProblems={evidenceProblemViewsOf(notePrep, questionIndexById)}

@@ -4,7 +4,7 @@ import { gzipOrRaw } from "@/features/ink/gzip";
 import { renderInkSnapshot } from "@/features/ink/render-ink-snapshot";
 import { ApiError, putAttemptInkApi } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
-import { getDraftSessionEpoch } from "./draft-store";
+import { draftStore, getDraftSessionEpoch } from "./draft-store";
 
 /**
  * 笔迹上传状态机（T2.8，任务要点「笔迹上传时机」）：
@@ -153,7 +153,20 @@ export function useInkUpload(
           };
           mutations.current.set(doc, mutation);
         }
-        if (stale() || hooksRef.current?.suspended) return false;
+        if (stale() || blockedRef.current || hooksRef.current?.suspended)
+          return false;
+        await draftStore.refreshShared(attemptIdRef.current);
+        if (
+          stale() ||
+          blockedRef.current ||
+          hooksRef.current?.suspended ||
+          !draftStore.allowsInkUpload(
+            attemptIdRef.current,
+            questionIdRef.current,
+            doc,
+          )
+        )
+          return false;
         const receipt = await putAttemptInkApi(
           attemptIdRef.current,
           questionIdRef.current,
@@ -282,6 +295,7 @@ export function useInkUpload(
         mutations.current = new WeakMap();
       },
       pause: () => {
+        baselineEpoch.current++;
         blockedRef.current = true;
       },
     },

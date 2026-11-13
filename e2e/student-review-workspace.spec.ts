@@ -7,6 +7,7 @@ import {
 } from "@playwright/test";
 import {
   assignmentCreateOkSchema,
+  attemptAnswerSaveDataSchema,
   attemptDraftOkSchema,
   attemptResultOkSchema,
   attemptStartOkSchema,
@@ -133,6 +134,7 @@ async function prepareResult(
         { kind: "choice", index: 1 },
         { kind: "choice", index: 0 },
       ];
+  const savedRevisions = new Map<string, number>();
   for (const [index, answer] of answers.entries()) {
     const question = questions[index];
     if (!question) throw new Error("测试题目缺失");
@@ -141,6 +143,12 @@ async function prepareResult(
       { data: { answer } },
     );
     expect(saved.ok(), await saved.text()).toBe(true);
+    const receipt = attemptAnswerSaveDataSchema.parse(
+      (await saved.json()).data,
+    );
+    if (receipt.revision === undefined)
+      throw new Error("测试保存回执缺少答案版本");
+    savedRevisions.set(question.id, receipt.revision);
   }
   const submitted = await api.post(
     `/api/student/attempts/${attemptId}/submit`,
@@ -149,6 +157,10 @@ async function prepareResult(
         revisions: questions.map((question) => ({
           questionId: question.id,
           questionRevisionId: question.questionRevisionId,
+          expectedAnswerRevision:
+            savedRevisions.get(question.id) ??
+            draft.draftRevisions?.[question.id] ??
+            0,
         })),
       },
     },

@@ -7,11 +7,14 @@ export function touchAttemptActivity(
   db: Pick<Db, "update">,
   attemptId: string,
   now: string,
-): void {
-  db.update(attempts)
-    .set({
-      lastActivityAt: sql`max(coalesce(${attempts.lastActivityAt}, ${attempts.startedAt}), ${now})`,
-    })
-    .where(and(eq(attempts.id, attemptId), eq(attempts.status, "draft")))
-    .run();
+): boolean {
+  return (
+    db
+      .update(attempts)
+      .set({
+        lastActivityAt: sql`max(coalesce(${attempts.lastActivityAt}, ${attempts.startedAt}), ${now})`,
+      })
+      .where(and(eq(attempts.id, attemptId), eq(attempts.status, "draft")))
+      .run().changes > 0
+  );
 }

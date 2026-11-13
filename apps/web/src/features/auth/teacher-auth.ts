@@ -34,13 +34,13 @@ export function useTeacherStatus() {
 }
 
 /** 当前登录教师（未登录时 isError 且错误码 UNAUTHORIZED，由守卫处理跳转） */
-export function useTeacherMe() {
+export function useTeacherMe({ freshOnMount = false } = {}) {
   return useQuery({
     queryKey: teacherMeKey,
     queryFn: fetchTeacherMe,
     // 401 不重试：守卫需要立刻感知并跳登录页
     retry: false,
-    staleTime: 5 * 60_000,
+    staleTime: freshOnMount ? 0 : 5 * 60_000,
     refetchOnWindowFocus: false,
   });
 }

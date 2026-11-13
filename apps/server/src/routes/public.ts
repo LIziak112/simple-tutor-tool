@@ -18,6 +18,7 @@ import {
 } from "@tutor/contract";
 import { type Context, Hono } from "hono";
 import { setCookie } from "hono/cookie";
+import { createClientIpResolver } from "../auth/client-ip.ts";
 import {
   loginPersonalAccount,
   type PersonalAuthResult,
@@ -70,21 +71,16 @@ import { createPublicPersonalSessionRoutes } from "./public-personal-session";
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
  */
 
-/** 取客户端 IP：仅信任反向代理追加的 X-Forwarded-For 首段；直连拿不到归为 unknown（限流退化为仅按登录名计数） */
-function getClientIp(c: Context): string {
-  const forwarded = c.req.header("x-forwarded-for");
-  const first = forwarded?.split(",")[0]?.trim();
-  return first || "unknown";
-}
-
 export function createPublicRoutes(
   db: Db,
   publicUrl: string,
   dataDir: string,
   /** spec 目录覆盖（createApp 注入，测试/部署显式指定；缺省按候选顺序解析，见 spec-files.ts） */
   specDir?: string | undefined,
+  trustedProxies: readonly string[] = [],
 ) {
   const secure = isSecurePublicUrl(publicUrl);
+  const getClientIp = createClientIpResolver(trustedProxies);
   /** 写教师会话 Cookie（setup / login / register / 个人双会话共用） */
   const setTeacherCookie = (c: Context, token: string): void => {
     setCookie(

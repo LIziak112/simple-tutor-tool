@@ -170,8 +170,12 @@ export const adminOverviewDataSchema = z.object({
  * 403 ADMIN_ONLY 与登录名冲突 409 TEACHER_LOGIN_EXISTS、最后一位活跃管理员
  * 保护 409 LAST_ADMIN 定义在 auth.ts 的 authErrorCodeSchema，此处不重复收录）：
  * - TEACHER_NOT_FOUND：目标教师不存在（404，管理动作按 id 取行未命中）。
+ * - BACKUP_OPERATOR_PASSWORD_PROTECTED：整站备份操作员密码受主机配置保护（403）。
  */
-export const adminErrorCodeSchema = z.enum(["TEACHER_NOT_FOUND"]);
+export const adminErrorCodeSchema = z.enum([
+  "TEACHER_NOT_FOUND",
+  "BACKUP_OPERATOR_PASSWORD_PROTECTED",
+]);
 
 // ---------- 具体化的成功壳 ----------
 

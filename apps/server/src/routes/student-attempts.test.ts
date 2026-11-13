@@ -17,12 +17,22 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, questions, responses, units } from "../db/schema.ts";
+import {
+  attempts,
+  events,
+  questions,
+  responses,
+  submissionEvidence,
+  units,
+} from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import * as snapshot from "../services/snapshot.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 作答生命周期集成测试（T2.6 全部验收项，app.request() 直调路由 + 内存库）：
@@ -452,8 +462,15 @@ describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
       draft.id,
     );
 
+    // 交卷回执直接驱动结果页，必须与详情一样携带当前重做策略。
+    const submitted = await postSubmit(app, aCookie, draft.id as string);
+    expect(submitted.status).toBe(200);
+    const receipt = attemptResultOkSchema.parse(await submitted.json()).data;
+    expect(receipt.attempt.allowRedo).toBe(false);
+    const detail = await getAttempt(app, aCookie, draft.id as string);
+    expect(attemptResultOkSchema.parse(detail.body).data).toEqual(receipt);
+
     // 交卷后：redo:true 被拒；缺省 POST 回看不受影响
-    await postSubmit(app, aCookie, draft.id as string);
     const denied = await postAttemptWithBody(app, aCookie, assignmentId, {
       redo: true,
     });
@@ -472,9 +489,14 @@ describe("作业重做（hall-15313：显式 redo:true 开新卷）", () => {
       redo: true,
     });
     expect(redo.status).toBe(200);
+    const next = attemptStartOkSchema.parse(await redo.json()).data;
+    expect(next.attemptNo).toBe(2);
+    const nextSubmit = await postSubmit(app, aCookie, next.id);
+    expect(nextSubmit.status).toBe(200);
     expect(
-      ((await redo.json()) as { data: { attemptNo: number } }).data.attemptNo,
-    ).toBe(2);
+      attemptResultOkSchema.parse(await nextSubmit.json()).data.attempt
+        .allowRedo,
+    ).toBe(true);
   });
 
   it("缺省 POST（空 body / 无 redo 字段）在可重做作业上不开新卷（回归锁）", async () => {
@@ -832,6 +854,75 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
       ).status,
     ).toBe(409);
   });
+  it("整卷拒绝陈旧的可见答案版本，保留新草稿和未封存状态", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.judge, {
+          kind: "judge",
+          value: true,
+        })
+      ).status,
+    ).toBe(200);
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+    expect(
+      revisions.find((entry) => entry.questionId === Q.judge)
+        ?.expectedAnswerRevision,
+    ).toBe(1);
+    const latest = { kind: "judge", value: false };
+    expect(
+      (await putAnswer(app, aCookie, attemptId, Q.judge, latest)).status,
+    ).toBe(200);
+    const stale = await app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: { cookie: aCookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          revisions,
+          evidence: revisions.map(({ questionId }) => ({
+            questionId,
+            state: "none",
+          })),
+        }),
+      },
+    );
+    expect(stale.status).toBe(409);
+    const error = await stale.json();
+    expect(error).toMatchObject({
+      error: "ANSWER_REVISION_CONFLICT",
+      _current: { revision: 2, draft: latest },
+    });
+    assertNoLeak(error);
+    const { body } = await getAttempt(app, aCookie, attemptId);
+    const draft = (body as { data: AttemptDraftData }).data;
+    expect(draft.attempt.status).toBe("draft");
+    expect(draft.drafts[Q.judge]).toEqual(latest);
+    expect(
+      db
+        .select()
+        .from(submissionEvidence)
+        .where(eq(submissionEvidence.attemptId, attemptId))
+        .all(),
+    ).toEqual([]);
+    const submitMarkers = () =>
+      db
+        .select()
+        .from(events)
+        .where(and(eq(events.attemptId, attemptId), eq(events.type, "submit")))
+        .all();
+    expect(submitMarkers()).toEqual([]);
+    expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
+    expect(submitMarkers()).toHaveLength(1);
+    expect(JSON.parse(submitMarkers()[0]?.payloadJson ?? "{}")).toMatchObject({
+      confirmed: true,
+    });
+    expect((await postSubmit(app, aCookie, attemptId)).status).toBe(409);
+    expect(submitMarkers()).toHaveLength(1);
+  });
+
   it("保存后 GET 详情可读回（往返）；重复保存 changeCount 递增", async () => {
     const { app, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))

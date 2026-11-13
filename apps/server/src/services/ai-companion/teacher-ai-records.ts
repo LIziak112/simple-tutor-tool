@@ -21,8 +21,8 @@ import {
   aiTaskTeacherViewOf,
   firstQuestionOf,
   hasAssistantReply,
-  messageRowsOf,
 } from "./student-ai-queue.ts";
+import { messageRowsOf } from "./student-ai-reply.ts";
 
 /**
  * SAI-24 教师督学记录（B13；需求规格 §9、技术方案 §4.2 教师表）。

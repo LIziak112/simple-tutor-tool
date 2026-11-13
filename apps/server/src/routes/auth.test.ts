@@ -1,3 +1,5 @@
+import { once } from "node:events";
+import { serve } from "@hono/node-server";
 import type { ApiErr } from "@tutor/contract";
 import {
   apiErrSchema,
@@ -23,6 +25,7 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { nodePeerBindings } from "../test/node-peer.ts";
 
 /**
  * 教师鉴权接口集成测试（T1.9 验收项；T2B.2 起覆盖登录名登录、管理员角色、
@@ -41,7 +44,10 @@ const WRONG_PASSWORD = "wrong-pass-8";
 const LOGIN_NAME = "teacher";
 
 /** 组装被测应用：内存库 + 可指定 PUBLIC_URL（Cookie Secure 断言用） */
-function makeApp(publicUrl = "http://localhost:8787"): {
+function makeApp(
+  publicUrl = "http://localhost:8787",
+  trustedProxies?: readonly string[],
+): {
   app: ReturnType<typeof createApp>;
   db: Db;
 } {
@@ -52,6 +58,7 @@ function makeApp(publicUrl = "http://localhost:8787"): {
     db,
     dataDir: createTestDir(),
     publicUrl,
+    ...(trustedProxies === undefined ? {} : { trustedProxies }),
   });
   return { app, db };
 }
@@ -75,18 +82,23 @@ function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
-/** 在指定 app 上发 JSON POST（可带额外请求头：Cookie、X-Forwarded-For 等） */
+/** 在指定 app 上发 JSON POST，可指定连接对端及额外请求头。 */
 async function jsonRequestOn(
   app: ReturnType<typeof createApp>,
   path: string,
   body: unknown,
   headers: Record<string, string> = {},
+  peer?: string,
 ): Promise<Response> {
-  return app.request(path, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  });
+  return app.request(
+    path,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    },
+    nodePeerBindings(peer),
+  );
 }
 
 /** 造一位教师行（T2B.6 前无第二个创建入口，测试直写库；限流/守卫分支用） */
@@ -147,6 +159,65 @@ describe("GET /api/public/teacher/status", () => {
 });
 
 describe("POST /api/public/teacher/setup", () => {
+  it.each(["空库", "占位行"] as const)(
+    "%s 并发首设只写入一位管理员和一个会话",
+    async (shape) => {
+      const { app, db } = makeApp();
+      if (shape === "空库") db.delete(teachers).run();
+      const path = "/api/public/teacher/setup";
+      const outcomes = await Promise.all([
+        jsonRequestOn(app, path, {
+          loginName: "teacher-one",
+          password: PASSWORD,
+        }),
+        jsonRequestOn(app, path, {
+          loginName: "teacher-two",
+          password: PASSWORD,
+        }),
+      ]);
+      expect(outcomes.map((response) => response.status).sort()).toEqual([
+        200, 409,
+      ]);
+      const winner = outcomes.find((response) => response.ok);
+      const loser = outcomes.find((response) => response.status === 409);
+      if (!winner || !loser) throw new Error("缺少首设胜负响应");
+      const { data } = teacherInfoOkSchema.parse(await winner.json());
+      expect(await loser.json()).toMatchObject({ error: "TEACHER_EXISTS" });
+      expect(loser.headers.getSetCookie()).toEqual([]);
+      expect(db.select().from(teachers).all()).toMatchObject([
+        { id: data.id, loginName: data.loginName, isAdmin: true },
+      ]);
+      expect(db.select().from(sessions).all()).toMatchObject([
+        {
+          id: extractSessionToken(winner),
+          subjectType: "teacher",
+          subjectId: data.id,
+        },
+      ]);
+      if (shape === "占位行") expect(data.id).toBe(TEST_TEACHER_ID);
+    },
+  );
+
+  it("其他教师已设密码时禁止占位行再次首设", async () => {
+    const { app, db } = makeApp();
+    await seedTeacher(
+      db,
+      { id: "teacher-configured", loginName: "existing-teacher" },
+      PASSWORD,
+    );
+    const response = await jsonRequestOn(app, "/api/public/teacher/setup", {
+      loginName: "another-teacher",
+      password: PASSWORD,
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "TEACHER_EXISTS" });
+    expect(
+      db.select().from(teachers).where(eq(teachers.id, TEST_TEACHER_ID)).get()
+        ?.passwordHash,
+    ).toBeNull();
+    expect(db.select().from(sessions).all()).toEqual([]);
+  });
+
   it("成功：200 + 教师信息（loginName/isAdmin）+ 写入会话 Cookie，响应不含密码哈希", async () => {
     const { app } = makeApp();
     const res = await jsonRequestOn(app, "/api/public/teacher/setup", {
@@ -272,6 +343,124 @@ describe("POST /api/public/teacher/setup", () => {
 });
 
 describe("POST /api/public/teacher/login（登录名 + 密码，D6）", () => {
+  it("实际 Node 监听器提供直连地址", async () => {
+    const { app, db } = makeApp();
+    const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
+    try {
+      await once(server, "listening");
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new Error("未取得测试监听端口");
+      const { port } = address;
+      const res = await fetch(
+        `http://127.0.0.1:${port}/api/public/teacher/login`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "198.51.100.6",
+          },
+          body: JSON.stringify({
+            loginName: LOGIN_NAME,
+            password: WRONG_PASSWORD,
+          }),
+        },
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({ error: "INVALID_CREDENTIALS" });
+      const failures = db
+        .select({ key: loginFailures.key })
+        .from(loginFailures)
+        .all();
+      expect(failures).toContainEqual({ key: "ip:127.0.0.1" });
+      expect(failures).not.toContainEqual({ key: "ip:198.51.100.6" });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      db.$client.close();
+    }
+  });
+
+  it.each([
+    {
+      label: "直连 IPv4 映射地址",
+      peer: "::ffff:192.0.2.11",
+      trusted: [],
+      forwarded: "198.51.100.2",
+      expected: "192.0.2.11",
+    },
+    {
+      label: "单层可信代理",
+      peer: "192.0.2.9",
+      trusted: ["192.0.2.9"],
+      forwarded: "198.51.100.3",
+      expected: "198.51.100.3",
+    },
+    {
+      label: "可信代理链",
+      peer: "192.0.2.9",
+      trusted: ["192.0.2.8/29"],
+      forwarded: "198.51.100.4, 203.0.113.4, 192.0.2.10",
+      expected: "203.0.113.4",
+    },
+    {
+      label: "仅配 IPv6 网段的 IPv4 对端",
+      peer: "192.0.2.9",
+      trusted: ["::/64"],
+      forwarded: "2001:db8:2::7",
+      expected: "192.0.2.9",
+    },
+    {
+      label: "可信 IPv6 代理",
+      peer: "2001:db8:1::3",
+      trusted: ["2001:db8:1::/64"],
+      forwarded: "2001:0db8:0002:0000:0000:0000:0000:0004",
+      expected: "2001:db8:2::4",
+    },
+    {
+      label: "代理地址缺失",
+      peer: "192.0.2.9",
+      trusted: ["192.0.2.9"],
+      forwarded: "invalid",
+      expected: "192.0.2.9",
+    },
+    {
+      label: "无连接地址",
+      peer: undefined,
+      trusted: ["192.0.2.9"],
+      forwarded: "198.51.100.5",
+      expected: "unknown",
+    },
+  ])(
+    "$label 按真实地址归入登录限流",
+    async ({ peer, trusted, forwarded, expected }) => {
+      const { app, db } = makeApp(undefined, trusted);
+      const res = await app.request(
+        "/api/public/teacher/login",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": forwarded,
+          },
+          body: JSON.stringify({
+            loginName: LOGIN_NAME,
+            password: WRONG_PASSWORD,
+          }),
+        },
+        nodePeerBindings(peer),
+      );
+      expect(res.status).toBe(401);
+      const keys = db
+        .select({ key: loginFailures.key })
+        .from(loginFailures)
+        .all()
+        .map(({ key }) => key);
+      expect(keys.sort()).toEqual([`ip:${expected}`, `name:${LOGIN_NAME}`]);
+    },
+  );
+
   it("未设置教师时登录返回 401 INVALID_CREDENTIALS（与密码错误同码，防枚举）", async () => {
     const { app } = makeApp();
     const res = await jsonRequestOn(app, "/api/public/teacher/login", {
@@ -341,13 +530,15 @@ describe("POST /api/public/teacher/login（登录名 + 密码，D6）", () => {
       app,
       "/api/public/teacher/login",
       { loginName: "不存在的老师", password: PASSWORD },
-      { "x-forwarded-for": "10.0.0.1" },
+      {},
+      "10.0.0.1",
     );
     const wrongPassword = await jsonRequestOn(
       app,
       "/api/public/teacher/login",
       { loginName: LOGIN_NAME, password: WRONG_PASSWORD },
-      { "x-forwarded-for": "10.0.0.2" },
+      {},
+      "10.0.0.2",
     );
 
     expect(wrongName.status).toBe(401);
@@ -456,7 +647,8 @@ describe("POST /api/public/teacher/login（登录名 + 密码，D6）", () => {
         app,
         "/api/public/teacher/login",
         { loginName: LOGIN_NAME, password: WRONG_PASSWORD },
-        { "x-forwarded-for": "10.1.0.1" },
+        {},
+        "10.1.0.1",
       );
       expect(res.status).toBe(401);
     }
@@ -464,7 +656,8 @@ describe("POST /api/public/teacher/login（登录名 + 密码，D6）", () => {
       app,
       "/api/public/teacher/login",
       { loginName: LOGIN_NAME, password: PASSWORD },
-      { "x-forwarded-for": "10.1.0.1" },
+      {},
+      "10.1.0.1",
     );
     expect(locked.status).toBe(429);
 
@@ -473,7 +666,8 @@ describe("POST /api/public/teacher/login（登录名 + 密码，D6）", () => {
       app,
       "/api/public/teacher/login",
       { loginName: "李老师", password: YI_PASSWORD },
-      { "x-forwarded-for": "10.1.0.2" },
+      {},
+      "10.1.0.2",
     );
     expect(yi.status).toBe(200);
     const yiBody = (await yi.json()) as {

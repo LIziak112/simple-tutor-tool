@@ -45,6 +45,23 @@ afterEach(() => {
 });
 
 describe("readZipEntries：与 archiver 往返", () => {
+  it("普通 ZIP 按条目数、单条目及累计展开预算读取", async () => {
+    const zip = await zipOf([
+      { name: "a.md", data: Buffer.from("abc") },
+      { name: "b.md", data: Buffer.from("abcd") },
+    ]);
+    expect(
+      readZipEntries(zip, {
+        maxEntries: 2,
+        maxEntryBytes: 4,
+        maxTotalBytes: 7,
+      }),
+    ).toHaveLength(2);
+    expect(() => readZipEntries(zip, { maxEntries: 1 })).toThrow(/条目数/);
+    expect(() => readZipEntries(zip, { maxEntryBytes: 3 })).toThrow(/b\.md/);
+    expect(() => readZipEntries(zip, { maxTotalBytes: 6 })).toThrow(/合计/);
+  });
+
   it("deflate（level 6）与 stored（level 0）都能原样读回", async () => {
     const files = [
       { name: "tutor-20261001-120000.db", data: Buffer.from([1, 2, 3, 4, 5]) },

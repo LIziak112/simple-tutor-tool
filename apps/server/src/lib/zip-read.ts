@@ -69,7 +69,10 @@ function u32(buffer: Buffer, offset: number): number {
 function findEocd(buffer: Buffer): number {
   const scanEnd = Math.max(0, buffer.length - EOCD_MIN_SIZE - MAX_COMMENT_SIZE);
   for (let i = buffer.length - EOCD_MIN_SIZE; i >= scanEnd; i -= 1) {
-    if (u32(buffer, i) === EOCD_SIGNATURE) {
+    if (
+      u32(buffer, i) === EOCD_SIGNATURE &&
+      i + EOCD_MIN_SIZE + u16(buffer, i + 20) === buffer.length
+    ) {
       return i;
     }
   }
@@ -105,171 +108,223 @@ export function isSafeZipEntryName(name: string): boolean {
   return true;
 }
 
-/**
- * 解析 zip 并解压全部文件条目。
- * - 目录条目（名以 '/' 结尾）跳过（目录在恢复落位时按需创建）；
- * - 逐条校验签名、方法、大小与 CRC32，任一不符抛 ZipReadError；
- * - 顺序按中央目录出现顺序（稳定）。
- */
-/**
- * Map 形态快捷读取（服务端测试断言与 e2e 共用——条目名 → 内容；
- * 与 readZipEntries 同一实现单点，CRC/ZIP64 校验齐全）。
- * 零外部依赖（仅 node:zlib）——e2e 跨包相对 import 的前提。
- */
+export class ZipBudgetError extends ZipReadError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZipBudgetError";
+  }
+}
+
+export interface ZipReadOptions {
+  readonly names?: ReadonlySet<string>;
+  readonly maxEntries?: number;
+  readonly maxEntryBytes?: number;
+  readonly maxTotalBytes?: number;
+}
+
+/** 经过结构与预算预检的条目，压缩数据引用输入的对应片段。 */
+export interface ZipEntryPlan {
+  readonly name: string;
+  readonly method: 0 | 8;
+  readonly compressed: Buffer;
+  readonly uncompressedSize: number;
+  readonly crcExpected: number;
+}
+
+/** Map 形态快捷读取，服务端测试与 E2E 共用。 */
 export function readZipEntriesMap(buffer: Buffer): Map<string, Buffer> {
   return new Map(
-    readZipEntries(buffer).map((entry) => [entry.name, entry.data] as const),
+    readZipEntries(buffer).map((entry) => [entry.name, entry.data]),
   );
 }
 
-/** EOCD → 中央目录起点与条目数（ZIP64 / 空包在此拒绝；readZipEntries 与 listZipEntryNames 共用） */
-function centralDirectoryOf(buffer: Buffer): {
-  entryCount: number;
-  centralOffset: number;
-} {
+function centralDirectoryOf(buffer: Buffer) {
   const eocd = findEocd(buffer);
   const entryCount = u16(buffer, eocd + 10);
+  const centralSize = u32(buffer, eocd + 12);
   const centralOffset = u32(buffer, eocd + 16);
-
-  // ZIP64 哨兵值：条目数或偏移占满 16/32 位说明是 ZIP64 打包
-  if (entryCount === 0xffff || centralOffset === 0xffffffff) {
+  if (
+    entryCount === 0xffff ||
+    centralOffset === 0xffffffff ||
+    centralSize === 0xffffffff
+  ) {
     throw new ZipReadError("不支持 ZIP64 格式的压缩包");
   }
-  if (entryCount === 0) {
-    throw new ZipReadError("压缩包为空");
+  if (entryCount === 0) throw new ZipReadError("压缩包为空");
+  if (
+    u16(buffer, eocd + 4) !== 0 ||
+    u16(buffer, eocd + 6) !== 0 ||
+    u16(buffer, eocd + 8) !== entryCount
+  ) {
+    throw new ZipReadError("不支持分卷的压缩包");
   }
-  return { entryCount, centralOffset };
+  const centralEnd = centralOffset + centralSize;
+  if (centralEnd > eocd) throw new ZipReadError("压缩包损坏（中央目录越界）");
+  return { entryCount, centralOffset, centralEnd };
 }
 
-/**
- * 只列中央目录里的条目名（含目录条目，按出现顺序），不解压、不校验 CRC、
- * 不做条目名安全校验——用于「这个 zip 是不是某种 Office 包」一类的结构判断。
- * 结构不符（非 zip / 截断 / 签名错 / ZIP64）抛 ZipReadError。
- */
-export function listZipEntryNames(buffer: Buffer): string[] {
-  const { entryCount, centralOffset } = centralDirectoryOf(buffer);
-  const names: string[] = [];
-  let cursor = centralOffset;
-  for (let index = 0; index < entryCount; index += 1) {
-    if (u32(buffer, cursor) !== CENTRAL_SIGNATURE) {
-      throw new ZipReadError("压缩包损坏（中央目录签名不符）");
-    }
-    const nameLength = u16(buffer, cursor + 28);
-    const extraLength = u16(buffer, cursor + 30);
-    const commentLength = u16(buffer, cursor + 32);
-    if (cursor + 46 + nameLength > buffer.length) {
-      throw new ZipReadError("压缩包损坏（读取越界）");
-    }
-    names.push(
-      buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8"),
-    );
-    cursor += 46 + nameLength + extraLength + commentLength;
-  }
-  return names;
-}
-
-export function readZipEntries(
+function* centralEntries(
   buffer: Buffer,
-  selection?: {
-    readonly names: ReadonlySet<string>;
-    readonly maxEntryBytes: number;
-  },
-): ZipEntry[] {
-  const { entryCount, centralOffset } = centralDirectoryOf(buffer);
-
-  const entries: ZipEntry[] = [];
-  let cursor = centralOffset;
-  for (let index = 0; index < entryCount; index += 1) {
-    if (u32(buffer, cursor) !== CENTRAL_SIGNATURE) {
+  directory: ReturnType<typeof centralDirectoryOf>,
+) {
+  let offset = directory.centralOffset;
+  for (let index = 0; index < directory.entryCount; index += 1) {
+    if (
+      offset + 46 > directory.centralEnd ||
+      u32(buffer, offset) !== CENTRAL_SIGNATURE
+    ) {
       throw new ZipReadError("压缩包损坏（中央目录签名不符）");
     }
-    const flags = u16(buffer, cursor + 8);
-    const method = u16(buffer, cursor + 10);
-    const crcExpected = u32(buffer, cursor + 16);
-    const compressedSize = u32(buffer, cursor + 20);
-    const uncompressedSize = u32(buffer, cursor + 24);
-    const nameLength = u16(buffer, cursor + 28);
-    const extraLength = u16(buffer, cursor + 30);
-    const commentLength = u16(buffer, cursor + 32);
-    const localOffset = u32(buffer, cursor + 42);
-    const name = buffer
-      .subarray(cursor + 46, cursor + 46 + nameLength)
-      .toString("utf8");
+    const nameEnd = offset + 46 + u16(buffer, offset + 28);
+    const next = nameEnd + u16(buffer, offset + 30) + u16(buffer, offset + 32);
+    if (next > directory.centralEnd)
+      throw new ZipReadError("压缩包损坏（读取越界）");
+    yield {
+      name: buffer.subarray(offset + 46, nameEnd).toString("utf8"),
+      offset,
+    };
+    offset = next;
+  }
+}
 
-    if (selection !== undefined && !selection.names.has(name)) {
-      cursor += 46 + nameLength + extraLength + commentLength;
-      continue;
-    }
-    if (selection !== undefined && uncompressedSize > selection.maxEntryBytes) {
-      throw new ZipReadError(`压缩包条目解压后超限：${name}`);
-    }
+/** 只列中央目录中的条目名，供探测 Office 包结构。 */
+export function listZipEntryNames(buffer: Buffer): string[] {
+  return Array.from(
+    centralEntries(buffer, centralDirectoryOf(buffer)),
+    (entry) => entry.name,
+  );
+}
 
-    // 加密位（bit 0）：不是本系统备份的形态，明确拒绝
-    if ((flags & 0x0001) !== 0) {
-      throw new ZipReadError("不支持加密的压缩包");
-    }
+function formatBudget(bytes: number): string {
+  const mib = 1024 * 1024;
+  return bytes % mib === 0 ? `${bytes / mib} MB` : `${bytes} 字节`;
+}
 
-    // 目录条目：跳过（内容条目自带完整路径）
-    if (name.endsWith("/")) {
-      cursor += 46 + nameLength + extraLength + commentLength;
-      continue;
-    }
-    if (!isSafeZipEntryName(name)) {
+function entryPlanOf(
+  buffer: Buffer,
+  offset: number,
+  centralOffset: number,
+  name: string,
+): ZipEntryPlan {
+  const flags = u16(buffer, offset + 8);
+  const method = u16(buffer, offset + 10);
+  const crcExpected = u32(buffer, offset + 16);
+  const compressedSize = u32(buffer, offset + 20);
+  const uncompressedSize = u32(buffer, offset + 24);
+  const localOffset = u32(buffer, offset + 42);
+  if ((flags & 1) !== 0) throw new ZipReadError("不支持加密的压缩包");
+  if (method !== 0 && method !== 8) {
+    throw new ZipReadError(
+      `不支持的压缩方法（条目 ${name}，方法码 ${method}）`,
+    );
+  }
+  if (method === 0 && compressedSize !== uncompressedSize) {
+    throw new ZipReadError(`压缩包损坏（条目大小不符：${name}）`);
+  }
+  if (
+    localOffset + 30 > centralOffset ||
+    u32(buffer, localOffset) !== LOCAL_SIGNATURE
+  ) {
+    throw new ZipReadError("压缩包损坏（本地文件头签名不符）");
+  }
+  const localNameEnd = localOffset + 30 + u16(buffer, localOffset + 26);
+  const dataStart = localNameEnd + u16(buffer, localOffset + 28);
+  const dataEnd = dataStart + compressedSize;
+  if (
+    dataEnd > centralOffset ||
+    u16(buffer, localOffset + 8) !== method ||
+    (u16(buffer, localOffset + 6) & 1) !== 0 ||
+    buffer.subarray(localOffset + 30, localNameEnd).toString("utf8") !== name
+  ) {
+    throw new ZipReadError(`压缩包损坏（条目位置不符：${name}）`);
+  }
+  return {
+    name,
+    method,
+    compressed: buffer.subarray(dataStart, dataEnd),
+    uncompressedSize,
+    crcExpected,
+  };
+}
+
+/** 先完成整个目录的路径、结构与展开预算校验，再允许解压任一条目。 */
+export function planZipEntries(
+  buffer: Buffer,
+  options: ZipReadOptions = {},
+): ZipEntryPlan[] {
+  const directory = centralDirectoryOf(buffer);
+  if (
+    options.maxEntries !== undefined &&
+    directory.entryCount > options.maxEntries
+  ) {
+    throw new ZipBudgetError(
+      `压缩包条目数超过上限（最多 ${options.maxEntries} 个，当前 ${directory.entryCount} 个）`,
+    );
+  }
+  const entries: ZipEntryPlan[] = [];
+  const names = new Set<string>();
+  let total = 0;
+  for (const { name, offset } of centralEntries(buffer, directory)) {
+    if (options.names && !options.names.has(name)) continue;
+    const isDirectory = name.endsWith("/");
+    if (!isSafeZipEntryName(isDirectory ? name.slice(0, -1) : name)) {
       throw new ZipReadError(`压缩包含不安全的条目名：${name}`);
     }
-
-    // 本地文件头：只取名字/额外段长度以定位数据起点（大小以中央目录为准）
-    if (u32(buffer, localOffset) !== LOCAL_SIGNATURE) {
-      throw new ZipReadError("压缩包损坏（本地文件头签名不符）");
-    }
-    const localNameLength = u16(buffer, localOffset + 26);
-    const localExtraLength = u16(buffer, localOffset + 28);
-    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    if (isDirectory) continue;
+    if (names.has(name)) throw new ZipReadError(`压缩包包含重复条目：${name}`);
+    names.add(name);
+    const entry = entryPlanOf(buffer, offset, directory.centralOffset, name);
     if (
-      dataStart + compressedSize > centralOffset ||
-      buffer
-        .subarray(localOffset + 30, localOffset + 30 + localNameLength)
-        .toString("utf8") !== name
+      options.maxEntryBytes !== undefined &&
+      entry.uncompressedSize > options.maxEntryBytes
     ) {
-      throw new ZipReadError(`压缩包损坏（条目位置不符：${name}）`);
-    }
-    const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
-
-    let data: Buffer;
-    if (method === 0) {
-      // stored：原样字节
-      if (compressedSize !== uncompressedSize) {
-        throw new ZipReadError(`压缩包损坏（条目大小不符：${name}）`);
-      }
-      data = Buffer.from(compressed);
-    } else if (method === 8) {
-      // deflate：raw inflate（zip 的 deflate 不带 zlib 头）
-      try {
-        data = inflateRawSync(compressed, {
-          maxOutputLength: Math.max(1, uncompressedSize),
-        });
-      } catch {
-        throw new ZipReadError(`压缩包损坏（条目解压失败：${name}）`);
-      }
-    } else {
-      throw new ZipReadError(
-        `不支持的压缩方法（条目 ${name}，方法码 ${method}）`,
+      throw new ZipBudgetError(
+        `压缩包条目「${name}」展开后超过 ${formatBudget(options.maxEntryBytes)} 上限`,
       );
     }
-
-    if (data.length !== uncompressedSize) {
-      throw new ZipReadError(`压缩包损坏（条目大小不符：${name}）`);
+    total += entry.uncompressedSize;
+    if (options.maxTotalBytes !== undefined && total > options.maxTotalBytes) {
+      throw new ZipBudgetError(
+        `压缩包解压后合计超过 ${formatBudget(options.maxTotalBytes)} 上限`,
+      );
     }
-    if (zlibCrc32(data) !== crcExpected) {
-      throw new ZipReadError(`压缩包损坏（条目校验失败：${name}）`);
-    }
-
-    entries.push({ name, data });
-    cursor += 46 + nameLength + extraLength + commentLength;
+    entries.push(entry);
   }
-
-  if (entries.length === 0) {
-    throw new ZipReadError("压缩包内没有文件");
-  }
+  if (entries.length === 0) throw new ZipReadError("压缩包内没有文件");
   return entries;
+}
+
+export function assertZipEntryIntegrity(
+  entry: ZipEntryPlan,
+  bytes: number,
+  crc: number,
+): void {
+  if (bytes !== entry.uncompressedSize) {
+    throw new ZipReadError(`压缩包损坏（条目大小不符：${entry.name}）`);
+  }
+  if (crc !== entry.crcExpected) {
+    throw new ZipReadError(`压缩包损坏（条目校验失败：${entry.name}）`);
+  }
+}
+
+/** 小体积调用方按中央目录顺序完整读取，逐条校验实际展开大小与 CRC32。 */
+export function readZipEntries(
+  buffer: Buffer,
+  options?: ZipReadOptions,
+): ZipEntry[] {
+  return planZipEntries(buffer, options).map((entry) => {
+    let data: Buffer;
+    try {
+      data =
+        entry.method === 0
+          ? Buffer.from(entry.compressed)
+          : inflateRawSync(entry.compressed, {
+              maxOutputLength: Math.max(1, entry.uncompressedSize),
+            });
+    } catch {
+      throw new ZipReadError(`压缩包损坏（条目解压失败：${entry.name}）`);
+    }
+    assertZipEntryIntegrity(entry, data.byteLength, zlibCrc32(data));
+    return { name: entry.name, data };
+  });
 }

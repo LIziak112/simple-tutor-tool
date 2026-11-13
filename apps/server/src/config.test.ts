@@ -10,7 +10,9 @@ describe("readConfig：环境变量读取（§0.3 约定）", () => {
     expect(config.port).toBe(8787);
     expect(config.dataDir).toBe(resolve("./data"));
     expect(config.publicUrl).toBe("http://localhost:8787");
+    expect(config.trustedProxies).toEqual([]);
     expect(config.isProduction).toBe(false);
+    expect(config.backupOperatorId).toBeUndefined();
   });
 
   it("环境变量可覆盖，DATA_DIR 转绝对路径、PUBLIC_URL 去尾部斜杠、NODE_ENV=production 生效", () => {
@@ -18,11 +20,13 @@ describe("readConfig：环境变量读取（§0.3 约定）", () => {
       PORT: "9000",
       DATA_DIR: "some-data",
       PUBLIC_URL: "https://tutor.example.com/",
+      TRUSTED_PROXIES: " 192.0.2.9, 2001:db8::/64 ",
       NODE_ENV: "production",
     });
     expect(config.port).toBe(9000);
     expect(config.dataDir).toBe(resolve("some-data"));
     expect(config.publicUrl).toBe("https://tutor.example.com");
+    expect(config.trustedProxies).toEqual(["192.0.2.9", "2001:db8::/64"]);
     expect(config.isProduction).toBe(true);
   });
 
@@ -30,6 +34,16 @@ describe("readConfig：环境变量读取（§0.3 约定）", () => {
     expect(() => readConfig({ PORT: "abc" })).toThrow(/PORT/);
     expect(() => readConfig({ PORT: "0" })).toThrow(/PORT/);
     expect(() => readConfig({ PORT: "70000" })).toThrow(/PORT/);
+  });
+
+  it("整站备份仅接受显式配置的操作员 ID，空白视为未配置", () => {
+    expect(
+      readConfig({ INSTANCE_BACKUP_OPERATOR_ID: "  " }).backupOperatorId,
+    ).toBeUndefined();
+    expect(
+      readConfig({ INSTANCE_BACKUP_OPERATOR_ID: " operator-id " })
+        .backupOperatorId,
+    ).toBe("operator-id");
   });
 });
 

@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   AI_REPLY_CHECK_VERSION,
   AI_REPLY_FORMAT_INSTRUCTIONS,
@@ -34,6 +34,7 @@ import { submitRubricOpinion } from "../services/rubric-review-service.ts";
 import { startWrongPractice } from "../services/wrong-practice.ts";
 import { listWrongQuestions } from "../services/wrong-questions.ts";
 import { registerStudentMemoTools } from "./student-memo-tools";
+import { AllowListMcpServer } from "./tool-allow-list";
 import { guard, jsonContent } from "./tool-result";
 
 /**
@@ -138,11 +139,14 @@ export interface StudentMcpServerDeps {
  * 创建一台绑定单学生的 MCP 服务器实例（15 工具，见 STUDENT_MCP_TOOL_NAMES）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
-export function createStudentMcpServer(deps: StudentMcpServerDeps): McpServer {
-  const server = new McpServer({
-    name: STUDENT_MCP_SERVER_NAME,
-    version: STUDENT_MCP_SERVER_VERSION,
-  });
+export function createStudentMcpServer(
+  deps: StudentMcpServerDeps & { readonly isAuthorized: () => boolean },
+): McpServer {
+  const server = new AllowListMcpServer(
+    { name: STUDENT_MCP_SERVER_NAME, version: STUDENT_MCP_SERVER_VERSION },
+    STUDENT_MCP_TOOL_NAMES,
+    deps.isAuthorized,
+  );
   registerStudentTools(server, deps);
   return server;
 }

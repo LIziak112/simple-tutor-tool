@@ -267,6 +267,10 @@ export function useDraftSync(
         // 锁屏/切走前：先保证本地写盘，再尽力同步一轮（请求可能被浏览器截断）
         void draftStore.flush(attemptIdRef.current);
         void syncNow();
+      } else if (readyRef.current) {
+        void draftStore.refreshShared(attemptIdRef.current).catch(() => {
+          setStatus({ state: "offline" });
+        });
       }
     };
     const onOnline = () => {

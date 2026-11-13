@@ -15,6 +15,7 @@ import {
   attemptContextSnapshots,
   attempts,
   responses,
+  students,
   teachers,
 } from "../../db/schema.ts";
 import {
@@ -27,7 +28,10 @@ import {
   insertResponse,
 } from "../../test/ai-companion-fixtures.ts";
 import { makeNotePng, makeStudent } from "../../test/note-fixtures.ts";
-import { createStudentAiConnection } from "./connection-service.ts";
+import {
+  createStudentAiConnection,
+  deleteStudentAiConnection,
+} from "./connection-service.ts";
 import {
   type GuardedResponse,
   OutboundTargetError,
@@ -120,8 +124,8 @@ function addInappConnection(
   db: Db,
   studentId: string,
   opts?: { imageCapability?: "unknown" | "supported" | "unsupported" },
-): void {
-  createStudentAiConnection(db, {
+): string {
+  return createStudentAiConnection(db, {
     studentId,
     rootSecret: ROOT_SECRET,
     request: {
@@ -134,7 +138,7 @@ function addInappConnection(
         imageCapability: opts.imageCapability,
       }),
     },
-  });
+  }).connection.id;
 }
 
 function taskStatus(db: Db, taskId: string): string {
@@ -680,6 +684,40 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
 // ---------- 必测②退避与重试 ----------
 
 describe("SAI-17 worker 退避与重试", () => {
+  it.each([429, 200])("撤销在途连接后处理供应商响应 %i", async (status) => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const world = setupWorld(db);
+    const connectionId = addInappConnection(db, world.studentId);
+    const taskId = mkInappTask(db, world);
+    let hits = 0;
+    const provider = await startFakeProvider((respond) => {
+      if (++hits === 1) {
+        deleteStudentAiConnection(db, {
+          studentId: world.studentId,
+          connectionId,
+        });
+      }
+      if (status === 429) respond(status, { "retry-after": "1" }, "{}");
+      else respondJson(respond);
+    });
+    try {
+      const result = await runStudentAiDispatchOnce(db, {
+        dataDir,
+        rootSecret: ROOT_SECRET,
+        transport: provider.transport,
+        now: () => new Date(T0 + 1000),
+        retryWaitMaxMs: 1,
+      });
+      expect(result.paused).toBe(1);
+      expect(taskStatus(db, taskId)).toBe("paused");
+      expect(provider.requests).toHaveLength(1);
+      expect(assistantReplies(db, taskId)).toEqual([]);
+    } finally {
+      await provider.close();
+    }
+  });
+
   it("429→按 Retry-After 指引等待→重试成功（replied，两次出站）", async () => {
     const db = createTestDb();
     const dataDir = createTestDir();
@@ -992,6 +1030,43 @@ describe("SAI-17 worker 生命周期与恢复", () => {
       await provider.close();
     }
   });
+
+  it.each(["归档学生", "停用教师"] as const)(
+    "%s 后页内任务在派发前暂停",
+    async (reason) => {
+      const db = createTestDb();
+      const dataDir = createTestDir();
+      const world = setupWorld(db);
+      addInappConnection(db, world.studentId);
+      const taskId = mkInappTask(db, world);
+      const now = new Date(T0 + 600).toISOString();
+      if (reason === "归档学生") {
+        db.update(students)
+          .set({ archivedAt: now })
+          .where(eq(students.id, world.studentId))
+          .run();
+      } else {
+        db.update(teachers)
+          .set({ disabledAt: now })
+          .where(eq(teachers.id, TEST_TEACHER_ID))
+          .run();
+      }
+      const provider = await startFakeProvider(respondJson);
+      try {
+        const result = await runStudentAiDispatchOnce(db, {
+          dataDir,
+          rootSecret: ROOT_SECRET,
+          transport: provider.transport,
+          now: () => new Date(T0 + 1000),
+        });
+        expect(result.paused).toBe(1);
+        expect(taskStatus(db, taskId)).toBe("paused");
+        expect(provider.requests).toHaveLength(0);
+      } finally {
+        await provider.close();
+      }
+    },
+  );
 
   it("教师改为 post_submit_only：派发前拦截转 paused 零出站；恢复开放+resume 后正常派发", async () => {
     const db = createTestDb();

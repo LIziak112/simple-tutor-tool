@@ -82,6 +82,101 @@ beforeEach(() => {
   installDraftBackend(backend);
 });
 
+describe("多个页面共享本机草稿", () => {
+  let sharedBackend: KVBackend;
+  let peerIndex = 0;
+  beforeEach(() => {
+    sharedBackend = memoryBackend();
+    installDraftBackend(sharedBackend);
+  });
+
+  async function openPeer() {
+    const path = `./draft-store.ts?tab=${peerIndex++}`;
+    const peer: typeof import("./draft-store") = await import(
+      /* @vite-ignore */ path
+    );
+    peer.installDraftBackend(sharedBackend);
+    return peer.draftStore;
+  }
+
+  it.each([true, false])(
+    "不同题按任意顺序落盘均保留（先写本页：%s）",
+    async (first) => {
+      const peer = await openPeer();
+      expect(await draftStore.loadDraft("shared")).toBeNull();
+      expect(await peer.loadDraft("shared")).toBeNull();
+      draftStore.saveAnswer("shared", "q1", judge);
+      draftStore.saveInk("shared", "q1", doc(1));
+      peer.saveAnswer("shared", "q2", fill);
+      peer.saveInk("shared", "q2", doc(2));
+      const tabs = first ? [draftStore, peer] : [peer, draftStore];
+      await Promise.all(tabs.map((tab) => tab.flush("shared")));
+      const reopened = await openPeer();
+      expect(await reopened.loadDraft("shared")).toMatchObject({
+        answers: { q1: judge, q2: fill },
+        inks: { q1: doc(1), q2: doc(2) },
+      });
+    },
+  );
+
+  it("交卷清理保留另一页面未同步的答案和材料圈画", async () => {
+    const peer = await openPeer();
+    draftStore.saveAnswer("shared", "q1", judge);
+    await draftStore.markAnswerSynced("shared", "q1", judge, 1);
+    await peer.loadDraft("shared");
+    peer.saveAnswer("shared", "q2", fill);
+    peer.saveMaterialInk("shared", "m", doc(2));
+    peer.saveMaterialInkBase("shared", "m", { cssWidth: 750 });
+    await peer.flush("shared");
+    await draftStore.clearDraft("shared");
+    const reopened = await openPeer();
+    expect(await reopened.loadDraft("shared")).toMatchObject({
+      answers: { q2: fill },
+      materialInks: { m: doc(2) },
+      materialInkBases: { m: { cssWidth: 750 } },
+    });
+    expect((await reopened.loadDraft("shared"))?.answers.q1).toBeUndefined();
+  });
+
+  it("同一题的两个离线版本持久保留，交卷清理也保留待裁决稿", async () => {
+    const peer = await openPeer();
+    await draftStore.loadDraft("shared");
+    await peer.loadDraft("shared");
+    draftStore.saveAnswer("shared", "q1", judge);
+    peer.saveAnswer("shared", "q1", judgeFalse);
+    await draftStore.flush("shared");
+    await peer.flush("shared");
+    await draftStore.clearDraft("shared");
+    const reopened = await openPeer();
+    expect(await reopened.loadDraft("shared")).toMatchObject({
+      answers: { q1: judge },
+      localConflicts: [{ kind: "answer", key: "q1", value: judgeFalse }],
+    });
+  });
+
+  it("另一页先落笔时，当前编辑器写入不同题不会改写已打开笔迹的基线", async () => {
+    draftStore.saveInk("shared", "ink", doc(1));
+    await draftStore.flush("shared");
+    const peer = await openPeer();
+    await peer.loadDraft("shared");
+    peer.saveInk("shared", "ink", doc(2));
+    await peer.flush("shared");
+    draftStore.saveAnswer("shared", "q1", judge);
+    await draftStore.flush("shared");
+    draftStore.saveInk("shared", "ink", doc(3));
+    await draftStore.flush("shared");
+    draftStore.saveInk("shared", "ink", doc(4));
+    await draftStore.flush("shared");
+    const reopened = await openPeer();
+    expect(await reopened.loadDraft("shared")).toMatchObject({
+      inks: { ink: doc(2) },
+      localConflicts: expect.arrayContaining([
+        { kind: "ink", key: "ink", value: doc(4) },
+      ]),
+    });
+  });
+});
+
 describe("写盘防抖", () => {
   it("本机写失败可观察，不把内存稿冒称落盘；成功重试清错误", async () => {
     const set = vi.fn<KVBackend["set"]>(async () => {
@@ -146,8 +241,9 @@ describe("写盘防抖", () => {
 });
 
 describe("clearDraft", () => {
-  it("交卷后清除：内存与底层都删；防抖未触发的落盘不会复活记录", async () => {
+  it("交卷后清除已同步答案；在途落盘不会复活记录", async () => {
     draftStore.saveAnswer("att-1", "q1", judge);
+    await draftStore.markAnswerSynced("att-1", "q1", judge);
     await draftStore.clearDraft("att-1");
     await vi.advanceTimersByTimeAsync(DRAFT_WRITE_DEBOUNCE_MS);
     expect(await draftStore.loadDraft("att-1")).toBeNull();
@@ -206,6 +302,37 @@ describe("同步指纹", () => {
 });
 
 describe("applyServerDrafts（进入答题页合并）", () => {
+  it("迟到的提交冲突不得覆盖已经显示的较新云端版本", async () => {
+    await draftStore.applyServerDrafts(
+      "late-conflict",
+      { q1: judge },
+      { q1: 1 },
+    );
+    draftStore.saveAnswer("late-conflict", "q1", judgeFalse);
+    draftStore.setAnswerConflict("late-conflict", "q1", {
+      revision: 3,
+      draft: fill,
+    });
+    draftStore.setAnswerConflict("late-conflict", "q1", {
+      revision: 2,
+      draft: judge,
+    });
+    expect(
+      (await draftStore.loadDraft("late-conflict"))?.answerConflicts?.q1,
+    ).toEqual({
+      revision: 3,
+      draft: fill,
+    });
+    await draftStore.resolveAnswerConflict("late-conflict", "q1", "cloud");
+    draftStore.setAnswerConflict("late-conflict", "q1", {
+      revision: 2,
+      draft: judge,
+    });
+    expect(
+      (await draftStore.loadDraft("late-conflict"))?.answerConflicts?.q1,
+    ).toBeUndefined();
+  });
+
   it("迟到的旧云端读取不得覆盖已确认的新答案或倒退版本", async () => {
     await draftStore.applyServerDrafts("late-read", { q1: judge }, { q1: 1 });
     draftStore.saveAnswer("late-read", "q1", judgeFalse);

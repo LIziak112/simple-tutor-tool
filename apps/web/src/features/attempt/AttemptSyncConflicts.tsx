@@ -13,6 +13,7 @@ import {
   resolveNoteConflictKeepLocal,
 } from "@/features/notes/note-sync";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
+import { LocalDraftConflicts } from "./LocalDraftConflicts";
 import { subscribeAttemptSaveChanges } from "./use-attempt-save-status";
 import type { DraftSyncApi } from "./use-draft-sync";
 
@@ -62,7 +63,15 @@ export function AttemptSyncConflicts({
     return JSON.stringify(rows);
   });
   const conflicts: Conflict[] = JSON.parse(snapshot);
-  if (!conflicts.length) return null;
+  const local = (
+    <LocalDraftConflicts
+      attemptId={attemptId}
+      questionIds={questionIds}
+      beforeResolve={beforeResolve}
+      afterResolve={sync.syncNow}
+    />
+  );
+  if (!conflicts.length) return local;
   const resolve = async (row: Conflict, keep: "local" | "cloud") => {
     setBusy(true);
     setError(null);
@@ -105,44 +114,47 @@ export function AttemptSyncConflicts({
     }
   };
   return (
-    <section
-      aria-label="同步冲突"
-      className="rounded-lg border border-border bg-card p-4"
-    >
-      <p className="text-sm">
-        以下内容在当前设备与云端都有修改。请选择本题要保留的版本，其它题目会自动合并。
-      </p>
-      {conflicts.map((row) => (
-        <div
-          key={`${row.questionId}:${row.kind}`}
-          className="mt-3 flex flex-wrap items-center gap-2"
-        >
-          <span>
-            第 {row.questionNo} 题 · {row.kind}
-          </span>
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => void resolve(row, "local")}
-          >
-            {row.kind === "标画" && row.layoutConflict
-              ? "保留本机（不再同步）"
-              : "保留当前设备版本"}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => void resolve(row, "cloud")}
-          >
-            采用云端版本
-          </Button>
-        </div>
-      ))}
-      {error && (
-        <p role="alert" className="mt-2 text-sm text-destructive">
-          {error}
+    <>
+      {local}
+      <section
+        aria-label="同步冲突"
+        className="rounded-lg border border-border bg-card p-4"
+      >
+        <p className="text-sm">
+          以下内容在当前设备与云端都有修改。请选择本题要保留的版本，其它题目会自动合并。
         </p>
-      )}
-    </section>
+        {conflicts.map((row) => (
+          <div
+            key={`${row.questionId}:${row.kind}`}
+            className="mt-3 flex flex-wrap items-center gap-2"
+          >
+            <span>
+              第 {row.questionNo} 题 · {row.kind}
+            </span>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void resolve(row, "local")}
+            >
+              {row.kind === "标画" && row.layoutConflict
+                ? "保留本机（不再同步）"
+                : "保留当前设备版本"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void resolve(row, "cloud")}
+            >
+              采用云端版本
+            </Button>
+          </div>
+        ))}
+        {error && (
+          <p role="alert" className="mt-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+      </section>
+    </>
   );
 }

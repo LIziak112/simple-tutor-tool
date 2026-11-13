@@ -5,7 +5,9 @@ import { PendingReleaseBanner } from "./PendingReleaseBanner";
 
 describe("PendingReleaseBanner", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({
+      toFake: ["Date", "performance", "setInterval", "clearInterval"],
+    });
   });
 
   afterEach(() => {
@@ -55,6 +57,7 @@ describe("PendingReleaseBanner", () => {
     render(
       <PendingReleaseBanner
         dueAt={dueAt}
+        serverNow={now.toISOString()}
         submittedAt="2026-10-21T08:30:00.000Z"
         summary={{ answered: 6, total: 6 }}
         onRefresh={onRefresh}
@@ -73,9 +76,7 @@ describe("PendingReleaseBanner", () => {
     });
 
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(
-      screen.getByText("截止时间已到，正在加载批改结果…"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("待服务器确认公布时间。")).toBeInTheDocument();
   });
 
   it("到期态提供「立即刷新」手动重试（自动刷新后仍未公布时不卡死）", () => {
@@ -88,6 +89,7 @@ describe("PendingReleaseBanner", () => {
     render(
       <PendingReleaseBanner
         dueAt={dueAt}
+        serverNow={now.toISOString()}
         submittedAt="2026-10-21T08:30:00.000Z"
         summary={{ answered: 6, total: 6 }}
         onRefresh={onRefresh}
