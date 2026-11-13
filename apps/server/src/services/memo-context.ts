@@ -1,13 +1,14 @@
+import { contextFromMemoAnchor } from "./learning-context-projection";
+
+export { contextFromMemoAnchor } from "./learning-context-projection";
+
 import type { LearningContext, MemoAnchor } from "@tutor/contract";
-import { learningContextSchema, MEMO_ANCHOR_LABEL_MAX } from "@tutor/contract";
+import { MEMO_ANCHOR_LABEL_MAX } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { attempts, courses, questions, students, units } from "../db/schema";
+import { courses, questions, students, units } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { frozenRowsInDisplayOrder } from "./attempt-service";
 import { requireVisibleCourseUnit } from "./course-service";
-import { assertDraftCourseVisible } from "./practice-workflow-wiring";
-import { requireVisibleStudentLecture } from "./student-course-service";
 
 function notFound(): never {
   throw new HttpError(
@@ -50,140 +51,17 @@ export function memoAnchorFromContext(
   return { kind: "none" };
 }
 
-/** 从本人可见的旧锚恢复稳定坐标。历史来源缺失时调用方保留 NULL，不猜题目版本。 */
-export function contextFromMemoAnchor(
-  db: Db,
-  studentId: string,
-  anchor: MemoAnchor,
-  now = new Date(),
-  historical = false,
-): LearningContext | null {
-  if (anchor.kind === "none") return null;
-  if (anchor.kind === "lecture") {
-    const visible = requireVisibleStudentLecture(
-      db,
-      studentId,
-      anchor.lectureId,
-      undefined,
-      now,
-    );
-    return learningContextSchema.parse({
-      schemaVersion: 1,
-      content: {
-        courseId: visible.course.id,
-        unitId: null,
-        lectureId: anchor.lectureId,
-        sectionId: anchor.sectionId,
-        questionId: null,
-        titles: {
-          course: visible.course.title,
-          unit: null,
-          lecture: visible.lecture.title,
-        },
-      },
-      session: null,
-      view: null,
-      deviceId: null,
-    });
-  }
-  const attempt = db
-    .select()
-    .from(attempts)
-    .where(
-      and(eq(attempts.id, anchor.attemptId), eq(attempts.studentId, studentId)),
-    )
-    .get();
-  if (attempt === undefined) return notFound();
-  if (!historical) assertDraftCourseVisible(db, studentId, attempt);
-  const entries = frozenRowsInDisplayOrder(db, attempt);
-  const index = entries.findIndex(
-    (entry) => entry.row.questionId === anchor.questionId,
+function sameFrozenCoordinates(
+  context: LearningContext | null,
+  expected: NonNullable<LearningContext["session"]>,
+): boolean {
+  return (
+    context?.session != null &&
+    context.session.attemptId === expected.attemptId &&
+    context.session.questionRevisionId === expected.questionRevisionId &&
+    context.session.questionNo === expected.questionNo &&
+    context.session.questionCount === expected.questionCount
   );
-  const entry = entries[index];
-  if (entry === undefined) return notFound();
-  const teacherId = db
-    .select({ teacherId: students.teacherId })
-    .from(students)
-    .where(eq(students.id, studentId))
-    .get()?.teacherId;
-  if (teacherId == null) return notFound();
-  const question = db
-    .select({ unitId: questions.unitId })
-    .from(questions)
-    .where(
-      and(
-        eq(questions.id, anchor.questionId),
-        eq(questions.teacherId, teacherId),
-      ),
-    )
-    .get();
-  const unitId =
-    entry.unitId ??
-    entry.row.unitId ??
-    attempt.unitId ??
-    question?.unitId ??
-    null;
-  const unit =
-    unitId === null
-      ? undefined
-      : db
-          .select()
-          .from(units)
-          .where(and(eq(units.id, unitId), eq(units.teacherId, teacherId)))
-          .get();
-  const course =
-    attempt.courseId === null
-      ? undefined
-      : db
-          .select()
-          .from(courses)
-          .where(
-            and(
-              eq(courses.id, attempt.courseId),
-              eq(courses.teacherId, teacherId),
-            ),
-          )
-          .get();
-  const inferredLectureId = attempt.lectureId ?? unit?.lectureId ?? null;
-  let lecture: { id: string; title: string } | null = null;
-  if (inferredLectureId !== null) {
-    try {
-      lecture = requireVisibleStudentLecture(
-        db,
-        studentId,
-        inferredLectureId,
-        undefined,
-        now,
-      ).lecture;
-    } catch (error) {
-      // 推断来源不可见时不暴露其存在，也不阻断本人随笔保存。
-      if (!(error instanceof HttpError)) throw error;
-    }
-  }
-  return learningContextSchema.parse({
-    schemaVersion: 1,
-    content: {
-      courseId: attempt.courseId,
-      unitId,
-      lectureId: lecture?.id ?? null,
-      sectionId: null,
-      questionId: anchor.questionId,
-      titles: {
-        course: course?.title ?? null,
-        unit: unit?.title ?? null,
-        lecture: lecture?.title ?? null,
-      },
-    },
-    session: {
-      attemptId: attempt.id,
-      questionRevisionId: entry.row.id,
-      questionNo: index + 1,
-      questionCount: entries.length,
-      settlementSeq: entry.row.settlementSeq,
-    },
-    view: null,
-    deviceId: null,
-  });
 }
 
 /** 客户端坐标必须核对；名称快照以本人可见的服务端资料为准。 */
@@ -223,15 +101,36 @@ export function resolveMemoContext(
         label: "作答",
       },
       now,
+      false,
+      input.view?.surface === "attempt" ||
+        input.view?.surface === "result" ||
+        input.view?.surface === "lesson"
+        ? { surface: input.view.surface }
+        : { surface: "attempt" },
     );
-    if (
-      canonical?.session === null ||
-      canonical === null ||
-      canonical.session.questionRevisionId !== session.questionRevisionId ||
-      canonical.session.questionNo !== session.questionNo ||
-      canonical.session.questionCount !== session.questionCount
-    )
-      return notFound();
+    // 无host的公开坐标没有view可携带surface；只接受同一projector的合法公开序。
+    // 明确的surface不回退猜测，view/null与客户端真实viewId均原样保留。
+    if (input.view === null && !sameFrozenCoordinates(canonical, session)) {
+      try {
+        canonical = contextFromMemoAnchor(
+          db,
+          studentId,
+          {
+            kind: "question",
+            attemptId: session.attemptId,
+            questionId: input.content.questionId,
+            label: "作答",
+          },
+          now,
+          false,
+          { surface: "lesson" },
+        );
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        return notFound();
+      }
+    }
+    if (!sameFrozenCoordinates(canonical, session)) return notFound();
   } else if (
     input.content.lectureId !== null &&
     input.content.questionId === null
@@ -253,6 +152,10 @@ export function resolveMemoContext(
         label: "讲义",
       },
       now,
+      false,
+      input.content.courseId === null
+        ? {}
+        : { courseId: input.content.courseId },
     );
   } else if (
     input.content.courseId !== null &&

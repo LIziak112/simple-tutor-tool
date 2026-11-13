@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, Navigate, Outlet, useLocation } from "react-router";
+import { Link, Outlet, useLocation } from "react-router";
 import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,19 +24,23 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { PersonalViewButton } from "@/features/auth/PersonalViewButton";
+import { PortalGuard } from "@/features/auth/PortalGuard";
 import { useAccountLoginPath } from "@/features/auth/personal-auth";
+import {
+  type PortalCapability,
+  portalCapabilitiesOf,
+} from "@/features/auth/portals";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { SettingsNavigationProvider } from "@/features/teacher-settings/settings-navigation";
-import { ApiError } from "@/lib/api";
 import { BRAND_NAME } from "@/lib/brand";
-import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
 interface NavItemSpec {
   to: string;
   label: string;
   icon: typeof Library;
   matchPrefixes?: string[];
+  capability?: PortalCapability;
 }
 
 /** 导航与顶栏共用分组数据，导入属于资源库，详情保留父分区高亮。 */
@@ -52,8 +56,13 @@ const NAV_GROUPS: { label: string; items: NavItemSpec[] }[] = [
       },
       { to: "/t/shared", label: "共享资源", icon: Share2 },
       { to: "/t/courses", label: "课程", icon: GraduationCap },
-      { to: "/t/students", label: "学生", icon: Users },
-      { to: "/t/assignments", label: "作业", icon: ClipboardList },
+      { to: "/t/students", label: "学生", icon: Users, capability: "members" },
+      {
+        to: "/t/assignments",
+        label: "作业",
+        icon: ClipboardList,
+        capability: "assignments",
+      },
     ],
   },
   {
@@ -73,29 +82,25 @@ const NAV_GROUPS: { label: string; items: NavItemSpec[] }[] = [
   {
     label: "系统",
     items: [
-      { to: "/t/connect", label: "连接 AI", icon: PlugZap },
+      {
+        to: "/t/connect",
+        label: "连接 AI",
+        icon: PlugZap,
+        capability: "teacherAiConnections",
+      },
       { to: "/t/settings", label: "设置", icon: Settings },
     ],
   },
 ];
 
-/**
- * 个人账号（模块 0）在管理视角里不需要的入口：学生 / 作业（没有班级）、连接 AI
- * （唯一 token 在学习视角「AI 伴学」管理，/mcp/personal）。路由本身仍在——直接
- * 访问由服务端闸门（409 PERSONAL_ACCOUNT_RESTRICTED）与页面提示兜底。
- */
-const PERSONAL_HIDDEN_PATHS = new Set([
-  "/t/students",
-  "/t/assignments",
-  "/t/connect",
-]);
-
-/** 按账号类型裁剪导航分组（个人账号去掉班级 / 连接 AI 入口；空分组整组不显示） */
+/** 导航按门户能力表裁剪，和页面内入口共用同一判定。 */
 function navGroupsFor(accountKind: "class" | "personal") {
-  if (accountKind === "class") return NAV_GROUPS;
+  const capabilities = portalCapabilitiesOf("teacher", accountKind);
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !PERSONAL_HIDDEN_PATHS.has(item.to)),
+    items: group.items.filter(
+      (item) => !item.capability || capabilities[item.capability],
+    ),
   })).filter((group) => group.items.length > 0);
 }
 
@@ -190,113 +195,111 @@ export function TeacherLayout() {
     isNavActive(item, pathname),
   );
 
-  if (meQuery.isPending) return <AuthScreenLoading text="正在确认登录状态…" />;
-  if (meQuery.isError) {
-    const err = meQuery.error;
-    if (err instanceof ApiError && err.code === "UNAUTHORIZED")
-      return <Navigate to={loginPath} replace />;
-    return (
-      <AuthScreenError
-        message={err instanceof Error ? err.message : "网络异常，请稍后重试"}
-        onRetry={() => void meQuery.refetch()}
-      />
-    );
-  }
-
   return (
-    <SettingsNavigationProvider>
-      <div className="teacher-theme flex min-h-dvh bg-background text-foreground">
-        <a
-          href="#teacher-content"
-          className="sr-only z-[60] rounded-lg bg-card p-3 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
-        >
-          跳到主要内容
-        </a>
-        <aside className="sticky top-0 hidden h-dvh w-[224px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
-          <div className="px-6 pt-5 pb-3">
-            <Brand compact />
-          </div>
-          <TeacherNavigation groups={navGroups} />
-          <Link
-            to="/t/settings?section=account"
-            aria-label={personal ? "查看个人账号" : "查看教师账号"}
-            className="flex min-h-16 items-center gap-3 border-t border-sidebar-border px-6 py-3 text-sm text-muted-foreground hover:bg-sidebar-accent"
-          >
-            <UserRound aria-hidden className="size-4 shrink-0" />
-            <span className="min-w-0">
-              <span
-                data-testid="teacher-login-name"
-                className="block break-all font-medium text-foreground"
+    <PortalGuard portal="teacher" loginPath={loginPath} query={meQuery}>
+      {(me) => (
+        <SettingsNavigationProvider>
+          <div className="teacher-theme flex min-h-dvh bg-background text-foreground">
+            <a
+              href="#teacher-content"
+              className="sr-only z-[60] rounded-lg bg-card p-3 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+            >
+              跳到主要内容
+            </a>
+            <aside className="sticky top-0 hidden h-dvh w-[224px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+              <div className="px-6 pt-5 pb-3">
+                <Brand compact />
+              </div>
+              <TeacherNavigation groups={navGroups} />
+              <Link
+                to="/t/settings?section=account"
+                aria-label={personal ? "查看个人账号" : "查看教师账号"}
+                className="flex min-h-16 items-center gap-3 border-t border-sidebar-border px-6 py-3 text-sm text-muted-foreground hover:bg-sidebar-accent"
               >
-                {meQuery.data.loginName}
-              </span>
-              <span className="text-xs">
-                {personal ? "个人账号 · 管理视角" : "教师账号"}
-              </span>
-            </span>
-          </Link>
-        </aside>
-        <div className="min-w-0 flex-1">
-          <header className="flex min-h-14 flex-wrap items-center gap-2 px-5 py-1.5 lg:px-10">
-            <div className="flex min-w-0 items-center gap-3">
-              <Sheet open={navOpen} onOpenChange={setNavOpen}>
-                <SheetTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="size-11 lg:hidden"
-                    aria-label="打开导航"
+                <UserRound aria-hidden className="size-4 shrink-0" />
+                <span className="min-w-0">
+                  <span
+                    data-testid="teacher-login-name"
+                    className="block break-all font-medium text-foreground"
                   >
-                    <Menu aria-hidden />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent
-                  side="left"
-                  className="teacher-theme w-[min(20rem,100%)] max-w-full sm:max-w-80"
-                >
-                  <SheetHeader>
-                    <SheetTitle>{BRAND_NAME} 导航</SheetTitle>
-                  </SheetHeader>
-                  <TeacherNavigation
-                    groups={navGroups}
-                    onNavigate={() => setNavOpen(false)}
-                  />
-                </SheetContent>
-              </Sheet>
-              <p className="text-sm">
-                <span className="hidden text-muted-foreground sm:inline">
-                  {currentGroup?.label ?? "教学"}
-                  <span aria-hidden className="px-2">
-                    /
+                    {me.loginName}
+                  </span>
+                  <span className="text-xs">
+                    {personal ? "个人账号 · 管理视角" : "教师账号"}
                   </span>
                 </span>
-                <span className="font-medium">
-                  {currentItem?.label ?? (personal ? "管理视角" : "教师工作台")}
-                </span>
-              </p>
-            </div>
-            {personal && (
-              <PersonalViewButton
-                from="teacher"
-                to="/s/home"
-                aria-label="切换到学习视角"
-                className="ml-auto flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-primary outline-offset-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary"
+              </Link>
+            </aside>
+            <div className="min-w-0 flex-1">
+              <header className="flex min-h-14 flex-wrap items-center gap-2 px-5 py-1.5 lg:px-10">
+                <div className="flex min-w-0 items-center gap-3">
+                  <Sheet open={navOpen} onOpenChange={setNavOpen}>
+                    <SheetTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="size-11 lg:hidden"
+                        aria-label="打开导航"
+                      >
+                        <Menu aria-hidden />
+                      </Button>
+                    </SheetTrigger>
+                    <SheetContent
+                      side="left"
+                      className="teacher-theme w-[min(20rem,100%)] max-w-full sm:max-w-80"
+                    >
+                      <SheetHeader>
+                        <SheetTitle>{BRAND_NAME} 导航</SheetTitle>
+                      </SheetHeader>
+                      <TeacherNavigation
+                        groups={navGroups}
+                        onNavigate={() => setNavOpen(false)}
+                      />
+                    </SheetContent>
+                  </Sheet>
+                  <p className="text-sm">
+                    <span className="hidden text-muted-foreground sm:inline">
+                      {currentGroup?.label ?? "教学"}
+                      <span aria-hidden className="px-2">
+                        /
+                      </span>
+                    </span>
+                    <span className="font-medium">
+                      {currentItem?.label ??
+                        (personal ? "管理视角" : "教师工作台")}
+                    </span>
+                  </p>
+                </div>
+                <Link
+                  to="/"
+                  className="flex min-h-11 items-center rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent"
+                >
+                  切换身份
+                </Link>
+                {personal && (
+                  <PersonalViewButton
+                    from="teacher"
+                    to="/s/home"
+                    aria-label="切换到学习视角"
+                    className="flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-primary outline-offset-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary"
+                  >
+                    <BookOpenCheck aria-hidden className="size-4 shrink-0" />
+                    学习视角
+                  </PersonalViewButton>
+                )}
+              </header>
+              <main
+                id="teacher-content"
+                tabIndex={-1}
+                className="min-w-0 outline-none"
               >
-                <BookOpenCheck aria-hidden className="size-4 shrink-0" />
-                学习视角
-              </PersonalViewButton>
-            )}
-          </header>
-          <main
-            id="teacher-content"
-            tabIndex={-1}
-            className="min-w-0 outline-none"
-          >
-            <Outlet />
-          </main>
-        </div>
-      </div>
-    </SettingsNavigationProvider>
+                <Outlet />
+              </main>
+            </div>
+          </div>
+        </SettingsNavigationProvider>
+      )}
+    </PortalGuard>
   );
 }
 

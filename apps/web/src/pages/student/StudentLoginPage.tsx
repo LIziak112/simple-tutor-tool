@@ -1,8 +1,10 @@
 import { GraduationCap, Loader2, LogIn } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Navigate, useNavigate } from "react-router";
+import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LoginShell } from "@/features/auth/LoginShell";
+import { safeReturnTo } from "@/features/auth/portals";
 import { useLoginStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
@@ -13,6 +15,8 @@ import { ApiError } from "@/lib/api";
  * （INVALID_CREDENTIALS 防枚举统一口径 / LOCKED 限流提示）。
  */
 export default function StudentLoginPage() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   useStudentTheme();
   const meQuery = useStudentMe();
   const loginMutation = useLoginStudent();
@@ -21,8 +25,17 @@ export default function StudentLoginPage() {
   const [password, setPassword] = useState("");
 
   // 已登录（会话仍有效）：直接进首页
-  if (meQuery.isSuccess) {
-    return <Navigate to="/s/home" replace />;
+  if (meQuery.isSuccess && !loginMutation.isPending) {
+    return (
+      <Navigate
+        to={
+          loginMutation.isSuccess
+            ? safeReturnTo(returnTo, "student")
+            : "/s/home"
+        }
+        replace
+      />
+    );
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -30,7 +43,10 @@ export default function StudentLoginPage() {
     loginMutation.mutate(
       { loginName: loginName.trim(), password },
       // 成功后 me 缓存已写入；replace 避免回退键回到登录页
-      { onSuccess: () => navigate("/s/home", { replace: true }) },
+      {
+        onSuccess: () =>
+          navigate(safeReturnTo(returnTo, "student"), { replace: true }),
+      },
     );
   }
 
@@ -48,7 +64,7 @@ export default function StudentLoginPage() {
     : null;
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-foreground">
+    <LoginShell portal="student">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
         <span
           aria-hidden
@@ -127,6 +143,6 @@ export default function StudentLoginPage() {
           还没有账号？请联系老师开通。
         </p>
       </div>
-    </main>
+    </LoginShell>
   );
 }
