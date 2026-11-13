@@ -33,6 +33,7 @@ export function useResultReviewLocation(
   ids: readonly string[],
   released: boolean,
   root: RefObject<HTMLElement | null>,
+  beforeJump?: (id: string) => void,
 ) {
   const [params, setParams] = useSearchParams();
   const session = useNoteSessionRef();
@@ -49,6 +50,7 @@ export function useResultReviewLocation(
   const interacted = useRef(false);
   const jumpToElement = useCallback(
     (id: string, focus: boolean) => {
+      beforeJump?.(id);
       const element = [
         ...(root.current?.querySelectorAll<HTMLElement>(
           "[data-review-question]",
@@ -61,7 +63,7 @@ export function useResultReviewLocation(
           ?.focus({ preventScroll: true });
       setCurrentId(id);
     },
-    [root],
+    [root, beforeJump],
   );
   const jump = useCallback(
     (id: string) => {

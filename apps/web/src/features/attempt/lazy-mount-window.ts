@@ -34,6 +34,8 @@ const UNLOAD_INTERVAL_MS = 120;
 const UNLOAD_BATCH = 3;
 
 export interface LazyMountWindowOptions {
+  /** 回看只延迟首挂，保留详解与订正的局部状态；作答页默认仍窗口化卸载。 */
+  unload?: boolean;
   /** 卸载守卫：返回 true 表示该题本轮不可卸载（编辑器激活/焦点/展开 UI/钉住）。 */
   retain?: (questionId: string) => boolean;
   /** 挂载/卸载结算回调（挂载版本号驱动判分反馈观察列表与阅读位置重捕）。 */
@@ -45,6 +47,7 @@ export interface LazyMountWindowOptions {
 type Id = string;
 
 export class LazyMountWindow {
+  private readonly unload: boolean;
   private readonly retain: (questionId: Id) => boolean;
   private readonly onSettle: () => void;
   private readonly now: () => number;
@@ -71,6 +74,7 @@ export class LazyMountWindow {
   private disposed = false;
 
   constructor(options: LazyMountWindowOptions = {}) {
+    this.unload = options.unload ?? true;
     this.retain = options.retain ?? (() => false);
     this.onSettle = options.onSettle ?? (() => {});
     this.now = options.now ?? (() => performance.now());
@@ -371,7 +375,7 @@ export class LazyMountWindow {
         { rootMargin: MOUNT_MARGIN },
       );
     }
-    if (this.unloadObserver === null) {
+    if (this.unload && this.unloadObserver === null) {
       this.unloadObserver = new IntersectionObserver(
         (entries) => {
           for (const entry of entries) {

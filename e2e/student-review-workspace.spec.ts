@@ -342,6 +342,15 @@ test(
     expect(eagerMaterialRequests()).toEqual([]);
     const firstRenderMs = Date.now() - startedAt;
     const nodeCount = await page.locator("*").count();
+    // 长卷先提供常驻定位锚点，不在首屏解析全部题面与结果控件。
+    const initialCards = await page
+      .locator("[data-review-question] article")
+      .count();
+    expect(initialCards).toBeLessThan(20);
+    await expect(
+      page.getByRole("article", { name: "第 130 题", exact: true }),
+    ).toHaveCount(0);
+
     const measurements: {
       width: number;
       height: number;
@@ -485,6 +494,7 @@ test(
         {
           firstRenderMs,
           nodeCount,
+          initialCards,
           questions: 130,
           initialCanvases: 0,
           closedMaterialRequests: materialRequests.length,
@@ -509,7 +519,11 @@ test(
     const cardBox = await last.boundingBox();
     if (!originalBox || !cardBox) throw new Error("无法测量展开材料");
     expect(originalBox.width).toBeGreaterThan(cardBox.width - 60);
-    const lastQuestionId = await last.getAttribute("data-review-question");
+    const lastQuestionId = await last.evaluate(
+      (element) =>
+        element.closest<HTMLElement>("[data-review-question]")?.dataset
+          .reviewQuestion,
+    );
     if (!lastQuestionId) throw new Error("末题缺少题目ID");
     // 可见性题干读必须有界：只有进入过视口（含 200px 预载边距）的题卡才读；
     // 若退化为挂载即全量预取（130 题），上限立即击穿。
