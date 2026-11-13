@@ -18,6 +18,7 @@ const COURSE_COUNT = 24;
 const STUDENT_COUNT = 60;
 const WEEKS = 52;
 const QUESTIONS = 20;
+const MEASURE_LATENCY = process.env.OWNCLASS_MEASURE_ANALYTICS === "1";
 
 /** 一年每生每周两卷，每卷 20 题，题库复用同一套题。 */
 function seedYear(db: Db): void {
@@ -170,7 +171,8 @@ function measure<T>(db: Db, read: () => T) {
   } finally {
     prepare.mockRestore();
   }
-  const samples = Array.from({ length: 12 }, () => {
+  // 常规回归验证查询、行量与结果。隔离量测时才重复执行以取延迟分位数。
+  const samples = Array.from({ length: MEASURE_LATENCY ? 12 : 0 }, () => {
     const start = performance.now();
     read();
     return performance.now() - start;
@@ -183,7 +185,9 @@ function measure<T>(db: Db, read: () => T) {
     courseItemQueries,
     medianQueries,
     plans: [...plans],
-    p95Ms: Math.round(samples.at(Math.ceil(samples.length * 0.95) - 1) ?? 0),
+    p95Ms: MEASURE_LATENCY
+      ? Math.round(samples.at(Math.ceil(samples.length * 0.95) - 1) ?? 0)
+      : undefined,
   };
 }
 
