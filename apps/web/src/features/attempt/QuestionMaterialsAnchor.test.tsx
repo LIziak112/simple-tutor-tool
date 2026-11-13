@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import type { AttemptContextMaterial } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
+import { noteMaterialReadingOffset } from "./material-reading-position";
 import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
 
 /**
@@ -116,6 +117,74 @@ describe("QuestionMaterialsAnchor（题级材料锚）", () => {
 });
 
 describe("题级材料分栏独立滚动与切题联动（2026-10-27 需求）", () => {
+  it.each([0, 1])(
+    "隐藏时等待可见后执行定位，查看材料优先（查看 %s）",
+    (revealSignal) => {
+      const scrollIntoView = vi.fn();
+      const props = {
+        questionId: "q-9",
+        materials: [material("m-solo")],
+        readingKey: "hidden|q:q-9",
+      };
+      noteMaterialReadingOffset(props.readingKey, 125);
+      const { rerender } = render(
+        <QuestionMaterialsAnchor {...props} hidden />,
+      );
+      const section = document.querySelector(
+        '[data-slot="question-materials"]',
+      ) as HTMLElement;
+      section.scrollIntoView = scrollIntoView;
+      section.scrollTo = vi.fn();
+      Object.defineProperties(section, {
+        scrollHeight: { value: 900 },
+        clientHeight: { value: 300 },
+      });
+      const jumpSignal = { questionId: "q-9", seq: 1 };
+      const signals = { jumpSignal, revealSignal };
+      rerender(<QuestionMaterialsAnchor {...props} {...signals} hidden />);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(section.scrollTo).not.toHaveBeenCalled();
+      rerender(<QuestionMaterialsAnchor {...props} {...signals} />);
+      if (revealSignal) {
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        expect(section.scrollTo).not.toHaveBeenCalled();
+        expect(section.scrollTop).toBe(125);
+        expect(section).toHaveFocus();
+      } else {
+        expect(section.scrollTo).toHaveBeenCalledWith({
+          top: 0,
+          behavior: "smooth",
+        });
+      }
+      rerender(<QuestionMaterialsAnchor {...props} {...signals} hidden />);
+      rerender(<QuestionMaterialsAnchor {...props} {...signals} />);
+      expect(scrollIntoView).toHaveBeenCalledTimes(revealSignal);
+      expect(section.scrollTo).toHaveBeenCalledTimes(1 - revealSignal);
+    },
+  );
+
+  it("上下排布时回到保存的正向阅读偏移，聚焦不再改变滚动", () => {
+    const readingKey = "stack|q:q-9";
+    noteMaterialReadingOffset(readingKey, 125);
+    const props = {
+      questionId: "q-9",
+      materials: [material("m-solo")],
+      readingKey,
+    };
+    const { rerender } = render(<QuestionMaterialsAnchor {...props} />);
+    const section = screen.getByRole("region", { name: "本题材料" });
+    section.scrollIntoView = vi.fn();
+    const scrollBy = vi.spyOn(window, "scrollBy").mockImplementation(() => {});
+    const focus = vi.spyOn(section, "focus");
+    try {
+      rerender(<QuestionMaterialsAnchor {...props} revealSignal={1} />);
+      expect(scrollBy).toHaveBeenCalledWith({ top: 125, behavior: "instant" });
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    } finally {
+      scrollBy.mockRestore();
+    }
+  });
+
   it("分栏网格生效（列表模式）时题级材料列获得视口级独立滚动端口与滚动隔离，把手容器同栏粘性", () => {
     render(
       <QuestionMaterialsAnchor

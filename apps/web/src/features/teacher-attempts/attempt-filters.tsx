@@ -39,17 +39,6 @@ export interface AttemptListUrlState {
   offset: number;
 }
 
-/** 默认状态（按课程视图、无筛选、第一页） */
-export const DEFAULT_ATTEMPT_LIST_URL_STATE: AttemptListUrlState = {
-  view: "course",
-  sourceType: "all",
-  status: "all",
-  studentId: null,
-  from: "",
-  to: "",
-  offset: 0,
-};
-
 function pickEnum<T extends string>(
   raw: string | null,
   allowed: readonly T[],

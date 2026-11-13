@@ -6,7 +6,12 @@
  */
 
 import type { RefObject } from "react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+
+export interface MaterialJumpSignal {
+  questionId: string;
+  seq: number;
+}
 
 const offsets = new Map<string, number>();
 
@@ -27,7 +32,7 @@ export function noteMaterialReadingOffset(key: string, offset: number): void {
  * 列内自身滚动记 scrollTop；整页流式（stack/窄屏）记页面滚过顶部的距离
  * （截断到材料自身高度）。readingKey 未定义（不记录语境）零行为。
  */
-export function useMaterialReadingPosition(
+function useMaterialReadingPosition(
   elementRef: RefObject<HTMLElement | null>,
   readingKey: string | undefined,
 ): void {
@@ -63,4 +68,84 @@ export function useMaterialReadingPosition(
       window.removeEventListener("scroll", schedule);
     };
   }, [readingKey, elementRef]);
+}
+
+/** 显式跳题和查看材料共用定位规则，隐藏期间保留最近一次信号。 */
+export function useMaterialNavigation({
+  elementRef,
+  fallbackRef,
+  hasMaterials,
+  hidden,
+  questionIds,
+  readingKey,
+  revealSignal,
+  jumpSignal,
+}: {
+  elementRef: RefObject<HTMLElement | null>;
+  fallbackRef?: RefObject<HTMLElement | null>;
+  hasMaterials: boolean;
+  hidden: boolean;
+  questionIds: readonly string[];
+  readingKey: string | undefined;
+  revealSignal: number;
+  jumpSignal: MaterialJumpSignal | null | undefined;
+}): void {
+  useMaterialReadingPosition(
+    elementRef,
+    hidden || !hasMaterials ? undefined : readingKey,
+  );
+  const lastJumpSeq = useRef(0);
+  const lastReveal = useRef<{
+    key: string | undefined;
+    signal: number;
+    target: HTMLElement;
+  }>(null);
+  useEffect(() => {
+    if (hidden) return;
+    const node = hasMaterials ? elementRef.current : null;
+    const newJump = jumpSignal && jumpSignal.seq !== lastJumpSeq.current;
+    if (newJump) lastJumpSeq.current = jumpSignal.seq;
+    const target = node ?? fallbackRef?.current;
+    // 同一次渲染里，查看材料优先于切题联动，避免两次滚动争抢位置。
+    if (
+      target &&
+      revealSignal !== 0 &&
+      (lastReveal.current?.key !== readingKey ||
+        lastReveal.current?.signal !== revealSignal ||
+        lastReveal.current?.target !== target)
+    ) {
+      lastReveal.current = { key: readingKey, signal: revealSignal, target };
+      target.scrollIntoView({ block: "start", behavior: "auto" });
+      if (!node) return;
+      const offset =
+        readingKey === undefined ? 0 : materialReadingOffsetOf(readingKey);
+      if (offset > 0) {
+        if (node.scrollHeight > node.clientHeight) node.scrollTop = offset;
+        else
+          window.scrollBy({
+            top: node.getBoundingClientRect().top + offset,
+            behavior: "instant",
+          });
+      }
+      node.focus({ preventScroll: true });
+      return;
+    }
+    if (
+      newJump &&
+      questionIds.includes(jumpSignal.questionId) &&
+      node &&
+      node.scrollHeight > node.clientHeight
+    ) {
+      node.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [
+    elementRef,
+    fallbackRef,
+    hasMaterials,
+    hidden,
+    jumpSignal,
+    questionIds,
+    readingKey,
+    revealSignal,
+  ]);
 }

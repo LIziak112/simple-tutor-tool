@@ -8,23 +8,61 @@ import {
   useRef,
 } from "react";
 
-interface ReadingState {
-  sections?: readonly string[];
-  anchor?: string | undefined;
-  offset?: number;
+interface ReadingPosition {
+  anchor: string;
+  offset: number;
 }
-export const AiReadingMemoryContext = createContext<Map<
-  string,
-  ReadingState
+
+export function createReplySectionsStore() {
+  let expanded: readonly string[] | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => expanded,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    set(ids: readonly string[]) {
+      expanded = ids;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+export function createAiReadingMemory() {
+  const positions = new Map<string, ReadingPosition>();
+  const sections = new Map<
+    string,
+    ReturnType<typeof createReplySectionsStore>
+  >();
+  return {
+    positions,
+    sectionsOf(key: string) {
+      let store = sections.get(key);
+      if (!store) {
+        store = createReplySectionsStore();
+        sections.set(key, store);
+      }
+      return store;
+    },
+  };
+}
+
+const AI_READING_KEY = ["student", "ai-reading"] as const;
+export const AiReadingMemoryContext = createContext<ReturnType<
+  typeof createAiReadingMemory
 > | null>(null);
 export function useAiReadingMemory(attemptId: string) {
   const client = useQueryClient();
   return useMemo(() => {
-    const key = ["student", "ai-reading", attemptId];
-    let memory = client.getQueryData<Map<string, ReadingState>>(key);
+    const key = [...AI_READING_KEY, attemptId];
+    let memory =
+      client.getQueryData<ReturnType<typeof createAiReadingMemory>>(key);
     if (!memory) {
-      memory = new Map();
-      client.setQueryDefaults(key, { gcTime: Infinity });
+      memory = createAiReadingMemory();
+      client.setQueryDefaults(AI_READING_KEY, { gcTime: Infinity });
       client.setQueryData(key, memory);
     }
     return memory;
@@ -46,8 +84,7 @@ export function AiReadingWorkspace({
     if (!root || !memory) return;
     const host = root.closest<HTMLElement>("[data-ai-scroll]");
     const scroller = host ?? window;
-    const key = `position:${readingKey}`;
-    let restoring = false;
+    const saved = memory.positions.get(readingKey);
     const top = () => (host ? host.getBoundingClientRect().top : 0);
     const sections = () => {
       const nodes = Array.from(
@@ -62,38 +99,41 @@ export function AiReadingWorkspace({
     const anchorKey = (node: HTMLElement) =>
       node.dataset.aiSection ?? node.dataset.aiReadingBlock;
     const restore = () => {
-      const state = memory.get(key);
-      const anchor = sections().find(
-        (node) => anchorKey(node) === state?.anchor,
-      );
-      if (!anchor || state?.offset === undefined) return;
-      restoring = true;
-      const delta = anchor.getBoundingClientRect().top - top() - state.offset;
+      if (!saved) return true;
+      const anchor = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          "[data-ai-section], [data-ai-reading-block]",
+        ),
+      ).find((node) => anchorKey(node) === saved.anchor);
+      if (!anchor) return false;
+      const delta = anchor.getBoundingClientRect().top - top() - saved.offset;
       if (host) host.scrollTop += delta;
       else window.scrollBy({ top: delta, behavior: "instant" });
-      restoring = false;
+      return true;
     };
+    const observer = new MutationObserver(() => {
+      if (restore()) observer.disconnect();
+    });
     const remember = () => {
-      if (restoring) return;
+      observer.disconnect();
       const nodes = sections();
       const anchor =
         nodes.find((node) => node.getBoundingClientRect().bottom > top()) ??
         nodes.at(-1);
-      if (anchor)
-        memory.set(key, {
-          anchor: anchorKey(anchor),
+      const key = anchor && anchorKey(anchor);
+      if (anchor && key !== undefined)
+        memory.positions.set(readingKey, {
+          anchor: key,
           offset: anchor.getBoundingClientRect().top - top(),
         });
     };
-    restore();
-    const observer = new MutationObserver(() => {
-      if (sections().length) {
-        restore();
-        observer.disconnect();
-      }
-    });
-    if (!sections().length)
-      observer.observe(root, { childList: true, subtree: true });
+    if (!restore())
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-ai-section", "data-ai-reading-block"],
+      });
     scroller.addEventListener("scroll", remember, { passive: true });
     return () => {
       observer.disconnect();
