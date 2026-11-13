@@ -4,11 +4,11 @@ import {
   mkdtempSync,
   readdirSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { BackupRestoreResult, BackupSnapshot } from "@tutor/contract";
 import {
   BACKUP_KEEP_COUNT,
@@ -16,13 +16,12 @@ import {
 } from "@tutor/contract";
 import { ZipArchive } from "archiver";
 import Database from "better-sqlite3";
-import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
-import { verifyPassword } from "../auth/password";
+import { verifyBackupRestorePassword } from "../auth/instance-backup-access";
 import type { Db, DbHandle } from "../db/client";
-import { BLOB_BACKUP_REF_COLUMNS, teachers } from "../db/schema";
+import { BLOB_BACKUP_REF_COLUMNS } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { readZipEntries, type ZipEntry, ZipReadError } from "../lib/zip-read";
+import { stageBackupArchive } from "./backup-restore-staging.ts";
 import { beijingExportStampOf } from "./export-csv";
 
 /**
@@ -41,8 +40,8 @@ import { beijingExportStampOf } from "./export-csv";
  *   契约 backup-api.ts 注释同源）；恢复需操作者本人登录密码（D21）。
  *
  * 恢复原子性（最高优先级，任何失败路径原数据无损）：
- * ① 验密码 → ② 解析并校验 zip（动数据前完成，损坏包零副作用）→
- * ③ 恢复前自动快照（D21 回滚保险，进 14 份轮转）→ ④ 解压到**同卷**暂存目录 →
+ * ① 验密码 → ② 预检并逐块解压到同卷暂存目录，完整校验后重验权限 →
+ * ③ 恢复前自动快照（D21 回滚保险，进 14 份轮转）→
  * ⑤ close 数据连接（Windows 文件锁 + WAL 边车）→ DATA_DIR 顶层内容
  *   （除 backups/）整体挪到暂存、新内容 rename 就位，任一步失败回滚复原 →
  * ⑥ 重启数据连接（DbHandle.restart，服务进程不重启）→ ⑦ 恢复摘要
@@ -293,56 +292,6 @@ export function buildBackupZip(
 
 // ---------- 恢复（校验 → 保险快照 → 原子替换 → 重启连接） ----------
 
-/** 恢复校验后的落位计划：唯一 db 条目 + 全部待落位条目 */
-interface RestorePlan {
-  dbEntry: ZipEntry;
-}
-
-/**
- * 校验 zip 结构：顶层只允许 db 文件（tutor.db 或快照命名，恰好一个）、
- * blobs/、shared/、secret.key；其余（含 backups/ 覆写尝试）→ 400 中文说明。
- */
-function validateBackupEntries(entries: ZipEntry[]): RestorePlan {
-  const dbEntries = entries.filter(
-    (entry) =>
-      !entry.name.includes("/") &&
-      (entry.name === DB_FILE_NAME ||
-        BACKUP_SNAPSHOT_NAME_PATTERN.test(entry.name)),
-  );
-  if (dbEntries.length === 0) {
-    throw new HttpError(
-      400,
-      "BACKUP_ZIP_INVALID",
-      "压缩包结构不符：缺少数据库文件（tutor.db 或 tutor-时间戳.db）",
-    );
-  }
-  if (dbEntries.length > 1) {
-    throw new HttpError(
-      400,
-      "BACKUP_ZIP_INVALID",
-      "压缩包结构不符：包含多个数据库文件，请上传未改动过的备份",
-    );
-  }
-
-  for (const entry of entries) {
-    const top = entry.name.split("/")[0] as string;
-    const allowed =
-      top === "blobs" ||
-      top === "shared" ||
-      top === SECRET_KEY_NAME ||
-      entry === dbEntries[0];
-    if (!allowed) {
-      throw new HttpError(
-        400,
-        "BACKUP_ZIP_INVALID",
-        `压缩包结构不符：不认识的顶层内容「${top}」（只允许 db 文件、blobs/、shared/、secret.key）`,
-      );
-    }
-  }
-
-  return { dbEntry: dbEntries[0] as ZipEntry };
-}
-
 /** 尽力清理临时目录（失败忽略——孤儿临时目录无害，不掩盖业务结果） */
 function rmTempBestEffort(path: string): void {
   try {
@@ -358,7 +307,7 @@ function rmTempBestEffort(path: string): void {
  * 返回恢复摘要；失败路径：
  * - 密码错误 → 403（任何数据未动）；
  * - zip 损坏 / 结构不符 → 400（解析与校验在动数据之前）；
- * - 替换或重启连接失败 → 500 BACKUP_RESTORE_FAILED（已回滚复原，原数据无损）。
+ * - 替换或重启失败 → 500 BACKUP_RESTORE_FAILED。回滚未完成时保留旧数据暂存目录。
  */
 export async function restoreFromBackup(
   dataDir: string,
@@ -366,112 +315,104 @@ export async function restoreFromBackup(
   teacherId: string,
   password: string,
   zipBytes: Uint8Array,
+  recheckAccess?: () => void,
 ): Promise<BackupRestoreResult> {
-  // ① 密码（D21）：操作者本人的登录密码，服务端 scrypt 校验
-  const teacherRow = handle.db
-    .select()
-    .from(teachers)
-    .where(eq(teachers.id, teacherId))
-    .get();
-  const passwordOk =
-    teacherRow?.passwordHash !== undefined &&
-    teacherRow.passwordHash !== null &&
-    (await verifyPassword(password, teacherRow.passwordHash));
-  if (!passwordOk) {
-    throw new HttpError(403, "BACKUP_INVALID_PASSWORD", "登录密码不正确");
-  }
+  // ① 密码校验会让出执行权，恢复前重新检查当前会话和操作员资格。
+  const originalConnection = handle.db.$client;
+  const recheckPassword = await verifyBackupRestorePassword(
+    handle.db,
+    teacherId,
+    password,
+  );
+  recheckAccess?.();
 
-  // ② 解析 zip（损坏在此暴露，零副作用）
-  let entries: ZipEntry[];
+  // ② 暂存和回滚目录留在数据挂载卷内；backups/ 不参与打包和切换。
+  const absoluteDataDir = resolve(dataDir);
+  const scratchRoot = backupsDirOf(absoluteDataDir);
+  const createdScratchRoot =
+    mkdirSync(scratchRoot, { recursive: true }) !== undefined;
+  let staging: string | undefined;
+  let oldDir: string | undefined;
+  let preserveOldDir = false;
+
   try {
-    entries = readZipEntries(Buffer.from(zipBytes));
-  } catch (err) {
-    if (err instanceof ZipReadError) {
+    staging = mkdtempSync(join(scratchRoot, "tutor-restore-"));
+    const plan = await stageBackupArchive(zipBytes, staging, {
+      dbFilename: DB_FILE_NAME,
+      secretKeyName: SECRET_KEY_NAME,
+      directories: ALLOWED_TOP_DIRS,
+    });
+    if (handle.db.$client !== originalConnection) {
       throw new HttpError(
-        400,
-        "BACKUP_ZIP_INVALID",
-        `备份压缩包无法读取：${err.message}`,
+        409,
+        "BACKUP_RESTORE_FAILED",
+        "整站数据已更新，请重新发起恢复",
       );
     }
-    throw err;
-  }
-  const plan = validateBackupEntries(entries);
-
-  // ③ 恢复前自动快照（D21 回滚保险；进 14 份轮转）
-  createSnapshot(dataDir, handle.db);
-
-  // ④ 解压到暂存目录：与 DATA_DIR **同父目录**（同卷）→ rename 快且原子
-  const absoluteDataDir = resolve(dataDir);
-  const staging = mkdtempSync(join(dirname(absoluteDataDir), "tutor-restore-"));
-  const oldDir = mkdtempSync(
-    join(dirname(absoluteDataDir), "tutor-restore-old-"),
-  );
-
-  try {
-    for (const entry of entries) {
-      const dest = join(staging, entry.name);
-      mkdirSync(dirname(dest), { recursive: true });
-      writeFileSync(dest, entry.data);
-    }
-    // db 统一落位为 tutor.db（恢复后的运行库名，与启动路径约定一致）
-    if (plan.dbEntry.name !== DB_FILE_NAME) {
-      renameSync(join(staging, plan.dbEntry.name), join(staging, DB_FILE_NAME));
-    }
+    recheckPassword();
+    recheckAccess?.();
+    oldDir = mkdtempSync(join(scratchRoot, "tutor-restore-old-"));
+    // ③ 验证与权限检查均通过后，再创建恢复保险快照。
+    createSnapshot(dataDir, handle.db);
 
     // ⑤ 原子替换：先关连接（Windows 文件锁 + WAL 边车）
     handle.close();
+    const movedOut: string[] = [];
+    const movedIn: string[] = [];
     try {
       // 旧内容挪到暂存（backups/ 唯一保留：回滚快照在里面）
       for (const name of readdirSync(absoluteDataDir)) {
         if (name !== BACKUP_DIR_NAME) {
           renameSync(join(absoluteDataDir, name), join(oldDir, name));
+          movedOut.push(name);
         }
       }
-      // 新内容就位；中途失败撤回已就位部分再回滚旧内容
-      const movedIn: string[] = [];
-      try {
-        for (const name of readdirSync(staging)) {
-          renameSync(join(staging, name), join(absoluteDataDir, name));
-          movedIn.push(name);
-        }
-      } catch (err) {
-        for (const name of movedIn) {
-          rmSync(join(absoluteDataDir, name), { recursive: true, force: true });
-        }
-        throw err;
+      for (const name of readdirSync(staging)) {
+        renameSync(join(staging, name), join(absoluteDataDir, name));
+        movedIn.push(name);
       }
       // ⑥ 重启数据连接（迁移钩子在 onOpen 里，旧版快照恢复后自动升级）
       handle.restart();
     } catch {
-      // 回滚：清掉 DATA_DIR 里的新内容（若有），把旧内容原样放回
-      for (const name of readdirSync(absoluteDataDir)) {
-        if (name !== BACKUP_DIR_NAME) {
+      // 只撤回已经完成的移动。尚未移出的原文件留在原位。
+      try {
+        for (const name of movedIn) {
           rmSync(join(absoluteDataDir, name), { recursive: true, force: true });
         }
+        for (const name of movedOut) {
+          renameSync(join(oldDir, name), join(absoluteDataDir, name));
+        }
+        handle.restart();
+      } catch {
+        preserveOldDir = true;
+        throw new HttpError(
+          500,
+          "BACKUP_RESTORE_FAILED",
+          "恢复失败，自动回滚未完成，请联系主机运维人员",
+        );
       }
-      for (const name of readdirSync(oldDir)) {
-        renameSync(join(oldDir, name), join(absoluteDataDir, name));
-      }
-      // 旧库文件已回原位，重开连接恢复服务（此时几乎不会失败）
-      handle.restart();
       throw new HttpError(
         500,
         "BACKUP_RESTORE_FAILED",
         "恢复失败，数据已回滚复原（原数据无损）；请重试或检查磁盘空间",
       );
     }
+    return {
+      ...plan,
+      snapshotTime: snapshotTimeOf(plan.dbFilename),
+      sessionWarning: true,
+    };
   } finally {
-    rmTempBestEffort(staging);
-    rmTempBestEffort(oldDir);
+    if (staging !== undefined) rmTempBestEffort(staging);
+    if (oldDir !== undefined && !preserveOldDir) rmTempBestEffort(oldDir);
+    if (createdScratchRoot) {
+      try {
+        rmdirSync(scratchRoot);
+      } catch {
+        // 保留已写入快照或仍有内容的备份目录。
+      }
+    }
   }
-
-  // ⑦ 摘要：会话以恢复库为准（可能失效属预期，UI 提示重新登录）
-  return {
-    dbFilename: plan.dbEntry.name,
-    snapshotTime: snapshotTimeOf(plan.dbEntry.name),
-    restoredFiles: entries.length,
-    sessionWarning: true,
-  };
 }
 
 // ---------- 自动快照调度（index.ts 挂载） ----------

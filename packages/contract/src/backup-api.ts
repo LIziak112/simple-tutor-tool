@@ -10,8 +10,7 @@ import { z } from "zod";
  * - 日常自动快照只做 db 文件（启动时 + 每 24h，保留 14 份轮转）；blobs/shared/
  *   secret.key 在**下载时实时读档**打进 zip，避免每日复制大目录；
  * - 备份/恢复是**整库操作**：多教师共存一个库（D14 一生一师但同库），
- *   任意教师登录后即可下载/恢复整库，恢复需登录密码（D21）——
- *   一对一自部署场景无教师间隔离，本契约不做域概念（Phase4 清单既定口径）。
+ *   主机指定的有效管理员才可查看快照、下载或恢复，恢复仍需登录密码（D21）。
  *
  * 恢复安全（D21，用户定）：
  * - 恢复请求必须带**登录密码**（multipart 的 password 字段），服务端 scrypt 校验，
@@ -90,15 +89,19 @@ export const backupRestoreResultSchema = z.object({
 
 // ---------- 错误码 ----------
 
+export const BACKUP_OPERATOR_REQUIRED = "BACKUP_OPERATOR_REQUIRED";
+
 /**
  * 备份相关错误码（鉴权 401 见 auth.ts）：
+ * - BACKUP_OPERATOR_REQUIRED：当前会话无整站备份权限（403）；
  * - BACKUP_INVALID_PASSWORD：恢复时登录密码不正确（403，D21）；
  * - BACKUP_ZIP_INVALID：zip 损坏 / 结构不符（400，中文说明缺什么——必备 db 文件、
  *   顶层只允许 db / blobs / shared / secret.key，禁路径穿越与 backups/ 覆写）；
- * - BACKUP_TOO_LARGE：恢复上传超过 BACKUP_MAX_UPLOAD_BYTES（413）；
- * - BACKUP_RESTORE_FAILED：替换 DATA_DIR 失败且已回滚复原（500，原数据无损）。
+ * - BACKUP_TOO_LARGE：恢复上传或 ZIP 展开预算超限（413）；
+ * - BACKUP_RESTORE_FAILED：暂存时数据连接已被另一恢复替换（409），或替换 DATA_DIR 失败（500，响应说明是否已回滚）。
  */
 export const backupErrorCodeSchema = z.enum([
+  BACKUP_OPERATOR_REQUIRED,
   "BACKUP_INVALID_PASSWORD",
   "BACKUP_ZIP_INVALID",
   "BACKUP_TOO_LARGE",

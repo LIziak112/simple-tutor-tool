@@ -13,7 +13,14 @@
  * 在长库下的成本与库大小解耦。上界取 prefix + U+FFFF：合法 JSON.stringify
  * 键（本仓键形态）不包含该字符，区间恰好覆盖全部前缀键。
  */
-import { createStore, del, get, set, type UseStore } from "idb-keyval";
+import {
+  createStore,
+  del,
+  get,
+  promisifyRequest,
+  set,
+  type UseStore,
+} from "idb-keyval";
 import {
   localPersistenceErrorMessage,
   persistenceErrorName,
@@ -37,8 +44,22 @@ export interface KVStoreBackend {
   getAll(prefix: string): Promise<Array<[string, unknown]>>;
 }
 
+export interface KVAtomicWrite {
+  set(key: string, value: unknown): void;
+  del(key: string): void;
+}
+
+export interface KVAtomicBackend extends KVStoreBackend {
+  /** 同事务读取一组关联键，且在同步回调内提交更新。 */
+  update(
+    keys: readonly string[],
+    apply: (values: readonly unknown[], write: KVAtomicWrite) => void,
+    presenceOnly?: ReadonlySet<string>,
+  ): Promise<void>;
+}
+
 /** 内存实现（jsdom 自动回退、单测隔离与故障注入用；不持久） */
-export function memoryKVBackend(): KVStoreBackend {
+export function memoryKVBackend(): KVAtomicBackend {
   const map = new Map<string, unknown>();
   return {
     get: async (key) => map.get(key),
@@ -50,6 +71,25 @@ export function memoryKVBackend(): KVStoreBackend {
     },
     getAll: async (prefix) =>
       Array.from(map.entries()).filter(([key]) => key.startsWith(prefix)),
+    update: async (keys, apply, presenceOnly) => {
+      const changes: Array<() => void> = [];
+      apply(
+        keys.map((key) =>
+          presenceOnly?.has(key) ? map.has(key) : map.get(key),
+        ),
+        {
+          set: (key, value) =>
+            changes.push(() => {
+              map.set(key, value);
+            }),
+          del: (key) =>
+            changes.push(() => {
+              map.delete(key);
+            }),
+        },
+      );
+      for (const change of changes) change();
+    },
   };
 }
 
@@ -68,7 +108,7 @@ function prefixRange(prefix: string): IDBKeyRange {
 export function idbKVBackend(
   dbName: string,
   storeName: string,
-): KVStoreBackend {
+): KVAtomicBackend {
   const connect = () => ({
     store: createStore(dbName, storeName),
     db: null as IDBDatabase | null,
@@ -101,6 +141,48 @@ export function idbKVBackend(
     get: (key) => run((store) => get<unknown>(key, store)),
     set: (key, value) => run((store) => set(key, value, store)),
     del: (key) => run((store) => del(key, store)),
+    update: (keys, apply, presenceOnly) =>
+      run((store) =>
+        store("readwrite", (objectStore) => {
+          const tx = objectStore.transaction;
+          const done = promisifyRequest(tx);
+          let failure: { cause: unknown } | undefined;
+          const values: unknown[] = new Array(keys.length);
+          let remaining = keys.length;
+          const commit = () => {
+            try {
+              apply(values, {
+                set: (key, value) => {
+                  objectStore.put(value, key);
+                },
+                del: (key) => {
+                  objectStore.delete(key);
+                },
+              });
+            } catch (cause) {
+              failure = { cause };
+              tx.abort();
+            }
+          };
+          keys.forEach((key, i) => {
+            const onlyPresence = presenceOnly?.has(key);
+            const request = onlyPresence
+              ? objectStore.getKey(key)
+              : objectStore.get(key);
+            request.onsuccess = () => {
+              values[i] = onlyPresence
+                ? request.result !== undefined
+                : request.result;
+              if (--remaining === 0) commit();
+            };
+          });
+          if (remaining === 0) commit();
+          // Safari 要求在请求成功事件内入队后续写入，避免事务自动结束。
+          return done.catch((error: unknown) => {
+            throw failure === undefined ? error : failure.cause;
+          });
+        }),
+      ),
     getAll: (prefix) =>
       run(async (store) => {
         // 同一事务内 getAllKeys + getAll（同一 range 同序）；回调返回 Promise

@@ -537,9 +537,9 @@ it("收笔时重试失败的本机稿，恢复写入后可退出圈画且原稿�
   installAnnotationBackend({
     ...backend,
     get: async () => before,
-    set: async (key, value) => {
+    update: async (keys, apply, presenceOnly) => {
       if (failed) throw null;
-      await backend.set(key, value);
+      await backend.update(keys, apply, presenceOnly);
     },
   });
   await getAnnotationRecord(session, scope);
