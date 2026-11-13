@@ -27,6 +27,7 @@ import {
   scoreAutoOf,
 } from "./attempt-final-outcome.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
+import { writeFinalSettlementWithin } from "./attempt-settlement.ts";
 import { buildSubmissionEvidence } from "./attempt-submit-evidence.ts";
 import { validateSubmitRevisions } from "./attempt-submit-revisions.ts";
 import { assertSavedAnswersConfirmed } from "./attempt-timing";
@@ -275,7 +276,8 @@ function finalizeWholeAttempt(
     ),
   ]);
   recordConfirmedSubmit(db, attempt, nowIso);
-  db.update(attempts)
+  const completed = db
+    .update(attempts)
     .set({
       // D2/D3：全部 finalCorrect 非 null → 直接 graded 并写 scoreFinal；
       // 否则 submitted、scoreFinal=null（待批批改后由 T3.2b 重算）
@@ -286,8 +288,12 @@ function finalizeWholeAttempt(
       // 总有效用时 = 各题之和；无任何 focus 序列（未计算）保持 NULL
       activeSec: totalActiveSec,
     })
-    .where(eq(attempts.id, attemptId))
-    .run();
+    .where(and(eq(attempts.id, attemptId), eq(attempts.status, "draft")))
+    .returning({ id: attempts.id })
+    .get();
+  if (!completed)
+    throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
+  writeFinalSettlementWithin(db, attemptId);
 
   // 预加载：判分循环已 parse 的快照 + 内存镜像事务写入后的行/attempt（结果
   // 视图免二次查询/parse，且拿到的是判分后的新值——预载原始行会带旧判定）。

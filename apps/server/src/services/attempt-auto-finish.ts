@@ -7,6 +7,7 @@ import {
   scoreAutoOf,
 } from "./attempt-final-outcome.ts";
 import type { ScoreSummaryRow } from "./attempt-score-summary.ts";
+import { writeFinalSettlementWithin } from "./attempt-settlement.ts";
 import { recordConfirmedSubmit } from "./event-service";
 import { recordedActiveSecTotal } from "./submission-time.ts";
 
@@ -68,7 +69,10 @@ export function autoFinishPerQuestionAttempt(
       .where(and(eq(attempts.id, attemptId), eq(attempts.status, "draft")))
       .returning()
       .get();
-    if (attempt) recordConfirmedSubmit(tx, attempt, nowIso);
+    if (attempt) {
+      recordConfirmedSubmit(tx, attempt, nowIso);
+      writeFinalSettlementWithin(tx, attemptId);
+    }
     return { rows: rowsAfter, attempt: attempt ?? null };
   }
   return { rows: rowsAfter, attempt: null };
