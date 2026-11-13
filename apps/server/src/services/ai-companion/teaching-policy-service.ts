@@ -11,12 +11,15 @@ import { responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import {
   lessonQuestionSubmitted,
+  requireOwnAttempt,
   requireUsableAttempt,
 } from "../attempt-service.ts";
 import {
+  assertDraftCourseVisible,
   isPerQuestionV1Attempt,
   practiceProtocolOf,
 } from "../practice-workflow-wiring.ts";
+import { snapshotOfRow } from "../snapshot.ts";
 
 /**
  * SAI-04 统一教学策略裁决（B02）：唯一 AI 权限口径，创建、领取、回信交付、
@@ -247,13 +250,15 @@ export function resolveAttemptQuestionAiPolicy(
   attemptId: string,
   questionId: string,
   configSource: AiPolicyConfigSource,
+  options: { readonly frozenOnly?: boolean } = {},
 ): AttemptQuestionAiPolicy {
-  const { attempt, teacherId } = requireStudentAiAttempt(
-    db,
-    studentId,
-    attemptId,
-  );
+  const { attempt, teacherId } = options.frozenOnly
+    ? requireFrozenStudentAiAttempt(db, studentId, attemptId)
+    : requireStudentAiAttempt(db, studentId, attemptId);
   const response = requireAttemptResponse(db, attempt.id, questionId);
+  if (options.frozenOnly && snapshotOfRow(response) === null) {
+    throw new HttpError(404, "QUESTION_NOT_FOUND", "题目快照不可用");
+  }
   const completed = phaseOfRows(attempt, response) === "completed";
   const teacherDefault = configSource.teacherDefaultMode(db, teacherId);
   const studentMode = configSource.studentOverrideMode(db, attempt.studentId);
@@ -268,4 +273,22 @@ export function resolveAttemptQuestionAiPolicy(
     completed,
   });
   return { resolution, completed, attempt, responseId: response.id };
+}
+
+function requireFrozenStudentAiAttempt(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+) {
+  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  const domain = studentAiDomainOf(db, studentId);
+  if (
+    domain === null ||
+    attempt.frozenAt === null ||
+    attempt.abandonedAt !== null
+  ) {
+    throw new HttpError(403, "AI_POLICY_DISABLED", "当前无法使用 AI 伴学");
+  }
+  assertDraftCourseVisible(db, studentId, attempt);
+  return { attempt, teacherId: domain.teacherId };
 }

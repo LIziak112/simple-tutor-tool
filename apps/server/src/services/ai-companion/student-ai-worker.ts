@@ -5,6 +5,7 @@ import { loadOrCreateSecretKey } from "../../config.ts";
 import type { Db } from "../../db/client.ts";
 import type { AiTaskRow } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { elapsedMs } from "../../lib/request-diagnostics.ts";
 import {
   learningRecordAiViewForTask,
   learningRecordSectionMd,
@@ -233,9 +234,9 @@ function inappReplyPlanFor(
     return task === undefined
       ? { replyMd }
       : inappReplyPlanOf(ctx.db, task, replyMd, now);
-  } catch (error) {
+  } catch {
     ctx.logger?.error(
-      { event: "ai_rubric_plan_failed", taskId, err: error },
+      { event: "ai_rubric_plan_failed", taskId },
       "量表意见落账规划失败，回信原文照发",
     );
     return inappReplyFallbackOf(replyMd);
@@ -630,7 +631,20 @@ async function dispatchPass(
   }
 
   const outcomes = await Promise.all(
-    selected.map((candidate) => dispatchOne(ctx, candidate)),
+    selected.map(async (candidate) => {
+      const startedAt = performance.now();
+      const reason = await dispatchOne(ctx, candidate);
+      ctx.logger?.info(
+        {
+          event: "ai_dispatch_decision",
+          taskId: candidate.id,
+          reason,
+          durationMs: elapsedMs(startedAt),
+        },
+        "页内 AI 派发裁决",
+      );
+      return reason;
+    }),
   );
   const summary: StudentAiDispatchRunSummary = {
     // dispatched = 真正进入出站流程（含最终 late/写回竞态的派发）

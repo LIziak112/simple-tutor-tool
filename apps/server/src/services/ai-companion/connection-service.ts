@@ -10,6 +10,7 @@ import {
   type AiConnectionProbeRequest,
   type AiConnectionPublic,
   type AiConnectionTestData,
+  MCP_LIVE_FOCUS_TTL_MS,
 } from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
@@ -25,12 +26,14 @@ import {
   type SealedApiKey,
   sealApiKey,
 } from "./connection-cipher.ts";
+import { clearStudentMcpFocus } from "./mcp-live-focus-registry.ts";
 import { parseOutboundBaseUrl } from "./outbound-target.ts";
 import {
   fetchProviderModels,
   type ProviderTransport,
   testProviderConnection,
 } from "./provider-client.ts";
+import { runtimeEpochOf } from "./runtime-epoch.ts";
 import { appendAiFact } from "./student-ai-audit.ts";
 import { revokeStudentShareTickets } from "./student-ai-share-revocation.ts";
 
@@ -72,6 +75,8 @@ interface McpConnectionConfig {
   readonly tokenFingerprint: string;
   /** 可选以兼容只保存哈希的历史连接；不影响现有认证。 */
   readonly tokenSealed?: SealedApiKey;
+  readonly liveContextEnabled?: boolean;
+  readonly liveContextGeneration?: string;
 }
 
 interface LinkConnectionConfig {
@@ -153,6 +158,7 @@ function connectionViewOf(
       ...base,
       channel: "mcp",
       tokenFingerprint: config.tokenFingerprint,
+      liveContextEnabled: config.liveContextEnabled === true,
       token:
         opened?.ok === true && hashMcpToken(opened.key) === config.tokenHash
           ? opened.key
@@ -451,7 +457,23 @@ export function patchStudentAiConnection(
       tokenSealed = sealApiKey(rootSecret, token);
       credential = { token };
     }
-    configJson = JSON.stringify({ tokenHash, tokenFingerprint, tokenSealed });
+    const liveContextEnabled =
+      request.liveContextEnabled ?? config.liveContextEnabled === true;
+    const changed =
+      request.resetToken === true ||
+      liveContextEnabled !== (config.liveContextEnabled === true);
+    if (changed) clearStudentMcpFocus(db, studentId);
+    configJson = JSON.stringify({
+      tokenHash,
+      tokenFingerprint,
+      tokenSealed,
+      liveContextEnabled,
+      liveContextGeneration: liveContextEnabled
+        ? changed
+          ? crypto.randomUUID()
+          : (config.liveContextGeneration ?? crypto.randomUUID())
+        : undefined,
+    });
   } else {
     const config = JSON.parse(row.configJson) as LinkConnectionConfig;
     configJson = JSON.stringify({
@@ -527,6 +549,7 @@ export function deleteStudentAiConnection(
       });
     }
   });
+  if (row.channel === "mcp") clearStudentMcpFocus(db, studentId);
   return { id: connectionId };
 }
 
@@ -742,4 +765,45 @@ export function findActiveMcpConnectionByToken(
     }
   }
   return null;
+}
+
+/** 连接撤销、归档或旧配置均不授予实时定位权限。 */
+export function mcpLiveContextGeneration(
+  db: Db,
+  studentId: string,
+  connectionId?: string,
+  windowOffset = 0,
+): string | null {
+  const row = db
+    .select({ config: aiConnections.configJson })
+    .from(aiConnections)
+    .where(
+      and(
+        eq(aiConnections.studentId, studentId),
+        eq(aiConnections.channel, "mcp"),
+        isNull(aiConnections.archivedAt),
+        connectionId === undefined
+          ? undefined
+          : eq(aiConnections.id, connectionId),
+      ),
+    )
+    .get();
+  if (row === undefined) return null;
+  try {
+    const config: unknown = JSON.parse(row.config);
+    return typeof config === "object" &&
+      config !== null &&
+      "liveContextEnabled" in config &&
+      config.liveContextEnabled === true &&
+      "liveContextGeneration" in config &&
+      typeof config.liveContextGeneration === "string"
+      ? createHash("sha256")
+          .update(
+            `${runtimeEpochOf(db)}:${config.liveContextGeneration}:${Math.floor(Date.now() / MCP_LIVE_FOCUS_TTL_MS) + windowOffset}`,
+          )
+          .digest("hex")
+      : null;
+  } catch {
+    return null;
+  }
 }

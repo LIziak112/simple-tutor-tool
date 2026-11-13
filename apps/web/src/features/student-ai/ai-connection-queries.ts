@@ -63,6 +63,9 @@ function useInvalidateConnections() {
     );
     void queryClient.invalidateQueries({ queryKey: studentAiConnectionsKey });
     void queryClient.invalidateQueries({ queryKey: ["student", "ai-status"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["student", "mcp-live-focus"],
+    });
   };
 }
 

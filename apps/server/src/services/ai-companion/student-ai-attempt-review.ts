@@ -42,7 +42,6 @@ import {
 } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
-  type AiAttemptReviewFactType,
   type AiAttemptReviewTaskRow,
   aiAttemptReviewFacts,
   aiAttemptReviewResults,
@@ -59,6 +58,7 @@ import { resolveNowDate } from "../export-service.ts";
 import { jsonOf, snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { attemptReviewPublicViewOf } from "./student-ai-attempt-review-public.ts";
+import { insertArFact } from "./student-ai-audit.ts";
 import { attemptAnswersReleased } from "./student-ai-batch.ts";
 import { missingNoteOf, studentAnswerTextOf } from "./student-ai-context.ts";
 import {
@@ -147,28 +147,6 @@ const AR_TASK_TRANSITIONS: Readonly<
   paused: ["created", "cancelled"],
   cancelled: [],
 };
-
-type FactDetail = Record<string, string | number | boolean | null>;
-
-function insertArFact(
-  tx: QueueTx,
-  task: AiAttemptReviewTaskRow,
-  type: AiAttemptReviewFactType,
-  nowIso: string,
-  detail?: FactDetail,
-): void {
-  tx.insert(aiAttemptReviewFacts)
-    .values({
-      id: randomUUID(),
-      taskId: task.id,
-      studentId: task.studentId,
-      attemptId: task.attemptId,
-      type,
-      ...(detail === undefined ? {} : { detailJson: JSON.stringify(detail) }),
-      serverTs: nowIso,
-    })
-    .run();
-}
 
 /** 唯一状态转换入口：查表 + 按旧状态 CAS 条件更新（落空 → 409） */
 function applyArTransition(

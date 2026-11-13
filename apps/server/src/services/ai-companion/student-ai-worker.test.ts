@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
+import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runBackfills } from "../../db/backfill.ts";
 import { createDbHandle, type Db } from "../../db/client.ts";
@@ -321,14 +322,30 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
     addInappConnection(db, world.studentId);
     const taskId = mkInappTask(db, world);
     const provider = await startFakeProvider(respondJson);
+    const logs: string[] = [];
+    const logger = pino(
+      { level: "info" },
+      { write: (line: string) => logs.push(line) },
+    ).child({ buildVersion: "test-build" });
     try {
       const summary = await runStudentAiDispatchOnce(db, {
         dataDir,
+        logger,
         rootSecret: ROOT_SECRET,
         transport: provider.transport,
         now: () => new Date(T0 + 1000),
       });
       expect(summary.replied).toBe(1);
+      expect(logs.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          event: "ai_dispatch_decision",
+          taskId,
+          reason: "replied",
+          durationMs: expect.any(Number),
+          buildVersion: "test-build",
+        }),
+      );
+      expect(logs.join("")).not.toMatch(/FAKE-REPLY|请帮我讲解本题|题干/u);
       expect(taskStatus(db, taskId)).toBe("replied");
       expect(assistantReplies(db, taskId)).toEqual(["FAKE-REPLY"]);
       expect(factTypes(db, taskId)).toContain("dispatched");
