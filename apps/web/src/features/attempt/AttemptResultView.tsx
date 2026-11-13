@@ -1,7 +1,6 @@
 import type {
   AttemptResultData,
   AttemptResultQuestion,
-  MaterialRef,
   QuestionActivity,
 } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
@@ -19,14 +18,8 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { optionCorrectOf } from "@/features/answering/views/choice";
-import {
-  groupSegmentsOfUnit,
-  questionMaterialsOf,
-} from "@/features/attempt/attempt-context-view";
 import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { HintEntryList } from "@/features/attempt/HintPanel";
-import { QuestionGroupAnchor } from "@/features/attempt/QuestionGroupAnchor";
-import { QuestionMaterialsAnchor } from "@/features/attempt/QuestionMaterialsAnchor";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
@@ -64,12 +57,14 @@ export { ResultOptions, VerdictBadge } from "./AttemptResultParts";
 import { PendingAttemptRelease } from "./PendingReleaseBanner";
 import { ResultAiActions, useResultAiCompanion } from "./ResultAiActions";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
+import { ResultQuestionList } from "./ResultQuestionList";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { RubricReviewSection } from "./RubricReviewSection";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
 import { SelfReviewSection } from "./SelfReviewSection";
 import { verdictBadgeDisplayOf } from "./self-review-display";
+import { useResultMountWindow } from "./use-result-mount-window";
 import { useResultReviewLocation } from "./use-result-review-location";
 
 /**
@@ -325,7 +320,6 @@ function ResultQuestionCard({
   );
   return (
     <article
-      data-review-question={question.questionId}
       className={cn(
         "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6 isolate",
         "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
@@ -559,7 +553,6 @@ export function AttemptResultView({
     [data.units],
   );
   const counts = reviewCounts(flatQuestions, released);
-  const showUnitHeaders = data.units.length > 1;
   // 2026-10：本卷错题——直达重练的圈题范围与示数（口径单源 isRetrainable，
   // 与模块 7 按模块「专项重练」同一函数）：有效判定为错且已作答 / 教师已判 /
   // 自评有记录，或标过「不会」。未公布时服务端已把判定键整键 null（数出来必为 0）
@@ -590,11 +583,18 @@ export function AttemptResultView({
     () => flatQuestions.map((question) => question.questionId),
     [flatQuestions],
   );
+  const lazyResults = questionIds.length > 20;
+  const resultMounts = useResultMountWindow(attempt.id, lazyResults);
   const reviewLocation = useResultReviewLocation(
     attempt.id,
     questionIds,
     released,
     rootRef,
+    resultMounts.beforeJump,
+  );
+  const indexOfQuestion = useMemo(
+    () => new Map(questionIds.map((id, index) => [id, index + 1] as const)),
+    [questionIds],
   );
   const attemptReview = useAttemptReviewOverlay();
   const aiCompanion = useResultAiCompanion({
@@ -602,6 +602,7 @@ export function AttemptResultView({
     title: data.title,
     questions: flatQuestions,
     currentQuestionId: reviewLocation.currentId,
+    beforeJump: resultMounts.beforeJump,
   });
   return (
     <ResultWorkspace
@@ -876,112 +877,35 @@ export function AttemptResultView({
             </p>
           )}
 
-          {/* 逐题结果（T2A.7 多单元按节分组，题号全卷连续）。QM-08 题目序经
-              groupSegmentsOfUnit 解释成组段，共享材料按组渲染一份；题组只是题行
-              ol 里的兄弟锚点，题行永不进组子树；solo 题的题级 ::ref 材料挂题级锚；
-              segments 展平成单层题行数组（与作答视图同构同口径）。 */}
-          <ol className="flex flex-col gap-4">
-            {data.units.map((unit) => {
-              const questionById = new Map(
-                unit.questions.map(
-                  (question) => [question.questionId, question] as const,
-                ),
-              );
-              // P1-2：题级引用映射（学生题目投影携带）——组段并集 + solo 锚共用
-              const questionRefs = new Map<string, readonly MaterialRef[]>([]);
-              for (const question of unit.questions) {
-                const refs = question.snapshot.materialRefs;
-                if (refs !== undefined && refs.length > 0)
-                  questionRefs.set(question.questionId, refs);
-              }
-              const segments = groupSegmentsOfUnit(
-                contextQuery.data,
-                unit.questions.map((question) => question.questionId),
-                questionRefs,
-              );
-              /** 单题行（组行/独立行共用；组行不挂「查看材料」——回看布局
-                  上下排布自然阅读，无需 reveal 跳转） */
-              const renderRow = (questionId: string) => {
-                const question = questionById.get(questionId);
-                if (question === undefined) return null;
-                return (
-                  <li key={question.questionId} className="min-w-0">
-                    <ResultQuestionCard
-                      aiTrigger={aiCompanion.triggerForQuestion(
-                        question.questionId,
-                      )}
-                      index={flatQuestions.indexOf(question)}
-                      question={question}
-                      attemptId={attempt.id}
-                      released={released}
-                      roundLabel={roundLabel}
-                      activity={
-                        data.activity === undefined
-                          ? null
-                          : data.activity.byQuestion[question.questionId]
-                      }
-                      onSolutionToggle={onSolutionToggle}
-                    />
-                    {aiCompanion.inlineForQuestion(question.questionId)}
-                  </li>
-                );
-              };
-              return (
-                <li key={unit.id} className="flex flex-col gap-4">
-                  {showUnitHeaders && (
-                    <h2
-                      data-review-unit={unit.id}
-                      className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
-                    >
-                      {unit.title}
-                    </h2>
+          <ResultQuestionList
+            key={attempt.id}
+            data={data}
+            context={contextQuery.data}
+            indexOfQuestion={indexOfQuestion}
+            controller={resultMounts.controller}
+            lazy={lazyResults}
+            renderQuestion={(question, index) => (
+              <>
+                <ResultQuestionCard
+                  aiTrigger={aiCompanion.triggerForQuestion(
+                    question.questionId,
                   )}
-                  <ol data-layout="stack" className="flex flex-col gap-4">
-                    {segments.flatMap((segment) =>
-                      segment.kind === "solo"
-                        ? segment.questionIds.flatMap((questionId) => {
-                            const question = questionById.get(questionId);
-                            if (question === undefined) return [];
-                            // P1-2：solo 题级材料锚（回看自然阅读，无 reveal
-                            // 跳转——与组材料列同理由）
-                            const soloMaterials = questionMaterialsOf(
-                              contextQuery.data,
-                              question.snapshot,
-                            );
-                            return soloMaterials.length === 0
-                              ? [renderRow(questionId)]
-                              : [
-                                  <QuestionMaterialsAnchor
-                                    key={`qmat:${question.questionId}`}
-                                    questionId={question.questionId}
-                                    materials={soloMaterials}
-                                    readingKey={`${attempt.id}|q:${question.questionId}`}
-                                    className="min-w-0"
-                                    attemptId={attempt.id}
-                                  />,
-                                  renderRow(questionId),
-                                ];
-                          })
-                        : [
-                            <QuestionGroupAnchor
-                              key={`group:${segment.group.id}`}
-                              group={segment.group}
-                              materials={segment.materials}
-                              questionCount={segment.questionIds.length}
-                              readingKey={`${attempt.id}|${segment.group.id}`}
-                              layoutMode="stack"
-                              attemptId={attempt.id}
-                            />,
-                            ...segment.questionIds.map((questionId) =>
-                              renderRow(questionId),
-                            ),
-                          ],
-                    )}
-                  </ol>
-                </li>
-              );
-            })}
-          </ol>
+                  index={index}
+                  question={question}
+                  attemptId={attempt.id}
+                  released={released}
+                  roundLabel={roundLabel}
+                  activity={
+                    data.activity === undefined
+                      ? null
+                      : data.activity.byQuestion[question.questionId]
+                  }
+                  onSolutionToggle={onSolutionToggle}
+                />
+                {aiCompanion.inlineForQuestion(question.questionId)}
+              </>
+            )}
+          />
         </div>,
       )}
     </ResultWorkspace>

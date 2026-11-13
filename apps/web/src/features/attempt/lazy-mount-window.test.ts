@@ -273,3 +273,22 @@ describe("LazyMountWindow 结算与退化", () => {
     expect(instance.isMounted("q3")).toBe(false);
   });
 });
+
+describe("只延迟首挂的回看列表", () => {
+  it("保留已挂载内容且不建立卸载观察器", async () => {
+    FakeObserver.instances = [];
+    const instance = new LazyMountWindow({ unload: false });
+    const row = makeLi("result", { top: 8000, height: 500 });
+    instance.attach("result", row);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(instance.isMounted("result")).toBe(false);
+    instance.forceMount("result");
+    expect(instance.isMounted("result")).toBe(true);
+    expect(
+      FakeObserver.instances.map((observer) => observer.options.rootMargin),
+    ).toEqual([MOUNT_MARGIN]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(instance.isMounted("result")).toBe(true);
+    instance.dispose();
+  });
+});

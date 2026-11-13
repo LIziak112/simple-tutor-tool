@@ -37,11 +37,13 @@ export function useResultAiCompanion({
   title,
   questions,
   currentQuestionId,
+  beforeJump,
 }: {
   attemptId: string;
   title: string;
   questions: readonly AttemptResultQuestion[];
   currentQuestionId: string | null;
+  beforeJump: (questionId: string) => void;
 }) {
   const numberOf = (questionId: string): number | null => {
     const index = questions.findIndex(
@@ -66,6 +68,10 @@ export function useResultAiCompanion({
       return number === null ? null : `第 ${number} 题`;
     },
     currentQuestionId,
+    goToQuestion: async (questionId) => {
+      beforeJump(questionId);
+      return true;
+    },
     editor: null,
     materials: { annotation: false, paper: false },
     triggerLabel: "AI 复盘",

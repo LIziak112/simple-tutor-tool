@@ -170,12 +170,12 @@ const DATA: AttemptResultData = {
   ],
 };
 
-function renderView(data: AttemptResultData = DATA) {
+function renderView(data: AttemptResultData = DATA, entry = "/") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={client}>
         <AttemptResultView data={data} onBackHome={() => {}} />
       </QueryClientProvider>
@@ -533,3 +533,48 @@ describe("结果页顶栏：整卷复盘入口", () => {
     expect(mockedReviewAction).not.toHaveBeenCalled();
   });
 });
+it.each(["aiQuestion", "aiCompose"])(
+  "长卷远端题 %s 深链先挂载题卡",
+  async (parameter) => {
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      const original = DATA.units[0]?.questions[0];
+      if (!original) throw new Error("缺少题目夹具");
+      const data: AttemptResultData = {
+        ...DATA,
+        units: [
+          {
+            id: "long",
+            title: "长卷",
+            questions: Array.from({ length: 30 }, (_, index) => ({
+              ...original,
+              questionId: `long-${index}`,
+              snapshot: { ...original.snapshot, id: `long-${index}` },
+            })),
+          },
+        ],
+      };
+      renderView(data, `/?${parameter}=long-29`);
+      expect(
+        screen.queryByRole("article", { name: "第 30 题" }),
+      ).not.toBeInTheDocument();
+      expect(
+        await screen.findByRole("article", { name: "第 30 题" }),
+      ).toBeInTheDocument();
+      if (parameter === "aiCompose")
+        expect(
+          await screen.findByRole("region", { name: /的 AI 助教/ }),
+        ).toBeInTheDocument();
+      expect(screen.queryByText(/暂时无法定位本题/)).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
