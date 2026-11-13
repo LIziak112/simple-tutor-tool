@@ -105,6 +105,8 @@ describe("完成矩阵进行中进度计数（M4-D3）", () => {
     const u2 = unitCellOf(overview, seed.students.s2.id, seed.units.u2.id);
     // U2 共 3 题：已提交 1 行 → n/N = 1/3
     expect(u2.status).toBe("in-progress");
+    expect(u2.attemptCount).toBe(1);
+    expect(u2.redoCount).toBe(0);
     expect(u2.practiceSubmittedCount).toBe(1);
     expect(u2.practiceQuestionCount).toBe(3);
 

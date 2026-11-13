@@ -407,9 +407,9 @@ function buildMatrix(
         continue;
       }
       const submitted = group.filter((attempt) => attempt.submittedAt !== null);
-      // 进度与单元格状态共用最新卷；旧作废草稿不能因查询顺序抢占进度。
-      const latest = latestAttemptOf(group);
-      const draftAttempt = latest?.status === "draft" ? latest : undefined;
+      // M4-D3：格子为 in-progress 时取使格进行中的那份 draft（每 学生×单元
+      // 至多一份）；仅 v1 新协议卷在 progressByAttempt 中（legacy 缺省回落）
+      const draftAttempt = group.find((attempt) => attempt.status === "draft");
       const progress =
         draftAttempt === undefined
           ? undefined
