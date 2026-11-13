@@ -536,8 +536,14 @@ describe("SAI-29 分享正文及附件（公开读端点）", () => {
       expect(res.status).toBe(403);
       const joined = w.logs.join("\n");
       expect(joined).not.toContain(w.token);
-      // 脱敏形态：路径段替换为占位符（不能只清查询参数——token 在 path 里）
-      expect(joined).toContain("/api/public/ai/share/[token]");
+      // 仅记录注册的路由模板，且可与实际响应对账。
+      expect(w.logs.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          route: "/api/public/ai/share/:token",
+          requestId: res.headers.get("x-request-id"),
+          status: 403,
+        }),
+      );
       expect(joined).not.toContain(w.dataDir.replaceAll("\\", "/"));
       expect((await res.text()).includes(w.token)).toBe(false);
     });
