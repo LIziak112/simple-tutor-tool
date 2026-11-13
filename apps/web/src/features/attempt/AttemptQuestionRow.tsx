@@ -1,8 +1,4 @@
-import type {
-  HintOpenedEntry,
-  QuestionPublic,
-  StudentAnswer,
-} from "@tutor/contract";
+import type { HintOpenedEntry, StudentAnswer } from "@tutor/contract";
 import {
   type ComponentProps,
   createContext,
@@ -18,6 +14,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
+import { placeholderHeight } from "./question-placeholder-height";
+
+export { placeholderHeight } from "./question-placeholder-height";
+
 import { LazyMountWindow } from "./lazy-mount-window";
 import { registerReadingCard } from "./reading-position-capture";
 import type { AttemptAnswersState } from "./use-attempt-answers";
@@ -253,11 +253,3 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
     </SlotsContext>
   );
 });
-
-/** 懒挂载占位高度估算：题头 + 题干行数 + 选项行数（不含答案区/反馈区）。 */
-export function placeholderHeight(question: QuestionPublic): number {
-  const stemLength = question.stemMd?.length ?? 0;
-  const options = Array.isArray(question.options) ? question.options.length : 0;
-  const stemRows = Math.ceil(stemLength / 32);
-  return Math.min(1200, 132 + stemRows * 28 + options * 56);
-}
