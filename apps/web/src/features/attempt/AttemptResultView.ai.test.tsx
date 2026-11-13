@@ -395,10 +395,10 @@ it.each(["aiQuestion", "aiCompose"])(
       };
       renderView(data, `/?${parameter}=long-29`);
       expect(
-        screen.queryByRole("article", { name: "第 30 题", exact: true }),
+        screen.queryByRole("article", { name: "第 30 题" }),
       ).not.toBeInTheDocument();
       expect(
-        await screen.findByRole("article", { name: "第 30 题", exact: true }),
+        await screen.findByRole("article", { name: "第 30 题" }),
       ).toBeInTheDocument();
       if (parameter === "aiCompose")
         expect(
