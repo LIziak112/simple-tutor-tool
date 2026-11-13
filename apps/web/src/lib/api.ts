@@ -914,12 +914,14 @@ export function startWrongPracticeApi(
   options?: PracticeWorkflowStartOptions,
   /** 建卷范围快照（#6980-2）：随卷落库，记录/轮次史标题「练的是什么」 */
   scope?: WrongPracticeScope,
+  operationId?: string,
 ): Promise<AttemptStartData> {
   const args = {
     json: {
       questionIds,
       ...(options !== undefined ? { ...options } : {}),
       ...(scope !== undefined ? { scope } : {}),
+      ...(operationId !== undefined ? { operationId } : {}),
     },
   };
   return callApi(() => api.api.student["wrong-practice"].$post(args));
@@ -1145,17 +1147,9 @@ export function startLessonAttemptApi(
  * 讲练重做（POST /lectures/:id/lesson/restart，「再做一次/重新开始」显式
  * 独立动作，2026-10 教师演示口径随时可用）：最新 attempt 进行中时先作废
  * （abandonedAt 软标记——历次/记录/待批不再计入）再开新卷；无任何作答
- * 409。返回新卷（attemptNo+1，从空白开始）的讲练投影。无参数。
+ * 409。返回新卷（attemptNo+1，从空白开始）的讲练投影。
  */
-export function restartLessonAttemptApi(
-  lectureId: string,
-): Promise<LessonStartData> {
-  return callApi(() =>
-    api.api.student.lectures[":id"].lesson.restart.$post({
-      param: { id: lectureId },
-    }),
-  );
-}
+export { restartLessonAttemptApi } from "./lesson-restart-api";
 
 /**
  * 单题提交（POST /attempts/:id/questions/:questionId/submit，lesson 逐题

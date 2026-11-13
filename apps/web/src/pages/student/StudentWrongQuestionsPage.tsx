@@ -44,6 +44,7 @@ import {
   wrongQuestionsUrlQuery,
 } from "@/features/student/wrong-questions-ui";
 import { startWrongPracticeApi } from "@/lib/api";
+import { useReplayableCreate } from "@/lib/use-replayable-create";
 
 /**
  * /s/wrong 错题本（T3.5，D11；2026-10 IA 调整升为一级路由；2026-10 轮次史
@@ -345,22 +346,27 @@ export default function StudentWrongQuestionsPage() {
   // 圈定顺序（列表序）即组卷题序。成功后跳答题页；失败留错误横幅可重试
   // （重试按最近一次请求的题目集合重发）。scopeKey 标记正在提交的按钮。
   const [practiceScope, setPracticeScope] = useState<string | null>(null);
-  const lastPracticeRef = useRef<{
+  const createPractice = useReplayableCreate();
+  type PracticeInput = {
     scope: string;
     ids: string[];
-  } | null>(null);
+    options: ReturnType<typeof workflowStartOptions>;
+    scopePayload?: WrongPracticeScope | undefined;
+  };
+  const lastPracticeRef = useRef<PracticeInput | null>(null);
+  const practiceInFlight = useRef(false);
   const practice = useMutation({
-    mutationFn: (input: {
-      scope: string;
-      ids: string[];
-      scopePayload?: WrongPracticeScope | undefined;
-    }) => {
+    mutationFn: (input: PracticeInput) => {
       lastPracticeRef.current = input;
-      // M3-D1.5：执行时读本机偏好，显式进入新协议（教师约束服务端裁决）
-      return startWrongPracticeApi(
-        input.ids,
-        workflowStartOptions(),
-        input.scopePayload,
+      return createPractice(
+        [input.ids, input.options, input.scopePayload],
+        (operationId) =>
+          startWrongPracticeApi(
+            input.ids,
+            input.options,
+            input.scopePayload,
+            operationId,
+          ),
       );
     },
     onMutate: (input) => {
@@ -370,9 +376,15 @@ export default function StudentWrongQuestionsPage() {
       void navigate(`/s/attempts/${attempt.id}`);
     },
     onSettled: () => {
+      practiceInFlight.current = false;
       setPracticeScope(null);
     },
   });
+  const submitPractice = (input: PracticeInput) => {
+    if (practiceInFlight.current) return;
+    practiceInFlight.current = true;
+    practice.mutate(input);
+  };
   // #6980-2：三个重练入口随请求携带范围快照（all/group + 课程名），服务端
   // 落 attempts.practice_scope_json，记录/轮次史标题据此说明「练的是什么」
   const courseNameForScope =
@@ -422,9 +434,10 @@ export default function StudentWrongQuestionsPage() {
     groupTitle: string | null = null,
   ) => {
     if (list.length === 0) return; // 空范围按钮本就禁用（防御）
-    practice.mutate({
+    submitPractice({
       scope,
       ids: list.map((question) => question.questionId),
+      options: workflowStartOptions(),
       scopePayload: scopePayloadFor(scope, groupTitle, list.length),
     });
   };
@@ -603,7 +616,7 @@ export default function StudentWrongQuestionsPage() {
                 className="min-h-11"
                 onClick={() => {
                   const last = lastPracticeRef.current;
-                  if (last !== null) practice.mutate(last);
+                  if (last !== null) submitPractice(last);
                 }}
               >
                 重试

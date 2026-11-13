@@ -3,6 +3,7 @@ import {
   assignmentDueAtSchema,
   assignmentTitleSchema,
   assignmentUnitGroupingSchema,
+  createOperationIdSchema,
 } from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
@@ -29,6 +30,7 @@ import {
  */
 export const assignmentToolInputSchema = z
   .object({
+    operationId: createOperationIdSchema.optional(),
     title: assignmentTitleSchema.optional(),
     courseId: z.uuid().nullable().optional(),
     // 与 contract unitIdSchema 同口径（模块内私有，此处镜像）：单元 id 是

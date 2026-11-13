@@ -15,6 +15,7 @@ import {
   fetchAssignmentsApi,
   updateAssignmentApi,
 } from "@/lib/api";
+import { useReplayableCreate } from "@/lib/use-replayable-create";
 
 /**
  * 作业查询与写操作（T2.2 教师端作业页；T2A.7 扩展 courseId 筛选、详情与 D15 检查）。
@@ -72,8 +73,12 @@ function useInvalidateAssignments() {
  */
 export function useCreateAssignment() {
   const invalidate = useInvalidateAssignments();
+  const create = useReplayableCreate();
   return useMutation<AssignmentCreateData, Error, AssignmentCreateRequest>({
-    mutationFn: createAssignmentApi,
+    mutationFn: (request) =>
+      create(request, (operationId) =>
+        createAssignmentApi({ ...request, operationId }),
+      ),
     onSuccess: invalidate,
   });
 }

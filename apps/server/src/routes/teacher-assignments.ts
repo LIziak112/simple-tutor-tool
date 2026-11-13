@@ -13,9 +13,9 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody } from "../lib/http-error";
+import { createAssignmentWithReceipt } from "../services/assignment-creation-operation";
 import {
   checkAssignment,
-  createAssignment,
   deleteAssignment,
   getAssignmentDetail,
   listTeacherAssignments,
@@ -80,10 +80,13 @@ export function createAssignmentTeacherRoutes(db: Db) {
         c,
         assignmentCreateRequestSchema,
       );
-      return c.json(
-        { ok: true, data: createAssignment(db, c.var.teacher.id, body) },
-        201,
+      const data = createAssignmentWithReceipt(
+        db,
+        c.var.teacher.id,
+        body,
+        () => body,
       );
+      return c.json({ ok: true, data }, 201);
     })
     .post("/assignments/check", async (c) => {
       const body: AssignmentCheckRequest = await parseJsonBody(

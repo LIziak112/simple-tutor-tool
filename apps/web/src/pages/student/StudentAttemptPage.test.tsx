@@ -11,6 +11,10 @@ import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import {
+  bindPracticePreferenceAccount,
+  savePracticePreference,
+} from "@/features/attempt/practice-preference-store";
+import {
   ApiError,
   AttemptDetailReadTimeoutError,
   createCorrectionApi,
@@ -529,6 +533,7 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
         { workflowVersion: 1 },
         // #6980-2：范围快照（本卷结果入口 → kind:"result" + 卷标题）
         { kind: "result", sourceTitle: "有理数小练" },
+        expect.any(String),
       ),
     );
     // 跳转 /s/attempts/:新id（同路由重挂载）→ 按新 attemptId 重新拉详情
@@ -555,6 +560,7 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
         { workflowVersion: 1 },
         // #6980-2：范围快照（本卷结果入口 → kind:"result" + 卷标题）
         { kind: "result", sourceTitle: "有理数小练" },
+        expect.any(String),
       ),
     );
     // role=alert 按 ARIA 不能从内容取名（name 查询恒空），断言用文本内容
@@ -566,6 +572,31 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
     expect(
       screen.getByRole("button", { name: "练习本卷错题（1 题）" }),
     ).toBeEnabled();
+  });
+
+  it("回执丢失后修改偏好，结果页重试仍使用首次参数和操作编号", async () => {
+    mockedFetch.mockResolvedValue(RESULT_WITH_WRONG);
+    mockedPractice.mockRejectedValue(new Error("回执丢失"));
+    renderPage();
+    const button = await screen.findByRole("button", {
+      name: "练习本卷错题（1 题）",
+    });
+    fireEvent.click(button);
+    await screen.findByRole("alert");
+    const first = mockedPractice.mock.calls[0];
+    if (!first) throw new Error("首次请求缺失");
+    act(() => {
+      bindPracticePreferenceAccount("result-retry-user");
+      savePracticePreference({
+        layout: null,
+        keyboardShortcuts: true,
+        feedback: "after_attempt",
+      });
+    });
+    fireEvent.click(button);
+    await waitFor(() => expect(mockedPractice).toHaveBeenCalledTimes(2));
+    expect(mockedPractice.mock.calls[1]).toEqual(first);
+    bindPracticePreferenceAccount(null);
   });
 
   it("模块 7「专项重练（n）」：只圈本模块的题，范围标题带「· 模块名」", async () => {
@@ -604,6 +635,7 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
         ["练习四-2"],
         { workflowVersion: 1 },
         { kind: "result", sourceTitle: "有理数小练 · 资料分析" },
+        expect.any(String),
       ),
     );
   });

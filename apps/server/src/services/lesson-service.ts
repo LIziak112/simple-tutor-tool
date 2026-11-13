@@ -5,6 +5,7 @@ import type {
   HintOpenedEntry,
   LessonBlock,
   LessonLandingData,
+  LessonRestartRequest,
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
@@ -12,6 +13,7 @@ import type {
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
 import { splitLessonBlocks } from "@tutor/md-dsl";
 import { and, desc, eq, isNull } from "drizzle-orm";
+import { z } from "zod";
 import type { Db } from "../db/client";
 import { type Attempt, attempts, questions } from "../db/schema";
 import { HttpError } from "../lib/http-error";
@@ -31,9 +33,11 @@ import {
   materialSlotOrderOf,
   newDraftAttempt,
   publicOfSnapshot,
+  requireUsableAttempt,
   resultQuestionOf,
   studentFacingResultOf,
 } from "./attempt-service";
+import { createOnce } from "./create-receipt";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
 import { pickEmbeddedUnits } from "./lesson-embedded";
@@ -381,6 +385,7 @@ export function restartLessonAttempt(
   db: Db,
   studentId: string,
   lectureId: string,
+  request?: LessonRestartRequest,
 ): LessonStartData {
   const { lecture, course, unitId, topic } = requireLessonContext(
     db,
@@ -388,26 +393,46 @@ export function restartLessonAttempt(
     lectureId,
   );
 
-  const attempt = db.transaction((tx) => {
-    const latest = lessonAttemptsOf(tx, studentId, lectureId)[0];
-    if (latest === undefined) {
-      throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
-    }
-    if (latest.status === "draft") {
-      tx.update(attempts)
-        .set({ abandonedAt: new Date().toISOString() })
-        .where(eq(attempts.id, latest.id))
-        .run();
-    }
-    return createLessonAttempt(tx, db, {
-      studentId,
-      courseId: course.id,
-      lectureId: lecture.id,
-      unitId,
-      attemptNo: latest.attemptNo + 1,
+  const create = (store: Db) =>
+    store.transaction((tx) => {
+      const latest = lessonAttemptsOf(tx, studentId, lectureId)[0];
+      if (latest === undefined) {
+        throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
+      }
+      if (request && latest.id !== request.expectedAttemptId)
+        throw new HttpError(
+          409,
+          "LESSON_RESTART_STALE",
+          "讲练已在其他页面重新开始，请刷新后确认",
+        );
+      if (latest.status === "draft") {
+        tx.update(attempts)
+          .set({ abandonedAt: new Date().toISOString() })
+          .where(eq(attempts.id, latest.id))
+          .run();
+      }
+      const attempt = createLessonAttempt(tx, store, {
+        studentId,
+        courseId: course.id,
+        lectureId: lecture.id,
+        unitId,
+        attemptNo: latest.attemptNo + 1,
+      });
+      recordAttemptStartEvent(store, studentId, attempt.id);
+      return attempt.id;
     });
-  });
-  recordAttemptStartEvent(db, studentId, attempt.id);
+  const id = request
+    ? createOnce(
+        db,
+        "lesson-restart",
+        studentId,
+        request.operationId,
+        [lectureId, request.expectedAttemptId],
+        z.uuid(),
+        create,
+      )
+    : create(db);
+  const attempt = requireUsableAttempt(db, studentId, id);
   return buildLessonStartData(db, lecture, course, topic, attempt);
 }
 

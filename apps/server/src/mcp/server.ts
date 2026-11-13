@@ -19,9 +19,9 @@ import { z } from "zod";
 import type { Db } from "../db/client";
 import { firstIssueMessage, HttpError } from "../lib/http-error";
 import { getAnalyticsQuestions } from "../services/analytics-service";
+import { createAssignmentWithReceipt } from "../services/assignment-creation-operation";
 import {
   checkAssignment,
-  createAssignment,
   listTeacherAssignments,
 } from "../services/assignment-service";
 import { getCapabilityProfile } from "../services/capability-profile-service";
@@ -387,7 +387,7 @@ export function registerTeacherTools(
     "create_assignment",
     {
       description:
-        "给名下学生布置作业（unitIds 顺序即作业内单元顺序；studentIds 可省略：名下未归档学生恰 1 名时默认该生，否则报 STUDENT_AMBIGUOUS 附名单）。缺省仅预检（D15「已做过」检查，零副作用），confirm=true 执行创建。",
+        "给名下学生布置作业（unitIds 顺序即作业内单元顺序；studentIds 可省略：名下未归档学生恰 1 名时默认该生，否则报 STUDENT_AMBIGUOUS 附名单）。缺省仅预检（D15「已做过」检查，零副作用），confirm=true 执行创建；同一次确认的重试沿用 assignment.operationId。",
       inputSchema: {
         assignment: assignmentToolInputSchema,
         confirm: z.boolean().optional(),
@@ -395,21 +395,21 @@ export function registerTeacherTools(
       annotations: { readOnlyHint: false, destructiveHint: false },
     },
     guard(({ assignment, confirm }) => {
-      const studentIds = resolveAssignmentStudentIds(
-        db,
-        teacherId,
-        assignment.studentIds,
-      );
+      const resolve = (store: Db) => ({
+        ...assignment,
+        studentIds: resolveAssignmentStudentIds(
+          store,
+          teacherId,
+          assignment.studentIds,
+        ),
+      });
       if (!confirm)
         return jsonContent({
           preview: true,
-          check: checkAssignment(db, teacherId, {
-            unitIds: assignment.unitIds,
-            studentIds,
-          }),
+          check: checkAssignment(db, teacherId, resolve(db)),
         });
       return jsonContent(
-        createAssignment(db, teacherId, { ...assignment, studentIds }),
+        createAssignmentWithReceipt(db, teacherId, assignment, resolve),
       );
     }),
   );
