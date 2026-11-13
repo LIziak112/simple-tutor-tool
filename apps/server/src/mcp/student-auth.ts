@@ -60,7 +60,7 @@ export function studentMcpToolAuthorization(
   expected: ResolvedMcpStudent,
 ): () => boolean {
   return () => {
-    const current = resolveMcpStudentToken(db, header);
+    const current = resolveMcpStudentToken(db, header, expected.connectionId);
     return (
       current?.connectionId === expected.connectionId &&
       current.studentId === expected.studentId &&
@@ -99,10 +99,13 @@ function unauthorized(c: Context): Response {
 export function resolveMcpStudentToken(
   db: Db,
   authorizationHeader: string | undefined,
+  connectionId?: string,
 ): ResolvedMcpStudent | null {
   const token = bearerTokenOf(authorizationHeader);
   const connection =
-    token === null ? null : findActiveMcpConnectionByToken(db, token);
+    token === null
+      ? null
+      : findActiveMcpConnectionByToken(db, token, connectionId);
   if (connection === null) return null;
   const domain = studentAiDomainOf(db, connection.studentId);
   if (domain === null) return null;

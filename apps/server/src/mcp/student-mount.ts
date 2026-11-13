@@ -9,6 +9,7 @@ import {
   studentMcpToolAuthorization,
 } from "./student-auth";
 import { createStudentMcpServer } from "./student-server";
+import { createStudentTaskNotificationRoutes } from "./student-task-notifications";
 
 /**
  * /mcp/student 挂载（SAI-25，B14）——SDK Streamable HTTP 传输，**不走统一壳、
@@ -103,6 +104,7 @@ export function createStudentMcpRoutes(options: StudentMcpMountOptions) {
   return new Hono<StudentMcpEnv>()
     .use("*", rejectForeignOrigin)
     .use("*", requireToken)
+    .route("/", createStudentTaskNotificationRoutes(options.db))
     .all("/", async (c) => {
       // 鉴权通过：token 绑定的学生（c.var.mcpStudent）成为本请求全部工具的域
       const server = createStudentMcpServer({

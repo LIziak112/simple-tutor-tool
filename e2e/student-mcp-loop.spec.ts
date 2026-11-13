@@ -191,6 +191,7 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", { tag: ["@mcp"] }
     const world = await makeWorld(request, suffix, title);
     const student = await getStudentViaApi(request, world.loginName);
     const { context, page } = await loginStudent(browser, student.linkToken);
+    const eventStream = new AbortController();
     try {
       // 学生 API（context.request 复用会话 cookie）：开卷（幂等）+ 拿两题 id
       const studentApi = context.request;
@@ -246,15 +247,74 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", { tag: ["@mcp"] }
           await studentApi.get("/api/student/ai/connections")
         ).json()) as {
           data: {
-            connections: { channel: string; tokenFingerprint?: string }[];
+            connections: {
+              id: string;
+              channel: string;
+              tokenFingerprint?: string;
+            }[];
           };
         }
       ).data.connections;
       const mcpConn = listConn.find((c) => c.channel === "mcp");
       expect(mcpConn?.tokenFingerprint).toBeTruthy();
 
+      // 实时等待默认关闭，必须由学生明确启用。
+      const waitHeaders = { authorization: `Bearer ${token}` };
+      const waitUrl = `${STUDENT_MCP_URL}/wait?timeout=1`;
+      expect(
+        (await request.get(waitUrl, { headers: waitHeaders })).status(),
+      ).toBe(403);
+      const connectionId = mcpConn?.id;
+      if (connectionId === undefined) throw new Error("缺少 MCP 连接");
+      const enabled = await studentApi.patch(
+        `/api/student/ai/connections/${connectionId}`,
+        {
+          data: { channel: "mcp", liveContextEnabled: true },
+        },
+      );
+      expect(enabled.status()).toBe(200);
+      expect(
+        (await request.get(waitUrl, { headers: waitHeaders })).status(),
+      ).toBe(204);
+
       // ③ 两题入队（学生可继续作答，页面不自动切题）；首题记下 id 供附材料
       const questionIds = questions.slice(0, 2).map((q) => q.id);
+      const currentQuestion = questionIds[0];
+      if (currentQuestion === undefined) throw new Error("缺少首题");
+      const capability = await studentApi.get("/api/student/ai/mcp-live-focus");
+      expect(capability.ok()).toBe(true);
+      const { data } = (await capability.json()) as {
+        data: { generation: string | null };
+      };
+      if (!data.generation) throw new Error("缺少实时焦点代次");
+      const focus = await studentApi.put(
+        `/api/student/attempts/${attemptId}/mcp-live-focus`,
+        {
+          data: {
+            generation: data.generation,
+            questionId: currentQuestion,
+            viewId: crypto.randomUUID(),
+            sequence: 1,
+          },
+        },
+      );
+      expect(focus.ok()).toBe(true);
+      const readCurrent = (id: number) =>
+        callTool(request, token, id, "get_current_context", {});
+      expect((await readCurrent(101)).json).toEqual({
+        status: "student_action_required",
+      });
+      const events = await fetch(`${STUDENT_MCP_URL}/events`, {
+        headers: waitHeaders,
+        signal: AbortSignal.any([
+          eventStream.signal,
+          AbortSignal.timeout(15_000),
+        ]),
+      });
+      expect(events.status).toBe(200);
+      expect(events.headers.get("content-type")).toContain("text/event-stream");
+      const eventReader = events.body?.getReader();
+      if (eventReader === undefined) throw new Error("缺少求助事件流");
       const createdIds: string[] = [];
       for (const questionId of questionIds) {
         const created = await studentApi.post("/api/student/ai/tasks", {
@@ -272,6 +332,46 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", { tag: ["@mcp"] }
           ((await created.json()) as { data: { id: string } }).data.id,
         );
       }
+      const decoder = new TextDecoder();
+      let eventText = "";
+      while (!eventText.includes(`id: ${createdIds[1]}\n\n`)) {
+        const chunk = await eventReader.read();
+        if (chunk.done) throw new Error("求助事件流未交付任务就关闭");
+        eventText += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(eventText).toContain(": keepalive\n\n");
+      expect(eventText).toContain(`id: ${createdIds[0]}\n`);
+      expect(eventText).toContain(`id: ${createdIds[1]}\n`);
+      const eventData = eventText.match(/^data: (.+)$/m)?.[1];
+      if (eventData === undefined) throw new Error("缺少事件载荷");
+      expect(JSON.parse(eventData)).toEqual({
+        kind: "task",
+        id: createdIds[0],
+        createdAt: expect.any(String),
+      });
+      expect((await readCurrent(102)).json).toEqual({
+        status: "authorized_task",
+        taskId: createdIds[0],
+      });
+      const waitingTask = await request.get(waitUrl, { headers: waitHeaders });
+      expect(waitingTask.status()).toBe(200);
+      const waitBody: unknown = await waitingTask.json();
+      expect(waitBody).toMatchObject({ kind: "task", id: createdIds[0] });
+      expect(JSON.stringify(waitBody)).not.toMatch(
+        /answers|solutionMd|teacherComment/,
+      );
+      const disabled = await studentApi.patch(
+        `/api/student/ai/connections/${connectionId}`,
+        {
+          data: { channel: "mcp", liveContextEnabled: false },
+        },
+      );
+      expect(disabled.status()).toBe(200);
+      expect((await eventReader.read()).done).toBe(true);
+      expect((await readCurrent(103)).json).toEqual({ status: "disabled" });
+      expect(
+        (await request.get(waitUrl, { headers: waitHeaders })).status(),
+      ).toBe(403);
 
       // ③b 首题上传一页草稿材料 PNG（SAI-20 multipart）：领取时应作为
       // SDK image content 附图出站——协议客户端拿到的是 base64 PNG
@@ -459,6 +559,7 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", { tag: ["@mcp"] }
         page.getByRole("button", { name: /新回复 [1-9]/u }),
       ).toBeVisible();
     } finally {
+      eventStream.abort();
       await context.close();
     }
   });

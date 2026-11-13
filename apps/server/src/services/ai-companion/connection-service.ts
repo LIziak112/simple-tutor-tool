@@ -745,6 +745,7 @@ export async function testStudentAiConnection(
 export function findActiveMcpConnectionByToken(
   db: Db,
   token: string,
+  connectionId?: string,
 ): { id: string; studentId: string } | null {
   const tokenHash = hashMcpToken(token);
   const rows = db
@@ -755,7 +756,13 @@ export function findActiveMcpConnectionByToken(
     })
     .from(aiConnections)
     .where(
-      and(eq(aiConnections.channel, "mcp"), isNull(aiConnections.archivedAt)),
+      and(
+        eq(aiConnections.channel, "mcp"),
+        isNull(aiConnections.archivedAt),
+        connectionId === undefined
+          ? undefined
+          : eq(aiConnections.id, connectionId),
+      ),
     )
     .all();
   for (const row of rows) {
@@ -767,12 +774,11 @@ export function findActiveMcpConnectionByToken(
   return null;
 }
 
-/** 连接撤销、归档或旧配置均不授予实时定位权限。 */
-export function mcpLiveContextGeneration(
+/** 授权代次在开关、凭证或数据库运行实例变化时失效。 */
+export function mcpLiveContextGrant(
   db: Db,
   studentId: string,
   connectionId?: string,
-  windowOffset = 0,
 ): string | null {
   const row = db
     .select({ config: aiConnections.configJson })
@@ -797,13 +803,22 @@ export function mcpLiveContextGeneration(
       config.liveContextEnabled === true &&
       "liveContextGeneration" in config &&
       typeof config.liveContextGeneration === "string"
-      ? createHash("sha256")
-          .update(
-            `${runtimeEpochOf(db)}:${config.liveContextGeneration}:${Math.floor(Date.now() / MCP_LIVE_FOCUS_TTL_MS) + windowOffset}`,
-          )
-          .digest("hex")
+      ? `${runtimeEpochOf(db)}:${config.liveContextGeneration}`
       : null;
   } catch {
     return null;
   }
+}
+
+/** 浏览器定位请求还须匹配短时间窗。 */
+export function mcpLiveContextGeneration(
+  db: Db,
+  studentId: string,
+  connectionId?: string,
+  windowOffset = 0,
+): string | null {
+  const grant = mcpLiveContextGrant(db, studentId, connectionId);
+  if (grant === null) return null;
+  const window = Math.floor(Date.now() / MCP_LIVE_FOCUS_TTL_MS) + windowOffset;
+  return createHash("sha256").update(`${grant}:${window}`).digest("hex");
 }
