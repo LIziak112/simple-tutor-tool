@@ -33,6 +33,10 @@ import { assertSavedAnswersConfirmed } from "./attempt-timing";
 import { recordConfirmedSubmit, submissionActivityOf } from "./event-service";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { answerOf, snapshotOfRow } from "./snapshot";
+import {
+  recordedActiveSecTotal,
+  submittedTimePatchOf,
+} from "./submission-time.ts";
 
 // ---------- POST /api/student/attempts/:id/submit ----------
 
@@ -241,7 +245,7 @@ function finalizeWholeAttempt(
         answered:
           !isUnanswered(g.answer) || inkQuestionIds.has(g.response.questionId),
         ...rowSubmittedAtPatch,
-        activeSec: activeSecByQuestion[g.response.questionId] ?? null,
+        ...submittedTimePatchOf(activeSecByQuestion, g.response.questionId),
         changeCount: Math.max(
           g.response.changeCount,
           eventChangeCountByQuestion[g.response.questionId] ?? 0,
@@ -264,6 +268,12 @@ function finalizeWholeAttempt(
       })
       .run();
   }
+  const totalActiveSec = recordedActiveSecTotal([
+    ...keptRows,
+    ...graded.map((g) =>
+      submittedTimePatchOf(activeSecByQuestion, g.response.questionId),
+    ),
+  ]);
   recordConfirmedSubmit(db, attempt, nowIso);
   db.update(attempts)
     .set({
@@ -274,13 +284,7 @@ function finalizeWholeAttempt(
       scoreAuto,
       scoreFinal,
       // 总有效用时 = 各题之和；无任何 focus 序列（未计算）保持 NULL
-      activeSec:
-        Object.keys(activeSecByQuestion).length > 0
-          ? Object.values(activeSecByQuestion).reduce(
-              (sum, sec) => sum + sec,
-              0,
-            )
-          : null,
+      activeSec: totalActiveSec,
     })
     .where(eq(attempts.id, attemptId))
     .run();
@@ -298,7 +302,7 @@ function finalizeWholeAttempt(
       answered:
         !isUnanswered(g.answer) || inkQuestionIds.has(g.response.questionId),
       ...rowSubmittedAtPatch,
-      activeSec: activeSecByQuestion[g.response.questionId] ?? null,
+      ...submittedTimePatchOf(activeSecByQuestion, g.response.questionId),
       changeCount: Math.max(
         g.response.changeCount,
         eventChangeCountByQuestion[g.response.questionId] ?? 0,
@@ -311,10 +315,7 @@ function finalizeWholeAttempt(
     submittedAt: nowIso,
     scoreAuto,
     scoreFinal,
-    activeSec:
-      Object.keys(activeSecByQuestion).length > 0
-        ? Object.values(activeSecByQuestion).reduce((sum, sec) => sum + sec, 0)
-        : null,
+    activeSec: totalActiveSec,
   };
   return buildResultData(
     db,
