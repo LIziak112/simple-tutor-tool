@@ -9,6 +9,7 @@ import type {
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
+import { isRecordableAttempt } from "@tutor/contract";
 // 学生端题干投影唯一入口在 attempt-service 的 studentFacingResultOf
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
 import { splitLessonBlocks } from "@tutor/md-dsl";
@@ -21,6 +22,7 @@ import {
   contextEntriesOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import { refreshOpenedAttempt } from "./attempt-opened-refresh.ts";
 import {
   answerOf,
   attemptEnabledCapabilities,
@@ -242,6 +244,7 @@ function buildLessonStartData(
     validQuestionIds.add(row.questionId);
     questions.push(
       publicOfSnapshot(snapshot, row.id, {
+        questionVersion: row.questionVersion,
         materialSlots,
         // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
         unitId: row.unitId,
@@ -368,7 +371,8 @@ export function startLessonAttempt(
   const { attempt, created } = db.transaction((tx) => {
     const existing = lessonAttemptsOf(tx, studentId, lectureId);
     const draft = existing.find((row) => row.status === "draft");
-    if (draft !== undefined) return { attempt: draft, created: false };
+    if (draft !== undefined)
+      return { attempt: refreshOpenedAttempt(db, draft), created: false };
     const latest = existing[0];
     // 已完成（或历史终态）：返回最新那份——start 绝不因已完成而开新卷
     if (latest !== undefined) return { attempt: latest, created: false };
@@ -499,7 +503,9 @@ export function getLessonLanding(
     typeDistribution[row.type] = (typeDistribution[row.type] ?? 0) + 1;
   }
 
-  const attemptRows = lessonAttemptsOf(db, studentId, lectureId);
+  const attemptRows = lessonAttemptsOf(db, studentId, lectureId).filter(
+    isRecordableAttempt,
+  );
   const resultCounts = attemptResultCounts(db, attemptRows);
   const submittedRows = attemptRows.filter((row) => row.status !== "draft");
   const ascending = [...submittedRows].sort(

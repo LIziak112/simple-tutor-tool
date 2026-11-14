@@ -112,10 +112,19 @@ export function useInkUpload(
   const inFlightRef = useRef<Promise<boolean> | null>(null);
   const baseRevisionRef = useRef(0);
   const blockedRef = useRef(false);
+  const snapshots = useRef(
+    new WeakMap<InkDoc, { token: string | null | undefined }>(),
+  );
   const mutations = useRef(
     new WeakMap<
       InkDoc,
-      { baseRevision: number; mutationId: string; gzip: Blob; png: Blob }
+      {
+        baseRevision: number;
+        mutationId: string;
+        gzip: Blob;
+        png: Blob;
+        expectedFrozenAt?: string | null;
+      }
     >(),
   );
   const attemptIdRef = useRef(attemptId);
@@ -151,11 +160,13 @@ export function useInkUpload(
             renderInkSnapshot(doc),
             gzipOrRaw(JSON.stringify(doc)),
           ]);
+          const expectedFrozenAt = snapshots.current.get(doc)?.token;
           mutation = {
             baseRevision: baseRevisionRef.current,
             mutationId: randomUuid(),
             gzip: new Blob([gzip], { type: "application/gzip" }),
             png,
+            ...(expectedFrozenAt !== undefined ? { expectedFrozenAt } : {}),
           };
           mutations.current.set(doc, mutation);
         }
@@ -181,6 +192,9 @@ export function useInkUpload(
           {
             baseRevision: mutation.baseRevision,
             mutationId: mutation.mutationId,
+            ...(mutation.expectedFrozenAt !== undefined
+              ? { expectedFrozenAt: mutation.expectedFrozenAt }
+              : {}),
           },
         );
         if (stale()) return false;
@@ -233,6 +247,14 @@ export function useInkUpload(
   /** 把文档放入待传并进防抖（书写一笔与本地恢复补传共用） */
   const resync = useCallback(
     (doc: InkDoc) => {
+      if (!snapshots.current.has(doc))
+        snapshots.current.set(doc, {
+          token: draftStore.inkSnapshotToken(
+            attemptIdRef.current,
+            questionIdRef.current,
+            doc,
+          ),
+        });
       pendingRef.current = doc;
       pendingEpoch.current = getDraftSessionEpoch();
       if (timerRef.current !== null) clearTimeout(timerRef.current);

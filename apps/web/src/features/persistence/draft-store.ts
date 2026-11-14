@@ -13,6 +13,7 @@ import {
   storedVersionOf,
 } from "@/features/persistence/draft-persistence";
 import { randomUuid } from "@/lib/uuid";
+import { editingView } from "./draft-editing-view";
 import {
   digestOf,
   inkDigestOf,
@@ -48,6 +49,10 @@ export interface MaterialInkBaseMeta {
   readonly cssWidth: number;
   readonly cssHeight?: number;
 }
+export interface LocalSnapshotBinding {
+  digest: string;
+  frozenAt: string | null;
+}
 
 /** 一份 attempt 的本地草稿记录（IndexedDB 值形态） */
 export interface AttemptDraftRecord {
@@ -74,6 +79,9 @@ export interface AttemptDraftRecord {
   /** 新协议逐题基线、稳定重试标识及待裁决云端稿。旧记录缺省为空。 */
   answerRevisions?: Record<string, number>;
   answerMutationIds?: Record<string, string>;
+  answerQuestionRevisions?: Record<string, string>;
+  inkSnapshotBindings?: Record<string, LocalSnapshotBinding>;
+  materialSnapshotBindings?: Record<string, LocalSnapshotBinding>;
   answerConflicts?: Record<string, AttemptAnswerConflictCurrent>;
   localConflicts?: LocalDraftConflict[];
 }
@@ -269,35 +277,6 @@ const inFlightWrites = new Map<
 /** attemptId → 待落盘定时器 */
 const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-/** 画布持有本页已打开的文档，普通落盘不替换它的编辑基线。 */
-function editingView(
-  local: AttemptDraftRecord,
-  stored: AttemptDraftRecord,
-  chosen?: LocalDraftConflict,
-): AttemptDraftRecord {
-  const view = {
-    ...stored,
-    inks: { ...local.inks },
-    inkDigests: { ...local.inkDigests },
-    materialInks: { ...local.materialInks },
-    materialInkBases: { ...local.materialInkBases },
-  };
-  if (chosen?.kind === "ink") {
-    const doc = stored.inks[chosen.key];
-    if (doc) view.inks[chosen.key] = doc;
-    else delete view.inks[chosen.key];
-  }
-  if (chosen?.kind === "material") {
-    const doc = stored.materialInks?.[chosen.key];
-    const base = stored.materialInkBases?.[chosen.key];
-    if (doc) view.materialInks[chosen.key] = doc;
-    else delete view.materialInks[chosen.key];
-    if (base) view.materialInkBases[chosen.key] = base;
-    else delete view.materialInkBases[chosen.key];
-  }
-  return view;
-}
-
 /** 变更后统一走这里：更新内存 + 防抖落盘 */
 function mutate(
   attemptId: string,
@@ -469,6 +448,66 @@ export async function assertLoadedDraftsForPwaUpdate(): Promise<void> {
 }
 
 export const draftStore = {
+  /** 清除恢复只复制已核对版本的正文，保留原卷，并重建新卷同步基线。 */
+  async restoreClearedDraft(
+    attemptId: string,
+    source: AttemptDraftRecord,
+    expectedFrozenAt?: string | null,
+    questionRevisions: Readonly<Record<string, string>> = {},
+  ): Promise<void> {
+    const generation = backendGeneration;
+    await loadDraft(attemptId, { strictRead: true });
+    if (generation !== backendGeneration) throw new Error("作答会话已切换");
+    mutate(attemptId, (record) => {
+      for (const [id, answer] of Object.entries(source.answers)) {
+        record.answers[id] ??= structuredClone(answer);
+        if (
+          questionRevisions[id] &&
+          digestOf(record.answers[id]) === digestOf(answer)
+        ) {
+          record.answerQuestionRevisions ??= {};
+          record.answerQuestionRevisions[id] = questionRevisions[id];
+        }
+      }
+      for (const [id, doc] of Object.entries(source.inks)) {
+        const { serverRevision: _revision, ...body } = doc;
+        record.inks[id] ??= structuredClone(body);
+        if (
+          expectedFrozenAt !== undefined &&
+          inkDigestOf(record.inks[id]) === inkDigestOf(body)
+        ) {
+          record.inkSnapshotBindings ??= {};
+          record.inkSnapshotBindings[id] = {
+            digest: inkDigestOf(body),
+            frozenAt: expectedFrozenAt,
+          };
+        }
+      }
+      record.materialInks = { ...source.materialInks, ...record.materialInks };
+      if (expectedFrozenAt !== undefined)
+        for (const [id, doc] of Object.entries(source.materialInks ?? {})) {
+          if (
+            record.materialInks[id] &&
+            inkDigestOf(record.materialInks[id]) === inkDigestOf(doc)
+          ) {
+            record.materialSnapshotBindings ??= {};
+            record.materialSnapshotBindings[id] = {
+              digest: inkDigestOf(doc),
+              frozenAt: expectedFrozenAt,
+            };
+          }
+        }
+      record.materialInkBases = {
+        ...source.materialInkBases,
+        ...record.materialInkBases,
+      };
+      record.savedAt = Date.now();
+    });
+    await writeNow(attemptId);
+    if (generation !== backendGeneration) throw new Error("作答会话已切换");
+    if (getDraftPersistenceState(attemptId) !== "saved")
+      throw new Error("本机草稿恢复保存失败，请重试");
+  },
   markLockedSubmission(attemptId: string): void {
     lockedSubmissions.add(attemptId);
   },
@@ -596,9 +635,14 @@ export const draftStore = {
     attemptId: string,
     questionId: string,
     answer: StudentAnswer,
+    questionRevisionId?: string,
   ): void {
     mutate(attemptId, (record) => {
       record.answers[questionId] = answer;
+      if (questionRevisionId !== undefined) {
+        record.answerQuestionRevisions ??= {};
+        record.answerQuestionRevisions[questionId] = questionRevisionId;
+      }
       record.answerMutationIds ??= {};
       record.answerMutationIds[questionId] = randomUuid();
       record.savedAt = Date.now();
@@ -666,18 +710,52 @@ export const draftStore = {
   },
 
   /** 每笔结束写本地（InkPad onDocChange 链路） */
-  saveInk(attemptId: string, questionId: string, doc: InkDoc): void {
+  saveInk(
+    attemptId: string,
+    questionId: string,
+    doc: InkDoc,
+    expectedFrozenAt?: string | null,
+  ): void {
     mutate(attemptId, (record) => {
       record.inks[questionId] = doc;
+      if (expectedFrozenAt !== undefined) {
+        record.inkSnapshotBindings ??= {};
+        record.inkSnapshotBindings[questionId] = {
+          digest: inkDigestOf(doc),
+          frozenAt: expectedFrozenAt,
+        };
+      }
       record.savedAt = Date.now();
     });
   },
 
+  /** 提交凭据必须与当前正文指纹绑定，不借用其他版本的本机元数据。 */
+  inkSnapshotToken(
+    attemptId: string,
+    questionId: string,
+    doc: InkDoc,
+  ): string | null | undefined {
+    const binding = cache.get(attemptId)?.inkSnapshotBindings?.[questionId];
+    return binding?.digest === inkDigestOf(doc) ? binding.frozenAt : undefined;
+  },
+
   /** 材料圈画手写笔迹：按 materialId 合并存储于本次 attempt 草稿 */
-  saveMaterialInk(attemptId: string, materialId: string, doc: InkDoc): void {
+  saveMaterialInk(
+    attemptId: string,
+    materialId: string,
+    doc: InkDoc,
+    expectedFrozenAt?: string | null,
+  ): void {
     mutate(attemptId, (record) => {
       record.materialInks ??= {};
       record.materialInks[materialId] = doc;
+      if (expectedFrozenAt !== undefined) {
+        record.materialSnapshotBindings ??= {};
+        record.materialSnapshotBindings[materialId] = {
+          digest: inkDigestOf(doc),
+          frozenAt: expectedFrozenAt,
+        };
+      }
       record.savedAt = Date.now();
     });
   },

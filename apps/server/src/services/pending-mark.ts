@@ -15,6 +15,7 @@ import {
   hasUsableQuestionSnapshotSql,
   needsTeacherMarkSql,
 } from "./attempt-final-outcome.ts";
+import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { effectiveVerdictValueSql } from "./response-verdict.ts";
 
 /** 单卷、批量、列表和结果汇总使用相同的行级待批与待自评条件。 */
@@ -26,7 +27,7 @@ export const needsSelfReviewSql = and(
 );
 
 export const submittedActiveResponseSql = and(
-  isNull(attempts.abandonedAt),
+  recordableAttemptWhere(),
   or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
 );
 

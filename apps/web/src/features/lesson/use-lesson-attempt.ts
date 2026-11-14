@@ -8,6 +8,7 @@ import type {
 } from "@tutor/contract";
 import { attemptSubmissionConflictSchema } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { questionRevisionMap } from "@/features/attempt/attempt-question-view";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptSaveStatus } from "@/features/attempt/use-attempt-save-status";
@@ -159,6 +160,7 @@ export function useLessonAttempt(
     setAnswer,
     flush: flushAnswers,
   } = useAttemptAnswers(attemptId, draftSync.recoveredDrafts, draftSync, {
+    questionRevisions: questionRevisionMap(data.questions),
     onAnswerCommitted: (questionId, answer) => {
       attemptEvents.noteInteraction(questionId);
       attemptEvents.trackAnswerChange(questionId, answer);

@@ -1,12 +1,18 @@
 import {
+  attemptActivateRequestSchema,
   attemptAnswerSaveRequestSchema,
   attemptContextDataSchema,
+  attemptOpenedQuerySchema,
   studentPaperDataSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
 import type { StudentEnv } from "../auth/require-student";
 import type { Db } from "../db/client.ts";
-import { parseJsonBody } from "../lib/http-error.ts";
+import { parseJsonBody, parseJsonValue } from "../lib/http-error.ts";
+import {
+  activateAttempt,
+  getOpenedAttempt,
+} from "../services/attempt-activation.ts";
 import { studentAttemptContext } from "../services/attempt-context.ts";
 import {
   getStudentAttemptPaper,
@@ -21,6 +27,24 @@ import { createStudentSettlementRoutes } from "./student-settlements.ts";
 export function createStudentAttemptRoutes(db: Db) {
   return (
     new Hono<StudentEnv>()
+      .get("/attempts/opened", (c) =>
+        c.json({
+          ok: true,
+          data: getOpenedAttempt(
+            db,
+            c.var.student.id,
+            parseJsonValue(c.req.query(), attemptOpenedQuerySchema),
+          ),
+        }),
+      )
+      .post("/attempts/:id/activate", async (c) => {
+        const input = await parseJsonBody(c, attemptActivateRequestSchema);
+        c.header("Cache-Control", "private, no-store");
+        return c.json({
+          ok: true,
+          data: activateAttempt(db, c.var.student.id, c.req.param("id"), input),
+        });
+      })
       .route("/", createStudentLearningContextRoutes(db))
       .route("/", createStudentSettlementRoutes(db))
       .put("/attempts/:id/answers/:questionId", async (c) => {

@@ -168,6 +168,7 @@ export function startWrongPractice(
       unitId: null,
       attemptNo,
       startedAt: new Date().toISOString(),
+      activateOnCreate: scope?.kind === "ai",
       // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议
       ...workflowStartColumns(db, "wrong", studentId, null, options),
     });
