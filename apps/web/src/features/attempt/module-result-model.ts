@@ -3,8 +3,8 @@ import type {
   AttemptResultQuestion,
   AttemptResultUnit,
 } from "@tutor/contract";
+import { type ReviewGroupStats, reviewRetrainableOf } from "@tutor/contract";
 import { reviewQuestionState } from "./result-review-model";
-import { verdictBadgeDisplayOf } from "./self-review-display";
 
 /**
  * 按模块（单元）看结果（2026-11-09 个人学习迭代模块 7 第一刀）：行测整卷模考
@@ -39,6 +39,9 @@ export interface ModuleResultStats {
   timeQuotaMinutes: number | null;
   /** 本模块可重练的题（已判定轮中：有效判定为错且已作答 / 教师已判 / 自评有记录，或标过不会） */
   wrongQuestionIds: string[];
+  correctRate?: number | null;
+  objectiveCount?: number;
+  rubricAverages?: ReviewGroupStats["rubricAverages"];
 }
 
 /**
@@ -47,31 +50,11 @@ export interface ModuleResultStats {
  * verdict 与 at 均非空）。读侧 selfReviewRecordOf 已把「verdict 非空而 at
  * 缺失」的脏行降级为 record=null，所以 record 非空即两者齐备。
  */
-function isJudged(question: AttemptResultQuestion): boolean {
-  return (
-    question.finalCorrect !== null ||
-    (question.selfReview?.record ?? null) !== null
-  );
-}
-
-/**
- * 与结果页「练习本卷错题」同一圈题口径（AttemptResultView wrongQuestionIds）。
- * #101-02：服务端重练组卷（startWrongPractice → latestJudgedResponsesByQuestion）
- * 只从已判定轮里取候选再套入本条件（enteredWrongBook），未判定的轮会被静默
- * 剔除——客户端先过同一道「已判定」门，免得标了「不会」却仍待判的主观题在
- * 按钮上有数、点开却 WRONG_PRACTICE_EMPTY。只看本卷这一轮：前几轮已入本的题
- * 这里算不出来，宁可少圈，不猜。
- */
 export function isRetrainable(question: AttemptResultQuestion): boolean {
-  if (!isJudged(question)) return false;
-  if (question.studentFlag === "unsure") return true;
-  const badge = verdictBadgeDisplayOf(question);
-  if (badge.verdict !== false) return false;
-  return (
-    question.answered ||
-    question.teacherMark !== null ||
-    (question.selfReview?.record?.verdict ?? null) !== null
-  );
+  return reviewRetrainableOf({
+    ...question,
+    selfReviewVerdict: question.selfReview?.record?.verdict ?? null,
+  });
 }
 
 export function moduleResultStatsOf(

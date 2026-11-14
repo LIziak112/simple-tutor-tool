@@ -25,6 +25,7 @@ import {
   attemptWorkflowView,
   requireOwnActiveAttempt,
 } from "./practice-workflow-wiring.ts";
+import { reviewEvidenceReader } from "./review-evidence.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 import { recordedActiveSecTotal } from "./submission-time.ts";
 
@@ -70,6 +71,7 @@ export function getStudentSettlement(
         )
       : workflow?.allowedFeedbackModes.includes("per_question") === true;
   const slots = materialSlotOrderOf(db, attemptId);
+  const evidenceOf = reviewEvidenceReader(db, attempt.id, attempt.studentId);
   const entries = frozenRowsInDisplayOrder(db, attempt);
   const members = entries.filter(({ row }) => row.settlementSeq === seq);
   if (members.length !== settlement.questionCount)
@@ -85,9 +87,13 @@ export function getStudentSettlement(
     questions: members.map(({ row }) => {
       const snapshot = snapshotOfRow(row);
       if (!snapshot) conflict("本批题目数据不完整，请联系老师检查");
-      const projected = studentFacingResultOf(
-        resultQuestionOf(row, snapshot, { materialSlots: slots, db }),
-      );
+      const projected = studentFacingResultOf({
+        ...resultQuestionOf(row, snapshot, { materialSlots: slots, db }),
+        ...evidenceOf(
+          row.questionId,
+          (snapshot.materialRefs ?? []).map((r) => r.material),
+        ),
+      });
       return released ? projected : restrictedResultQuestionOf(projected);
     }),
     answersReleased: released,

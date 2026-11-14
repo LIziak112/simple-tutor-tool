@@ -370,14 +370,10 @@ describe("得分汇总卡", () => {
     expect(screen.getByText("第 4 题")).toBeInTheDocument();
     view.unmount();
 
-    // 对照：单单元（DATA 本体）不渲染节标题；按模块表仍有一行但模块名不是按钮
+    // 对照：单单元且未分批不渲染节标题，也不显示与汇总重复的分组表。
     renderView();
     expect(screen.queryByRole("heading", { name: "练习四" })).toBeNull();
-    expect(
-      within(screen.getByTestId("module-results")).queryByRole("button", {
-        name: "练习四",
-      }),
-    ).toBeNull();
+    expect(screen.queryByTestId("module-results")).toBeNull();
   });
 });
 

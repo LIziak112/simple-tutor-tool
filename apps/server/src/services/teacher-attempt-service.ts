@@ -65,6 +65,7 @@ import {
 } from "./pending-mark";
 import { countsAsWrong } from "./response-verdict.ts";
 import { attemptResultCounts } from "./result-counts";
+import { reviewEvidenceReader } from "./review-evidence.ts";
 import { snapshotOfRow } from "./snapshot";
 import { detailItemOf } from "./teacher-attempt-detail-item.ts";
 
@@ -668,6 +669,7 @@ export function getTeacherAttemptDetail(
   const source = sourceOf(db, attempt, teacherId);
   const inkByQuestion = inkByQuestionOf(db, attemptId);
   const materialSlots = materialSlotOrderOf(db, attemptId);
+  const evidenceOf = reviewEvidenceReader(db, attemptId);
 
   // 逐题条目（先按单元归属排序，再统一编号）；行同步收集（判定计数用——
   // 有效判定的输入是行事实，不经过投影条目反推）
@@ -706,6 +708,11 @@ export function getTeacherAttemptDetail(
       detailRows.push(row);
       items.push(
         detailItemOf(row, snapshot, {
+          db,
+          evidence: evidenceOf(
+            row.questionId,
+            (snapshot.materialRefs ?? []).map((r) => r.material),
+          ),
           isDraft: !draftRowVisible(row.submittedAt),
           unitId: originUnitId,
           unitTitle: originUnitId, // 占位，下方统一回填（题目行缺失回退 questionId）
@@ -732,6 +739,11 @@ export function getTeacherAttemptDetail(
         detailRows.push(row);
         items.push(
           detailItemOf(row, snapshot, {
+            db,
+            evidence: evidenceOf(
+              row.questionId,
+              (snapshot.materialRefs ?? []).map((r) => r.material),
+            ),
             isDraft: !draftRowVisible(row.submittedAt),
             // 兜底组（unitId=null，正常不可达）：unitId 用 questionId 稳定占位，
             // 标题占位用组标题「未分组题目」（人文文案，不露 id）

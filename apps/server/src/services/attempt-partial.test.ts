@@ -10,11 +10,13 @@ import {
 } from "../db/schema.ts";
 import { TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { studentPracticeReadEnv } from "../test/student-mcp-practice-fixtures.ts";
+import { getAttemptDetail } from "./attempt-detail.ts";
 import {
   getStudentSettlement,
   settleStudentAttempt,
 } from "./attempt-partial.ts";
 import { practiceQuestionFeedbackStateOf } from "./attempt-question-feedback.ts";
+import { submitAttempt } from "./attempt-whole-submit.ts";
 import {
   attemptWorkflowView,
   requireOwnActiveAttempt,
@@ -73,6 +75,36 @@ describe("分批提交事务", () => {
     expect(env.db.select().from(attemptSettlements).all()).toHaveLength(1);
     expect(before.find((q) => q.questionId === "q-2")?.submittedAt).toBeNull();
   });
+  it("先分批再整卷：首回执与GET一致，旧批号保留且余题立即归入final", async () => {
+    const env = await setup();
+    settleStudentAttempt(env.db, env.studentId, env.practiceId, request(env));
+    const first = env.db
+      .select()
+      .from(responses)
+      .where(eq(responses.id, env.revisions[0] ?? ""))
+      .get();
+    const receipt = submitAttempt(env.db, env.studentId, env.practiceId);
+    expect(
+      receipt.units.flatMap((unit) =>
+        unit.questions.map((question) => question.settlementSeq),
+      ),
+    ).toEqual([1, 2]);
+    expect(getAttemptDetail(env.db, env.studentId, env.practiceId)).toEqual(
+      receipt,
+    );
+    expect(
+      env.db
+        .select()
+        .from(responses)
+        .where(eq(responses.id, env.revisions[0] ?? ""))
+        .get(),
+    ).toEqual(first);
+    expect(env.db.select().from(attemptSettlements).all()).toMatchObject([
+      { seq: 1, kind: "partial", questionCount: 1 },
+      { seq: 2, kind: "final", questionCount: 1 },
+    ]);
+  });
+
   it("任一答案版本冲突整批零写入", async () => {
     const env = await setup();
     const req = request(env, [0, 1]);

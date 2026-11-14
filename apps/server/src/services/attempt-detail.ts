@@ -47,6 +47,7 @@ import { pendingMarkCount } from "./pending-mark";
 import { answerReleaseProjection } from "./practice-workflow-service";
 import { attemptWorkflowView } from "./practice-workflow-wiring";
 import { attemptActivityProjection } from "./question-activity";
+import { reviewEvidenceReader } from "./review-evidence.ts";
 import { answerOf, snapshotOfRow } from "./snapshot";
 import { unitTimeQuotasOf } from "./unit-time-quota";
 
@@ -314,14 +315,19 @@ export function buildResultData(
   // 逐题条目与分组同批组装（groupedSnapshotRows；快照优先取预加载）；QM-13
   // matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
   const materialSlots = materialSlotOrderOf(db, attempt.id);
+  const evidenceOf = reviewEvidenceReader(db, attempt.id, attempt.studentId);
   const resultQuestions: AttemptResultQuestion[] = [];
   const unitGroups = groupedSnapshotRows(
     db,
     attempt,
     (row, snapshot) => {
-      const item = releaseAwareQuestion(
-        resultQuestionOf(row, snapshot, { materialSlots, db }),
-      );
+      const item = releaseAwareQuestion({
+        ...resultQuestionOf(row, snapshot, { materialSlots, db }),
+        ...evidenceOf(
+          row.questionId,
+          (snapshot.materialRefs ?? []).map((r) => r.material),
+        ),
+      });
       resultQuestions.push(item);
       return item;
     },

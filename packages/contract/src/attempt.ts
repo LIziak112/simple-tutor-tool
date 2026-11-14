@@ -25,6 +25,7 @@ import {
   practiceWorkflowStartOptionsFields,
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
+import { reviewEvidenceMetadataSchema } from "./review-facts.ts";
 import { rubricReviewSchema } from "./rubric.ts";
 import {
   effectiveVerdictSchema,
@@ -414,7 +415,7 @@ export const attemptDraftDataSchema = z.object({
  * - hintsOpened：做题时已解锁的提示条目（含内容；交卷后回看自己用过的提示，
  *   T2.11）。快照里的其余提示内容仍不随本视图下发（hintCount 是唯一计数形态）。
  */
-export const attemptResultQuestionSchema = z.object({
+export const attemptResultQuestionSchema = reviewEvidenceMetadataSchema.extend({
   questionId: z.string().min(1),
   /**
    * 题目版本引用（与作答视图 AttemptQuestionPublic 同源——该题 responses 行

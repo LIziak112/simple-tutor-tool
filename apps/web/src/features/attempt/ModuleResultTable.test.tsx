@@ -208,9 +208,15 @@ describe("isRetrainable：与服务端错题本「已判定轮」谓词同口径
 
 describe("按模块看结果：表格与窄屏卡片", () => {
   it("默认展开，点击标题可收起并再次展开模块结果", () => {
-    render(<ModuleResultTable units={[UNIT_A]} released activity={ACTIVITY} />);
+    render(
+      <ModuleResultTable
+        units={[UNIT_A, UNIT_B]}
+        released
+        activity={ACTIVITY}
+      />,
+    );
     const section = screen.getByTestId("module-results");
-    const toggle = within(section).getByText("按模块看", { exact: true });
+    const toggle = within(section).getByText("分组统计", { exact: true });
     const disclosure = toggle.closest("details");
     expect(disclosure).toHaveAttribute("open");
 
@@ -264,9 +270,7 @@ describe("按模块看结果：表格与窄屏卡片", () => {
     const cardA = within(cards).getByText("言语理解").closest("li");
     expect(cardA?.textContent).toContain("答对 / 作答 / 题数 2 / 3 / 4");
     expect(cardA?.textContent).toContain("跳过 1 · 不确定但答对 1");
-    expect(cardA?.textContent).toContain(
-      "活动用时 1 分 30 秒 · 参考配额 30 分钟",
-    );
+    expect(cardA?.textContent).toContain("用时 1 分 30 秒 · 建议用时 30 分钟");
     anchor.remove();
   });
 
@@ -287,25 +291,51 @@ describe("按模块看结果：表格与窄屏卡片", () => {
     const cardC = within(screen.getByTestId("module-results-cards"))
       .getByText("判断推理")
       .closest("li");
-    expect(cardC?.textContent).toContain("活动用时 无可用记录");
+    expect(cardC?.textContent).toContain("用时 无可用记录");
   });
 
-  it("未公布：无答对列与重练按钮，模块名不是按钮（单模块）", () => {
+  it("单单元无批次默认隐藏，不重复汇总", () => {
     render(
       <ModuleResultTable
         units={[UNIT_B]}
         released={false}
         activity={undefined}
-        wrongPractice={{ loading: false, onStart: vi.fn() }}
       />,
     );
+    expect(screen.queryByTestId("module-results")).toBeNull();
+  });
+  it("可切换批次、题型、材料、考点，重练跟随当前组", () => {
+    const onStart = vi.fn();
+    const unit = {
+      ...UNIT_A,
+      questions: UNIT_A.questions.map((q, index) => ({
+        ...q,
+        settlementSeq: index < 2 ? 1 : 2,
+      })),
+    };
+    render(
+      <ModuleResultTable
+        units={[unit]}
+        released
+        activity={ACTIVITY}
+        wrongPractice={{ loading: false, onStart }}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("分组维度"), {
+      target: { value: "settlement" },
+    });
     const section = screen.getByTestId("module-results");
-    expect(within(section).queryByText("不确定但答对")).toBeNull();
-    expect(within(section).queryByRole("button")).toBeNull();
-    expect(
-      within(within(section).getByRole("table"))
-        .getByText("资料分析")
-        .closest("tr")?.textContent,
-    ).toContain("无可用记录");
+    expect(within(section).getAllByText("第 1 批").length).toBe(2);
+    fireEvent.click(
+      within(section).getAllByRole("button", { name: /专项重练/ })[0]!,
+    );
+    expect(onStart).toHaveBeenCalledWith(["a2"], "第 1 批");
+    for (const dimension of ["type", "material", "knowledge"]) {
+      fireEvent.change(screen.getByLabelText("分组维度"), {
+        target: { value: dimension },
+      });
+      expect(within(section).getByRole("table")).toBeInTheDocument();
+    }
+    expect(section.textContent).not.toMatch(/口径 v1|参考配额/);
   });
 });
