@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StudentLoginRequest, StudentMeData } from "@tutor/contract";
+import { useCallback } from "react";
 import {
   currentAnnotationSession,
   resetAnnotationSession,
@@ -23,6 +24,7 @@ import {
   logoutStudentApi,
 } from "@/lib/api";
 import { clearAccountQueries } from "./account-query-cache";
+import { portalCapabilitiesOf } from "./portals";
 
 /**
  * 学生登录状态（T2.3 学生端外壳）：与 teacher-auth 同构的模式——
@@ -47,53 +49,66 @@ export function useStudentMe() {
 }
 
 /**
- * 登录成功后写入 me 缓存并预取我的作业/课程/讲义（首页立即可用，T2A.5 加课程）。
+ * 登录成功后写入 me 缓存，按门户能力预取作业，并预取课程/讲义。
  * 导出供个人账号双会话登录复用（personal-auth.ts，模块 0）。
  */
 export function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
-  return async (student: StudentMeData) => {
-    // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
-    // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
-    // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
-    // （专属链接重进）不 reset，队列照常；本地未同步内容保留（方案 §6.1）
-    const bound = currentNoteSession();
-    if (bound !== null && bound.studentId !== student.id) {
-      resetNoteSession();
-    }
-    // T6R.20：标注会话同口径（换账号停旧标注同步队列，防误 403 终态）
-    const boundAnnotation = currentAnnotationSession();
-    if (boundAnnotation !== null && boundAnnotation.studentId !== student.id) {
-      resetAnnotationSession();
-    }
-    await clearAccountQueries(queryClient, "student");
-    bindAiDisplayAccount(student.id);
-    bindPracticePreferenceAccount(student.id);
-    bindKeyboardBindingsAccount(student.id);
-    bindGroupMaterialLayoutAccount(student.id);
-    bindDraftSession({ origin: window.location.origin, studentId: student.id });
-    queryClient.setQueryData(studentMeKey, student);
-    void queryClient.prefetchQuery({
-      queryKey: ["student", "assignments"],
-      queryFn: fetchStudentAssignmentsApi,
-    });
-    void queryClient.prefetchQuery({
-      queryKey: ["student", "courses"],
-      queryFn: fetchStudentCoursesApi,
-    });
-    void queryClient.prefetchQuery({
-      queryKey: ["student", "lectures"],
-      queryFn: fetchStudentLecturesApi,
-    });
-  };
+  return useCallback(
+    async (student: StudentMeData, isCurrent: () => boolean = () => true) => {
+      if (!isCurrent()) return;
+      // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
+      // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
+      // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
+      // （专属链接重进）不 reset，队列照常；本地未同步内容保留（方案 §6.1）
+      const bound = currentNoteSession();
+      if (bound !== null && bound.studentId !== student.id) {
+        resetNoteSession();
+      }
+      // T6R.20：标注会话同口径（换账号停旧标注同步队列，防误 403 终态）
+      const boundAnnotation = currentAnnotationSession();
+      if (
+        boundAnnotation !== null &&
+        boundAnnotation.studentId !== student.id
+      ) {
+        resetAnnotationSession();
+      }
+      await clearAccountQueries(queryClient, "student", isCurrent);
+      if (!isCurrent()) return;
+      bindAiDisplayAccount(student.id);
+      bindPracticePreferenceAccount(student.id);
+      bindKeyboardBindingsAccount(student.id);
+      bindGroupMaterialLayoutAccount(student.id);
+      bindDraftSession({
+        origin: window.location.origin,
+        studentId: student.id,
+      });
+      queryClient.setQueryData(studentMeKey, student);
+      if (portalCapabilitiesOf("student", student.accountKind).assignments) {
+        void queryClient.prefetchQuery({
+          queryKey: ["student", "assignments"],
+          queryFn: fetchStudentAssignmentsApi,
+        });
+      }
+      void queryClient.prefetchQuery({
+        queryKey: ["student", "courses"],
+        queryFn: fetchStudentCoursesApi,
+      });
+      void queryClient.prefetchQuery({
+        queryKey: ["student", "lectures"],
+        queryFn: fetchStudentLecturesApi,
+      });
+    },
+    [queryClient],
+  );
 }
 
 /** 专属链接登录（/s/:token 页面挂载即调用） */
 export function useStudentLinkLogin() {
   const applyAuthed = useApplyStudentAuthed();
   return useMutation({
-    mutationFn: loginStudentByLinkApi,
-    onSuccess: applyAuthed,
+    mutationFn: (token: string) => loginStudentByLinkApi(token),
+    onSuccess: (student) => applyAuthed(student),
   });
 }
 
@@ -102,7 +117,7 @@ export function useLoginStudent() {
   const applyAuthed = useApplyStudentAuthed();
   return useMutation({
     mutationFn: (request: StudentLoginRequest) => loginStudentApi(request),
-    onSuccess: applyAuthed,
+    onSuccess: (student) => applyAuthed(student),
   });
 }
 
@@ -111,14 +126,17 @@ export function useLoginStudent() {
  * resetNoteSession（T6R.9）——停旧草稿同步队列、中止在途上传、隔离回执；
  * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
  */
-export function useLogoutStudent() {
+export function useLogoutStudent(onLoggedOut?: () => void) {
   const clearSession = useClearStudentSession();
-  return useMutation({ mutationFn: logoutStudentApi, onSuccess: clearSession });
+  return useMutation({
+    mutationFn: logoutStudentApi,
+    onSuccess: () => clearSession(onLoggedOut),
+  });
 }
 
 export function useClearStudentSession() {
   const queryClient = useQueryClient();
-  return async () => {
+  return async (onCleared?: () => void) => {
     bindDraftSession(null);
     bindAiDisplayAccount(null);
     bindPracticePreferenceAccount(null);
@@ -127,6 +145,12 @@ export function useClearStudentSession() {
     resetNoteSession();
     resetAnnotationSession();
     await clearAccountQueries(queryClient, "student");
-    await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
+    const reset = queryClient.resetQueries({
+      queryKey: studentMeKey,
+      exact: true,
+    });
+    // 身份已清空、页面尚未卸载时完成主动退出导航，再等待身份重取。
+    onCleared?.();
+    await reset;
   };
 }
