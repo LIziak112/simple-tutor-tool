@@ -67,7 +67,12 @@ it("已有结算覆盖全部行时，final为零成员终结标记且不重复�
       finalCorrect: false,
     })
     .run();
-  submitAttempt(env.db, env.studentId, env.attemptId, at(20));
+  const receipt = submitAttempt(env.db, env.studentId, env.attemptId, at(20));
+  expect(
+    receipt.units.flatMap((unit) =>
+      unit.questions.map((question) => question.settlementSeq),
+    ),
+  ).toEqual([1, 1]);
   expect(settlements(env)).toMatchObject([
     { kind: "partial", question_count: 2 },
     { seq: 2, kind: "final", question_count: 0, active_sec: null },

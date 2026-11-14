@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -16,7 +17,7 @@ import type {
   StudentListData,
   TeacherAssignment,
 } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { courseDetailKey } from "@/features/courses/course-queries";
 import {
   ApiError,
@@ -386,6 +387,15 @@ async function openStep2() {
   fireEvent.click(screen.getByRole("button", { name: "下一步" }));
   await screen.findByRole("tablist", { name: "内容来源" });
 }
+
+// Radix FocusScope 的卸载焦点事件在 setTimeout(0) 中派发。先卸载、再交还
+// 一次事件循环，让回调仍使用本文件的 DOM realm，避免越过 jsdom teardown。
+afterEach(async () => {
+  cleanup();
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
