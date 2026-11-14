@@ -1,10 +1,12 @@
 import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, Navigate } from "react-router";
-import { Brand } from "@/components/brand";
+import { Link, Navigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
+import { LoginShell } from "@/features/auth/LoginShell";
+import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useSetupTeacher,
   useTeacherStatus,
@@ -22,6 +24,8 @@ import { ApiError } from "@/lib/api";
  * 登录名默认建议 teacher（与存量迁移一致），可改。
  */
 export function SetupPage() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
   const setupMutation = useSetupTeacher();
 
@@ -31,26 +35,34 @@ export function SetupPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   if (setupMutation.isSuccess) {
-    return <Navigate to="/t" replace />;
+    return <Navigate to={safeReturnTo(returnTo, "teacher")} replace />;
   }
   if (statusQuery.isPending) {
-    return <AuthScreenLoading text="正在检查初始状态…" />;
+    return (
+      <LoginShell portal="teacher">
+        <AuthScreenLoading text="正在检查初始状态…" />
+      </LoginShell>
+    );
   }
   if (statusQuery.isError) {
     return (
-      <AuthScreenError
-        message={
-          statusQuery.error instanceof Error
-            ? statusQuery.error.message
-            : "网络异常，请稍后重试"
-        }
-        onRetry={() => void statusQuery.refetch()}
-      />
+      <LoginShell portal="teacher">
+        <AuthScreenError
+          message={
+            statusQuery.error instanceof Error
+              ? statusQuery.error.message
+              : "网络异常，请稍后重试"
+          }
+          onRetry={() => void statusQuery.refetch()}
+        />
+      </LoginShell>
     );
   }
   if (statusQuery.data.hasTeacher && !setupMutation.isPending) {
     // 当前提交可能先触发状态刷新，等它收尾再决定去向。
-    return <Navigate to="/t/login" replace />;
+    return (
+      <Navigate to={loginPathWithReturnTo("/t/login", returnTo)} replace />
+    );
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -84,10 +96,7 @@ export function SetupPage() {
   const shownError = formError ?? serverError;
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-background px-6 text-foreground">
-      <div className="w-full max-w-sm">
-        <Brand />
-      </div>
+    <LoginShell portal="teacher">
       <header className="text-center">
         <h1 className="flex items-center justify-center gap-2 text-2xl font-semibold">
           <LockKeyhole aria-hidden className="size-6" />
@@ -189,7 +198,7 @@ export function SetupPage() {
               <p className="text-center text-sm text-muted-foreground">
                 教师已设置，可
                 <Link
-                  to="/t/login"
+                  to={loginPathWithReturnTo("/t/login", returnTo)}
                   className="mx-1 text-primary underline-offset-4 hover:underline"
                 >
                   直接登录
@@ -202,47 +211,11 @@ export function SetupPage() {
       <p className="max-w-sm text-center text-xs text-muted-foreground">
         密码以 scrypt 哈希存放在本机数据库，请妥善保管；忘记密码需按文档重置。
       </p>
-    </main>
+    </LoginShell>
   );
 }
 
 /** 认证页通用的全屏加载态 */
-export function AuthScreenLoading({ text }: { text: string }) {
-  return (
-    <main
-      aria-live="polite"
-      className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background text-foreground"
-    >
-      <Loader2
-        aria-hidden
-        className="size-6 animate-spin text-muted-foreground"
-      />
-      <p className="text-sm text-muted-foreground">{text}</p>
-    </main>
-  );
-}
+export { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 
-/** 认证页通用的错误态（原因 + 重试） */
-export function AuthScreenError({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
-      <TriangleAlert aria-hidden className="size-8 text-destructive" />
-      <p className="text-sm font-medium text-destructive">无法完成请求</p>
-      <p className="max-w-sm text-xs break-all text-muted-foreground">
-        {message}
-      </p>
-      <Button variant="outline" className="min-h-11 px-6" onClick={onRetry}>
-        重试
-      </Button>
-    </main>
-  );
-}
-
-// 供 App.tsx 路由级懒加载
 export default SetupPage;

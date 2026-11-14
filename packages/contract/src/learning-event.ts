@@ -525,6 +525,7 @@ export const attemptEventBatchRequestSchema = z.object(
       .max(LEARNING_EVENTS_BATCH_MAX, "每次最多上报 200 条事件"),
     viewId: viewIdSchema.optional(),
     delivery: eventDeliverySchema.optional(),
+    deviceId: z.uuid().optional(),
   },
   { message: "请求体需为 { events: […] }" },
 );
@@ -537,6 +538,7 @@ export const lectureEventBatchRequestSchema = z.object(
       .min(1, "events 至少 1 条")
       .max(LEARNING_EVENTS_BATCH_MAX, "每次最多上报 200 条事件"),
     delivery: lectureEventDeliverySchema.optional(),
+    deviceId: z.uuid().optional(),
   },
   { message: "请求体需为 { events: […] }" },
 );

@@ -17,6 +17,7 @@ import {
   fetchCourseDetail,
   fetchCourseStudentView,
   fetchTeacherCourses,
+  fetchTeacherMe,
 } from "@/lib/api";
 import CourseEditPage from "./CourseEditPage";
 import CoursesPage from "./CoursesPage";
@@ -33,6 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    fetchTeacherMe: vi.fn(),
     fetchCourseDetail: vi.fn(),
     fetchCourseStudentView: vi.fn(),
     fetchTeacherCourses: vi.fn(),
@@ -138,6 +140,13 @@ function renderPage() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(fetchTeacherMe).mockResolvedValue({
+    id: "11111111-1111-4111-8111-111111111111",
+    loginName: "teacher",
+    accountKind: "class",
+    isAdmin: false,
+    createdAt: "2026-09-01T00:00:00.000Z",
+  });
   mockedDetail.mockResolvedValue(DETAIL);
   mockedStudentView.mockResolvedValue(STUDENT_VIEW);
 });
@@ -176,7 +185,7 @@ describe("CourseEditPage（T2A.4）", () => {
   it("头部「布置作业」跳转作业页并携带课程预选参数（T2A.7）", async () => {
     renderPage();
     await screen.findByText("第1讲 有理数");
-    fireEvent.click(screen.getByRole("button", { name: "布置作业" }));
+    fireEvent.click(await screen.findByRole("button", { name: "布置作业" }));
     await waitFor(() =>
       expect(screen.getByTestId("assignments-stub")).toHaveTextContent(
         `courseId=${COURSE_ID}&compose=1`,
@@ -223,4 +232,19 @@ describe("CoursesPage（T2A.4）", () => {
     expect(screen.getByText("条目 5（可见 3）")).toBeVisible();
     await waitFor(() => expect(mockedCourses).toHaveBeenCalledWith(false));
   });
+});
+
+it("个人学习课程页不显示布置作业", async () => {
+  vi.mocked(fetchTeacherMe).mockResolvedValue({
+    id: "11111111-1111-4111-8111-111111111111",
+    loginName: "personal",
+    accountKind: "personal",
+    isAdmin: false,
+    createdAt: "2026-09-01T00:00:00.000Z",
+  });
+  renderPage();
+  await screen.findByText("第1讲 有理数");
+  expect(
+    screen.queryByRole("button", { name: "布置作业" }),
+  ).not.toBeInTheDocument();
 });

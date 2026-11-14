@@ -6,6 +6,7 @@ import type {
   MemoMediaFormat,
 } from "@tutor/contract";
 import {
+  learningContextSchema,
   MEMO_ANCHOR_NONE,
   MEMO_MEDIA_CONTENT_TYPE,
   memoAnchorSchema,
@@ -37,6 +38,12 @@ export function toMemo(row: MemoRow): Memo {
   const tagsParsed = memoTagsSchema.safeParse(JSON.parse(row.tagsJson));
   return memoSchema.parse({
     id: row.id,
+    ...(row.seq === null ? {} : { seq: row.seq }),
+    context:
+      row.contextJson === null
+        ? null
+        : learningContextSchema.parse(JSON.parse(row.contextJson)),
+    deviceId: row.deviceId,
     kind: row.kind,
     text: row.text,
     media:

@@ -17,15 +17,28 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
-import { useLearningFocus } from "./learning-focus-store";
+import {
+  captureLearningSource,
+  type LearningSource,
+} from "@/features/learning-context/learning-context-store";
+import { LearningPrincipalContext } from "@/features/learning-context/learning-principal";
 import {
   detectMemoDevice,
   memoAnchorLabel,
   splitMemoTagInput,
 } from "./memo-format";
 import { enqueueMemo, type MemoOutboxInput } from "./memo-outbox";
+import { memoSourceFields } from "./memo-source-fields";
 import { useVoiceRecorder, type VoiceRecording } from "./use-voice-recorder";
 
 const MemoInkSheet = lazy(() => import("./MemoInkSheet"));
@@ -39,7 +52,7 @@ const MEDIA_KIND_LABEL: Record<Exclude<MemoKind, "text">, string> = {
 
 /**
  * 随笔记录端（模块 5 第一步）：一个输入框 + 三个媒体入口（语音 / 图片 / 手写）。
- * - 上下文锚自动取「我现在在哪」（learning-focus-store），可一键去掉；
+ * - 来源在本次记录打开时捕获，可一键去掉；滚动不改写本条来源；
  * - 标签用逗号 / 空格分隔，最多 5 个；
  * - 每条先入本机待传队列再上传（memo-outbox）：离线也能记；
  * - 语音：点一下开始、再点停止（≤ 10 分钟自动停，建议 ≤ 5 分钟）；
@@ -49,12 +62,18 @@ const MEDIA_KIND_LABEL: Record<Exclude<MemoKind, "text">, string> = {
 export function MemoComposer({
   onQueued,
   autoFocus = false,
+  source: initialSource,
 }: {
   /** 一条已入队（本机已保存）后回调，如关闭浮层 */
   onQueued?: (() => void) | undefined;
   autoFocus?: boolean;
+  source?: LearningSource | undefined;
 }) {
-  const focus = useLearningFocus();
+  const principal = useContext(LearningPrincipalContext);
+  const [source] = useState(() =>
+    structuredClone(initialSource ?? captureLearningSource(principal)),
+  );
+  const focus = source.anchor;
   const [anchorDropped, setAnchorDropped] = useState(false);
   const anchor: MemoAnchor = anchorDropped ? MEMO_ANCHOR_NONE : focus;
   const [text, setText] = useState("");
@@ -154,7 +173,7 @@ export function MemoComposer({
   }
 
   const base = () => ({
-    anchor,
+    ...memoSourceFields(source, anchorDropped),
     tags,
     device: detectMemoDevice(),
     durationSec: undefined,
