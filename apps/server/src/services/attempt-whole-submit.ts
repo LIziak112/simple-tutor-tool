@@ -293,7 +293,7 @@ function finalizeWholeAttempt(
     .get();
   if (!completed)
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
-  writeFinalSettlementWithin(db, attemptId);
+  const finalSettlement = writeFinalSettlementWithin(db, attemptId);
 
   // 预加载：判分循环已 parse 的快照 + 内存镜像事务写入后的行/attempt（结果
   // 视图免二次查询/parse，且拿到的是判分后的新值——预载原始行会带旧判定）。
@@ -314,7 +314,11 @@ function finalizeWholeAttempt(
         eventChangeCountByQuestion[g.response.questionId] ?? 0,
       ),
     })),
-  ];
+  ].map((row) => ({
+    ...row,
+    // 结算已在同一事务写入；首回执镜像同步新归属，既有分批号保持原值。
+    settlementSeq: row.settlementSeq ?? finalSettlement.seq,
+  }));
   const attemptAfter: Attempt = {
     ...attempt,
     status: finalStatus,
