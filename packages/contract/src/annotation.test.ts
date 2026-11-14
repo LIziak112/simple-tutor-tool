@@ -517,6 +517,7 @@ describe("错误码与 multipart 字段名单一来源", () => {
 
   it("两套 multipart 字段名常量", () => {
     expect(ANNOTATION_FORM_FIELDS).toEqual({
+      expectedFrozenAt: "expectedFrozenAt",
       resetVersion: "resetVersion",
       body: "body",
       baseRevision: "baseRevision",

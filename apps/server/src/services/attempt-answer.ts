@@ -1,6 +1,7 @@
 import {
   type AttemptAnswerSaveData,
   type AttemptAnswerSaveRequest,
+  type AttemptWriteProof,
   attemptAnswerConflictCurrentSchema,
   attemptAnswerSaveDataSchema,
   type StudentAnswer,
@@ -161,6 +162,7 @@ export function setStudentFlag(
   attemptId: string,
   questionId: string,
   flag: "unsure" | null,
+  proof?: AttemptWriteProof,
 ): { questionId: string; studentFlag: string | null } {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
@@ -177,6 +179,7 @@ export function setStudentFlag(
   assertRowNotSubmitted(db, attemptId, questionId, "修改「不会」标记");
   db.transaction((tx) => {
     assertAttemptWriteVersion(tx, attempt);
+    assertAttemptWriteProof(attempt, proof);
     const old = tx
       .select({ flag: responses.studentFlag })
       .from(responses)

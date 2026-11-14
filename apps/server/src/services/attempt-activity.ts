@@ -6,7 +6,10 @@ import { HttpError } from "../lib/http-error.ts";
 
 /** 请求到达前发生的重冻，必须由实际渲染/本机正文携带的身份证明。 */
 export function assertAttemptWriteProof(
-  attempt: Pick<Attempt, "frozenAt" | "startedAt" | "legacyUnverified">,
+  attempt: Pick<
+    Attempt,
+    "frozenAt" | "startedAt" | "legacyUnverified" | "status"
+  >,
   proof: AttemptWriteProof | undefined,
   questionRevisionId?: string,
   frozenQuestionRevisionId?: string,
@@ -31,6 +34,7 @@ export function assertAttemptWriteProof(
   }
   if (questionRevisionId !== undefined) return;
   if (
+    attempt.status === "draft" &&
     !attempt.legacyUnverified &&
     attempt.frozenAt !== null &&
     attempt.frozenAt !== attempt.startedAt

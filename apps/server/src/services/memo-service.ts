@@ -20,10 +20,13 @@ import {
 } from "@tutor/contract";
 import { and, eq, isNull, max } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { memos } from "../db/schema";
+import { attempts, memos } from "../db/schema";
 import { writeFileAtomic } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
-import { touchAttemptActivity } from "./attempt-activity.ts";
+import {
+  assertAttemptWriteProof,
+  touchAttemptActivity,
+} from "./attempt-activity.ts";
 import { requireDevice } from "./device-service";
 import { resolveAgentMemoAnchor } from "./memo-anchor";
 import { assertMemoMetadataBudget } from "./memo-budget";
@@ -121,6 +124,26 @@ function insertMemoRow(
     input.anchor,
     now,
   );
+  if (context?.session != null) {
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(
+        and(
+          eq(attempts.id, context.session.attemptId),
+          eq(attempts.studentId, input.studentId),
+        ),
+      )
+      .get();
+    if (!attempt)
+      throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
+    assertAttemptWriteProof(
+      attempt,
+      undefined,
+      input.context?.session?.questionRevisionId,
+      context.session.questionRevisionId,
+    );
+  }
   if (
     input.deviceId !== undefined &&
     context?.deviceId != null &&

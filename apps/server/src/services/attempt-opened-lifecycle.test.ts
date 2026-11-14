@@ -20,7 +20,10 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
-import { expectHttpError } from "../test/ai-companion-fixtures.ts";
+import {
+  expectHttpError,
+  insertAiConnectionFixture,
+} from "../test/ai-companion-fixtures.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   gzipJson,
@@ -28,6 +31,8 @@ import {
   makeStudent,
   noteDoc,
 } from "../test/note-fixtures.ts";
+import { createAiBatchReviewTasks } from "./ai-companion/student-ai-batch.ts";
+import { createAiTask } from "./ai-companion/student-ai-queue.ts";
 import {
   assembleAnnotationBase,
   putAnnotationDoc,
@@ -39,13 +44,15 @@ import {
   updateAssignment,
 } from "./assignment-service.ts";
 import { activateAttempt, getOpenedAttempt } from "./attempt-activation.ts";
-import { saveDraftAnswer } from "./attempt-answer.ts";
+import { saveDraftAnswer, setStudentFlag } from "./attempt-answer.ts";
 import { purgeOpenedAttempts } from "./attempt-opened-purge.ts";
 import { refreshOpenedAttempt } from "./attempt-opened-refresh.ts";
 import { startAttempt, startCourseAttempt } from "./attempt-start.ts";
+import { submitAttempt } from "./attempt-whole-submit.ts";
 import { commitImport } from "./content-service.ts";
 import { openHint } from "./hint-service.ts";
 import { saveInk } from "./ink-service.ts";
+import { contextFromMemoAnchor } from "./memo-context.ts";
 import { createTextMemo } from "./memo-service.ts";
 import { saveNoteVersion } from "./note-service.ts";
 import { getStudentUnitLanding } from "./student-course-service.ts";
@@ -130,7 +137,7 @@ function fixture() {
   return { db, studentId, courseId, unitId, start, row, refs, query };
 }
 
-it.each(["answer", "ink", "note", "annotation"] as const)(
+it.each(["answer", "ink", "note", "annotation", "hint", "flag"] as const)(
   "ACT01 %s 重冻后无论是否已激活都要求本稿版本凭据",
   (kind) => {
     for (const active of [false, true]) {
@@ -178,6 +185,24 @@ it.each(["answer", "ink", "note", "annotation"] as const)(
           mutationId: randomUUID(),
           ...(proof === undefined ? {} : { expectedFrozenAt: proof }),
         };
+        if (kind === "hint")
+          return openHint(
+            env.db,
+            env.studentId,
+            first.id,
+            "activation-q",
+            0,
+            meta,
+          );
+        if (kind === "flag")
+          return setStudentFlag(
+            env.db,
+            env.studentId,
+            first.id,
+            "activation-q",
+            "unsure",
+            meta,
+          );
         if (kind === "answer")
           return saveDraftAnswer(
             env.db,
@@ -626,4 +651,255 @@ it("首次提示与合法带题随笔激活；无锚随笔和越权裸锚不激�
     },
   });
   expect(memo.row(m.id)?.activatedAt).toBeTruthy();
+});
+
+it.each(["hint", "flag"] as const)(
+  "ACT01 %s JSON真实请求原子校验，失败不激活",
+  async (kind) => {
+    const env = fixture(),
+      first = env.start();
+    env.db
+      .update(questions)
+      .set({ version: 2 })
+      .where(eq(questions.id, "activation-q"))
+      .run();
+    const current = env.start();
+    const app = createApp({
+      db: env.db,
+      dataDir: createTestDir(),
+      logger: pino({ enabled: false }),
+      publicUrl: "http://localhost:8787",
+      isProduction: false,
+    });
+    const cookie = `tutor_student_session=${createStudentSession(env.db, env.studentId).token}`;
+    const send = (proof?: string | null, invalid = false) =>
+      app.request(
+        `/api/student/attempts/${first.id}/${kind === "hint" ? "hints" : "flags/activation-q"}`,
+        {
+          method: kind === "hint" ? "POST" : "PUT",
+          headers: { cookie, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(kind === "hint"
+              ? { questionId: "activation-q", index: invalid ? 100 : 0 }
+              : { flag: invalid ? "invalid" : "unsure" }),
+            ...(proof === undefined ? {} : { expectedFrozenAt: proof }),
+          }),
+        },
+      );
+    expect((await send()).status).toBe(409);
+    expect((await send(first.frozenAt)).status).toBe(409);
+    expect((await send(current.frozenAt, true)).status).toBe(400);
+    expect(env.row(first.id)?.activatedAt).toBeNull();
+    env.db.$client.exec(
+      "CREATE TEMP TRIGGER reject_response_write BEFORE UPDATE ON responses BEGIN SELECT RAISE(ABORT, 'write rejected'); END",
+    );
+    expect((await send(current.frozenAt)).status).toBe(500);
+    expect(env.row(first.id)?.activatedAt).toBeNull();
+    env.db.$client.exec("DROP TRIGGER reject_response_write");
+    expect((await send(current.frozenAt)).status).toBe(200);
+    expect(env.row(first.id)?.activatedAt).toBeTruthy();
+  },
+);
+
+it.each(["ai", "memo"] as const)(
+  "ACT01 %s 只信客户端原题revision，失败不激活",
+  (kind) => {
+    const env = fixture(),
+      first = env.start(),
+      oldRevision = env.refs(first.id)[0]?.id;
+    const anchor = {
+      kind: "question" as const,
+      attemptId: first.id,
+      questionId: "activation-q",
+      label: "原稿",
+    };
+    const oldContext = contextFromMemoAnchor(env.db, env.studentId, anchor);
+    env.db
+      .update(questions)
+      .set({ version: 2 })
+      .where(eq(questions.id, "activation-q"))
+      .run();
+    env.start();
+    const freshContext = contextFromMemoAnchor(env.db, env.studentId, anchor);
+    if (!freshContext || !oldContext || !oldRevision)
+      throw new Error("缺测试上下文");
+    const write = (proof: "none" | "old" | "current") => {
+      if (kind === "ai")
+        return createAiTask(
+          env.db,
+          {
+            studentId: env.studentId,
+            attemptId: first.id,
+            questionId: "activation-q",
+            question: "解释思路",
+            channel: "mcp",
+            mutationId: randomUUID(),
+            ...(proof === "none"
+              ? {}
+              : {
+                  questionRevisionId:
+                    proof === "old"
+                      ? oldRevision
+                      : freshContext.session?.questionRevisionId,
+                }),
+          },
+          { hmacSecret: "proof-test-secret" },
+        );
+      return createTextMemo(env.db, {
+        studentId: env.studentId,
+        clientId: randomUUID(),
+        text: "本题思考",
+        anchor,
+        tags: [],
+        device: "desktop",
+        ...(proof === "none"
+          ? {}
+          : { context: proof === "old" ? oldContext : freshContext }),
+      });
+    };
+    expectHttpError(() => write("none"), 409, "ATTEMPT_SNAPSHOT_CHANGED");
+    expect(() => write("old")).toThrow();
+    expect(env.row(first.id)?.activatedAt).toBeNull();
+    env.db.$client.exec(
+      `CREATE TEMP TRIGGER reject_action_write BEFORE INSERT ON ${kind === "ai" ? "ai_tasks" : "memos"} BEGIN SELECT RAISE(ABORT, 'write rejected'); END`,
+    );
+    expect(() => write("current")).toThrow();
+    expect(env.row(first.id)?.activatedAt).toBeNull();
+    env.db.$client.exec("DROP TRIGGER reject_action_write");
+    expect(() => write("current")).not.toThrow();
+    expect(env.row(first.id)?.activatedAt).toBeTruthy();
+  },
+);
+
+it.each(["ai", "memo", "batch"] as const)(
+  "ACT01 已完成不可变来源 %s 兼容旧参数，显式错误凭据仍拒绝",
+  (kind) => {
+    const env = fixture(),
+      first = env.start();
+    const anchor = {
+      kind: "question" as const,
+      attemptId: first.id,
+      questionId: "activation-q",
+      label: "复盘",
+    };
+    const oldContext = contextFromMemoAnchor(env.db, env.studentId, anchor);
+    env.db
+      .update(questions)
+      .set({ version: 2 })
+      .where(eq(questions.id, "activation-q"))
+      .run();
+    const current = env.start();
+    saveDraftAnswer(
+      env.db,
+      env.studentId,
+      first.id,
+      "activation-q",
+      { kind: "judge", value: false },
+      { expectedFrozenAt: current.frozenAt },
+    );
+    submitAttempt(env.db, env.studentId, first.id);
+    const before = env.row(first.id);
+    if (kind === "batch") {
+      const result = createAiBatchReviewTasks(
+        env.db,
+        {
+          studentId: env.studentId,
+          items: [{ attemptId: first.id, questionId: "activation-q" }],
+          mutationId: randomUUID(),
+          question: "解释思路",
+          channel: "mcp",
+        },
+        { hmacSecret: "proof-test-secret" },
+      );
+      expect(result.items[0]?.status).toBe("created");
+    } else if (kind === "ai") {
+      const input = {
+        studentId: env.studentId,
+        attemptId: first.id,
+        questionId: "activation-q",
+        question: "解释思路",
+        channel: "mcp" as const,
+        mutationId: randomUUID(),
+      };
+      expect(() =>
+        createAiTask(env.db, input, { hmacSecret: "proof-test-secret" }),
+      ).not.toThrow();
+      expectHttpError(
+        () =>
+          createAiTask(
+            env.db,
+            {
+              ...input,
+              mutationId: randomUUID(),
+              questionRevisionId: "stale-rendered-revision",
+            },
+            { hmacSecret: "proof-test-secret" },
+          ),
+        409,
+        "QUESTION_REVISION_STALE",
+      );
+    } else {
+      expect(() =>
+        createTextMemo(env.db, {
+          studentId: env.studentId,
+          clientId: randomUUID(),
+          text: "复盘思考",
+          anchor,
+        }),
+      ).not.toThrow();
+      if (!oldContext) throw new Error("缺旧上下文");
+      expect(() =>
+        createTextMemo(env.db, {
+          studentId: env.studentId,
+          clientId: randomUUID(),
+          text: "复盘思考",
+          anchor,
+          context: oldContext,
+        }),
+      ).toThrow();
+    }
+    expect(env.row(first.id)).toEqual(before);
+  },
+);
+
+it("ACT01 AI真实JSON绑定原渲染revision，陈旧/缺失拒绝且合法请求激活", async () => {
+  const env = fixture(),
+    first = env.start(),
+    oldRevision = env.refs(first.id)[0]?.id;
+  env.db
+    .update(questions)
+    .set({ version: 2 })
+    .where(eq(questions.id, "activation-q"))
+    .run();
+  env.start();
+  insertAiConnectionFixture(env.db, env.studentId);
+  const app = createApp({
+    db: env.db,
+    dataDir: createTestDir(),
+    logger: pino({ enabled: false }),
+    publicUrl: "http://localhost:8787",
+    isProduction: false,
+  });
+  const cookie = `tutor_student_session=${createStudentSession(env.db, env.studentId).token}`;
+  const send = (revision?: string) =>
+    app.request("/api/student/ai/tasks", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        attemptId: first.id,
+        questionId: "activation-q",
+        question: "解释思路",
+        channel: "mcp",
+        mutationId: randomUUID(),
+        materials: { annotation: true, draft: false, formalInk: false },
+        ...(revision === undefined ? {} : { questionRevisionId: revision }),
+      }),
+    });
+  expect((await send()).status).toBe(409);
+  expect((await send(oldRevision)).status).toBe(409);
+  expect(env.row(first.id)?.activatedAt).toBeNull();
+  const response = await send(env.refs(first.id)[0]?.id);
+  expect(response.status).toBe(201);
+  assertNoLeak(await response.json());
+  expect(env.row(first.id)?.activatedAt).toBeTruthy();
 });

@@ -318,6 +318,7 @@ export function createStudentRoutes(
             c.req.param("id"),
             c.req.param("questionId"),
             body.flag,
+            body,
           ),
         });
       })
@@ -433,6 +434,7 @@ export function createStudentRoutes(
             c.req.param("id"),
             body.questionId,
             body.index,
+            body,
           ),
         });
       })
