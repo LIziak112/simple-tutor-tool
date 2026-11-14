@@ -4,9 +4,12 @@ import {
   MoreHorizontal,
   PenLine,
   Redo2,
+  Trash2,
   Undo2,
+  MousePointer2
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,7 +26,6 @@ export const toolButtonClass =
 export const COLOR_LABEL = { black: "黑", blue: "蓝", red: "红" } as const;
 export const SIZE_LABEL = { thin: "细", medium: "中", thick: "粗" } as const;
 
-/** 圈画、草稿与正式手写共享工具呈现，命令仍由各自控制器处理。 */
 export function CompactInkToolbar({
   label,
   tool,
@@ -70,28 +72,133 @@ export function CompactInkToolbar({
   children?: ReactNode;
 }) {
   const buttonClass = compact ? "size-11 shrink-0 p-0" : toolButtonClass;
+
+  const renderPenOptions = (isHighlighter = false) => (
+    <div className="p-2 flex flex-col gap-3 min-w-32 outline-none">
+      <DropdownMenuPrimitive.RadioGroup
+        value={color}
+        onValueChange={(val: string) => {
+          onColorChange(val as InkPenColor);
+          onToolChange(isHighlighter ? "highlighter" : "pen");
+        }}
+        className="flex items-center gap-2 outline-none"
+        aria-label="颜色"
+      >
+        {(["black", "blue", "red"] as const).map((c) => (
+          <DropdownMenuPrimitive.RadioItem
+            key={c}
+            value={c}
+            aria-label={COLOR_LABEL[c]}
+            title={COLOR_LABEL[c]}
+            className={`w-8 h-8 rounded-full border-2 ${color === c ? "border-primary scale-110" : "border-transparent"} transition-transform hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+            style={{ backgroundColor: c === "black" ? "#222" : c === "blue" ? "#3b82f6" : "#ef4444" }}
+          />
+        ))}
+      </DropdownMenuPrimitive.RadioGroup>
+      <DropdownMenuPrimitive.RadioGroup
+        value={size}
+        onValueChange={(val: string) => {
+          onSizeChange(val as InkPenSize);
+          onToolChange(isHighlighter ? "highlighter" : "pen");
+        }}
+        className="flex items-center justify-between gap-1 mt-1 outline-none"
+        aria-label="粗细"
+      >
+        {(["thin", "medium", "thick"] as const).map((s) => (
+          <DropdownMenuPrimitive.RadioItem
+            key={s}
+            value={s}
+            aria-label={SIZE_LABEL[s]}
+            title={SIZE_LABEL[s]}
+            className={`flex-1 h-8 rounded border flex items-center justify-center ${size === s ? "bg-accent border-primary" : "border-border hover:bg-accent/50"} transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+          >
+            <div 
+              className="bg-foreground rounded-full" 
+              style={{ 
+                width: s === "thin" ? "4px" : s === "medium" ? "8px" : "12px",
+                height: s === "thin" ? "4px" : s === "medium" ? "8px" : "12px" 
+              }} 
+            />
+          </DropdownMenuPrimitive.RadioItem>
+        ))}
+      </DropdownMenuPrimitive.RadioGroup>
+    </div>
+  );
+
   return (
     <div
       role="toolbar"
       aria-label={`${label}工具栏`}
       className={
         compact
-          ? "flex min-h-11 min-w-0 items-center gap-1"
-          : "flex flex-wrap items-center gap-1.5"
+          ? "flex min-h-11 min-w-0 items-center gap-1 rounded-xl bg-background border shadow-sm p-1"
+          : "flex flex-wrap items-center gap-1.5 rounded-xl bg-background border shadow-sm p-1.5"
       }
     >
-      <Button
-        variant={tool === "pen" ? "secondary" : "ghost"}
-        className={buttonClass}
-        aria-label="笔"
-        title="笔"
-        aria-pressed={tool === "pen"}
-        disabled={disabled}
-        onClick={() => onToolChange("pen")}
-      >
-        <PenLine aria-hidden />
-        {!compact && "笔"}
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant={tool === "pen" ? "secondary" : "ghost"}
+            className={buttonClass}
+            aria-label="笔"
+            title="笔"
+            aria-pressed={tool === "pen"}
+            disabled={disabled}
+            onClick={(e) => {
+              if (tool !== "pen") {
+                e.preventDefault();
+                onToolChange("pen");
+              }
+            }}
+          >
+            <PenLine aria-hidden />
+            {!compact && "笔"}
+            {tool === "pen" && (
+              <span 
+                className="absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full border border-background" 
+                style={{ backgroundColor: color === "black" ? "#222" : color === "blue" ? "#3b82f6" : "#ef4444" }} 
+              />
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="center" sideOffset={8}>
+          {renderPenOptions(false)}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {advanced && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant={tool === "highlighter" ? "secondary" : "ghost"}
+              className={buttonClass}
+              aria-label="荧光笔"
+              title="荧光笔"
+              aria-pressed={tool === "highlighter"}
+              disabled={disabled}
+              onClick={(e) => {
+                if (tool !== "highlighter") {
+                  e.preventDefault();
+                  onToolChange("highlighter");
+                }
+              }}
+            >
+              <Highlighter aria-hidden />
+              {!compact && "荧光笔"}
+              {tool === "highlighter" && (
+                <span 
+                  className="absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full border border-background opacity-50" 
+                  style={{ backgroundColor: color === "black" ? "#222" : color === "blue" ? "#3b82f6" : "#ef4444" }} 
+                />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" sideOffset={8}>
+            {renderPenOptions(true)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
       <Button
         variant={tool === "eraser" ? "secondary" : "ghost"}
         className={buttonClass}
@@ -104,6 +211,24 @@ export function CompactInkToolbar({
         <Eraser aria-hidden />
         {!compact && "橡皮"}
       </Button>
+      
+      {advanced && (
+         <Button
+         variant={tool === "scroll" ? "secondary" : "ghost"}
+         className={buttonClass}
+         aria-label="滚动/选择"
+         title="滚动/选择"
+         aria-pressed={tool === "scroll"}
+         disabled={disabled}
+         onClick={() => onToolChange("scroll")}
+       >
+         <MousePointer2 aria-hidden />
+         {!compact && "滚动"}
+       </Button>
+      )}
+
+      <div className="w-px h-6 bg-border mx-1" />
+
       <Button
         variant="ghost"
         className={buttonClass}
@@ -115,78 +240,49 @@ export function CompactInkToolbar({
         <Undo2 aria-hidden />
         {!compact && "撤销"}
       </Button>
+      
+      <Button
+        variant="ghost"
+        className={buttonClass}
+        aria-label="重做"
+        title="重做"
+        disabled={!canRedo || disabled}
+        onClick={onRedo}
+      >
+        <Redo2 aria-hidden />
+        {!compact && "重做"}
+      </Button>
+
       {fingerToggle}
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          className={`flex shrink-0 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-ring ${compact ? "size-11 rounded-md" : `ml-auto border-transparent ${toolButtonClass}`}`}
-          aria-label={moreLabel}
-          title={moreTitle}
-          disabled={disabled}
-        >
-          <MoreHorizontal aria-hidden />
-          {!compact && "更多"}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className="max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto"
-          collisionPadding={8}
-        >
-          <DropdownMenuItem disabled={!canRedo} onSelect={onRedo}>
-            <Redo2 aria-hidden />
-            重做
-          </DropdownMenuItem>
-          {advanced && (
-            <>
-              <DropdownMenuItem onSelect={() => onToolChange("highlighter")}>
-                <Highlighter aria-hidden />
-                荧光笔
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onToolChange("scroll")}>
-                滚动模式
-              </DropdownMenuItem>
-            </>
-          )}
-          <DropdownMenuSeparator />
-          {(["black", "blue", "red"] as const).map((value) => (
-            <DropdownMenuItem
-              key={value}
-              role="menuitemradio"
-              aria-checked={color === value}
-              onSelect={() => {
-                onColorChange(value);
-                onToolChange("pen");
-              }}
+      
+      {menuExtras || onClearRequest ? (
+        <>
+          <div className="w-px h-6 bg-border mx-1" />
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={`flex shrink-0 items-center justify-center outline-none hover:bg-accent hover:text-accent-foreground transition-colors ${compact ? "size-11 rounded-md" : `ml-auto ${toolButtonClass}`}`}
+              aria-label={moreLabel}
+              title={moreTitle}
+              disabled={disabled}
             >
-              <span
-                aria-hidden
-                className="size-3 rounded-full"
-                style={{ backgroundColor: value }}
-              />
-              颜色：{COLOR_LABEL[value]}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          {(["thin", "medium", "thick"] as const).map((value) => (
-            <DropdownMenuItem
-              key={value}
-              role="menuitemradio"
-              aria-checked={size === value}
-              onSelect={() => {
-                onSizeChange(value);
-                onToolChange("pen");
-              }}
+              <MoreHorizontal aria-hidden />
+              {!compact && "更多"}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto"
+              collisionPadding={8}
             >
-              粗细：{SIZE_LABEL[value]}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          {menuExtras}
-          {menuExtras && <DropdownMenuSeparator />}
-          <DropdownMenuItem variant="destructive" onSelect={onClearRequest}>
-            {clearLabel}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+              {menuExtras}
+              {menuExtras && <DropdownMenuSeparator />}
+              <DropdownMenuItem variant="destructive" onSelect={onClearRequest} className="text-destructive focus:text-destructive focus:bg-destructive/10">
+                <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                {clearLabel}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      ) : null}
       {children}
     </div>
   );
