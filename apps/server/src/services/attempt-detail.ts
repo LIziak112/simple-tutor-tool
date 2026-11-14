@@ -48,6 +48,7 @@ import { answerReleaseProjection } from "./practice-workflow-service";
 import { attemptWorkflowView } from "./practice-workflow-wiring";
 import { attemptActivityProjection } from "./question-activity";
 import { reviewEvidenceReader } from "./review-evidence.ts";
+import { reviewPresentationOf } from "./review-presentation.ts";
 import { answerOf, snapshotOfRow } from "./snapshot";
 import { unitTimeQuotasOf } from "./unit-time-quota";
 
@@ -378,6 +379,7 @@ export function buildResultData(
     : summaryProjection;
 
   return {
+    reviewPresentation: reviewPresentationOf(db, attempt, unitIds),
     attempt: released
       ? attemptProjection
       : { ...attemptProjection, scoreAuto: null },

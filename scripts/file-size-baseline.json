@@ -1,5 +1,5 @@
 {
-  "apps/server/src/db/schema.ts": 2445,
+  "apps/server/src/db/schema.ts": 2427,
   "apps/server/src/mcp/server.ts": 1274,
   "apps/server/src/routes/student.ts": 1133,
   "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1195,
@@ -8,7 +8,7 @@
   "apps/server/src/services/annotation-service.ts": 1621,
   "apps/server/src/services/assignment-service.ts": 1370,
   "apps/server/src/services/content-service.ts": 2118,
-  "apps/server/src/services/course-service.ts": 1498,
+  "apps/server/src/services/course-service.ts": 1481,
   "apps/server/src/services/export-service.ts": 2748,
   "apps/server/src/services/library-service.ts": 1610,
   "apps/server/src/services/note-service.ts": 1841,
@@ -25,6 +25,5 @@
   "apps/web/src/lib/api.ts": 3254,
   "apps/web/src/pages/teacher/ImportPage.tsx": 1225,
   "apps/web/src/pages/teacher/LibraryPage.tsx": 1759,
-  "packages/contract/src/content-api.ts": 1004,
   "packages/contract/src/learning-pack.ts": 1491
 }

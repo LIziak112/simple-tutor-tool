@@ -1,3 +1,7 @@
+import { courses } from "./course-schema.ts";
+
+export { courses } from "./course-schema.ts";
+
 import type {
   AiAttemptReviewStatus,
   AiChannel,
@@ -246,28 +250,6 @@ export const dataMigrations = sqliteTable("data_migrations", {
  * Phase 2A 起课程 = 一份有序目录（course_items）+ 成员（course_students）；
  * 「默认课程」按普通课程处理（D23-7，教师可改名/归档）。
  */
-export const courses = sqliteTable(
-  "courses",
-  {
-    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
-    id: text("id").primaryKey(),
-    /**
-     * 归属教师（D9：DB 可空、代码恒写非空）。课程与作业为域内私有（T2B.4 起按教师过滤）。
-     */
-    teacherId: text("teacher_id"),
-    /** 课程名；默认课程固定「默认课程」（同名复用） */
-    title: text("title").notNull(),
-    /** 同级排序（小在前）；首个课程为 0 */
-    order: integer("order").notNull(),
-    /** 归档时间：UTC ISO 字符串；未归档为 NULL（D4：归档后学生端不可见，可恢复） */
-    archivedAt: text("archived_at"),
-    /** 课程简介；未填为 NULL */
-    description: text("description"),
-    /** 创建时间：UTC ISO 字符串 */
-    createdAt: text("created_at").notNull(),
-  },
-  (table) => [index("courses_teacher_idx").on(table.teacherId)],
-);
 
 /**
  * 讲义表。markdown 保存讲义原文（§5.1.1(4) 原文是真相），目录等结构化数据渲染时再解析。

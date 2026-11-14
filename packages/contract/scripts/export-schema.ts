@@ -222,3 +222,16 @@ await writeSchema(
     }),
   ),
 );
+
+await writeSchema(
+  "review-template.json",
+  "复盘模板与展示推荐契约",
+  z.toJSONSchema(
+    z.object({
+      template: (await import("../src/review-template.ts"))
+        .reviewTemplateSchema,
+      presentation: (await import("../src/review-template.ts"))
+        .reviewPresentationSchema,
+    }),
+  ),
+);

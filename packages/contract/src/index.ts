@@ -210,6 +210,7 @@ export * from "./result-counts.ts";
 export * from "./review-adapters.ts";
 export * from "./review-facts.ts";
 export * from "./review-groups.ts";
+export * from "./review-template.ts";
 export * from "./review-verdict.ts";
 export * from "./rubric.ts";
 export * from "./student-ai-reply-check.ts";

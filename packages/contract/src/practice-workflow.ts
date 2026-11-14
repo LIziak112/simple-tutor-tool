@@ -28,6 +28,7 @@ export const practiceFeedbackModeSchema = z.enum([
  */
 export const practiceRecommendationSchema = z
   .object({
+    reviewTemplateId: z.string().min(1).max(80).optional(),
     layout: practiceLayoutSchema.optional(),
     feedback: practiceFeedbackModeSchema.optional(),
     /** 推荐时长（分钟，模块 2 限时测试）：开卷页「限时」的缺省值；只推荐，学习者可改可不限时 */

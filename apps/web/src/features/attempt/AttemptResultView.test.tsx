@@ -81,6 +81,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const DATA: AttemptResultData = {
+  reviewPresentation: {
+    examType: null,
+    templateId: "objective",
+    unitTemplateIds: [],
+  },
   attempt: {
     id: "55555555-5555-4555-8555-555555555555",
     sourceType: "assignment",

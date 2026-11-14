@@ -714,6 +714,13 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       >
     ).map((row) => {
       delete row.teacher_id; // 新增归属列不参与保真对比
+      if (table === "courses") {
+        // 0069 新增展示推荐列：旧课必须为 NULL，原有全部列仍逐行保真。
+        expect(row.exam_type ?? null).toBeNull();
+        expect(row.review_template_id ?? null).toBeNull();
+        delete row.exam_type;
+        delete row.review_template_id;
+      }
       if (table === "course_items") {
         // 此夹具没有嵌套；新别名必须等于原资源标题，而非忽略标题变化。
         expect(row.parent_id ?? null).toBeNull();
