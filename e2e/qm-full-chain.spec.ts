@@ -748,6 +748,10 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
       await page.getByRole("button", { name: "交卷", exact: true }).click();
       await page.getByRole("button", { name: "确认交卷" }).first().click();
       await expect(page.getByText("批改结果")).toBeVisible({ timeout: 30_000 });
+      // 本用例验收逐题对照/自评；长文预设默认隐藏逐题区，显式切回该视图。
+      await page
+        .getByLabel("复盘模板", { exact: true })
+        .selectOption("objective");
       await checks(page);
       await leak.drain();
       expect(leak.violations().join("\n")).toBe("");
