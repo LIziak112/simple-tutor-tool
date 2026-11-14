@@ -280,3 +280,12 @@ await writeSchema(
     }),
   ),
 );
+
+await writeSchema(
+  "student-mcp-settle.json",
+  "学生 MCP 分批结算契约",
+  z.toJSONSchema(
+    (await import("../src/student-mcp-settle.ts")).studentMcpSettleInputSchema,
+    { io: "input" },
+  ),
+);

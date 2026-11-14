@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { type MemoAgentCreate, normalizeMemoTags } from "@tutor/contract";
+import { canonicalJsonOf } from "../lib/canonical-json.ts";
 import { HttpError } from "../lib/http-error";
 import type { MemoRow } from "./memo-read";
 /** 记录原请求语义，不从未来时间收口后的记录或自动来源文案反推。 */
@@ -32,6 +33,10 @@ export function memoOperationDigest(input: MemoAgentCreate): string {
                   sectionId: anchor.sectionId ?? null,
                   label: anchor.label ?? null,
                 },
+        // 未传上下文时保持旧摘要逐字节兼容；新上下文参与同键异内容校验。
+        ...(input.context === undefined
+          ? {}
+          : { context: canonicalJsonOf(input.context) }),
       }),
     )
     .digest("hex");

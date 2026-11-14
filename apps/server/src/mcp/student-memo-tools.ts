@@ -6,6 +6,7 @@ import {
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
+import { registerMcpMemoDevice } from "../services/mcp-memo-device.ts";
 import { listMemos, readMemoMedia } from "../services/memo-read";
 import { createAgentMemo } from "../services/memo-service";
 import { guard, jsonContent } from "./tool-result";
@@ -28,6 +29,7 @@ export function registerStudentMemoTools(
     readonly db: Db;
     readonly dataDir: string;
     readonly studentId: string;
+    readonly connectionId?: string | undefined;
   },
 ): void {
   const { db, dataDir, studentId } = deps;
@@ -36,7 +38,7 @@ export function registerStudentMemoTools(
     "list_my_memos",
     {
       description:
-        "列出我（当前学生）的随笔：文字正文、语音 / 图片 / 手写的元信息（格式、字节、时长）、上下文锚、标签，按记录时间倒序分页。只读。媒体字节请用 get_memo_media 按 id 取。",
+        "列出我（当前学生）的随笔：文字正文、语音 / 图片 / 手写的元信息（格式、字节、时长）、完整上下文锚、序号、标签，按记录时间倒序分页；支持courseId/unitId/questionId、seq或seqFrom/seqTo范围、parentMemoSeq和原有筛选。只读。媒体字节请用 get_memo_media 按 id 取。",
       inputSchema: memoListQuerySchema.shape,
       annotations: {
         readOnlyHint: true,
@@ -51,7 +53,7 @@ export function registerStudentMemoTools(
     "add_memo",
     {
       description:
-        "替我（当前学生）记一条文字随笔（source=agent）：语音的转写文本、对话里的结论、要点摘录都从这里转记。原始随笔不可改——转写请新增一条，不要试图改原语音。同一操作重试请复用 operationId；parentMemoSeq 可关联原始随笔。",
+        "替我（当前学生）记一条文字随笔（source=agent）：语音的转写文本、对话里的结论、要点摘录都从这里转记。原始随笔不可改——转写请新增一条，不要试图改原语音。同一操作重试请复用 operationId；parentMemoSeq 可关联原始随笔；context可原样传入读题或随笔返回的完整上下文，来源坐标实时核对，设备绑定当前鉴权MCP连接。",
       inputSchema: memoAgentCreateSchema.shape,
       annotations: {
         readOnlyHint: false,
@@ -60,7 +62,20 @@ export function registerStudentMemoTools(
         openWorldHint: false,
       },
     },
-    guard((input) => jsonContent(createAgentMemo(db, studentId, input))),
+    guard((input) =>
+      jsonContent(
+        db.transaction(() => {
+          const now = new Date();
+          const deviceId = registerMcpMemoDevice(
+            db,
+            studentId,
+            deps.connectionId,
+            now,
+          );
+          return createAgentMemo(db, studentId, input, now, deviceId);
+        }),
+      ),
+    ),
   );
 
   server.registerTool(

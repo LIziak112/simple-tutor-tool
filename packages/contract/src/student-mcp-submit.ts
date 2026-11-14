@@ -2,6 +2,7 @@ import { z } from "zod";
 import { studentAnswerSchema } from "./grading.ts";
 import { learningContentIdSchema } from "./learning-context.ts";
 import {
+  practiceQuestionFeedbackSchema,
   practiceQuestionSubmitRequestSchema,
   studentMcpPracticeQuestionSubmitSchema,
 } from "./practice-question-submit.ts";
@@ -55,6 +56,7 @@ export const studentMcpSubmitReceiptSchema = z.strictObject({
     submittedCount: z.number().int().nonnegative(),
     totalCount: z.number().int().positive(),
   }),
+  feedback: practiceQuestionFeedbackSchema,
   nextQuestion: z
     .strictObject({
       questionId: learningContentIdSchema,

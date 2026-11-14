@@ -229,6 +229,10 @@ export type MemoCreateMedia = z.infer<typeof memoCreateMediaSchema>;
 /** GET /api/student/memos 查询：时间倒序、游标分页、可按形态 / 标签 / 锚过滤 */
 export const memoListQuerySchema = z.object({
   seq: z.coerce.number().int().positive().optional(),
+  seqFrom: z.coerce.number().int().positive().optional(),
+  seqTo: z.coerce.number().int().positive().optional(),
+  courseId: learningContentIdSchema.optional(),
+  unitId: learningContentIdSchema.optional(),
   questionId: learningContentIdSchema.optional(),
   parentMemoSeq: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -260,6 +264,7 @@ export const memoAgentCreateSchema = z.object({
   /** 同一操作重试复用此 UUID；省略时保留旧客户端每次新增行为。 */
   operationId: z.uuid().optional(),
   parentMemoSeq: z.number().int().positive().optional(),
+  context: learningContextSchema.optional(),
   text: z.string().trim().min(1).max(MEMO_TEXT_MAX),
   tags: memoTagsSchema.optional(),
   anchor: z

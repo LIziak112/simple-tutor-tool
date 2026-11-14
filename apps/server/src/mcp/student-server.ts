@@ -1,11 +1,15 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { studentMcpSubmitInputSchema } from "@tutor/contract";
+import {
+  studentMcpSettleInputSchema,
+  studentMcpSubmitInputSchema,
+} from "@tutor/contract";
 import type { Db } from "../db/client";
 import { listStudentMcpPractices } from "../services/student-mcp-practice-list.ts";
 import {
   getStudentMcpPractice,
   getStudentMcpPracticeQuestion,
 } from "../services/student-mcp-practice-read.ts";
+import { settleStudentMcpPractice } from "../services/student-mcp-settle.ts";
 import { submitStudentMcpQuestion } from "../services/student-mcp-submit.ts";
 import { registerStudentAiTaskTools } from "./student-ai-task-tools.ts";
 import { registerStudentAttemptReviewTools } from "./student-attempt-review-tools.ts";
@@ -79,6 +83,7 @@ export const STUDENT_MCP_TOOL_NAMES = [
   "submit_rubric_opinion",
   "submit_attempt_review_result",
   "student_submit_practice_question",
+  "student_settle_practice",
   // 模块 5 第一步随笔（student-memo-tools.ts）
   "list_my_memos",
   "add_memo",
@@ -124,7 +129,12 @@ export function registerStudentTools(
   deps: StudentMcpServerDeps,
 ): void {
   const { db, dataDir, studentId } = deps;
-  registerStudentMemoTools(server, { db, dataDir, studentId });
+  registerStudentMemoTools(server, {
+    db,
+    dataDir,
+    studentId,
+    connectionId: deps.connectionId,
+  });
   registerStudentLiveFocusTool(server, db, studentId, deps.connectionId);
 
   registerStudentAiTaskTools(server, deps);
@@ -145,10 +155,36 @@ export function registerStudentTools(
   });
 
   server.registerTool(
+    "student_settle_practice",
+    {
+      description:
+        "学生确认题号和已保存答案、冻结笔记后分批提交。仅支持允许分批的新协议非限时普通练习，不支持讲练、旧卷或教师限制的练习。先用get_practice/get_practice_question读取当前工作流、题目/答案版本与证据参数；questions只填本次确认的题，空数组仅用于结算此前已逐题提交且未归批的题。mutationId为必填UUID，重试须原样复用全部输入；本批锁题并按当前公布规则返回本批结果，最后一批自动交卷，其余可续做。实时检查所有本批成员的权限与AI设置，重放不返回已收紧的秘密。",
+      inputSchema: studentMcpSettleInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    guard((input) =>
+      jsonContent(
+        settleStudentMcpPractice(
+          db,
+          studentId,
+          input,
+          new Date(),
+          deps.connectionId ?? null,
+        ),
+      ),
+    ),
+  );
+
+  server.registerTool(
     "student_submit_practice_question",
     {
       description:
-        "学生确认后提交一题。提交会锁定本题，最后一题会自动交卷。questionId 是 DSL 题号，questionRevisionId 是冻结作答行引用。responseVersion=2 时可用 questionNo 定位且可省略 submissionMutationId，回执返回提交事实、进度和下一题；未指定版本保持旧请求和成功壳。携带练习详情中的工作流版本、答案版本及笔记证据声明。可同时提供本次答案，省略则提交已保存的草稿。重试同一次提交须复用 submissionMutationId 和全部输入。",
+        "学生确认后提交一题。提交会锁定本题，最后一题会自动交卷。questionId 是 DSL 题号，questionRevisionId 是冻结作答行引用。responseVersion=2 时可用 questionNo 定位且可省略 submissionMutationId，回执返回提交事实、进度、下一题和按当前公布规则可见的本题反馈，重试也实时检查权限与AI设置；未指定版本保持旧请求和成功壳。携带练习详情中的工作流版本、答案版本及笔记证据声明。可同时提供本次答案，省略则提交已保存的草稿。重试同一次提交须复用 submissionMutationId 和全部输入。",
       inputSchema: studentMcpSubmitInputSchema,
       annotations: {
         readOnlyHint: false,

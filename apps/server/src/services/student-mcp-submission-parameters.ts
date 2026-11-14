@@ -25,6 +25,7 @@ export function studentMcpSubmissionParameters(
   row: Pick<ResponseRow, "id" | "questionId" | "submittedAt">,
   expectedAnswerRevision: number | undefined,
   now: Date | string = new Date(),
+  purpose: "question" | "settlement" = "question",
 ): Availability {
   if (attempt.status !== "draft" || row.submittedAt !== null) {
     return { available: false, reason: "QUESTION_ALREADY_SUBMITTED" };
@@ -37,7 +38,11 @@ export function studentMcpSubmissionParameters(
   const workflow = attemptWorkflowView(db, attempt, now)?.practiceWorkflow;
   if (workflow === undefined)
     return { available: false, reason: "WORKFLOW_LEGACY" };
-  if (!workflow.canSubmitQuestion)
+  if (
+    !(purpose === "settlement"
+      ? workflow.canSettlePartially
+      : workflow.canSubmitQuestion)
+  )
     return { available: false, reason: "WORKFLOW_RESTRICTED" };
   try {
     assertAttemptNotTimedOut(attempt, now, "running");

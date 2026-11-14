@@ -252,6 +252,15 @@ function prepareQuestion(
     practiceWorkflow:
       attemptWorkflowView(db, attempt, now)?.practiceWorkflow ?? null,
     submittedAt: row.submittedAt,
+    settlement: studentMcpSubmissionParameters(
+      db,
+      studentId,
+      attempt,
+      row,
+      row.answerRevision,
+      now,
+      "settlement",
+    ),
     submission: studentMcpSubmissionParameters(
       db,
       studentId,

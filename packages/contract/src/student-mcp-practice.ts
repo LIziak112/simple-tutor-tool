@@ -144,6 +144,8 @@ export const studentMcpPracticeQuestionDataSchema = z
     practiceWorkflow: practiceWorkflowSchema.nullable(),
     submittedAt: z.string().nullable(),
     submission: submissionAvailabilitySchema,
+    /** 分批独立于逐题反馈节奏，参数由同一版本/证据投影生成。 */
+    settlement: submissionAvailabilitySchema.optional(),
     imagesIncluded: z.boolean(),
     images: z.array(
       z.strictObject({
