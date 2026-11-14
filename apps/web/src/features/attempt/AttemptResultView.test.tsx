@@ -375,7 +375,7 @@ describe("得分汇总卡", () => {
     expect(screen.getByText("第 4 题")).toBeInTheDocument();
     view.unmount();
 
-    // 单单元且没有分批时，不重复显示汇总分组表。
+    // 对照：单单元且未分批不渲染节标题，也不显示与汇总重复的分组表。
     renderView();
     expect(screen.queryByRole("heading", { name: "练习四" })).toBeNull();
     expect(screen.queryByTestId("module-results")).toBeNull();
