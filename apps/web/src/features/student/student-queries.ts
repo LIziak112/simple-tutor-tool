@@ -20,9 +20,10 @@ import {
 export const studentAssignmentsKey = ["student", "assignments"] as const;
 
 /** 我的作业（按布置时间倒序，含完成状态） */
-export function useStudentAssignments() {
+export function useStudentAssignments({ enabled = true } = {}) {
   return useQuery({
     queryKey: studentAssignmentsKey,
+    enabled,
     queryFn: fetchStudentAssignmentsApi,
     staleTime: 30_000,
     refetchOnWindowFocus: false,

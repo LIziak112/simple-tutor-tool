@@ -39,11 +39,22 @@ export function planCi(files, forceFull = false) {
   };
 }
 
+/** 缺省保留双浏览器；CI矩阵只能选择已有项目，空值/拼错不能静默少跑。 */
+export function ciBrowserProjects(project) {
+  const projects = ["chromium", "webkit"];
+  if (project === undefined) return projects;
+  if (!projects.includes(project))
+    throw new Error(`不支持的CI浏览器项目：${project}`);
+  return [project];
+}
+
 function main() {
   const [mode, ref] = process.argv.slice(2);
   if (!["plan", "unit", "e2e"].includes(mode) || !ref) {
     throw new Error("用法：node scripts/ci-scope.mjs plan|unit|e2e <基点 SHA>");
   }
+  const projects =
+    mode === "e2e" ? ciBrowserProjects(process.env.CI_E2E_PROJECT) : [];
   const plan = planCi(collectChangedFiles(ref), process.env.CI_FULL === "true");
   console.log(JSON.stringify(plan));
   if (mode === "plan") {
@@ -63,8 +74,7 @@ function main() {
     "exec",
     "playwright",
     "test",
-    "--project=chromium",
-    "--project=webkit",
+    ...projects.map((project) => `--project=${project}`),
   ];
   const decision = plan.e2e;
   if (decision.mode === "full") return runArgv(base);

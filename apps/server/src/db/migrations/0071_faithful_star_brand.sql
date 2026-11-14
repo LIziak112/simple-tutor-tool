@@ -1,0 +1,1 @@
+ALTER TABLE `memos` ADD `agent_request_digest` text;

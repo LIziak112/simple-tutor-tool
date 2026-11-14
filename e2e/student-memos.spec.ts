@@ -120,9 +120,9 @@ test("随手记 → 随笔页：文字与图片随笔的记录、筛选、删除
 
 /**
  * 作答页是「工作区」：自带吸底「交卷」条，右下角不浮「随手记」（曾压住「下一题」「交卷」），
- * 入口在「练习更多」菜单里；记下的随笔自动锚到当前题，随笔页能点锚回到那道题。
+ * 题卡「更多」提供明确来源入口；随笔页能点锚回到原题，整卷菜单另保留无题记录。
  */
-test("作答页：不浮随手记按钮、菜单入口记一条并锚到当前题", {
+test("作答页：不浮随手记按钮、题卡入口记一条并锚到原题", {
   tag: ["@student"],
 }, async ({ page }) => {
   await teacherApiLogin(page.request);
@@ -159,9 +159,9 @@ test("作答页：不浮随手记按钮、菜单入口记一条并锚到当前�
     .getByRole("button", { name: "交卷", exact: true })
     .click({ trial: true });
 
-  // 练习更多 → 随手记：浮层带当前题锚
-  await page.getByRole("button", { name: "练习更多" }).click();
-  await page.getByRole("menuitem", { name: "随手记" }).click();
+  // 题卡更多 → 记随笔：显式捕获这张卡，原锚回链断言仍保留。
+  await page.getByRole("button", { name: "第 1 题更多", exact: true }).click();
+  await page.getByRole("menuitem", { name: "记随笔", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "随手记" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(/^锚到：第 1 题/)).toBeVisible();
@@ -182,9 +182,13 @@ test("作答页：不浮随手记按钮、菜单入口记一条并锚到当前�
 
   // 随笔页：卡片上的锚链接回到那道题
   await page.goto("/s/memos");
-  const anchorLink = page
-    .locator("article")
-    .getByRole("link", { name: /^第 1 题/ });
+  const sourceCard = page.locator("article").filter({
+    hasText: "判断题里「正数」的定义要再看",
+  });
+  await sourceCard.getByRole("button", { name: /查看来源/ }).click();
+  const anchorLink = sourceCard.getByRole("link", {
+    name: new RegExp(`${courseName}.*${unitName}.*第\\s*1\\s*题`),
+  });
   await expect(anchorLink).toBeVisible();
   await anchorLink.click();
   await page.waitForURL(`**/s/attempts/${attemptId}?q=*`);

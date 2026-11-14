@@ -1,10 +1,15 @@
 import {
+  DEVICE_ID_HEADER,
+  MEMO_JSON_BODY_MAX_BYTES,
+  MEMO_METADATA_LIMIT_MESSAGE,
+  MEMO_METADATA_TOO_LARGE,
   MEMO_OUTBOX_ACCOUNT_CHANGED,
   MEMO_OUTBOX_ACCOUNT_HEADER,
   MEMO_VOICE_MAX_BYTES,
   memoCreateMediaSchema,
   memoCreateTextSchema,
   memoListQuerySchema,
+  memoShareInputSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
 import type { StudentEnv } from "../auth/require-student";
@@ -16,6 +21,8 @@ import {
   type MultipartCap,
   parseMultipartCapped,
 } from "../lib/multipart-capped";
+import { guardBodyLimit } from "../lib/request-body-limit";
+import { assertMemoMultipartEnvelope } from "../services/memo-budget";
 import {
   deleteMemo,
   listMemos,
@@ -23,6 +30,13 @@ import {
   readMemoMedia,
 } from "../services/memo-read";
 import { createMediaMemo, createTextMemo } from "../services/memo-service";
+import {
+  memoShareState,
+  revokeMemoShare,
+  shareMemo,
+} from "../services/memo-sharing";
+import { memoSourceTarget } from "../services/memo-source-target";
+import { memoTagSuggestions } from "../services/memo-tag-suggestions";
 
 /**
  * 随笔学生侧路由（模块 5 第一步），由 student.ts 挂在 /api/student 之下（个人账号
@@ -64,6 +78,15 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
     }
   };
   return new Hono<StudentEnv>()
+    .use(
+      "/memos",
+      guardBodyLimit({
+        method: "POST",
+        limit: MEMO_JSON_BODY_MAX_BYTES,
+        code: MEMO_METADATA_TOO_LARGE,
+        message: MEMO_METADATA_LIMIT_MESSAGE,
+      }),
+    )
     .post("/memos", async (c) => {
       requireQueueAccount(
         c.req.header(MEMO_OUTBOX_ACCOUNT_HEADER),
@@ -73,6 +96,7 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
       const result = createTextMemo(db, {
         studentId: c.var.student.id,
         ...body,
+        deviceId: body.deviceId ?? c.req.header(DEVICE_ID_HEADER),
       });
       return c.json(
         { ok: true, data: result.memo },
@@ -84,9 +108,9 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
         c.req.header(MEMO_OUTBOX_ACCOUNT_HEADER),
         c.var.student.id,
       );
-      const body = formDataToRecord(
-        await parseMultipartCapped(c, MEMO_MEDIA_UPLOAD_CAP),
-      );
+      const form = await parseMultipartCapped(c, MEMO_MEDIA_UPLOAD_CAP);
+      assertMemoMultipartEnvelope(form);
+      const body = formDataToRecord(form);
       const file = body.file;
       if (!(file instanceof File)) {
         throw new HttpError(
@@ -102,6 +126,7 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
       const result = createMediaMemo(db, dataDir, {
         studentId: c.var.student.id,
         ...fields,
+        deviceId: fields.deviceId ?? c.req.header(DEVICE_ID_HEADER),
         bytes: new Uint8Array(await file.arrayBuffer()),
       });
       return c.json(
@@ -123,6 +148,49 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
         200,
         { "Cache-Control": "private, no-store" },
       );
+    })
+    .get("/memos/tags", (c) =>
+      c.json(
+        { ok: true, data: { tags: memoTagSuggestions(db, c.var.student.id) } },
+        200,
+        { "Cache-Control": "private, no-store" },
+      ),
+    )
+    .get("/memos/:id/source-target", (c) =>
+      c.json(
+        {
+          ok: true,
+          data: memoSourceTarget(db, c.var.student.id, c.req.param("id")),
+        },
+        200,
+        { "Cache-Control": "private, no-store" },
+      ),
+    )
+    .get("/memos/:id/share", (c) =>
+      c.json(
+        {
+          ok: true,
+          data: memoShareState(db, c.var.student.id, c.req.param("id")),
+        },
+        200,
+        { "Cache-Control": "private, no-store" },
+      ),
+    )
+    .put("/memos/:id/share", async (c) => {
+      const input = await parseJsonBody(c, memoShareInputSchema);
+      return c.json({
+        ok: true,
+        data: shareMemo(
+          db,
+          c.var.student.id,
+          c.req.param("id"),
+          input.teacherId,
+        ),
+      });
+    })
+    .delete("/memos/:id/share", (c) => {
+      revokeMemoShare(db, c.var.student.id, c.req.param("id"));
+      return c.json({ ok: true, data: { id: c.req.param("id") } });
     })
     .delete("/memos/:id", (c) => {
       deleteMemo(db, c.var.student.id, c.req.param("id"));
@@ -155,6 +223,8 @@ function multipartFieldsOf(
   const duration = text("durationSec");
   return {
     clientId: text("clientId"),
+    context: json("context"),
+    deviceId: text("deviceId"),
     kind: text("kind"),
     text: text("text"),
     anchor: json("anchor"),

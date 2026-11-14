@@ -119,3 +119,59 @@ await writeSchema(
     }),
   ),
 );
+
+await writeSchema(
+  "learning-context.json",
+  "学习上下文契约",
+  z.toJSONSchema(
+    (await import("../src/learning-context.ts")).learningContextSchema,
+  ),
+);
+await writeSchema(
+  "attempt-session.json",
+  "作答结算事实契约",
+  z.toJSONSchema(
+    (await import("../src/attempt-session.ts")).attemptSettlementSchema,
+  ),
+);
+await writeSchema(
+  "device-api.json",
+  "设备登记契约",
+  z.toJSONSchema(
+    z.object({
+      register: (await import("../src/device-api.ts")).deviceRegisterSchema,
+      device: (await import("../src/device-api.ts")).deviceSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "learning-context-api.json",
+  "学习上下文只读接口",
+  z.toJSONSchema(
+    z.object({
+      request: (await import("../src/learning-context-api.ts"))
+        .learningContextRequestSchema,
+      response: (await import("../src/learning-context-api.ts"))
+        .learningContextOkSchema,
+    }),
+  ),
+);
+
+const memoApi = await import("../src/memo-api.ts");
+const memoSharing = await import("../src/memo-sharing.ts");
+await writeSchema(
+  "memo-api.json",
+  "随笔读写、来源与分享契约",
+  z.toJSONSchema(
+    z.object({
+      memo: memoApi.memoSchema,
+      query: memoApi.memoListQuerySchema,
+      agentCreate: memoApi.memoAgentCreateSchema,
+      share: memoSharing.memoShareInputSchema,
+      shareState: memoSharing.memoShareStateSchema,
+      sharedMemo: memoSharing.sharedMemoSchema,
+      sourceTarget: memoSharing.memoSourceTargetSchema,
+    }),
+  ),
+);

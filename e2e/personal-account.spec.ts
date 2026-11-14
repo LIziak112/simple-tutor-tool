@@ -83,8 +83,45 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     for (const name of ["学生", "作业", "连接 AI"]) {
       await expect(teacherNav.getByRole("link", { name })).toHaveCount(0);
     }
+    // 个人课程创建时本人自动入课，管理/学习页面均无作业入口。
+    const courseName = `个人课程${uniqueSuffix()}`;
+    await page.goto("/t/courses");
+    await page
+      .getByRole("button", { name: "新建课程", exact: true })
+      .first()
+      .click();
+    await page.getByLabel("课程名", { exact: true }).fill(courseName);
+    const [createdCourse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/teacher/courses") &&
+          response.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: "创建", exact: true }).click(),
+    ]);
+    expect(createdCourse.status()).toBe(201);
+    const courseId = ((await createdCourse.json()) as { data: { id: string } })
+      .data.id;
+    const courseDetail = await page.request.get(
+      `/api/teacher/courses/${courseId}`,
+    );
+    const members = (
+      (await courseDetail.json()) as {
+        data: { members: { displayName: string }[] };
+      }
+    ).data.members;
+    expect(members).toHaveLength(1);
+    await expect(page).toHaveURL(new RegExp(`/t/courses/${courseId}$`));
+    await expect(page.getByRole("button", { name: "布置作业" })).toHaveCount(0);
+    await page.getByRole("tab", { name: /成员/ }).click();
+    await expect(
+      page.getByText(members[0]?.displayName ?? "").first(),
+    ).toBeVisible();
+    await expect(page.getByText(/personal:/)).toHaveCount(0);
     await page.getByRole("button", { name: "切换到学习视角" }).click();
     await expect(page).toHaveURL(/\/s\/home/);
+    await expect(page.getByText("我的作业", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(courseName, { exact: true })).toBeVisible();
 
     // 一枚 token：学习视角 AI 伴学新建 MCP 连接，接口地址为 /mcp/personal
     const created = await page.request.post("/api/student/ai/connections", {
@@ -140,9 +177,23 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await expect(page).toHaveURL(/\/p\/login/);
     expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
     expect((await page.request.get("/api/student/me")).status()).toBe(401);
+    // 个人密码登录从学习入口安全回到管理课程页。
+    await page.goto("/p/login?returnTo=%2Ft%2Fcourses");
+    await page.getByLabel("登录名", { exact: true }).fill(loginName);
+    await page.getByLabel("密码", { exact: true }).fill(PERSONAL_PASSWORD);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(page).toHaveURL(/\/t\/courses$/);
   });
 
-  test("从管理视角退出回个人登录并结束双会话", async ({ page, request }) => {
+  test("从管理视角退出回个人登录并结束双会话", async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("退出回跳验收需要同源 baseURL");
+    const returnTo = "/t/settings?section=account";
+    const expectedLogin = new URL("/p/login", baseURL);
+    expectedLogin.searchParams.set("returnTo", returnTo);
     await openPersonalRegistration(request);
     const registered = await page.request.post(
       "/api/public/personal/register",
@@ -156,9 +207,16 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
       },
     );
     expect(registered.ok()).toBe(true);
-    await page.goto("/t/settings?section=account");
+    await page.goto(returnTo);
     await page.getByRole("button", { name: "退出登录" }).click();
-    await expect(page).toHaveURL(/\/p\/login$/);
+    await expect(page).toHaveURL(expectedLogin.href);
+    const actualLogin = new URL(page.url());
+    expect(actualLogin.origin).toBe(new URL(baseURL).origin);
+    expect(actualLogin.pathname).toBe("/p/login");
+    expect(actualLogin.hash).toBe("");
+    expect([...actualLogin.searchParams.entries()]).toEqual([
+      ["returnTo", returnTo],
+    ]);
     expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
     expect((await page.request.get("/api/student/me")).status()).toBe(401);
   });

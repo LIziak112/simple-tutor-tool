@@ -6,6 +6,7 @@ import type {
   MemoMediaFormat,
 } from "@tutor/contract";
 import {
+  learningContextSchema,
   MEMO_ANCHOR_NONE,
   MEMO_MEDIA_CONTENT_TYPE,
   memoAnchorSchema,
@@ -37,6 +38,13 @@ export function toMemo(row: MemoRow): Memo {
   const tagsParsed = memoTagsSchema.safeParse(JSON.parse(row.tagsJson));
   return memoSchema.parse({
     id: row.id,
+    ...(row.seq === null ? {} : { seq: row.seq }),
+    context:
+      row.contextJson === null
+        ? null
+        : learningContextSchema.parse(JSON.parse(row.contextJson)),
+    deviceId: row.deviceId,
+    parentMemoSeq: row.parentMemoSeq,
     kind: row.kind,
     text: row.text,
     media:
@@ -91,6 +99,13 @@ export function listMemos(
       and(
         eq(memos.studentId, studentId),
         isNull(memos.deletedAt),
+        query.seq === undefined ? undefined : eq(memos.seq, query.seq),
+        query.parentMemoSeq === undefined
+          ? undefined
+          : eq(memos.parentMemoSeq, query.parentMemoSeq),
+        query.questionId === undefined
+          ? undefined
+          : sql`json_extract(${memos.anchorJson}, '$.questionId') = ${query.questionId}`,
         query.kind === undefined ? undefined : eq(memos.kind, query.kind),
         query.tag === undefined
           ? undefined

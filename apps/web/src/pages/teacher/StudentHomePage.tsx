@@ -12,13 +12,7 @@ import {
   List,
   TriangleAlert,
 } from "lucide-react";
-import {
-  type MouseEvent,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type MouseEvent, useLayoutEffect, useMemo, useRef } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
@@ -38,8 +32,9 @@ import {
 import { formatPercent } from "@/features/insights/insights-format";
 import { LectureReadingMapView } from "@/features/insights/LectureReadingMapView";
 import { QuestionReviewRowCard } from "@/features/insights/QuestionReviewRowCard";
-import { StudentReportsSection } from "@/features/insights/StudentReportsSection";
+import { ReportsDisclosure } from "@/features/insights/ReportsDisclosure";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { SharedMemosSection } from "@/features/memos/SharedMemosSection";
 import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import {
   AttemptStatusBadge,
@@ -758,7 +753,12 @@ export function StudentHomePage() {
 
           {/* T4.7：AI 报告实数据（T4.2 占位换实）；T-PR4 Web-2④ 起默认折叠、
           展开才取列表——主页首屏请求 ≤ 4（方案验收） */}
-          {id !== undefined && <ReportsDisclosure studentId={id} />}
+          {id !== undefined && (
+            <>
+              <ReportsDisclosure studentId={id} />
+              <SharedMemosSection studentId={id} />
+            </>
+          )}
         </>
       )}
     </section>
@@ -789,33 +789,6 @@ function AttemptRow({ card }: { card: TeacherAttemptCard }) {
         </span>
       </Link>
     </li>
-  );
-}
-
-/** 报告区（Web-2④）：默认折叠、展开才请求列表——主页首屏请求 ≤ 4（方案验收） */
-function ReportsDisclosure({ studentId }: { studentId: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section
-      id="student-reports"
-      tabIndex={-1}
-      aria-label="报告"
-      className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
-    >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex min-h-11 w-fit items-center gap-1.5 rounded-lg text-sm font-semibold text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        AI 报告
-        <ChevronDown
-          aria-hidden
-          className={`size-4 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && <StudentReportsSection studentId={studentId} />}
-    </section>
   );
 }
 

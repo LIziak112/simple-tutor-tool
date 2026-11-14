@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  learningContentIdSchema,
+  learningContextSchema,
+} from "./learning-context.ts";
 
 /** 在本文件内把成功响应壳的 data 具体化（不从 index.ts 导入，避免循环依赖） */
 function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
@@ -14,7 +18,7 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
  *   是以后（模块 5 第二步）的派生版本，不改原文；
  * - 每条自动带**上下文锚**（记录时在哪道题 / 哪篇讲义，或无锚）与可选标签
  *   （易错 / 疑问 / 待办 …，≤ 5 个）；锚只是回链，不参与权限；
- * - **默认仅本人**：教师接口不存在随笔的任何投影；Agent 经本人 token
+ * - **默认仅本人**：未逐条授权时教师不可见；Agent 经本人 token
  *   （学生 / 个人 MCP）可读本人随笔、可代为转记（source=agent）；
  * - 媒体（语音 / 图片 / 手写 PNG）按内容寻址存 blobs/memos/<sha256>.<ext>，
  *   格式只认文件内容；语音原格式落盘不转码（线上无 ffmpeg），转写在 Agent 侧；
@@ -24,15 +28,32 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
  * 错误码（统一 ApiErr 壳）：
  * - MEMO_NOT_FOUND（404）：不存在 / 已删 / 不是本人（不暴露存在性）；
  * - MEMO_TOO_LARGE（413）：语音超 20 MB 或图片 / 手写超 10 MB；
+ * - MEMO_METADATA_TOO_LARGE（413）：请求信封或来源等元数据总字节超限，整条拒绝；
  * - MEMO_UNSUPPORTED_TYPE（415）：按内容识别不是支持的音频 / 图片格式；
  * - MEMO_MEDIA_TOO_LARGE_FOR_MCP（413）：MCP 取件超过内联字节预算。
  */
 
 /** 文字随笔 / 媒体随笔说明文字的长度上限（字符） */
 export const MEMO_TEXT_MAX = 5000;
+/** 来源、标签、设备和设备时间等元数据按序列化 JSON 的 UTF-8 总字节计，保留完整合法值。 */
+export const MEMO_METADATA_MAX_BYTES = 64 * 1024;
+/** JSON 信封额外容纳正文最坏的 JSON 转义（每 UTF-16 单元最多 6 字节）和固定字段。 */
+export const MEMO_JSON_BODY_MAX_BYTES =
+  MEMO_METADATA_MAX_BYTES + MEMO_TEXT_MAX * 6 + 1024;
+export const MEMO_METADATA_TOO_LARGE = "MEMO_METADATA_TOO_LARGE";
+export const MEMO_METADATA_LIMIT_MESSAGE =
+  "随笔请求或来源元数据过大，请精简后重试";
 /** 单个标签长度上限（字符）与每条标签个数上限 */
 export const MEMO_TAG_MAX = 20;
 export const MEMO_TAGS_MAX = 5;
+/** 快捷标签只在契约定义，所有输入仍受相同数量与长度限制。 */
+export const MEMO_PRESET_TAGS = [
+  "易错",
+  "疑问",
+  "待办",
+  "灵感",
+  "复习",
+] as const;
 /** 语音：单条 ≤ 20 MB、≤ 10 分钟（Q16 默认取法） */
 export const MEMO_VOICE_MAX_BYTES = 20 * 1024 * 1024;
 export const MEMO_VOICE_MAX_SECONDS = 600;
@@ -105,14 +126,14 @@ export const memoAnchorSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("question"),
     attemptId: z.string().min(1).max(80),
-    questionId: z.string().min(1).max(80),
+    questionId: learningContentIdSchema,
     label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX),
   }),
   z.object({
     kind: z.literal("lecture"),
-    lectureId: z.string().min(1).max(80),
+    lectureId: learningContentIdSchema,
     /** 讲义小节 id（有则锚到节；无则锚到整篇） */
-    sectionId: z.string().min(1).max(80).nullable(),
+    sectionId: learningContentIdSchema.nullable(),
     label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX),
   }),
   z.object({ kind: z.literal("none") }),
@@ -121,6 +142,15 @@ export type MemoAnchor = z.infer<typeof memoAnchorSchema>;
 
 export const MEMO_ANCHOR_NONE: MemoAnchor = { kind: "none" };
 
+/** 写入口与来源展开后的元数据共用计量；读侧不截断历史记录。 */
+export interface MemoMetadataInput {
+  readonly anchor?: unknown;
+  readonly context?: unknown;
+  readonly tags?: unknown;
+  readonly device?: unknown;
+  readonly deviceId?: unknown;
+  readonly recordedAt?: unknown;
+}
 /** 标签：去首尾空白、非空、≤ 20 字、≤ 5 个、去重（服务端再去重一次） */
 export const memoTagsSchema = z
   .array(z.string().trim().min(1).max(MEMO_TAG_MAX))
@@ -138,6 +168,11 @@ export type MemoMedia = z.infer<typeof memoMediaSchema>;
 /** 一条随笔（列表 / 创建响应 / MCP 共用） */
 export const memoSchema = z.object({
   id: z.uuid(),
+  /** 本人递增序号；可选以兼容旧服务端与离线缓存。新写入始终有值。 */
+  seq: z.number().int().positive().optional(),
+  parentMemoSeq: z.number().int().positive().nullable().optional(),
+  context: learningContextSchema.nullable().optional(),
+  deviceId: z.uuid().nullable().optional(),
   kind: memoKindSchema,
   /** 文字随笔的正文；媒体随笔的可选说明（没有为 null） */
   text: z.string().max(MEMO_TEXT_MAX).nullable(),
@@ -158,6 +193,8 @@ export type Memo = z.infer<typeof memoSchema>;
 export const memoCreateBaseSchema = z.object({
   /** 客户端生成的 UUID；(学生, clientId) 幂等键——离线补传重复只落一行 */
   clientId: z.uuid(),
+  context: learningContextSchema.optional(),
+  deviceId: z.uuid().optional(),
   anchor: memoAnchorSchema.optional(),
   tags: memoTagsSchema.optional(),
   device: memoDeviceSchema.optional(),
@@ -191,6 +228,9 @@ export type MemoCreateMedia = z.infer<typeof memoCreateMediaSchema>;
 
 /** GET /api/student/memos 查询：时间倒序、游标分页、可按形态 / 标签 / 锚过滤 */
 export const memoListQuerySchema = z.object({
+  seq: z.coerce.number().int().positive().optional(),
+  questionId: learningContentIdSchema.optional(),
+  parentMemoSeq: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   /** 上一页返回的 nextCursor */
   cursor: z.string().min(1).max(200).optional(),
@@ -198,7 +238,7 @@ export const memoListQuerySchema = z.object({
   tag: z.string().trim().min(1).max(MEMO_TAG_MAX).optional(),
   /** 只看锚在某次作答 / 某篇讲义上的 */
   attemptId: z.string().min(1).max(80).optional(),
-  lectureId: z.string().min(1).max(80).optional(),
+  lectureId: learningContentIdSchema.optional(),
   /** 只看这个时刻之后记的（recordedAt ≥ since；Agent 增量读） */
   since: z.iso.datetime({ offset: true }).optional(),
 });
@@ -217,6 +257,9 @@ export type MemoListData = z.infer<typeof memoListDataSchema>;
  * 标题生成。
  */
 export const memoAgentCreateSchema = z.object({
+  /** 同一操作重试复用此 UUID；省略时保留旧客户端每次新增行为。 */
+  operationId: z.uuid().optional(),
+  parentMemoSeq: z.number().int().positive().optional(),
   text: z.string().trim().min(1).max(MEMO_TEXT_MAX),
   tags: memoTagsSchema.optional(),
   anchor: z
@@ -224,13 +267,13 @@ export const memoAgentCreateSchema = z.object({
       z.object({
         kind: z.literal("question"),
         attemptId: z.string().min(1).max(80),
-        questionId: z.string().min(1).max(80),
+        questionId: learningContentIdSchema,
         label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX).optional(),
       }),
       z.object({
         kind: z.literal("lecture"),
-        lectureId: z.string().min(1).max(80),
-        sectionId: z.string().min(1).max(80).nullable().optional(),
+        lectureId: learningContentIdSchema,
+        sectionId: learningContentIdSchema.nullable().optional(),
         label: z.string().trim().min(1).max(MEMO_ANCHOR_LABEL_MAX).optional(),
       }),
     ])

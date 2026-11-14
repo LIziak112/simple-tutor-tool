@@ -17,9 +17,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     loginStudentApi: vi.fn(),
     fetchStudentMe: vi.fn(),
-    fetchStudentAssignmentsApi: vi.fn(),
-    fetchStudentCoursesApi: vi.fn(),
-    fetchStudentLecturesApi: vi.fn(),
+    fetchStudentAssignmentsApi: vi.fn(async () => ({ assignments: [] })),
+    fetchStudentCoursesApi: vi.fn(async () => ({ courses: [] })),
+    fetchStudentLecturesApi: vi.fn(async () => ({ lectures: [] })),
   };
 });
 
@@ -35,9 +35,9 @@ const STUDENT: StudentMeData = {
   accountKind: "class",
 };
 
-function renderPage() {
+function renderPage(initialPath = "/s/login") {
   return renderWithStudentRoutes({
-    initialPath: "/s/login",
+    initialPath,
     routePath: "/s/login",
     element: <StudentLoginPage />,
   });
@@ -125,4 +125,12 @@ describe("StudentLoginPage", () => {
       expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
     });
   });
+});
+
+it("已有学生会话仍直接进首页，不消费登录表单的回跳", async () => {
+  mockedMe.mockResolvedValue(STUDENT);
+  renderPage("/s/login?returnTo=%2Fs%2Frecords");
+  await waitFor(() =>
+    expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页"),
+  );
 });

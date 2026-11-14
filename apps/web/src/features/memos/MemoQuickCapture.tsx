@@ -1,5 +1,5 @@
 import { NotebookPen } from "lucide-react";
-import { useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +9,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  captureLearningSource,
+  type LearningSource,
+} from "@/features/learning-context/learning-context-store";
+import { LearningPrincipalContext } from "@/features/learning-context/learning-principal";
 import { MemoComposer } from "./MemoComposer";
 import { useMemoOutbox } from "./memo-outbox";
 
@@ -24,20 +29,67 @@ import { useMemoOutbox } from "./memo-outbox";
 export function MemoQuickCaptureDialog({
   open,
   onOpenChange,
+  source,
+  onReturnFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  source?: LearningSource | undefined;
+  onReturnFocus?: () => void;
 }) {
+  const principal = useContext(LearningPrincipalContext);
+  const snapshot = useRef<LearningSource | undefined>(undefined);
+  const wasOpen = useRef(false);
+  const opening = useRef(0);
+  if (open && !wasOpen.current) {
+    opening.current++;
+    const current = captureLearningSource(principal);
+    const selected = source ?? current;
+    snapshot.current = structuredClone({
+      ...selected,
+      principal: selected.principal ?? current.principal ?? null,
+    });
+  }
+  wasOpen.current = open;
+  const currentOpening = opening.current;
+  const sourcePrincipal = snapshot.current?.principal;
+  useEffect(() => {
+    if (open && principal !== undefined && sourcePrincipal !== principal)
+      onOpenChange(false);
+  }, [open, principal, sourcePrincipal, onOpenChange]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent
+        className="max-w-lg"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          if (event.target instanceof HTMLElement)
+            event.target
+              .querySelector<HTMLTextAreaElement>("textarea")
+              ?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          if (onReturnFocus) {
+            event.preventDefault();
+            onReturnFocus();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>随手记</DialogTitle>
           <DialogDescription>
             记下来就行，整理交给之后的 Agent；离线也能记。
           </DialogDescription>
         </DialogHeader>
-        <MemoComposer autoFocus onQueued={() => onOpenChange(false)} />
+        <MemoComposer
+          key={currentOpening}
+          source={snapshot.current}
+          autoFocus
+          onQueued={() => {
+            // 旧记录的迟到本机/网络回执不能关闭新打开的记录。
+            if (opening.current === currentOpening) onOpenChange(false);
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -60,7 +112,11 @@ function captureLabel(pending: number): string {
 }
 
 /** 工作区顶栏用的图标按钮（44px 触控面），自带浮层。 */
-export function MemoQuickCaptureButton() {
+export function MemoQuickCaptureButton({
+  unanchored = false,
+}: {
+  unanchored?: boolean;
+} = {}) {
   const [open, setOpen] = useState(false);
   const pending = useMemoOutbox().length;
   return (
@@ -76,7 +132,11 @@ export function MemoQuickCaptureButton() {
         <NotebookPen aria-hidden className="size-5" />
         <PendingBadge pending={pending} />
       </Button>
-      <MemoQuickCaptureDialog open={open} onOpenChange={setOpen} />
+      <MemoQuickCaptureDialog
+        source={unanchored ? { anchor: { kind: "none" } } : undefined}
+        open={open}
+        onOpenChange={setOpen}
+      />
     </>
   );
 }

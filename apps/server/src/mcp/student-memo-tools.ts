@@ -1,10 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   MEMO_MCP_MEDIA_MAX_BYTES,
-  MEMO_TAG_MAX,
-  MEMO_TAGS_MAX,
-  MEMO_TEXT_MAX,
-  memoKindSchema,
+  memoAgentCreateSchema,
+  memoListQuerySchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
@@ -24,23 +22,6 @@ import { guard, jsonContent } from "./tool-result";
  *   元信息或让学生在页面里听 / 看。
  */
 
-const memoAnchorInputSchema = z
-  .discriminatedUnion("kind", [
-    z.object({
-      kind: z.literal("question"),
-      attemptId: z.uuid().describe("作答 id（须为本人的作答）"),
-      questionId: z.string().min(1).describe("题号（DSL 题 id）"),
-      label: z.string().trim().min(1).max(120).optional(),
-    }),
-    z.object({
-      kind: z.literal("lecture"),
-      lectureId: z.uuid().describe("讲义 id（须为本人可见）"),
-      sectionId: z.string().min(1).optional(),
-      label: z.string().trim().min(1).max(120).optional(),
-    }),
-  ])
-  .describe("上下文锚：锚到当前题或讲义；省略 = 无锚");
-
 export function registerStudentMemoTools(
   server: McpServer,
   deps: {
@@ -56,18 +37,7 @@ export function registerStudentMemoTools(
     {
       description:
         "列出我（当前学生）的随笔：文字正文、语音 / 图片 / 手写的元信息（格式、字节、时长）、上下文锚、标签，按记录时间倒序分页。只读。媒体字节请用 get_memo_media 按 id 取。",
-      inputSchema: {
-        limit: z.number().int().min(1).max(100).optional(),
-        cursor: z.string().optional().describe("上一页返回的 nextCursor"),
-        kind: memoKindSchema.optional(),
-        tag: z.string().min(1).max(MEMO_TAG_MAX).optional(),
-        attemptId: z.uuid().optional().describe("只看锚到该作答的"),
-        lectureId: z.uuid().optional().describe("只看锚到该讲义的"),
-        since: z.iso
-          .datetime({ offset: true })
-          .optional()
-          .describe("只看记录时间不早于此刻的"),
-      },
+      inputSchema: memoListQuerySchema.shape,
       annotations: {
         readOnlyHint: true,
         idempotentHint: true,
@@ -81,21 +51,8 @@ export function registerStudentMemoTools(
     "add_memo",
     {
       description:
-        "替我（当前学生）记一条文字随笔（source=agent）：语音的转写文本、对话里的结论、要点摘录都从这里转记。原始随笔不可改——转写请新增一条，不要试图改原语音。每次调用新增一条，重试前先确认是否已记。",
-      inputSchema: {
-        text: z.string().trim().min(1).max(MEMO_TEXT_MAX),
-        tags: z
-          .array(z.string().trim().min(1).max(MEMO_TAG_MAX))
-          .max(MEMO_TAGS_MAX)
-          .optional(),
-        anchor: memoAnchorInputSchema.optional(),
-        recordedAt: z.iso
-          .datetime({ offset: true })
-          .optional()
-          .describe(
-            "内容实际发生的时间（如转写对应的原语音时间）；省略 = 现在",
-          ),
-      },
+        "替我（当前学生）记一条文字随笔（source=agent）：语音的转写文本、对话里的结论、要点摘录都从这里转记。原始随笔不可改——转写请新增一条，不要试图改原语音。同一操作重试请复用 operationId；parentMemoSeq 可关联原始随笔。",
+      inputSchema: memoAgentCreateSchema.shape,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
