@@ -65,6 +65,7 @@ import {
   memoryKVBackend,
 } from "@/lib/kv-backend";
 import { randomUuid } from "@/lib/uuid";
+import { countPoints, freshRecord, reviveRecord } from "./note-record-shape";
 
 // ---------- 会话与键 ----------
 
@@ -153,6 +154,7 @@ export function parseNoteKey(
 
 /** 待传版本描述：与正文同一记录原子写；重试复用同一 mutationId（幂等重放） */
 export interface NotePendingVersion {
+  expectedFrozenAt?: string | null;
   /** 幂等键（上传协议 §6.2：同 id 同正文重试返回原回执） */
   mutationId: string;
   /** 待传正文快照（上传固定的不可变副本；新写入整体替换本对象） */
@@ -222,82 +224,6 @@ export interface NoteLocalRecord {
    * 减笔冷路径重算）——配合视图标量物化，书写热路径不再全稿 parse/重扫。
    */
   totalPoints: number;
-}
-
-/** 全稿点数求和（revive/减笔冷路径；追加笔走增量不经过这里） */
-function countPoints(strokes: readonly { points: unknown[] }[]): number {
-  let total = 0;
-  for (const stroke of strokes) total += stroke.points.length;
-  return total;
-}
-
-function freshRecord(): NoteLocalRecord {
-  return {
-    doc: { version: 1, ink: { width: 1000, strokes: [] } },
-    pending: null,
-    baseRevision: 0,
-    noteId: null,
-    lastHead: null,
-    conflict: null,
-    denied: null,
-    local: "saved",
-    localError: null,
-    editedAt: 0,
-    docVersion: 0,
-    totalPoints: 0,
-  };
-}
-
-/** ink/strokes 形态校验（T6R.9 复审③）：坏形（历史损坏/异版本写入）弃壳
- * 返 null 重建空稿——曾在挂载/bind 扫描（getAll 原料直入）路径抛错击穿
- * 整个恢复链；只查结构不查数值（坐标/点数由写入与服务端边界管辖）。 */
-function inkShapeOk(ink: unknown): boolean {
-  if (typeof ink !== "object" || ink === null) return false;
-  const strokes = (ink as { strokes?: unknown }).strokes;
-  if (!Array.isArray(strokes)) return false;
-  for (const stroke of strokes) {
-    if (
-      typeof stroke !== "object" ||
-      stroke === null ||
-      !Array.isArray((stroke as { points?: unknown }).points)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** 读取旧记录的防御性归一（前向兼容：缺字段补默认，形态错则弃重建空稿壳） */
-function reviveRecord(raw: unknown): NoteLocalRecord | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const r = raw as Partial<NoteLocalRecord>;
-  if (
-    r.doc === undefined ||
-    typeof r.doc !== "object" ||
-    !inkShapeOk((r.doc as { ink?: unknown }).ink)
-  ) {
-    return null;
-  }
-  const base = freshRecord();
-  return {
-    ...base,
-    doc: r.doc,
-    pending:
-      r.pending && typeof r.pending.mutationId === "string" && r.pending.doc
-        ? r.pending
-        : null,
-    baseRevision: typeof r.baseRevision === "number" ? r.baseRevision : 0,
-    noteId: typeof r.noteId === "string" ? r.noteId : null,
-    lastHead: r.lastHead ?? null,
-    conflict: r.conflict ?? null,
-    denied: r.denied ?? null,
-    editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
-    docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
-    totalPoints: countPoints(r.doc.ink.strokes),
-    // local/localError 持久副本恒归一化（见文件头），读取即 saved
-    local: "saved",
-    localError: null,
-  };
 }
 
 /** 持久化快照：local 归一化（存在于 IDB 的记录定义上已落盘） */
@@ -704,6 +630,7 @@ export function writeNoteDoc(
   session: NoteSessionRef,
   scope: NoteScope,
   input: NoteDocInput,
+  expectedFrozenAt?: string | null,
 ): number {
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
@@ -737,7 +664,15 @@ export function writeNoteDoc(
     // 再改**（引擎每次变更整体换新数组，契约层笔迹不可变；gzip/parse 的
     // WeakMap memo 亦以引用为键，同引用同字节反而保幂等）
     replaceDoc(record, input);
-    record.pending = { mutationId: randomUuid(), doc: input };
+    const token =
+      expectedFrozenAt !== undefined
+        ? expectedFrozenAt
+        : record.pending?.expectedFrozenAt;
+    record.pending = {
+      mutationId: randomUuid(),
+      doc: input,
+      ...(token !== undefined ? { expectedFrozenAt: token } : {}),
+    };
     record.editedAt = Date.now();
     if (record.denied?.kind === "content") record.denied = null;
   });
@@ -996,6 +931,7 @@ export async function resolveNoteConflict(
     // 无摘要（MISMATCH）——重铸幂等键，正文快照不变
     if (conflict.current === null && record.pending !== null) {
       record.pending = {
+        ...record.pending,
         mutationId: randomUuid(),
         doc: record.pending.doc,
       };
@@ -1044,7 +980,11 @@ export async function resetCorrectionSealed(
     record.baseRevision = 0;
     record.noteId = null;
     if (record.pending !== null) {
-      record.pending = { mutationId: randomUuid(), doc: record.pending.doc };
+      record.pending = {
+        ...record.pending,
+        mutationId: randomUuid(),
+        doc: record.pending.doc,
+      };
     }
   });
 }

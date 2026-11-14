@@ -63,7 +63,10 @@ import {
   requireAnnotationResetVersion,
 } from "./annotation-reset";
 import { knowledgeNamesByQuestion } from "./assignment-service";
-import { touchAttemptActivity } from "./attempt-activity";
+import {
+  assertAttemptWriteVersion,
+  touchAttemptActivity,
+} from "./attempt-activity";
 import {
   attemptTeacherId,
   frozenRowsInDisplayOrder,
@@ -321,7 +324,7 @@ function annotationBaseRowOf(
 
 /** 该 (attempt, question, phase) 的标注行（无则 undefined） */
 function annotationRowOf(
-  db: Db,
+  db: Pick<Db, "select">,
   attemptId: string,
   questionId: string,
   phase: AnnotationPhase,
@@ -1044,17 +1047,8 @@ export function putAnnotationDoc(
     });
     db.transaction((tx) => {
       // 事务内定位（tx 是事务句柄非 Db——select 直查，同 saveNoteVersion 形态）
-      const row = tx
-        .select()
-        .from(annotationsTable)
-        .where(
-          and(
-            eq(annotationsTable.attemptId, attempt.id),
-            eq(annotationsTable.questionId, questionId),
-            eq(annotationsTable.phase, phase),
-          ),
-        )
-        .get();
+      assertAttemptWriteVersion(tx, attempt);
+      const row = annotationRowOf(tx, attempt.id, questionId, phase);
       if (row === undefined) {
         if (meta.baseRevision !== 0) throw revisionConflict(undefined);
         tx.insert(annotationsTable)
@@ -1119,7 +1113,13 @@ export function putAnnotationDoc(
           );
         }
       }
-      if (phase === "scratch" && existing?.hash !== hash)
+      if (
+        phase === "scratch" &&
+        existing?.hash !== hash &&
+        (existing !== undefined ||
+          strokeCount > 0 ||
+          (doc.deleted?.length ?? 0) > 0)
+      )
         touchAttemptActivity(tx, attemptId, now);
     });
   } catch (err) {

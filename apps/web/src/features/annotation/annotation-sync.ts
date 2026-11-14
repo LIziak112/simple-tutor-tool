@@ -301,7 +301,7 @@ async function runUpload(
   try {
     const record = peekAnnotationRecord(session, scope);
     if (!uploadable(record)) return;
-    const { mutationId, doc } = record.pending;
+    const { mutationId, doc, expectedFrozenAt } = record.pending;
     const baseRevision = record.baseRevision;
     let receipt: AnnotationReceipt;
     try {
@@ -432,6 +432,7 @@ async function runUpload(
         {
           baseRevision,
           mutationId,
+          ...(expectedFrozenAt !== undefined ? { expectedFrozenAt } : {}),
           ...(renderVersion === ANNOTATION_FROZEN_RENDER_VERSION ||
           renderVersion === ANNOTATION_WHOLE_QUESTION_RENDER_VERSION
             ? { protocolVersion: renderVersion }

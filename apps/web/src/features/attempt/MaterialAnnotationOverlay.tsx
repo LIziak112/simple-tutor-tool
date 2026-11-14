@@ -30,6 +30,7 @@ import {
   type AtramentReplayCanvas,
   createAtramentReplayCanvas,
 } from "@/features/ink/replay/draw.ts";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import {
   draftStore,
   getDraftSessionEpoch,
@@ -151,6 +152,7 @@ export function MaterialAnnotationOverlay({
   const color = coordinated?.color ?? "red";
   const size = coordinated?.size ?? "thin";
   const storeKey = inkKey ?? materialId;
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
 
   const isAssociated =
     associatedQuestionIds === undefined ||
@@ -433,7 +435,7 @@ export function MaterialAnnotationOverlay({
         data: { width: INK_LOGICAL_WIDTH, strokes: nextStrokes },
         updatedAt: Date.now(),
       };
-      draftStore.saveMaterialInk(attemptId, storeKey, doc);
+      draftStore.saveMaterialInk(attemptId, storeKey, doc, expectedFrozenAt);
       if (nextStrokes.length === 0) {
         // 空稿无对齐负担：冻结基准随稿清除，下次首笔按当前列宽重冻
         draftStore.removeMaterialInkBase(attemptId, storeKey);
@@ -444,7 +446,7 @@ export function MaterialAnnotationOverlay({
       const base = frozenRef.current;
       if (base) draftStore.saveMaterialInkBase(attemptId, storeKey, base);
     },
-    [attemptId, storeKey],
+    [attemptId, storeKey, expectedFrozenAt],
   );
 
   const pointOf = useCallback(

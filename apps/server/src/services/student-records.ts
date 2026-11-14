@@ -21,6 +21,7 @@ import {
   attempts,
 } from "../db/schema";
 import { attemptAnswersPublished } from "./answer-publication.ts";
+import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { assignmentReleaseByIds } from "./attempt-service";
 import { timeProjectionsOf } from "./attempt-time-projection";
 import { requireVisibleCourseUnit } from "./course-service";
@@ -173,7 +174,7 @@ export function listStudentRecords(
   const where = and(
     eq(attempts.studentId, studentId),
     // 作废卷（2026-10 讲练随时重开）不入记录
-    isNull(attempts.abandonedAt),
+    recordableAttemptWhere(),
     excluded.size > 0 ? notInArray(attempts.id, [...excluded]) : undefined,
     query.sourceType !== undefined
       ? eq(attempts.sourceType, query.sourceType)

@@ -16,7 +16,10 @@ import {
   requireAttemptQuestion,
   requireUsableAttempt,
 } from "./attempt-access.ts";
-import { touchAttemptActivity } from "./attempt-activity";
+import {
+  assertAttemptWriteVersion,
+  touchAttemptActivity,
+} from "./attempt-activity";
 import { assertFrozenAnswerShape } from "./attempt-question-projection.ts";
 import { assertAttemptNotTimedOut } from "./attempt-timing";
 import { answerOf, snapshotOfRow } from "./snapshot";
@@ -27,7 +30,10 @@ export function saveDraftAnswer(
   attemptId: string,
   questionId: string,
   answer: StudentAnswer,
-  options: Pick<AttemptAnswerSaveRequest, "baseRevision" | "mutationId"> = {},
+  options: Pick<
+    AttemptAnswerSaveRequest,
+    "baseRevision" | "mutationId" | "questionRevisionId"
+  > = {},
 ): AttemptAnswerSaveData {
   return db.transaction((tx) => {
     const attempt = requireUsableAttempt(db, studentId, attemptId);
@@ -55,6 +61,16 @@ export function saveDraftAnswer(
       .where(buildAttemptQuestionWhere(attemptId, questionId))
       .get();
     if (existing === undefined) throw questionNotFound();
+    if (
+      options.questionRevisionId !== undefined &&
+      options.questionRevisionId !== existing.id
+    ) {
+      throw new HttpError(
+        409,
+        "QUESTION_REVISION_STALE",
+        "题目版本已变化，请保留本机草稿并刷新练习",
+      );
+    }
     if (existing.submittedAt !== null)
       throw new HttpError(
         409,
@@ -162,14 +178,30 @@ export function setStudentFlag(
   // 「做题时标了不会」的事实已随提交落定，不能事后追加或取消——否则蒙对
   // 后可摘标记逃逸错题本。与 saveDraftAnswer / saveInk 同一守卫口径
   assertRowNotSubmitted(db, attemptId, questionId, "修改「不会」标记");
-  db.update(responses)
-    .set({ studentFlag: flag })
-    .where(
-      and(
-        eq(responses.attemptId, attemptId),
-        eq(responses.questionId, questionId),
-      ),
-    )
-    .run();
+  db.transaction((tx) => {
+    assertAttemptWriteVersion(tx, attempt);
+    const old = tx
+      .select({ flag: responses.studentFlag })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, questionId),
+        ),
+      )
+      .get();
+    if (old?.flag === flag) return;
+    tx.update(responses)
+      .set({ studentFlag: flag })
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, questionId),
+        ),
+      )
+      .run();
+    if (flag !== null)
+      touchAttemptActivity(tx, attemptId, new Date().toISOString());
+  });
   return { questionId, studentFlag: flag };
 }

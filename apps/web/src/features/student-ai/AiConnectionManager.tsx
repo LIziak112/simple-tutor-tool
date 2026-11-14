@@ -19,10 +19,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { PortalRoutes } from "@/features/runtime/portal-runtime";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { ApiError } from "@/lib/api-response";
-
 import { AiConnectionCard } from "./AiConnectionCard";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import {
@@ -33,6 +31,7 @@ import {
   useStudentAiConnections,
   useTestStudentAiConnection,
 } from "./ai-connection-queries";
+import { aiDisplayReturnTo } from "./ai-display-return";
 import { InappConnectionFields } from "./InappConnectionFields";
 
 /** 学生连接管理：凭据、通道与编辑草稿各自保持明确状态，设置页不自动发送求助。 */
@@ -81,25 +80,6 @@ function errorTextOf(error: unknown, fallback: string): string {
   return fallback;
 }
 
-/**
- * 来源题回跳地址(B11 发送控制器跳入携带):只接受本学生域内部路径,
- * 过滤外站、协议相对地址与跨角色页面(同题卡历史页 returnTo 纪律)。
- */
-function safeFromOf(
-  routes: PortalRoutes,
-  source: string | null,
-): string | null {
-  if (
-    source === null ||
-    !source.startsWith(routes.learning("/")) ||
-    source.startsWith("//") ||
-    source.includes("\\")
-  ) {
-    return null;
-  }
-  return source;
-}
-
 export function AiConnectionManager() {
   const routes = usePortalRoutes();
 
@@ -111,7 +91,7 @@ export function AiConnectionManager() {
 
   const [searchParams] = useSearchParams();
   /** 来源题路径(B11 发送控制器跳入时携带;保存成功后提供回跳入口) */
-  const from = safeFromOf(routes, searchParams.get("from"));
+  const from = aiDisplayReturnTo(routes, searchParams.get("from"));
   const queryClient = useQueryClient();
 
   // 草稿经 queryClient 缓存读回(gcTime Infinity):切页/卸载重挂不丢,

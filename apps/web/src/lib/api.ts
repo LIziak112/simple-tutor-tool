@@ -81,6 +81,9 @@ export const createAssignmentApi = defaultClientServices.createAssignmentApi;
 export const updateAssignmentApi = defaultClientServices.updateAssignmentApi;
 export const deleteAssignmentApi = defaultClientServices.deleteAssignmentApi;
 export const startAttemptApi = defaultClientServices.startAttemptApi;
+export const fetchOpenedAttemptApi =
+  defaultClientServices.fetchOpenedAttemptApi;
+export const activateAttemptApi = defaultClientServices.activateAttemptApi;
 export const fetchStudentUnitLandingApi =
   defaultClientServices.fetchStudentUnitLandingApi;
 export const startCourseAttemptApi =

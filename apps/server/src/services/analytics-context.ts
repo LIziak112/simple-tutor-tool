@@ -34,6 +34,7 @@ import {
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
 import { analyticsTimesOf } from "./analytics-time";
+import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { attemptResultCounts } from "./result-counts";
 
 export const DAY_MS = 86_400_000;
@@ -222,7 +223,7 @@ export function buildContext(
         .where(
           and(
             eq(students.teacherId, teacherId),
-            isNull(attempts.abandonedAt),
+            recordableAttemptWhere(),
             courseCondition,
             view.kind === "student"
               ? eq(attempts.studentId, view.studentId)

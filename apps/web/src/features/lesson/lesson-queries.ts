@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { prepareLocalAttempt } from "@/features/persistence/attempt-reopen";
+import { useLocalAttemptActivation } from "@/features/persistence/use-local-attempt-activation";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { ApiError } from "@/lib/api-response";
 
@@ -52,15 +54,22 @@ export function useLessonStart(
   lectureId: string | undefined,
   courseId?: string | undefined,
 ) {
-  const { startLessonAttemptApi } = usePortalClients();
+  const clients = usePortalClients();
+  const { startLessonAttemptApi } = clients;
 
-  return useQuery({
+  const query = useQuery({
     queryKey: studentLessonKey(lectureId ?? "pending", courseId),
-    queryFn: () => startLessonAttemptApi(lectureId ?? "", courseId),
+    queryFn: async () =>
+      prepareLocalAttempt(
+        clients,
+        await startLessonAttemptApi(lectureId ?? "", courseId),
+      ),
     enabled: lectureId !== undefined && lectureId.length > 0,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
+  useLocalAttemptActivation(query.data?.attempt);
+  return query;
 }
 
 /** 「再做一次/重新开始」：随时重开新卷（进行中先作废）；成功后失效开卷/落地与聚合缓存 */

@@ -4,6 +4,7 @@ import {
   ATTEMPT_SUBMIT_MAX_QUESTIONS,
   questionRevisionIdSchema,
 } from "./attempt.ts";
+import { attemptWriteProofFields } from "./attempt-session.ts";
 import { INK_LOGICAL_WIDTH, inkAtramentDataSchema } from "./ink.ts";
 
 /**
@@ -589,6 +590,7 @@ export const noteSubmissionEvidenceMetaSchema = z
  *   幂等重放不受 attempt 状态门槛约束（含已交卷，服务端裁决口径）。
  */
 export const noteUploadMetaSchema = z.object({
+  ...attemptWriteProofFields,
   // .max 防呆上限（复审⑫顺手）：revision 每次成功上传 +1，正常使用远达不到
   // 六位数；超过即客户端异常值，及早 400 而不是进服务层比对
   baseRevision: z.number().int().min(0).max(1_000_000),

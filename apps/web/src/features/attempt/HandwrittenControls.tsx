@@ -34,6 +34,7 @@ import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { paperCssHeight } from "@/features/notes/paper-geometry";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import { digestOf, mergeInkDocs } from "@/features/persistence/draft-merge";
 import {
   draftStore,
@@ -149,6 +150,7 @@ export function HandwrittenControls({
   contextLabel,
 }: HandwrittenControlsProps) {
   const { fetchAttemptInkApi, studentInkPngUrl } = usePortalClients();
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
 
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -293,7 +295,7 @@ export function HandwrittenControls({
         else process.ink(questionId, "answer", reason, before, after, finish);
       }
       setMasterDoc(doc);
-      draftStore.saveInk(attemptId, questionId, doc);
+      draftStore.saveInk(attemptId, questionId, doc, expectedFrozenAt);
       draftSyncRef.current?.noteLocalWrite();
       onDocChangeUpload(doc);
       if (
@@ -308,7 +310,7 @@ export function HandwrittenControls({
         onInkStrokeRef.current?.(inkStrokeCount(doc));
       }
     },
-    [attemptId, questionId, onDocChangeUpload, process],
+    [attemptId, questionId, onDocChangeUpload, process, expectedFrozenAt],
   );
 
   // 恢复基线与本机稿：修订一致才可补传；云端已前进则保留两份并要求裁决。
@@ -384,7 +386,7 @@ export function HandwrittenControls({
       ) {
         setMasterDoc(fetched);
         if (fetched) {
-          draftStore.saveInk(attemptId, questionId, fetched);
+          draftStore.saveInk(attemptId, questionId, fetched, expectedFrozenAt);
           await draftStore.markInkSynced(attemptId, questionId, fetched);
         }
         return;
@@ -408,7 +410,7 @@ export function HandwrittenControls({
         setInternalExpanded(true);
       if (merged.source === "server") {
         // 服务端较新：内容落本地仓并记指纹（视为已同步）
-        draftStore.saveInk(attemptId, questionId, merged.doc);
+        draftStore.saveInk(attemptId, questionId, merged.doc, expectedFrozenAt);
         void draftStore.markInkSynced(attemptId, questionId, merged.doc);
       } else if (merged.differs) {
         // 本地较新且内容不同：补传服务端
@@ -427,6 +429,7 @@ export function HandwrittenControls({
     externallyControlled,
     restoreRetry,
     fetchAttemptInkApi,
+    expectedFrozenAt,
   ]);
 
   // T4.0b ink_fullscreen：挂现成 fullscreen state 的翻转处（§5.0-C14）——

@@ -6,6 +6,7 @@ import {
 import type { ApiServices } from "@/features/runtime/ports/api-services";
 import { ApiError } from "@/lib/api-response";
 import { randomUuid } from "@/lib/uuid";
+import { readLocalAttemptSessions } from "./attempt-session-catalog";
 import { digestOf } from "./draft-merge";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
 
@@ -45,13 +46,20 @@ export function saveDraftAnswer(
     )
       throw new Error("本题已有较新的本机答案，旧答案未上传");
     const baseRevision = record?.answerRevisions?.[questionId];
+    const local = (await readLocalAttemptSessions())[attemptId];
+    if (epoch !== getDraftSessionEpoch())
+      throw new Error("作答会话已切换，旧答案未上传");
+    const questionRevisionId =
+      record?.answerQuestionRevisions?.[questionId] ??
+      local?.questionRevisions?.[questionId];
+    const sync = {
+      ...(baseRevision === undefined ? {} : { baseRevision, mutationId }),
+      ...(questionRevisionId === undefined ? {} : { questionRevisionId }),
+    };
     try {
-      const receipt = await (baseRevision === undefined
+      const receipt = await (Object.keys(sync).length === 0
         ? saveAttemptAnswerApi(attemptId, questionId, answer)
-        : saveAttemptAnswerApi(attemptId, questionId, answer, {
-            baseRevision,
-            mutationId,
-          }));
+        : saveAttemptAnswerApi(attemptId, questionId, answer, sync));
       if (epoch !== getDraftSessionEpoch()) return receipt;
       await draftStore.markAnswerSynced(
         attemptId,

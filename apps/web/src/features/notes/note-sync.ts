@@ -366,7 +366,7 @@ async function runUpload(
         if (!uploadable(repaired)) return;
         snapshot = repaired;
       }
-      const { mutationId, doc } = snapshot.pending;
+      const { mutationId, doc, expectedFrozenAt } = snapshot.pending;
       const baseRevision = snapshot.baseRevision;
       let receipt: NoteVersionReceipt;
       try {
@@ -386,6 +386,7 @@ async function runUpload(
           {
             baseRevision,
             mutationId,
+            ...(expectedFrozenAt !== undefined ? { expectedFrozenAt } : {}),
             // T6R.15（D5）：phase 随 scope 上送；scratch 不发该字段（旧链路
             // wire 形态零变化，服务端缺省即 scratch）
             ...(scope.phase !== "scratch" ? { phase: scope.phase } : {}),

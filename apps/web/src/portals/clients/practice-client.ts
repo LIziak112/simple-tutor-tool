@@ -1,9 +1,13 @@
 import {
+  type AttemptActivateData,
+  type AttemptActivateRequest,
   type AttemptAnswerSaveData,
   type AttemptAnswerSaveRequest,
   type AttemptDetailData,
   type AttemptFlagData,
+  type AttemptOpenedQuery,
   type AttemptStartData,
+  type AttemptSummary,
   type AttemptWorkflowUpdateData,
   attemptFlagDataSchema,
   type CourseAttemptStartOptions,
@@ -13,9 +17,15 @@ import {
   type StudentUnitLandingData,
   type WrongPracticeScope,
 } from "@tutor/contract";
+import {
+  assertDraftEpoch,
+  protectOpenedDraft,
+} from "@/features/persistence/attempt-local-session";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
 import { callApi } from "@/lib/api-response";
 import { readAttemptDetail } from "@/lib/attempt-detail-read";
 import { withRequestDeadline } from "@/lib/request-deadline";
+import { requestAttemptActivation } from "./attempt-write-activation";
 import type { HttpRuntime } from "./http-runtime";
 import type { ClientServices } from "./service-types";
 export function createPracticeClient(
@@ -23,10 +33,42 @@ export function createPracticeClient(
   _deps: () => ClientServices,
 ) {
   const { api } = http;
-  function startAttemptApi(
+  function fetchOpenedAttemptApi(
+    query: AttemptOpenedQuery,
+  ): Promise<{ attempt: AttemptSummary | null }> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(query))
+      if (value !== undefined) search.set(key, value);
+    return withRequestDeadline(
+      (signal) =>
+        callApi(() =>
+          http.fetch(`/api/student/attempts/opened?${search}`, { signal }),
+        ),
+      "打开练习前核对本机稿",
+    );
+  }
+  async function activateAttemptApi(
+    attemptId: string,
+    request: AttemptActivateRequest,
+  ): Promise<AttemptActivateData> {
+    return requestAttemptActivation(http, attemptId, request);
+  }
+  async function protectSource(query: AttemptOpenedQuery): Promise<void> {
+    const epoch = getDraftSessionEpoch();
+    const opened = await fetchOpenedAttemptApi(query);
+    assertDraftEpoch(epoch);
+    await protectOpenedDraft(
+      opened.attempt,
+      activateAttemptApi,
+      fetchAttemptApi,
+    );
+    assertDraftEpoch(epoch);
+  }
+  async function startAttemptApi(
     assignmentId: string,
     options?: PracticeWorkflowStartOptions,
   ): Promise<AttemptStartData> {
+    await protectSource({ sourceType: "assignment", assignmentId });
     return callApi(() =>
       api.api.student.assignments[":id"].attempt.$post({
         param: { id: assignmentId },
@@ -44,11 +86,13 @@ export function createPracticeClient(
       }),
     );
   }
-  function startCourseAttemptApi(
+  async function startCourseAttemptApi(
     courseId: string,
     unitId: string,
     options?: CourseAttemptStartOptions,
   ): Promise<AttemptStartData> {
+    if (options?.restartAttemptId === undefined)
+      await protectSource({ sourceType: "course", courseId, unitId });
     return callApi(() =>
       api.api.student.courses[":id"].units[":unitId"].attempts.$post({
         param: { id: courseId, unitId },
@@ -77,7 +121,10 @@ export function createPracticeClient(
     attemptId: string,
     questionId: string,
     answer: AttemptAnswerSaveRequest["answer"],
-    sync?: Pick<AttemptAnswerSaveRequest, "baseRevision" | "mutationId">,
+    sync?: Pick<
+      AttemptAnswerSaveRequest,
+      "baseRevision" | "mutationId" | "questionRevisionId" | "expectedFrozenAt"
+    >,
   ): Promise<AttemptAnswerSaveData> {
     const args = {
       param: { id: attemptId, questionId },
@@ -135,6 +182,8 @@ export function createPracticeClient(
     return callApi(() => api.api.student.attempts[":id"].workflow.$patch(args));
   }
   return {
+    fetchOpenedAttemptApi,
+    activateAttemptApi,
     startAttemptApi,
     fetchStudentUnitLandingApi,
     startCourseAttemptApi,

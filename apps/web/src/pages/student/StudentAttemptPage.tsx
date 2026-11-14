@@ -1,10 +1,15 @@
+import { useEffect } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import {
   isAttemptUnavailable,
   useAttemptDetail,
 } from "@/features/attempt/attempt-queries";
+import { LocalAttemptSnapshotConflictError } from "@/features/persistence/attempt-local-session";
+import { LocalAttemptSnapshotConflictPanel } from "@/features/persistence/LocalAttemptArchive";
+import { LocalAttemptRecoveryNotice } from "@/features/persistence/use-local-attempt-activation";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
+import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   aiQueueReturnTarget,
@@ -38,10 +43,23 @@ export default function StudentAttemptPage() {
   // 队列入口只在无回看上下文时改写返回目标
   const queueTarget = aiQueueReturnTarget(routes, searchParams.get("aiFrom"));
   const detailQuery = useAttemptDetail(attemptId || undefined);
+  const recoveredId = detailQuery.data?.attempt.id;
+  useEffect(() => {
+    if (recoveredId && recoveredId !== attemptId)
+      void navigate(
+        {
+          pathname: routes.learning(`attempts/${recoveredId}`),
+          search: searchParams.toString(),
+        },
+        { replace: true },
+      );
+  }, [recoveredId, attemptId, navigate, routes, searchParams]);
   const denied = detailQuery.isError && isAttemptUnavailable(detailQuery.error);
   const abandoned =
     detailQuery.error instanceof ApiError &&
     detailQuery.error.code === "ATTEMPT_ABANDONED";
+  if (detailQuery.error instanceof LocalAttemptSnapshotConflictError)
+    return <LocalAttemptSnapshotConflictPanel error={detailQuery.error} />;
 
   if (detailQuery.data === undefined && detailQuery.fetchStatus === "paused") {
     return (
@@ -93,6 +111,10 @@ export default function StudentAttemptPage() {
   }
 
   const data = detailQuery.data;
+  const assignmentTarget =
+    data.attempt.sourceType === "assignment"
+      ? assignmentsReturnTarget(routes, searchParams.get("returnTo"))
+      : null;
   // 退出目标：课程练习回单元落地页（继续「再做一次/历次记录」动线）；错题重练
   // 回错题本（2026-10，交卷后能直接看到轮次史新增一轮与攻克状态）；讲练回讲练
   // 页（2026-10 讲练一体——恒可回看/再做一次，courseId 上下文随行）；作业回首页。
@@ -112,6 +134,7 @@ export default function StudentAttemptPage() {
           : routes.learning("home");
   return (
     <>
+      <LocalAttemptRecoveryNotice attemptId={data.attempt.id} />
       {detailQuery.isError && (
         <StudentRefreshWarning
           title="练习信息刷新失败"
@@ -123,11 +146,17 @@ export default function StudentAttemptPage() {
         exitLabel={
           recordsTarget
             ? "返回我的记录"
-            : queueTarget
-              ? "返回原页面"
-              : undefined
+            : assignmentTarget
+              ? "返回作业列表"
+              : queueTarget
+                ? "返回原页面"
+                : undefined
         }
-        onExit={() => void navigate(recordsTarget ?? queueTarget ?? exitTarget)}
+        onExit={() =>
+          void navigate(
+            recordsTarget ?? assignmentTarget ?? queueTarget ?? exitTarget,
+          )
+        }
         onRefresh={() => void detailQuery.refetch()}
       />
     </>

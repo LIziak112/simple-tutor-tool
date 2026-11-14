@@ -11,6 +11,8 @@ import {
   TimeLimitPicker,
   timeLimitStartOption,
 } from "@/features/attempt/TimeLimitPicker";
+import { LocalAttemptSnapshotConflictError } from "@/features/persistence/attempt-local-session";
+import { LocalAttemptSnapshotConflictPanel } from "@/features/persistence/LocalAttemptArchive";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
@@ -72,6 +74,14 @@ function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
   // 第 2 步：详情（draft→草稿视图 / 已交→结果视图）
   const attemptId = startAttempt.data?.id;
   const detailQuery = useAttemptDetail(attemptId);
+  const snapshotError =
+    startAttempt.error instanceof LocalAttemptSnapshotConflictError
+      ? startAttempt.error
+      : detailQuery.error instanceof LocalAttemptSnapshotConflictError
+        ? detailQuery.error
+        : null;
+  if (snapshotError)
+    return <LocalAttemptSnapshotConflictPanel error={snapshotError} />;
 
   if (assignmentId === "") {
     return (

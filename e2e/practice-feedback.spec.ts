@@ -740,7 +740,30 @@ test.describe("练习反馈升级 M1–M5：逐题反馈全链", { tag: ["@stude
           .getByRole("radio", { name: "对", exact: true }),
       ).toBeEnabled();
 
-      // —— 名单与卡片状态落最新卷（教师详情 roster + 学生列表）——
+      // 空重做卷暂不覆盖上一次完成状态；真实标不会后仍0题，但已成为最新进行中卷。
+      const before = await request.get(
+        `/api/teacher/assignments/${assignmentId}`,
+      );
+      expect(before.ok()).toBe(true);
+      const beforeBody = (await before.json()) as {
+        data: { roster: { status: string; attemptId: string | null }[] };
+      };
+      expect(beforeBody.data.roster[0]?.status).toBe("graded");
+      expect(beforeBody.data.roster[0]?.attemptId).not.toBe(redoAttemptId);
+      const flagged = studentPage.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().includes("/flags/"),
+      );
+      await studentPage
+        .locator('article[aria-label="第 1 题"]')
+        .getByRole("button", { name: "第 1 题更多" })
+        .click();
+      await studentPage
+        .getByRole("menuitem", { name: "标记不会（进错题本）", exact: true })
+        .click();
+      expect((await flagged).ok()).toBe(true);
+      // —— 名单与卡片状态落最新已激活卷（教师详情 roster + 学生列表）——
       const detail = await request.get(
         `/api/teacher/assignments/${assignmentId}`,
       );
