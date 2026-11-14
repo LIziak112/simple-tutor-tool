@@ -208,6 +208,8 @@ export function MaterialAnnotationOverlay({
   const activePointerIdRef = useRef<number | null>(null);
   const rectRef = useRef<DOMRect | null>(null);
   const lastEraseRef = useRef<{ x: number; y: number } | null>(null);
+  /** 这一次橡皮手势擦掉了东西、还没存进草稿仓（见 flushErase） */
+  const eraseDirtyRef = useRef(false);
   const rafRef = useRef<number | null>(null);
 
   // 壳与材料子树常驻；已有基准在阅读和圈画时共用同一真实固定宽框。
@@ -435,8 +437,9 @@ export function MaterialAnnotationOverlay({
 
   /**
    * 橡皮经过一个落点：从上一个落点扫到这里，碰到的笔画整笔拿掉（整笔模式）
-   * 或只切掉碰到的一段（局部模式），随即保存。材料圈画没有撤销，每个落点
-   * 各算各的，不用等抬笔。
+   * 或只切掉碰到的一段（局部模式）。材料圈画没有撤销，每个落点各算各的，
+   * 画面立即跟上；存进草稿仓等这一次手势结束（flushErase）——草稿仓一变，
+   * 整个作答页跟着重渲染，局部橡皮几乎每个落点都有改动，逐点存会卡。
    */
   const eraseAt = useCallback(
     (
@@ -453,12 +456,22 @@ export function MaterialAnnotationOverlay({
       );
       lastEraseRef.current = point;
       if (changed === null) return;
-      const remaining = session.visible().map((item) => item.stroke);
-      setStrokesBoth(remaining);
-      saveToDraftStore(remaining);
+      setStrokesBoth(session.visible().map((item) => item.stroke));
+      eraseDirtyRef.current = true;
     },
-    [saveToDraftStore, setStrokesBoth, ring],
+    [setStrokesBoth, ring],
   );
+
+  /**
+   * 把这一次橡皮手势里擦掉的存进草稿仓，一次手势只存一次（抬起、被打断、
+   * 应用更新前都算手势结束）。擦空了的话，冻结基准也在这时才清：手势途中
+   * 不换排版。组件在手势途中被卸载时不补存，和在途的一笔一样。
+   */
+  const flushErase = useCallback(() => {
+    if (!eraseDirtyRef.current) return;
+    eraseDirtyRef.current = false;
+    saveToDraftStore(strokesRef.current);
+  }, [saveToDraftStore]);
 
   const beginInteraction = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -560,6 +573,7 @@ export function MaterialAnnotationOverlay({
     ring.hide();
     rectRef.current = null;
     lastEraseRef.current = null;
+    flushErase();
     // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
     const live = liveGestureRef.current;
     const shapePoints = shaper.end();
@@ -601,6 +615,7 @@ export function MaterialAnnotationOverlay({
     shaper,
     drawCurrent,
     ring,
+    flushErase,
   ]);
 
   usePwaUpdateGuard(
@@ -627,6 +642,8 @@ export function MaterialAnnotationOverlay({
           ring.hide();
           currentStrokeRef.current = null;
           shaper.end();
+          // 已经擦掉的照旧算数（材料圈画没有撤销），只是到这里才存
+          flushErase();
           scheduleRedraw();
         }
       }
@@ -638,6 +655,7 @@ export function MaterialAnnotationOverlay({
       scheduleRedraw,
       shaper,
       ring,
+      flushErase,
     ],
   );
 

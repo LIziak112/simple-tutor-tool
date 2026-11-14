@@ -96,7 +96,9 @@ export interface RepaintTarget {
 
 /**
  * 只重画 region 这一块：清空它（外扩 spread 后按像素取整），再把画得到这块
- * 的笔画按原顺序各画一遍（paint 画整笔，超出的部分被裁掉）。
+ * 的笔画按原顺序一并交给 paint 画一遍（画的是整笔，超出的部分被裁掉）。
+ * 一并交、不逐笔交：同一笔切出来的荧光笔各段要合在一起上一次色
+ * （paint-runs.ts）。画不到这块的段不用带上——它在这块里本来就不落墨。
  * 返回实际重画的像素矩形；region 整块在画布外时什么都不做，返回 null。
  */
 export function repaintRegion<
@@ -105,7 +107,7 @@ export function repaintRegion<
   target: RepaintTarget,
   region: StrokeBounds,
   strokes: readonly T[],
-  paint: (item: T) => void,
+  paint: (items: readonly T[]) => void,
 ): PixelRect | null {
   const { context, canvas, pixelsPerUnit, spread } = target;
   const rect = pixelRectOf(expandBounds(region, spread), pixelsPerUnit, canvas);
@@ -121,11 +123,12 @@ export function repaintRegion<
     spread,
   );
   repaintRect(context, rect, () => {
-    for (const item of strokes) {
-      if (item.paintBounds !== null && boundsOverlap(item.paintBounds, reach)) {
-        paint(item);
-      }
-    }
+    paint(
+      strokes.filter(
+        (item) =>
+          item.paintBounds !== null && boundsOverlap(item.paintBounds, reach),
+      ),
+    );
   });
   return rect;
 }

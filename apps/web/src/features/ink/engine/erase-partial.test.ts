@@ -45,6 +45,8 @@ describe("局部橡皮：把一笔里被扫过的部分切掉", () => {
         tool: "pen",
         color: "#1f2328",
         weight: 4,
+        // 出自哪一笔
+        cutFrom: "stroke-0001",
         startedAt: 1_700_000_000_000,
         pointer: "pen",
         points: [
@@ -58,6 +60,7 @@ describe("局部橡皮：把一笔里被扫过的部分切掉", () => {
         tool: "pen",
         color: "#1f2328",
         weight: 4,
+        cutFrom: "stroke-0001",
         // 第二段从原笔画第 43 毫秒处开始：时刻顺延，段内时间从 0 起算
         startedAt: 1_700_000_000_043,
         pointer: "pen",
@@ -77,6 +80,36 @@ describe("局部橡皮：把一笔里被扫过的部分切掉", () => {
         pointer: "pen",
       }),
     );
+  });
+
+  it("各段带上原笔的 id 作记号（cutFrom）；在段上再切，记号仍是最初那一笔", () => {
+    const pieces = splitStrokeByEraser(
+      hStroke({ id: "stroke-0001" }),
+      { x: 300, y: 100 },
+      14,
+    );
+    expect(pieces?.map((piece) => piece.cutFrom)).toEqual([
+      "stroke-0001",
+      "stroke-0001",
+    ]);
+    const first = pieces?.[0];
+    if (first === undefined) throw new Error("没有切出第一段");
+    // 提交之后这一段有了自己的 id；再切它，切出的段不指向它
+    const again = splitStrokeByEraser(
+      { ...first, id: "piece-0001" },
+      { x: 200, y: 100 },
+      14,
+    );
+    expect(again?.map((piece) => piece.cutFrom)).toEqual([
+      "stroke-0001",
+      "stroke-0001",
+    ]);
+  });
+
+  it("原笔没有 id（旧稿）：段不带记号，留给擦除会话补", () => {
+    const pieces = splitStrokeByEraser(hStroke(), { x: 300, y: 100 }, 14);
+    expect(pieces).toHaveLength(2);
+    expect(pieces?.every((piece) => !("cutFrom" in piece))).toBe(true);
   });
 
   it("橡皮划过去：按整条轨迹扫过的区域切，不只看落点", () => {

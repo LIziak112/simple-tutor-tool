@@ -108,6 +108,67 @@ describe("ink 契约 LR-1 笔画身份与绝对时刻", () => {
   });
 });
 
+describe("ink 契约：局部擦除切出的段带着原笔的记号（cutFrom）", () => {
+  it("旧样例笔画不带 cutFrom；带上合法的记号 parse 通过并保留", () => {
+    expect(inkStrokeSchema.parse(legacyStroke)).not.toHaveProperty("cutFrom");
+    const parsed = inkStrokeSchema.parse({
+      ...legacyStroke,
+      id: "piece-0001",
+      cutFrom: "stroke-abc_123",
+    });
+    expect(parsed.cutFrom).toBe("stroke-abc_123");
+  });
+
+  it("记号的形状与笔画 id 相同", () => {
+    expect(
+      inkStrokeSchema.safeParse({ ...legacyStroke, cutFrom: "short" }).success,
+    ).toBe(false);
+    expect(
+      inkStrokeSchema.safeParse({ ...legacyStroke, cutFrom: "has space id" })
+        .success,
+    ).toBe(false);
+    expect(
+      inkStrokeSchema.safeParse({
+        ...legacyStroke,
+        cutFrom: "3f8a2b1c-4d5e-6f70-8a9b-c0d1e2f3a4b5",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("同一笔切出的几段共用一个记号，不算 id 重复；记号可以指向墓碑里的原笔，也可以哪儿都不指", () => {
+    const piece = (id: string, cutFrom: string) => ({
+      ...legacyStroke,
+      id,
+      cutFrom,
+    });
+    const withTombstone = inkAtramentDataSchema.safeParse({
+      width: INK_LOGICAL_WIDTH,
+      strokes: [
+        piece("piece-0001", "stroke-0001"),
+        piece("piece-0002", "stroke-0001"),
+      ],
+      deleted: [tombstone("stroke-0001")],
+    });
+    expect(withTombstone.success).toBe(true);
+    const dangling = inkAtramentDataSchema.safeParse({
+      width: INK_LOGICAL_WIDTH,
+      strokes: [
+        piece("piece-0001", "group-0001"),
+        piece("piece-0002", "group-0001"),
+      ],
+    });
+    expect(dangling.success).toBe(true);
+  });
+
+  it("墓碑里的段同样带得上记号", () => {
+    const parsed = inkDeletedStrokeSchema.parse({
+      ...tombstone("piece-0001"),
+      cutFrom: "stroke-0001",
+    });
+    expect(parsed.cutFrom).toBe("stroke-0001");
+  });
+});
+
 describe("ink 契约 LR-2 擦除墓碑", () => {
   it("墓碑必有 id/deletedAt/deletedBy；缺 id 拒绝", () => {
     const ok = inkDeletedStrokeSchema.safeParse(tombstone("stroke-1"));

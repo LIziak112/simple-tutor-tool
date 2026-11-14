@@ -188,6 +188,86 @@ it("改用整帧重画（回放拖动）时临时层清空，荧光笔每笔一�
   canvas.destroy();
 });
 
+/** 一笔荧光笔被局部橡皮切成的两段：带着同一个记号 */
+function pieces(): [InkStroke, InkStroke] {
+  return [
+    {
+      ...highlighter(),
+      id: "piece-0001",
+      cutFrom: "stroke-0001",
+      points: [
+        { x: 100, y: 100, p: 0.5, t: 0 },
+        { x: 190, y: 100, p: 0.5, t: 8 },
+      ],
+    },
+    {
+      ...highlighter(),
+      id: "piece-0002",
+      cutFrom: "stroke-0001",
+      points: [
+        { x: 210, y: 100, p: 0.5, t: 0 },
+        { x: 300, y: 100, p: 0.5, t: 8 },
+      ],
+    },
+  ];
+}
+
+it("整帧重画：同一笔切出来的荧光笔各段合在一起只描一次（重叠处不叠深）", () => {
+  const { canvas } = mountReplay();
+  canvas.drawFrame([pen(), ...pieces()], [1, 2, 2]);
+  // 笔一个采样点一次描边 + 两段荧光笔合成一次
+  expect(CountingContext.strokes).toBe(2);
+  canvas.destroy();
+});
+
+it("整帧重画：后一段刚走到第一个点时，也和前一段在同一次描边里（不单独填一个圆点）", () => {
+  const { canvas } = mountReplay();
+  const fill = vi.spyOn(CountingContext.prototype, "fill");
+  canvas.drawFrame(pieces(), [2, 1]);
+  expect(CountingContext.strokes).toBe(1);
+  expect(fill).not.toHaveBeenCalled();
+  fill.mockRestore();
+  canvas.destroy();
+});
+
+it("按顺序重画：新到的一笔和画布上最后一笔是同一组时不往上追加，整张重画", () => {
+  const { canvas } = mountReplay();
+  const [first, second] = pieces();
+  const old = [pen(), first];
+  canvas.drawOrdered(old, 2, null, 0);
+  expect(CountingContext.clears).toBe(1);
+  expect(CountingContext.strokes).toBe(2);
+
+  // 前两笔没变，多出同一组的第二段：追加会让两段重叠处叠深
+  const next = [...old, second];
+  canvas.drawOrdered(next, 3, null, 0);
+  expect(CountingContext.clears).toBe(2);
+  // 清屏后：笔一次 + 两段合成一次
+  expect(CountingContext.strokes).toBe(4);
+
+  // 再多出一笔不相干的：照常只追加这一笔
+  canvas.drawOrdered([...next, pen()], 4, null, 0);
+  expect(CountingContext.clears).toBe(2);
+  expect(CountingContext.strokes).toBe(5);
+  canvas.destroy();
+});
+
+it("看擦改：被擦掉的同一组荧光笔段也合在一起画一次", () => {
+  const { canvas } = mountReplay();
+  canvas.drawFrame([], []);
+  canvas.drawDeleted?.(
+    pieces().map((stroke) => ({
+      stroke,
+      startMs: 0,
+      deletedAtMs: Number.POSITIVE_INFINITY,
+      pointTimesMs: stroke.points.map(() => 0),
+    })),
+    0,
+  );
+  expect(CountingContext.strokes).toBe(1);
+  canvas.destroy();
+});
+
 it("没有在途荧光笔就不创建临时层（纯回放页的 DOM 不变）", () => {
   const { host, canvas } = mountReplay();
   canvas.drawOrdered([highlighter()], 1, pen(), 1);

@@ -7,7 +7,7 @@ import { createFeelSurface, DEFAULT_FEEL_PARAMS } from "./feel-surface";
 
 class ContextStub {
   clearRect = vi.fn();
-  fill = vi.fn();
+  fill() {}
   save() {}
   restore() {}
   setTransform() {}
@@ -271,6 +271,58 @@ function strokes() {
   const doc = surface.getDoc();
   return doc.engine === "atrament" ? doc.data.strokes : [];
 }
+
+it("荧光笔被切开：各段带着原笔的记号，重画时各段的轮廓合在一起只填一次色（重叠处不比擦之前深）", () => {
+  mountSurface({ preserveRendering: true });
+  surface.setTool({ type: "highlighter" });
+  drawLine();
+  const [original] = strokes();
+  expect(original?.tool).toBe("highlighter");
+  surface.setTool({ type: "eraser", mode: "partial", size: "small" });
+  const fills = vi.spyOn(ContextStub.prototype, "fill");
+  const outlines = vi.spyOn(ContextStub.prototype, "closePath");
+
+  // 拖动途中的局部重画：切剩两段的轮廓在同一条路径里，填一次
+  send("pointerdown", 200, 1, 10, { clientY: 60 });
+  expect(outlines).toHaveBeenCalledTimes(2);
+  expect(fills).toHaveBeenCalledTimes(1);
+
+  // 抬起提交后的整张重画
+  fills.mockClear();
+  send("pointerup", 200, 1, 11, { clientY: 60 });
+  const pieces = strokes();
+  expect(pieces).toHaveLength(2);
+  expect(pieces.map((piece) => piece.cutFrom)).toEqual([
+    original?.id,
+    original?.id,
+  ]);
+  expect(fills).toHaveBeenCalledTimes(1);
+
+  // 撤销回整笔、重做回两段：都只填一次
+  fills.mockClear();
+  surface.undo();
+  expect(fills).toHaveBeenCalledTimes(1);
+  fills.mockClear();
+  outlines.mockClear();
+  surface.redo();
+  expect(strokes()).toEqual(pieces);
+  expect(outlines).toHaveBeenCalledTimes(2);
+  expect(fills).toHaveBeenCalledTimes(1);
+});
+
+it("笔被切开：各段照旧各填各的（不透明，重叠不会变深）", () => {
+  mountSurface({ preserveRendering: true });
+  drawLine();
+  surface.setTool({ type: "eraser", mode: "partial", size: "small" });
+  send("pointerdown", 200, 1, 10, { clientY: 60 });
+  send("pointerup", 200, 1, 11, { clientY: 60 });
+  expect(strokes()).toHaveLength(2);
+  const fills = vi.spyOn(ContextStub.prototype, "fill");
+  surface.undo();
+  surface.redo();
+  // 撤销重画一笔 + 重做重画两段
+  expect(fills).toHaveBeenCalledTimes(3);
+});
 /** 图形预览所在的临时层路径 */
 function livePath() {
   const path = canvas.parentElement?.querySelector(

@@ -137,6 +137,7 @@ for (const renderer of ["atrament", "freehand", "annotation"] as const) {
  * 局部橡皮在三种书写面上的真实像素：拖动途中只重画改动的那一块，这里核对它
  * 和抬笔后整张重画出来的画面是同一幅（没有擦不干净的残墨，也没有把旁边的
  * 笔画擦缺一块；只允许边缘抗锯齿量级的差别），并核对正文、撤销与重做。
+ * 第二段核对来回涂的荧光笔被切开之后，重叠处仍只有一层的透明度。
  */
 for (const renderer of ["atrament", "freehand", "annotation"] as const) {
   test(`${renderer} 局部橡皮只擦掉碰到的一段，拖动途中的画面与整张重画一致`, {
@@ -259,15 +260,35 @@ for (const renderer of ["atrament", "freehand", "annotation"] as const) {
           }
           return Math.round(worst);
         };
+        /** 以 (x, y) 为中心、边长 3 CSS px 的方块里最淡和最浓的不透明度 */
+        const alphaRange = (x: number, y: number) => {
+          const canvas = inkCanvas();
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("像素读取失败");
+          const scale = canvas.width / 500;
+          const data = context.getImageData(
+            Math.round((x - 1.5) * scale),
+            Math.round((y - 1.5) * scale),
+            Math.round(3 * scale),
+            Math.round(3 * scale),
+          ).data;
+          let min = 255;
+          let max = 0;
+          for (let i = 3; i < data.length; i += 4) {
+            min = Math.min(min, data[i] ?? 0);
+            max = Math.max(max, data[i] ?? 0);
+          }
+          return { min, max };
+        };
+        const strokeCount = () => {
+          if (surface) return surface.getDoc().strokes.length;
+          const doc = engine?.getData();
+          if (doc?.engine !== "atrament") throw new Error("笔迹格式错误");
+          return doc.data.strokes.length;
+        };
         const read = () => ({
           picture: inkCanvas().toDataURL(),
-          strokes: surface
-            ? surface.getDoc().strokes.length
-            : (() => {
-                const doc = engine?.getData();
-                if (doc?.engine !== "atrament") throw new Error("笔迹格式错误");
-                return doc.data.strokes.length;
-              })(),
+          strokes: strokeCount(),
           // 橡皮划过的地方、横线的左右两头、红线的上下两头
           hole: inkAt(250, 80),
           lineLeft: inkAt(100, 80),
@@ -319,7 +340,51 @@ for (const renderer of ["atrament", "freehand", "annotation"] as const) {
         const undone = read();
         controls.redo();
         const redone = read();
-        return { drawn, dragging, erased, undone, redone, dragVsRedraw };
+
+        // 第二段：一笔荧光笔去、回两趟压在同一条带上，橡皮从中间竖着切开。
+        // 切出的三段仍是同一笔，两趟压着的地方不能比擦之前深
+        controls.setTool({
+          type: "highlighter",
+          color: "green",
+          size: "thick",
+        });
+        send("pointerdown", 60, 190);
+        for (let x = 70; x <= 440; x += 10) send("pointermove", x, 190);
+        for (let x = 430; x >= 60; x -= 10) send("pointermove", x, 192);
+        send("pointerup", 60, 192);
+        const readBand = () => ({
+          strokes: strokeCount(),
+          // 切口左边（去、回两趟分属两段）、切口处、切口右边（折返的那一段）
+          left: alphaRange(150, 191),
+          hole: alphaRange(250, 191),
+          right: alphaRange(350, 191),
+        });
+        const bandDrawn = readBand();
+        controls.setTool({ type: "eraser", mode: "partial", size: "large" });
+        send("pointerdown", 250, 160);
+        for (const y of [170, 180, 190, 200, 210]) send("pointermove", 250, y);
+        const bandDragging = readBand();
+        send("pointerup", 250, 210);
+        const bandErased = readBand();
+        controls.undo();
+        const bandUndone = readBand();
+        controls.redo();
+        const bandRedone = readBand();
+        return {
+          drawn,
+          dragging,
+          erased,
+          undone,
+          redone,
+          dragVsRedraw,
+          band: {
+            drawn: bandDrawn,
+            dragging: bandDragging,
+            erased: bandErased,
+            undone: bandUndone,
+            redone: bandRedone,
+          },
+        };
       } finally {
         controls.destroy();
         host.remove();
@@ -343,8 +408,8 @@ for (const renderer of ["atrament", "freehand", "annotation"] as const) {
 
     // 抬笔：三笔各被切成两段，画面整张重画一遍。拖动途中只重画改动的那一块，
     // 两者最多差在跨过重画边界的笔画边缘的抗锯齿上（浏览器对带裁剪的路径取样
-    // 不同，Chromium 实测 ≤ 43）；多留或少画一笔会差出一整层墨（荧光笔 115、
-    // 笔 255），远超这个量级
+    // 不同；Chromium 本机实测 ≤ 23，WebKit 只在 CI 上跑、实测值没有记下来）；
+    // 多留或少画一笔会差出一整层墨（荧光笔 115、笔 255），远超这个量级
     expect(result.erased.strokes).toBe(6);
     expect(result.erased.ring).toBe(false);
     expect(result.erased.hole).toBe(0);
@@ -355,6 +420,38 @@ for (const renderer of ["atrament", "freehand", "annotation"] as const) {
     expect(result.undone.picture === result.drawn.picture).toBe(true);
     expect(result.redone.strokes).toBe(6);
     expect(result.redone.picture === result.erased.picture).toBe(true);
+
+    // 第二段：荧光笔一层的不透明度是 0.45×255≈115（半透明像素存取有舍入，
+    // 放 ±4）；同一处上两次色会到 178
+    const expectOneLayer = (
+      range: { min: number; max: number },
+      where: string,
+    ) => {
+      expect(range.min, `${where}最淡处`).toBeGreaterThanOrEqual(111);
+      expect(range.max, `${where}最浓处`).toBeLessThanOrEqual(119);
+    };
+    const { band } = result;
+    // 擦之前、撤销之后：一整笔，去、回两趟压着的地方只有一层
+    for (const [state, when] of [
+      [band.drawn, "擦之前"],
+      [band.undone, "撤销后"],
+    ] as const) {
+      expect(state.strokes, when).toBe(7);
+      for (const spot of ["left", "hole", "right"] as const)
+        expectOneLayer(state[spot], `${when} ${spot} `);
+    }
+    // 拖动途中（只重画改动的那一块）、抬笔后与重做后（整张重画）：切口擦空，
+    // 两边仍只有一层——左边那两趟已经分属切出来的两段
+    for (const [state, when, strokes] of [
+      [band.dragging, "拖动途中", 7],
+      [band.erased, "抬笔后", 9],
+      [band.redone, "重做后", 9],
+    ] as const) {
+      expect(state.strokes, when).toBe(strokes);
+      expect(state.hole.max, `${when} 切口`).toBe(0);
+      expectOneLayer(state.left, `${when} left `);
+      expectOneLayer(state.right, `${when} right `);
+    }
   });
 }
 

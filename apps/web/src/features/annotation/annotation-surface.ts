@@ -68,7 +68,10 @@ import {
   resolveGesture,
   resolveToolSpec,
 } from "@/features/ink/engine/types.ts";
-import { replayAnnotationStroke } from "./annotation-replay.ts";
+import {
+  replayAnnotationStroke,
+  replayAnnotationStrokes,
+} from "./annotation-replay.ts";
 
 /** 标注画布的 DOM 标识（E2E/注入器定位用；风格对齐 INK_CANVAS_DATA_SLOT） */
 export const ANNOTATION_CANVAS_DATA_SLOT = "annotation-canvas";
@@ -220,8 +223,13 @@ export function createAnnotationSurface(
             pixelsPerUnit: 1, // 位图恒 = 底图像素域
             spread: PAINT_SPREAD_CSS / cssPerBase(),
           },
-    paint: (item) => {
-      if (atrament) replayAnnotationStroke(atrament, cssPerBase(), item.stroke);
+    paint: (items) => {
+      if (atrament)
+        replayAnnotationStrokes(
+          atrament,
+          cssPerBase(),
+          items.map((item) => item.stroke),
+        );
     },
     redraw,
     ring: () => liveLayer,
@@ -370,24 +378,22 @@ export function createAnnotationSurface(
     c.clearRect(0, 0, canvas.width, canvas.height);
     c.restore();
     resetContext();
-    const scale = cssPerBase();
     const strokes = store.peekStrokes();
     // 近似原位：重绘在视图域画——存储笔画经锚映射到当前布局（锚缺失走 root）
-    const paint = (s: InkStroke, anchorKey: string | undefined) =>
-      replayAnnotationStroke(
-        a,
-        scale,
-        view ? view.strokeToView(s, anchorKey) : s,
-      );
+    const inView = (s: InkStroke, anchorKey: string | undefined) =>
+      view ? view.strokeToView(s, anchorKey) : s;
     const preview = eraser.visible();
-    // 擦除途中：切剩的段还没有自己的锚点，按它出自的那一笔的锚映射
-    if (preview) {
-      for (const item of preview) {
-        paint(item.stroke, anchorOf(strokes[item.source]));
-      }
-    } else {
-      for (const s of strokes) paint(s, anchorOf(s));
-    }
+    // 擦除途中：切剩的段还没有自己的锚点，按它出自的那一笔的锚映射。
+    // 一串一起画：同一笔切出来的荧光笔各段合在一起上一次色
+    replayAnnotationStrokes(
+      a,
+      cssPerBase(),
+      preview
+        ? preview.map((item) =>
+            inView(item.stroke, anchorOf(strokes[item.source])),
+          )
+        : strokes.map((s) => inView(s, anchorOf(s))),
+    );
   }
 
   /** 把书写中的整笔一条路径的那一笔（视图域）更新到临时层 */

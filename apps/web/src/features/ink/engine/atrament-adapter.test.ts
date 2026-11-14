@@ -1467,6 +1467,63 @@ describe("atrament-adapter：局部橡皮", () => {
     clip.mockRestore();
   });
 
+  it("荧光笔被切开：各段带着原笔的记号，重画时合在一起只上一次色（重叠处不比擦之前深）", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    writeLine(h);
+    const [original] = strokesOf(h);
+    h.surface.setTool(PARTIAL_SMALL);
+
+    // 拖动途中的局部重画：切剩的两段一次描边
+    StubContext.strokeCalls = 0;
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 150, 40));
+    expect(StubContext.strokeCalls).toBe(1);
+    pointer(h.canvas, "pointerup", { clientX: 150, clientY: 40 });
+    const pieces = strokesOf(h);
+    expect(pieces).toHaveLength(2);
+    expect(pieces.map((piece) => piece.cutFrom)).toEqual([
+      original?.id,
+      original?.id,
+    ]);
+
+    // 整张重画（撤销回整笔、重做回两段、布局变化）：都是一次描边
+    StubContext.strokeCalls = 0;
+    h.surface.undo();
+    expect(StubContext.strokeCalls).toBe(1);
+    StubContext.strokeCalls = 0;
+    h.surface.redo();
+    expect(strokesOf(h)).toEqual(pieces);
+    expect(StubContext.strokeCalls).toBe(1);
+    StubContext.strokeCalls = 0;
+    h.resizeTo(360);
+    expect(StubContext.strokeCalls).toBe(1);
+
+    // 再切其中一段（宽度调回 300，落点逻辑 x=600）：三段仍是同一个记号，
+    // 仍只描一次
+    h.resizeTo(300);
+    tap(h, 180, 40);
+    expect(strokesOf(h).map((piece) => piece.cutFrom)).toEqual([
+      original?.id,
+      original?.id,
+      original?.id,
+    ]);
+    StubContext.strokeCalls = 0;
+    h.resizeTo(360);
+    expect(StubContext.strokeCalls).toBe(1);
+  });
+
+  it("不透明的笔被切开：各段照旧各画各的（重叠不会变深，不用合）", () => {
+    const h = mountSurface();
+    writeLine(h);
+    h.surface.setTool(PARTIAL_SMALL);
+    tap(h, 150, 40);
+    expect(strokesOf(h)).toHaveLength(2);
+    StubContext.strokeCalls = 0;
+    h.resizeTo(360);
+    // 两段各 2 个采样点，逐点描边
+    expect(StubContext.strokeCalls).toBe(4);
+  });
+
   it("手掌先落用橡皮擦了一半、笔随后落下：手掌擦的不算数", () => {
     const h = mountSurface();
     writeLine(h);

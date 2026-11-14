@@ -45,7 +45,7 @@ export interface EraseSession {
 }
 
 export interface EraseSessionOptions {
-  /** 给切剩的段铸造 id；缺省用引擎的 mintStrokeId */
+  /** 给切剩的段铸造 id（以及原笔没有 id 时各段共用的记号）；缺省用引擎的 mintStrokeId */
   mintId?: () => string;
   /** 画面笔画数上限（圈画有）：切开会超限的那一笔改为整笔擦掉 */
   maxStrokes?: number;
@@ -93,6 +93,15 @@ export function createEraseSession(
   const originals = strokes.map(hold);
   const mintId = options.mintId ?? mintStrokeId;
   const maxStrokes = options.maxStrokes ?? Number.POSITIVE_INFINITY;
+  /**
+   * 切出来的各段都带着出自哪一笔的记号（cutFrom）。原笔没有 id（旧稿、
+   * 材料圈画）时切段函数给不出，这里在切开的那一刻铸一个，各段共用。
+   */
+  const tagged = (pieces: InkStroke[]): InkStroke[] => {
+    if (pieces.length === 0 || pieces[0]?.cutFrom !== undefined) return pieces;
+    const cutFrom = mintId();
+    return pieces.map((piece) => ({ ...piece, cutFrom }));
+  };
   /** 动过的笔画 → 它现在剩下的各段（整笔拿掉为空数组）；没动过的不在表里 */
   const changed = new Map<number, Held[]>();
   let count = originals.length;
@@ -135,7 +144,7 @@ export function createEraseSession(
         touched = true;
         dirty.push(piece.paintBounds);
         // 切开会超出笔画数上限：这一段整段拿掉
-        const kept = count - 1 + rest.length > maxStrokes ? [] : rest;
+        const kept = count - 1 + rest.length > maxStrokes ? [] : tagged(rest);
         count += kept.length - 1;
         next.push(...kept.map(hold));
       }

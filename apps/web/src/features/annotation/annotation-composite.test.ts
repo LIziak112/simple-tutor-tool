@@ -14,6 +14,8 @@ import {
  */
 
 class StubContext {
+  /** 累计描边次数（荧光笔「合在一起上一次色」的观察点；beforeEach 清零） */
+  static strokeCalls = 0;
   fillStyle = "";
   strokeStyle = "";
   lineWidth = 1;
@@ -23,9 +25,12 @@ class StubContext {
   globalCompositeOperation = "source-over";
   beginPath(): void {}
   moveTo(): void {}
+  lineTo(): void {}
   quadraticCurveTo(): void {}
   closePath(): void {}
-  stroke(): void {}
+  stroke(): void {
+    StubContext.strokeCalls += 1;
+  }
   fillRect(): void {}
   clearRect(): void {}
   save(): void {}
@@ -70,6 +75,7 @@ const DOC: AnnotationDoc = {
 
 let getContextSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
+  StubContext.strokeCalls = 0;
   getContextSpy = vi
     .spyOn(HTMLCanvasElement.prototype, "getContext")
     .mockImplementation(
@@ -146,6 +152,50 @@ describe("exportAnnotationComposite（canvas 直绘）", () => {
       encodePng: async () => fakePngBlob(),
     });
     expect(result.ok).toBe(true);
+  });
+
+  it("同一笔荧光笔被局部橡皮切成的各段，导出时合在一起只上一次色（重叠处不比擦之前深）", async () => {
+    const highlighter = {
+      tool: "highlighter",
+      color: "rgba(250, 204, 21, 0.45)",
+      weight: 25.92,
+    } as const;
+    const piece = (id: string, cutFrom: string, x: number) => ({
+      ...highlighter,
+      id,
+      cutFrom,
+      points: [
+        { x, y: 100, p: 0.5, t: 0 },
+        { x: x + 80, y: 100, p: 0.5, t: 16 },
+      ],
+    });
+    const exportOf = async (strokes: AnnotationDoc["strokes"]) => {
+      StubContext.strokeCalls = 0;
+      const result = await exportAnnotationComposite(
+        READY_BASE,
+        { ...DOC, strokes },
+        {
+          loadImage: async () => new Image(),
+          encodePng: async () => fakePngBlob(),
+        },
+      );
+      expect(result.ok).toBe(true);
+      return StubContext.strokeCalls;
+    };
+    // 同一笔切出的两段：一次描边
+    expect(
+      await exportOf([
+        piece("piece-0001", "stroke-0001", 100),
+        piece("piece-0002", "stroke-0001", 200),
+      ]),
+    ).toBe(1);
+    // 两笔各自切出的段：各描各的
+    expect(
+      await exportOf([
+        piece("piece-0001", "stroke-0001", 100),
+        piece("piece-0003", "stroke-0002", 200),
+      ]),
+    ).toBe(2);
   });
 
   it("底图加载失败：kind=base-missing、拒绝合成（不导出孤立的圈）", async () => {

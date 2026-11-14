@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isOnePathStroke,
   onePathSvg,
+  paintOnePathRun,
   paintOnePathStroke,
   traceOnePath,
 } from "./highlighter-paint.ts";
@@ -260,5 +261,80 @@ describe("paintOnePathStroke：整笔一次描边", () => {
       ["lineTo", 10, 0],
       ["restore"],
     ]);
+  });
+});
+
+describe("paintOnePathRun：一组笔画合在一起只描一次", () => {
+  it("同一笔切出来的两段：两条子路径、一次描边——两段重叠的地方不叠深", () => {
+    const ctx = new RecordingContext();
+    paintOnePathRun(asContext(ctx), 2, [
+      highlighter(pts([0, 0], [40, 0])),
+      highlighter(pts([60, 0], [100, 0], [100, 30])),
+    ]);
+    expect(ctx.ops).toEqual([
+      ["save"],
+      ["setTransform", 2, 0, 0, 2, 0, 0],
+      ["beginPath"],
+      ["moveTo", 0, 0],
+      ["lineTo", 40, 0],
+      ["moveTo", 60, 0],
+      ["lineTo", 80, 0],
+      ["quadraticCurveTo", 100, 0, 100, 15],
+      ["lineTo", 100, 30],
+      ["restore"],
+    ]);
+    expect(ctx.paints).toEqual([
+      {
+        kind: "stroke",
+        style: INK_HIGHLIGHTER.color,
+        lineWidth: INK_HIGHLIGHTER.weight,
+        lineCap: "round",
+        lineJoin: "round",
+      },
+    ]);
+  });
+
+  it("只有一笔：与 paintOnePathStroke 完全相同（轻点照旧填圆点）", () => {
+    const one = new RecordingContext();
+    const run = new RecordingContext();
+    const dot = highlighter(pts([30, 40]));
+    paintOnePathStroke(asContext(one), 1, dot);
+    paintOnePathRun(asContext(run), 1, [dot]);
+    expect(run.ops).toEqual(one.ops);
+    expect(run.paints).toEqual(one.paints);
+  });
+
+  it("组里只有一个位置的一笔（回放刚走到它的第一个点）：挪出一丁点长度，和其余各笔同一次描边", () => {
+    const ctx = new RecordingContext();
+    paintOnePathRun(asContext(ctx), 1, [
+      highlighter(pts([0, 0], [40, 0])),
+      highlighter(pts([60, 0])),
+    ]);
+    expect(ctx.ops).toEqual([
+      ["save"],
+      ["setTransform", 1, 0, 0, 1, 0, 0],
+      ["beginPath"],
+      ["moveTo", 0, 0],
+      ["lineTo", 40, 0],
+      ["moveTo", 60, 0],
+      ["lineTo", 60, 0],
+      ["lineTo", 60.01, 0],
+      ["restore"],
+    ]);
+    expect(ctx.paints.map((paint) => paint.kind)).toEqual(["stroke"]);
+  });
+
+  it("没有点的笔画跳过；整组都没有点什么都不画", () => {
+    const ctx = new RecordingContext();
+    paintOnePathRun(asContext(ctx), 1, [highlighter([]), highlighter([])]);
+    paintOnePathRun(asContext(ctx), 1, []);
+    expect(ctx.paints).toEqual([]);
+    // 有点的照画
+    paintOnePathRun(asContext(ctx), 1, [
+      highlighter([]),
+      highlighter(pts([0, 0], [40, 0])),
+      highlighter(pts([60, 0], [90, 0])),
+    ]);
+    expect(ctx.paints.map((paint) => paint.kind)).toEqual(["stroke"]);
   });
 });

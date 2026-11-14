@@ -8,7 +8,9 @@
  *
  * 切出来的段沿用原笔画的工具、颜色、线宽与渲染参数；段内时间从 0 重新起算，
  * 落笔时刻顺延到这一段在原笔画里开始的时刻（回放时各段仍按原来的先后与节奏
- * 出现）。段不带 id，由提交的一方铸造。纯函数，不碰 DOM。
+ * 出现）。段不带 id，由提交的一方铸造；各段带上原笔的 id 作记号（cutFrom，
+ * 原笔自己也是切出来的就沿用它的记号），绘制时据此把同一笔的荧光笔各段合在
+ * 一起上一次色（paint-runs.ts）。纯函数，不碰 DOM。
  */
 import type { StrokeBounds } from "./bounds.ts";
 import type { InkStroke, InkStrokePoint } from "./types.ts";
@@ -168,7 +170,10 @@ function pathLength(points: readonly InkStrokePoint[]): number {
   return total;
 }
 
-/** 一截点序列 → 一笔：时间从 0 重新起算，落笔时刻顺延；太短的碎屑返回 null */
+/**
+ * 一截点序列 → 一笔：时间从 0 重新起算，落笔时刻顺延，记下出自哪一笔；太短
+ * 的碎屑返回 null。原笔没有 id 也没有记号时这里不带记号（擦除会话会补）。
+ */
 function toPiece(
   stroke: InkStroke,
   points: InkStrokePoint[],
@@ -177,9 +182,11 @@ function toPiece(
   if (first === undefined || points.length < 2) return null;
   if (pathLength(points) < minPieceLength(stroke)) return null;
   const offset = Math.round(first.t);
-  const { id: _id, startedAt, ...rest } = stroke;
+  const { id, startedAt, ...rest } = stroke;
+  const cutFrom = stroke.cutFrom ?? id;
   return {
     ...rest,
+    ...(cutFrom === undefined ? {} : { cutFrom }),
     ...(startedAt === undefined ? {} : { startedAt: startedAt + offset }),
     points: points.map((point) => ({
       ...point,

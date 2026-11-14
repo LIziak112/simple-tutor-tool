@@ -14,8 +14,6 @@ import type {
   AnnotationSurfaceLayout,
   AnnotationUploadMetaInput,
   AnnotationViewData,
-  InkDeletedStroke,
-  InkStroke,
 } from "@tutor/contract";
 import {
   ANNOTATION_BASE_MAX_HEIGHT_PX,
@@ -72,6 +70,7 @@ import {
   requireOwnAttempt,
   requireUsableAttempt,
 } from "./attempt-service";
+import { canonicalDeletedStroke, canonicalInkStroke } from "./ink-canonical";
 import { materialOf, questionSnapshotHashOf } from "./question-evidence";
 import { snapshotOfRow } from "./snapshot";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
@@ -112,8 +111,8 @@ import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /**
  * 规范化序列化（固定键序重建对象树，同 canonicalNoteJson 口径）：
- * 顶层 {version, baseWidth, baseHeight}；每笔 {tool, color, weight, points}；
- * 每点 {x, y, p, t}。hash 与落盘字节都基于它——客户端 gzip 字节/键序不参与。
+ * 顶层 {version, baseWidth, baseHeight}；每笔、每点的键序见 ink-canonical.ts
+ * （与草稿共用）。hash 与落盘字节都基于它——客户端 gzip 字节/键序不参与。
  * LR-2/LR-4（学习记录模型设计稿 §4.2/§8）：墓碑与锚点纳入规范化——可选新
  * 字段缺席不写键（旧稿 hash 与升级前逐字节一致）；anchors 键按字典序重建
  * （客户端插入序不参与 hash）。
@@ -123,9 +122,9 @@ export function canonicalAnnotationJson(doc: AnnotationDoc): string {
     version: 1,
     baseWidth: doc.baseWidth,
     baseHeight: doc.baseHeight,
-    strokes: doc.strokes.map(canonicalAnnotationStroke),
+    strokes: doc.strokes.map(canonicalInkStroke),
     ...(doc.deleted !== undefined && doc.deleted.length > 0
-      ? { deleted: doc.deleted.map(canonicalAnnotationDeleted) }
+      ? { deleted: doc.deleted.map(canonicalDeletedStroke) }
       : {}),
     ...(doc.anchors !== undefined && Object.keys(doc.anchors).length > 0
       ? {
@@ -137,28 +136,6 @@ export function canonicalAnnotationJson(doc: AnnotationDoc): string {
         }
       : {}),
   });
-}
-
-/** LR-1 规范化笔画：固定键序；可选新字段（id/startedAt/pointer）缺席不写键 */
-function canonicalAnnotationStroke(stroke: InkStroke): Record<string, unknown> {
-  return {
-    tool: stroke.tool,
-    color: stroke.color,
-    weight: stroke.weight,
-    ...(stroke.id !== undefined ? { id: stroke.id } : {}),
-    ...(stroke.startedAt !== undefined ? { startedAt: stroke.startedAt } : {}),
-    ...(stroke.pointer !== undefined ? { pointer: stroke.pointer } : {}),
-    points: stroke.points.map((p) => ({ x: p.x, y: p.y, p: p.p, t: p.t })),
-  };
-}
-
-/** LR-2 规范化墓碑：笔画规范化 + 删除时刻/来源（删除态的一部分，必入 hash） */
-function canonicalAnnotationDeleted(deleted: InkDeletedStroke): unknown {
-  return {
-    ...canonicalAnnotationStroke(deleted),
-    deletedAt: deleted.deletedAt,
-    deletedBy: deleted.deletedBy,
-  };
 }
 
 /** 底图 PNG 相对路径（DATA_DIR 内）：blobs/annotations/<sha256>.png（内容寻址） */

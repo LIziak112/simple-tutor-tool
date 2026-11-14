@@ -164,6 +164,94 @@ describe("擦除会话：局部模式", () => {
     ]);
   });
 
+  it("切出的各段带着原笔的 id 作记号；同一次拖动里再切、下一次擦除再切，都还指向最初那一笔", () => {
+    const session = createEraseSession(threeLines(), "partial", {
+      mintId: counter(),
+    });
+    session.sweep(200, 200, 14);
+    session.sweep(400, 200, 14);
+    const cutFrom = (strokes: readonly InkStroke[]) =>
+      strokes.map((stroke) => stroke.cutFrom);
+    const committed = session.visible().map((item) => item.stroke);
+    expect(cutFrom(committed)).toEqual([
+      undefined,
+      "stroke-bbbb",
+      "stroke-bbbb",
+      "stroke-bbbb",
+      undefined,
+    ]);
+    expect(
+      session
+        .result()
+        ?.added.map((item) => [item.stroke.id, item.stroke.cutFrom]),
+    ).toEqual([
+      ["piece-0001", "stroke-bbbb"],
+      ["piece-0002", "stroke-bbbb"],
+      ["piece-0003", "stroke-bbbb"],
+    ]);
+
+    // 下一次擦除：在已经提交的段上再切
+    const next = createEraseSession(
+      session.result()?.added.map((item) => item.stroke) ?? [],
+      "partial",
+      { mintId: counter() },
+    );
+    next.sweep(150, 200, 14);
+    expect(cutFrom(next.visible().map((item) => item.stroke))).toEqual([
+      "stroke-bbbb",
+      "stroke-bbbb",
+      "stroke-bbbb",
+      "stroke-bbbb",
+    ]);
+  });
+
+  it("原笔没有 id（旧稿、材料圈画）：切开时给各段铸一个共用的记号，之后再切沿用", () => {
+    const { id: _id, ...legacy } = line(200, "stroke-bbbb");
+    const session = createEraseSession([legacy], "partial", {
+      mintId: counter(),
+    });
+    session.sweep(300, 200, 14);
+    const pieces = session.visible().map((item) => item.stroke);
+    // 记号先铸（切开那一刻），段自己的 id 收笔时才铸
+    expect(pieces.map((piece) => [piece.id, piece.cutFrom])).toEqual([
+      [undefined, "piece-0001"],
+      [undefined, "piece-0001"],
+    ]);
+    expect(
+      session
+        .result()
+        ?.added.map((item) => [item.stroke.id, item.stroke.cutFrom]),
+    ).toEqual([
+      ["piece-0002", "piece-0001"],
+      ["piece-0003", "piece-0001"],
+    ]);
+
+    // 材料圈画每个落点各开一次会话，段没有 id：再切不另铸记号
+    const next = createEraseSession(pieces, "partial", {
+      mintId: () => {
+        throw new Error("不该再铸记号");
+      },
+    });
+    next.sweep(200, 200, 14);
+    expect(next.visible().map((item) => item.stroke.cutFrom)).toEqual([
+      "piece-0001",
+      "piece-0001",
+      "piece-0001",
+    ]);
+  });
+
+  it("只剩一段（擦掉开头或结尾）也带记号：下一次再切，各段才认得彼此", () => {
+    const session = createEraseSession(threeLines(), "partial");
+    session.sweep(500, 200, 14);
+    expect(
+      session.visible().map((item) => [xs(item.stroke), item.stroke.cutFrom]),
+    ).toEqual([
+      [[100, 300, 500], undefined],
+      [[100, 300, 484], "stroke-bbbb"],
+      [[100, 300, 500], undefined],
+    ]);
+  });
+
   it("把一笔擦得一段不剩：只有删除，没有新增", () => {
     const session = createEraseSession(threeLines(), "partial");
     session.sweep(300, 200, 14);

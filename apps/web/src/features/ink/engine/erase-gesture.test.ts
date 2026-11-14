@@ -36,7 +36,8 @@ function fakeContext() {
 
 function harness(options: { target?: "canvas" | "none" } = {}) {
   const { context, clearRect } = fakeContext();
-  const painted: string[] = [];
+  /** 每次局部重画交给画法的那一批笔画（各笔记成它的 x 坐标串） */
+  const painted: string[][] = [];
   const ring = { showRing: vi.fn(), hideRing: vi.fn() };
   const redraw = vi.fn();
   const target: RepaintTarget = {
@@ -47,8 +48,12 @@ function harness(options: { target?: "canvas" | "none" } = {}) {
   };
   const host: EraseGestureHost = {
     repaintTarget: () => (options.target === "none" ? null : target),
-    paint: (item: EraseVisible) => {
-      painted.push(item.stroke.points.map((point) => point.x).join("-"));
+    paint: (items: readonly EraseVisible[]) => {
+      painted.push(
+        items.map((item) =>
+          item.stroke.points.map((point) => point.x).join("-"),
+        ),
+      );
     },
     redraw,
     ring: () => ring,
@@ -91,8 +96,9 @@ describe("擦除手势", () => {
     );
     expect(h.gesture.active).toBe(true);
     h.gesture.through([{ x: 300, y: 200, radius: 14 }]);
-    // 第 2 笔被切成两段；第 1 笔没被擦到，但画在这一块里，跟着重画；第 3 笔很远不画
-    expect(h.painted).toEqual(["100-300-500", "100-284", "316-500"]);
+    // 第 2 笔被切成两段；第 1 笔没被擦到，但画在这一块里，跟着重画；第 3 笔很远不画。
+    // 这一块里的笔画一次交齐（同一笔切出来的荧光笔段要合在一起上色）
+    expect(h.painted).toEqual([["100-300-500", "100-284", "316-500"]]);
     // 脏区 = 第 2 笔的范围 [94,194]–[506,206] 再外扩 10
     expect(h.clearRect).toHaveBeenCalledExactlyOnceWith(84, 184, 432, 32);
     expect(h.redraw).not.toHaveBeenCalled();

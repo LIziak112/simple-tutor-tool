@@ -58,6 +58,7 @@ import type Atrament from "atrament";
 import {
   createProgrammaticAtrament,
   replayAtramentStroke,
+  replayAtramentStrokes,
 } from "./atrament-replay.ts";
 import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
@@ -189,7 +190,7 @@ export function createAtramentSurface(
             spread: toLogical(cssWidth, PAINT_SPREAD_CSS),
           }
         : null,
-    paint: (item) => replayStroke(item.stroke),
+    paint: (items) => replayStrokes(items.map((item) => item.stroke)),
     redraw,
     ring: () => liveLayer,
   });
@@ -341,6 +342,15 @@ export function createAtramentSurface(
     replayAtramentStroke(atrament, cssWidth, s);
   }
 
+  /**
+   * 按顺序重放一串已有的笔画：同一笔切出来的荧光笔各段合在一起上一次色
+   * （paint-runs.ts）。整张重画和局部重画都走这里，不逐笔调 replayStroke。
+   */
+  function replayStrokes(strokes: readonly InkStroke[]): void {
+    if (!atrament) return;
+    replayAtramentStrokes(atrament, cssWidth, strokes);
+  }
+
   /** 全量重绘：清位图 → 重置 context → 依次重放（擦除途中画会话里的预览） */
   function redraw(): void {
     const c = ctx2d;
@@ -351,12 +361,10 @@ export function createAtramentSurface(
     c.restore();
     resetContext();
     const preview = eraser.visible();
-    if (preview) {
-      for (const item of preview) replayStroke(item.stroke);
-      return;
-    }
     // 只读视图同步重放（peekStrokes：重放期间无提交，零拷贝安全，复审⑨）
-    for (const s of store.peekStrokes()) replayStroke(s);
+    replayStrokes(
+      preview ? preview.map((item) => item.stroke) : store.peekStrokes(),
+    );
   }
 
   /** 橡皮经过一个落点（CSS 坐标）：换成逻辑坐标，带上本次擦除的半径 */

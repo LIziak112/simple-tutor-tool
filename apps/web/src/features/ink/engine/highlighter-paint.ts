@@ -150,3 +150,47 @@ export function paintOnePathStroke(
   }
   ctx.restore();
 }
+
+/** 组里只有一个位置的一笔挪出的长度（坐标单位，等于坐标的最小刻度） */
+const DOT_NUDGE = 0.01;
+
+/**
+ * 把一组笔画（同一笔切出来的荧光笔段，见 paint-runs.ts）画到 canvas 上：
+ * 各笔的路径放进同一条路径、只描一次，组内相互重叠的地方不叠深。颜色与
+ * 线宽取第一笔的（同组必相同）；坐标、scale 与 paintOnePathStroke 同口径。
+ */
+export function paintOnePathRun(
+  ctx: CanvasRenderingContext2D,
+  scale: number,
+  strokes: ReadonlyArray<Pick<InkStroke, "points" | "color" | "weight">>,
+): void {
+  const head = strokes[0];
+  if (head === undefined) return;
+  if (strokes.length === 1) {
+    paintOnePathStroke(ctx, scale, head);
+    return;
+  }
+  ctx.save();
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.beginPath();
+  let traced = false;
+  for (const stroke of strokes) {
+    const kind = traceOnePath(ctx, stroke.points);
+    if (kind === "none") continue;
+    traced = true;
+    // 只有一个位置的一笔是一条零长线，圆头画不画各浏览器不一：挪出一丁点
+    // 长度，让它和其余各笔在同一次描边里落成一个圆点
+    const first = stroke.points[0];
+    if (kind === "dot" && first !== undefined) {
+      ctx.lineTo(first.x + DOT_NUDGE, first.y);
+    }
+  }
+  if (traced) {
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = head.color;
+    ctx.lineWidth = head.weight;
+    ctx.stroke();
+  }
+  ctx.restore();
+}

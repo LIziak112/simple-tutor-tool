@@ -37,6 +37,50 @@ describe("单题过程正式手写契约", () => {
     expect(parsed.events[0]).toMatchObject({ layers: { answer: surface } });
     expect(parsed.events[1]).toMatchObject({ layer: "answer" });
   });
+  it("局部擦除切出的段带着原笔的记号（cutFrom）也能记进过程", () => {
+    const piece = (id: string) => ({
+      id,
+      cutFrom: "stroke-0001",
+      tool: "highlighter",
+      color: "rgba(250, 204, 21, 0.45)",
+      weight: 26,
+      points: [
+        { x: 10, y: 10, p: 0.5, t: 0 },
+        { x: 60, y: 10, p: 0.5, t: 40 },
+      ],
+    });
+    const parsed = questionProcessBatchSchema.parse({
+      ...base,
+      events: [
+        {
+          seq: 0,
+          at: 0,
+          kind: "start",
+          answer: null,
+          hints: [],
+          layers: { answer: surface },
+        },
+        {
+          seq: 1,
+          at: 100,
+          kind: "ink",
+          layer: "answer",
+          operation: "erase",
+          removed: ["stroke-0001"],
+          added: [
+            { index: 0, stroke: piece("piece-0001") },
+            { index: 1, stroke: piece("piece-0002") },
+          ],
+        },
+      ],
+    });
+    expect(parsed.events[1]).toMatchObject({
+      added: [
+        { stroke: { cutFrom: "stroke-0001" } },
+        { stroke: { cutFrom: "stroke-0001" } },
+      ],
+    });
+  });
   it("历史Excalidraw场景作为冻结快照，旧的双层快照仍兼容", () => {
     const legacy = {
       scene: {

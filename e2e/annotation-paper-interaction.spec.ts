@@ -962,8 +962,12 @@ test(
     await markToolbar
       .getByRole("button", { name: "完成标画", exact: true })
       .click();
-    // 退出圈画后静态显示的仍是这一笔
+    // 退出圈画后同一块画布转为静态显示：这一笔还在，仍是一层的透明度
+    await expect(markCanvas).toHaveAttribute("data-input-enabled", "false");
     await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await expect(async () => {
+      expectPixelNear(await centerPixel(markCanvas), [250, 204, 21, 115]);
+    }).toPass({ timeout: 5_000 });
   },
 );
 

@@ -29,8 +29,11 @@ export interface EraseGestureHost {
    * 与笔画不在同一个坐标域），改为 redraw 整张重画。
    */
   repaintTarget(): RepaintTarget | null;
-  /** 把一笔画到画布上（局部重画时裁剪区已经设好） */
-  paint(item: EraseVisible): void;
+  /**
+   * 把这些笔画按顺序画到画布上（局部重画时裁剪区已经设好）。一次交齐：
+   * 同一笔切出来的荧光笔各段要合在一起上一次色（paint-runs.ts）。
+   */
+  paint(items: readonly EraseVisible[]): void;
   /** 整张重画；擦除途中画的是 visible() */
   redraw(): void;
   /** 橡皮圈画在哪一层 */

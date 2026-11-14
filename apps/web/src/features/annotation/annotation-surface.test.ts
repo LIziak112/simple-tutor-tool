@@ -1017,6 +1017,38 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
     );
   });
 
+  it("近似原位下荧光笔被切开：各段映射到视图域后仍合在一起只上一次色（预览和提交后的重绘都是）", () => {
+    const h = mountViewSurface({
+      version: 1,
+      baseWidth: STORED_W,
+      baseHeight: STORED_H,
+      strokes: [
+        {
+          tool: "highlighter" as const,
+          color: "rgba(250, 204, 21, 0.45)",
+          weight: 25.92,
+          id: "keep-1",
+          points: [
+            { x: 80, y: 16, p: 0.5, t: 0 },
+            { x: 160, y: 24, p: 0.5, t: 16 },
+          ],
+        },
+      ],
+      anchors: { "keep-1": "stem/p/0" },
+    });
+    h.surface.setTool({ type: "eraser", mode: "partial", size: "small" });
+    StubContext.strokeCalls = 0;
+    pointer(h.canvas, "pointerdown", { clientX: 175, clientY: 62.5 });
+    // 拖动途中的预览（视图域整张重画）：两段一次描边
+    expect(StubContext.strokeCalls).toBe(1);
+    StubContext.strokeCalls = 0;
+    pointer(h.canvas, "pointerup", { clientX: 175, clientY: 62.5 });
+    const pieces = h.surface.getDoc().strokes;
+    expect(pieces.map((piece) => piece.cutFrom)).toEqual(["keep-1", "keep-1"]);
+    // 提交后的重绘：仍是一次描边
+    expect(StubContext.strokeCalls).toBe(1);
+  });
+
   it("图形在视图域成形（预览、间距、线宽都按当前画布），收笔整笔映射回存储域并照常锚定", () => {
     const h = mountViewSurface();
     h.surface.setTool({ type: "shape", shape: "line" });
@@ -1336,6 +1368,38 @@ describe("标注画布：局部橡皮", () => {
     expect(h.surface.getDoc().strokes).toHaveLength(5);
     h.surface.undo();
     expect(h.surface.getDoc().strokes).toHaveLength(4);
+  });
+
+  it("荧光笔被切开：各段带着原笔的记号，局部重画、整张重画都合在一起只上一次色（重叠处不比擦之前深）", () => {
+    const doc = lineDoc();
+    const h = mountSurface({
+      ...doc,
+      strokes: doc.strokes.map((stroke) => ({
+        ...stroke,
+        tool: "highlighter" as const,
+        color: "rgba(250, 204, 21, 0.45)",
+        weight: 25.92,
+      })),
+    });
+    h.surface.setTool(PARTIAL_SMALL);
+    // 拖动途中的局部重画：切剩的两段一次描边
+    StubContext.strokeCalls = 0;
+    pointer(h.canvas, "pointerdown", { clientX: 200, clientY: 70 });
+    expect(StubContext.strokeCalls).toBe(1);
+    pointer(h.canvas, "pointerup", { clientX: 200, clientY: 70 });
+    const pieces = h.surface.getDoc().strokes;
+    expect(pieces.map((piece) => piece.cutFrom)).toEqual([
+      "keep-line",
+      "keep-line",
+    ]);
+    // 整张重画：撤销回整笔、重做回两段，都是一次描边
+    StubContext.strokeCalls = 0;
+    h.surface.undo();
+    expect(StubContext.strokeCalls).toBe(1);
+    StubContext.strokeCalls = 0;
+    h.surface.redo();
+    expect(h.surface.getDoc().strokes).toEqual(pieces);
+    expect(StubContext.strokeCalls).toBe(1);
   });
 });
 

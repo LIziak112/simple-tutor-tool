@@ -1,7 +1,7 @@
 /**
  * 标注合成图导出（T6R.20，方案 §10）：底图 PNG ＋ 标注笔迹层合成单张 PNG。
  *
- * 实现：**canvas 直绘**（drawImage 底图 → replayAnnotationStroke 逐笔重放，
+ * 实现：**canvas 直绘**（drawImage 底图 → replayAnnotationStrokes 按顺序重放，
  * 与活编辑/草稿渲染同一绘制路径）——笔迹是 canvas 原生内容，不走 html-to-image
  * （方案 §10「合成图」对 foreignObject 保真性的保留意见在此直接绕开）。
  *
@@ -15,7 +15,7 @@ import { ANNOTATION_MAX_PIXEL_DIM } from "@tutor/contract";
 import type Atrament from "atrament";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay.ts";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
-import { replayAnnotationStroke } from "./annotation-replay";
+import { replayAnnotationStrokes } from "./annotation-replay";
 
 /** 合成失败分类 */
 export type AnnotationCompositeErrorKind =
@@ -184,9 +184,7 @@ export async function exportAnnotationCompositeSource(
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, doc.baseWidth, doc.baseHeight);
-    for (const stroke of doc.strokes) {
-      replayAnnotationStroke(atrament, cssPerBase, stroke);
-    }
+    replayAnnotationStrokes(atrament, cssPerBase, doc.strokes);
     let blob: Blob;
     try {
       blob = await (deps.encodePng !== undefined

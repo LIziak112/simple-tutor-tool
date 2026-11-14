@@ -1,10 +1,33 @@
 /**
- * 圈画笔画的重放：在底图像素域内把一笔画到 atrament 所在的画布上。书写面
+ * 圈画笔画的重放：在底图像素域内把笔画画到 atrament 所在的画布上。书写面
  * 的重绘、合成图（annotation-composite）、当前题渲染与只读画布共用。
+ *
+ * 画一串笔画用 replayAnnotationStrokes：同一笔被局部橡皮切出来的荧光笔各段
+ * 要合在一起上一次色（见 engine/paint-runs），不能逐笔调 replayAnnotationStroke。
  */
 import type Atrament from "atrament";
-import { paintOnePathOnAtrament } from "@/features/ink/engine/atrament-replay.ts";
+import {
+  paintOnePathOnAtrament,
+  paintRunOnAtrament,
+} from "@/features/ink/engine/atrament-replay.ts";
+import { forEachPaintRun } from "@/features/ink/engine/paint-runs.ts";
 import type { InkStroke } from "@/features/ink/engine/types.ts";
+
+/**
+ * 在底图像素域内按顺序重放一串笔画：同一笔切出来的荧光笔各段合在一起上
+ * 一次色，其余逐笔画。cssPerBase 同 replayAnnotationStroke。
+ */
+export function replayAnnotationStrokes(
+  atrament: Atrament,
+  cssPerBase: number,
+  strokes: readonly InkStroke[],
+): void {
+  forEachPaintRun(strokes, (run) => {
+    if (run.length > 1 && paintRunOnAtrament(atrament, cssPerBase, run)) return;
+    for (const stroke of run)
+      replayAnnotationStroke(atrament, cssPerBase, stroke);
+  });
+}
 
 /**
  * 在底图像素域内按一笔重放（atrament 官方程序化绘制；CSS 坐标桥接）。

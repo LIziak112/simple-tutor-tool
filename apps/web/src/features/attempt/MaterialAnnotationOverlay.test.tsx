@@ -732,7 +732,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     expect(draftStore.getMaterialInk("att-1", "m1")).toBeNull();
   });
 
-  it("橡皮按引擎 INK_ERASE_RADIUS 命中整笔并即时保存", async () => {
+  it("橡皮按引擎 INK_ERASE_RADIUS 命中整笔，抬起时保存", async () => {
     draftStore.saveMaterialInk(
       "att-1",
       "mat-1",
@@ -829,7 +829,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     },
   );
 
-  it("局部橡皮：只擦掉碰到的一段，两头各留一笔并即时保存；拖动时相邻落点之间按线段扫过", async () => {
+  it("局部橡皮：只擦掉碰到的一段，两头各留一笔；拖动时相邻落点之间按线段扫过；拖动途中只改画面，抬起时存一次", async () => {
     // 横线 x 100→300、y=100（笔宽 2.5，半宽 1.25），另有一笔在远处
     const line: InkStroke = {
       tool: "pen",
@@ -869,12 +869,13 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     await waitInkReady(root);
     const layer = inputLayerOf(container);
     mockLayerRect(layer);
-    const storedXs = () => {
+    const storedStrokes = () => {
       const stored = draftStore.getMaterialInk("att-1", "mat-1");
-      return stored?.engine === "atrament"
-        ? stored.data.strokes.map((stroke) => stroke.points.map((p) => p.x))
-        : null;
+      return stored?.engine === "atrament" ? stored.data.strokes : [];
     };
+    const storedXs = () =>
+      storedStrokes().map((stroke) => stroke.points.map((p) => p.x));
+    const save = vi.spyOn(draftStore, "saveMaterialInk");
 
     await act(async () => {
       // (100,50) = 逻辑 (200,100)：小号半径 8 + 半笔宽 1.25 → 切掉 190.75–209.25
@@ -887,9 +888,12 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
         pressure: 0.5,
       });
     });
+    // 画面上已经切开（两段 + 远处一笔），草稿仓还是擦之前的：每个落点都存
+    // 会让整页跟着重渲染
+    expect(root).toHaveAttribute("data-stroke-count", "3");
+    expect(save).not.toHaveBeenCalled();
     expect(storedXs()).toEqual([
-      [100, 190.75],
-      [209.25, 300],
+      [100, 300],
       [100, 120],
     ]);
 
@@ -902,14 +906,73 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
         clientY: 50,
         pressure: 0.5,
       });
+    });
+    expect(save).not.toHaveBeenCalled();
+
+    await act(async () => {
       fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
     });
+    expect(save).toHaveBeenCalledTimes(1);
     expect(storedXs()).toEqual([
       [100, 190.75],
       [229.25, 300],
       [100, 120],
     ]);
     expect(root).toHaveAttribute("data-stroke-count", "3");
+    // 两段带着同一个记号（材料笔画没有 id，记号是切开那一刻新铸的；再切
+    // 不换），没被切到的那一笔没有
+    const [head, tail, far] = storedStrokes();
+    expect(head?.cutFrom).toMatch(/^[0-9A-Za-z_-]{8,40}$/);
+    expect(tail?.cutFrom).toBe(head?.cutFrom);
+    expect(far?.cutFrom).toBeUndefined();
+    save.mockRestore();
+  });
+
+  it("擦到一半窗口失焦：按已擦的收尾并保存", async () => {
+    draftStore.saveMaterialInk(
+      "att-1",
+      "mat-1",
+      inkDocOf([strokeAt(100, 100), strokeAt(100, 300)]),
+    );
+    draftStore.saveMaterialInkBase("att-1", "mat-1", {
+      cssWidth: 500,
+      cssHeight: 400,
+    });
+    const { container } = render(
+      <AttemptEditorProvider>
+        <CoordinatedAnnotationProvider initialToolbox={{ active: "eraser" }}>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+            <div>擦除材料</div>
+          </MaterialAnnotationOverlay>
+        </CoordinatedAnnotationProvider>
+      </AttemptEditorProvider>,
+    );
+    fireEvent.click(screen.getByTestId("toggle-annotation"));
+    const root = overlayRootOf(container);
+    await waitInkReady(root);
+    const layer = inputLayerOf(container);
+    mockLayerRect(layer);
+    const storedCount = () => {
+      const stored = draftStore.getMaterialInk("att-1", "mat-1");
+      return stored?.engine === "atrament" ? stored.data.strokes.length : null;
+    };
+    await act(async () => {
+      fireEvent.pointerDown(layer, {
+        pointerId: 1,
+        button: 0,
+        pointerType: "pen",
+        clientX: 50,
+        clientY: 50,
+        pressure: 0.5,
+      });
+    });
+    expect(root).toHaveAttribute("data-stroke-count", "1");
+    expect(storedCount()).toBe(2);
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(storedCount()).toBe(1);
   });
 
   it("笔色、粗细跟随协同工具箱：落笔写入对应的颜色与线宽", async () => {
@@ -1732,6 +1795,15 @@ describe("材料圈画固定阅读框（已有基准常显）", () => {
           clientY: 1,
           pressure: 0.5,
         });
+      });
+      // 还按着：画面上已经擦空，基准和冻结框都还在——手势途中不换排版
+      expect(root).toHaveAttribute("data-stroke-count", "0");
+      expect(draftStore.getMaterialInkBase("att-f9", "m1|1")).toEqual({
+        cssWidth: 480,
+        cssHeight: 400,
+      });
+      expect(frameOf(container).style.width).toBe("480px");
+      await act(async () => {
         fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
       });
 

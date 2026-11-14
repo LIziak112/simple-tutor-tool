@@ -6,11 +6,19 @@
  * - 自然笔感（rendering.renderer 为 freehand）：整笔一个轮廓填充；
  * - 荧光笔：整笔一条路径、一次描边（见 highlighter-paint.ts）；
  * - 其余：atrament 官方程序化绘制（beginStroke / draw / endStroke），逐段描边。
+ *
+ * 画一串笔画用 replayAtramentStrokes：同一笔被局部橡皮切出来的荧光笔各段
+ * 要合在一起上一次色（见 paint-runs.ts），不能逐笔调 replayAtramentStroke。
  */
 import Atrament from "atrament";
-import { paintFreehandStroke } from "./freehand-paint";
-import { isOnePathStroke, paintOnePathStroke } from "./highlighter-paint.ts";
+import { paintFreehandRun, paintFreehandStroke } from "./freehand-paint";
+import {
+  isOnePathStroke,
+  paintOnePathRun,
+  paintOnePathStroke,
+} from "./highlighter-paint.ts";
 import { fromLogical, fromLogicalPoint } from "./normalize.ts";
+import { forEachPaintRun } from "./paint-runs.ts";
 import {
   INK_DEFAULT_SMOOTHING,
   INK_LOGICAL_WIDTH,
@@ -40,6 +48,51 @@ export function paintOnePathOnAtrament(
   const cssWidth = canvas.offsetWidth || fallbackCssWidth || canvas.width;
   paintOnePathStroke(context, (canvas.width / cssWidth) * cssPerUnit, s);
   return true;
+}
+
+/**
+ * 把一组笔画（同一笔切出来的荧光笔段，见 paint-runs.ts）一次画到 atrament
+ * 所在的画布上。实例不是 createProgrammaticAtrament 造的返回 false，由调用方
+ * 逐笔画。参数同 paintOnePathOnAtrament。
+ */
+export function paintRunOnAtrament(
+  atrament: Atrament,
+  cssPerUnit: number,
+  run: readonly InkStroke[],
+  fallbackCssWidth?: number,
+): boolean {
+  const head = run[0];
+  const canvas = drawingCanvases.get(atrament);
+  const context = canvas?.getContext("2d");
+  if (head === undefined || !canvas || !context) return false;
+  const cssWidth = canvas.offsetWidth || fallbackCssWidth || canvas.width;
+  const scale = (canvas.width / cssWidth) * cssPerUnit;
+  if (head.rendering?.renderer === "freehand") {
+    paintFreehandRun(context, scale, run, head.rendering);
+  } else {
+    paintOnePathRun(context, scale, run);
+  }
+  return true;
+}
+
+/**
+ * 按逻辑坐标在 Atrament 实例上按顺序重放一串笔画：同一笔切出来的荧光笔各段
+ * 合在一起上一次色，其余逐笔画。
+ * @param cssWidth 当前容器 CSS 宽（逻辑 1000 → 实际像素的换算基准）
+ */
+export function replayAtramentStrokes(
+  atrament: Atrament,
+  cssWidth: number,
+  strokes: readonly InkStroke[],
+): void {
+  forEachPaintRun(strokes, (run) => {
+    if (
+      run.length > 1 &&
+      paintRunOnAtrament(atrament, cssWidth / INK_LOGICAL_WIDTH, run, cssWidth)
+    )
+      return;
+    for (const stroke of run) replayAtramentStroke(atrament, cssWidth, stroke);
+  });
 }
 
 /**

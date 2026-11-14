@@ -7,14 +7,15 @@ import {
 import type Atrament from "atrament";
 import {
   createProgrammaticAtrament,
-  replayAtramentStroke,
+  replayAtramentStrokes,
 } from "../engine/atrament-replay";
 import { canvasToPngBlob } from "../engine/canvas-png";
 import { buildAtramentDoc, parseAtramentDoc } from "../engine/doc";
 import { createEraseGesture, type ErasePoint } from "../engine/erase-gesture";
-import { paintFreehandStroke } from "../engine/freehand-paint";
+import { paintFreehandRun } from "../engine/freehand-paint";
 import { InkStore, mintStrokeId } from "../engine/history";
 import { createInkLiveLayer, type InkLiveLayer } from "../engine/live-layer";
+import { forEachPaintRun } from "../engine/paint-runs";
 import {
   NOTE_PAPER_GRID_SPACING_LOGICAL,
   paperBackgroundCss,
@@ -151,8 +152,12 @@ export function createFeelSurface(
             spread: (PAINT_SPREAD_CSS * 1000) / width,
           }
         : null,
-    paint: (item) => {
-      if (dryCtx) paint(dryCtx, item.stroke, true);
+    paint: (items) => {
+      if (dryCtx)
+        paintAll(
+          dryCtx,
+          items.map((item) => item.stroke),
+        );
     },
     redraw: redrawDry,
     ring: () => ringLayer,
@@ -195,33 +200,42 @@ export function createFeelSurface(
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
+  /**
+   * 画一组笔画（多数时候就是一笔；同一笔切出来的荧光笔各段是一组，合在一起
+   * 上一次色，见 engine/paint-runs.ts）。画法取第一笔的，同组必相同。
+   */
   function paint(
     ctx: CanvasRenderingContext2D,
-    stroke: InkStroke,
+    run: readonly InkStroke[],
     complete: boolean,
   ) {
-    if (!dry || stroke.points.length === 0) return;
+    const head = run[0];
+    if (!dry || head === undefined) return;
     const config = options.preserveRendering
-      ? (stroke.rendering ?? DEFAULT_INK_PROFILE_CONFIG)
+      ? (head.rendering ?? DEFAULT_INK_PROFILE_CONFIG)
       : { ...params, renderer: "freehand" as const };
     if (config.renderer === "freehand") {
-      paintFreehandStroke(ctx, dry.width / 1000, stroke, config, complete);
+      paintFreehandRun(ctx, dry.width / 1000, run, config, complete);
       return;
     }
-    if (replayBrush) replayAtramentStroke(replayBrush, width, stroke);
-    return;
+    if (replayBrush) replayAtramentStrokes(replayBrush, width, run);
+  }
+  /** 按顺序把一串已有的笔画画上去，一组一组画 */
+  function paintAll(
+    ctx: CanvasRenderingContext2D,
+    strokes: readonly InkStroke[],
+  ) {
+    forEachPaintRun(strokes, (run) => paint(ctx, run, true));
   }
   function redrawDry() {
     if (!dry || !dryCtx) return;
-    const context = dryCtx;
-    clear(context, dry);
+    clear(dryCtx, dry);
     // 擦除途中画的是预览（擦掉、切开之后的样子），正文要到抬起才改
     const preview = eraser.visible();
-    if (preview) {
-      for (const item of preview) paint(context, item.stroke, true);
-      return;
-    }
-    for (const stroke of store.peekStrokes()) paint(context, stroke, true);
+    paintAll(
+      dryCtx,
+      preview ? preview.map((item) => item.stroke) : store.peekStrokes(),
+    );
   }
   function clearWet() {
     if (predictionTimer !== null) clearTimeout(predictionTimer);
@@ -242,7 +256,7 @@ export function createFeelSurface(
       if (live)
         paint(
           wetCtx,
-          { ...live, points: [...live.points, ...predicted] },
+          [{ ...live, points: [...live.points, ...predicted] }],
           false,
         );
       stats.renderMs = performance.now() - started;
@@ -268,7 +282,7 @@ export function createFeelSurface(
         if (points !== null && points.length > 0) {
           const stroke = { ...live, points };
           change("stroke", () => store.commitAdd([stroke]));
-          if (dryCtx) paint(dryCtx, stroke, true);
+          if (dryCtx) paint(dryCtx, [stroke], true);
         }
       }
     }

@@ -127,9 +127,9 @@ describe("局部重画：只动矩形里的像素", () => {
     };
   }
 
-  it("只重画碰到这一块的笔画，按原来的先后；清空范围含外扩并按像素取整", () => {
+  it("只重画碰到这一块的笔画，按原来的先后一并交给画法；清空范围含外扩并按像素取整", () => {
     const { calls, context } = recorder();
-    const painted: string[] = [];
+    const painted: string[][] = [];
     const strokes = [
       item("far-left", 0, 40, 200),
       item("crossing", 50, 400, 205),
@@ -147,13 +147,14 @@ describe("局部重画：只动矩形里的像素", () => {
       },
       { minX: 150, minY: 180, maxX: 250, maxY: 220 },
       strokes,
-      ({ stroke }) => {
-        painted.push(stroke.id ?? "");
+      (items) => {
+        painted.push(items.map(({ stroke }) => stroke.id ?? ""));
       },
     );
     expect(rect).toEqual({ x: 210, y: 255, width: 180, height: 90 });
     expect(calls).toContain("clearRect(210,255,180,90)");
-    expect(painted).toEqual(["crossing", "inside"]);
+    // 一次交齐：同一笔切出来的荧光笔段要合在一起上色，不能一笔一笔给
+    expect(painted).toEqual([["crossing", "inside"]]);
   });
 
   it("笔画只差外扩量就够得着这一块时也要带上（宁可多画）", () => {
@@ -169,8 +170,8 @@ describe("局部重画：只动矩形里的像素", () => {
       },
       { minX: 150, minY: 180, maxX: 250, maxY: 220 },
       [item("near", 60, 125, 200), item("out-of-reach", 60, 110, 200)],
-      ({ stroke }) => {
-        painted.push(stroke.id ?? "");
+      (items) => {
+        painted.push(...items.map(({ stroke }) => stroke.id ?? ""));
       },
     );
     expect(painted).toEqual(["near"]);

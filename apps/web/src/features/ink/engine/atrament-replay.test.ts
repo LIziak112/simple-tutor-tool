@@ -4,6 +4,7 @@ import {
   createProgrammaticAtrament,
   paintOnePathOnAtrament,
   replayAtramentStroke,
+  replayAtramentStrokes,
 } from "./atrament-replay.ts";
 import * as freehandPaint from "./freehand-paint";
 import { INK_HIGHLIGHTER, INK_PEN_COLORS, type InkStroke } from "./types.ts";
@@ -168,6 +169,93 @@ describe("replayAtramentStroke：荧光笔整笔一次描边", () => {
     } finally {
       paint.mockRestore();
     }
+  });
+});
+
+describe("replayAtramentStrokes：按顺序重放一串笔画", () => {
+  /** 一笔荧光笔被局部橡皮切成的两段（提交后各有自己的 id，带着同一个记号） */
+  const pieces: InkStroke[] = [
+    {
+      ...highlighter,
+      id: "piece-0001",
+      cutFrom: "stroke-0001",
+      points: points.slice(0, 2),
+    },
+    {
+      ...highlighter,
+      id: "piece-0002",
+      cutFrom: "stroke-0001",
+      points: points.slice(2),
+    },
+  ];
+
+  it("同一笔切出来的荧光笔各段合在一起只描一次：一条路径里两条子路径", () => {
+    const { atrament, ctx } = canvasOf();
+    replayAtramentStrokes(atrament, 500, pieces);
+    expect(ctx.strokes).toHaveLength(1);
+    expect(ctx.strokes[0]).toMatchObject({
+      style: INK_HIGHLIGHTER.color,
+      lineWidth: INK_HIGHLIGHTER.weight,
+      scale: 1,
+    });
+    expect(ctx.strokes[0]?.path.filter(([name]) => name === "moveTo")).toEqual([
+      ["moveTo", 100, 100],
+      ["moveTo", 100, 108],
+    ]);
+  });
+
+  it("没被切过的两笔荧光笔各描各的（两笔之间重叠照旧叠深）", () => {
+    const { atrament, ctx } = canvasOf();
+    replayAtramentStrokes(atrament, 500, [highlighter, highlighter]);
+    expect(ctx.strokes).toHaveLength(2);
+  });
+
+  it("中间隔着别的笔画：按绘制顺序分开画，先后不乱", () => {
+    const { atrament, ctx } = canvasOf();
+    const [first, second] = pieces;
+    if (!first || !second) throw new Error("缺少切段");
+    replayAtramentStrokes(atrament, 500, [first, pen, second]);
+    expect(ctx.strokes.map((s) => s.style)).toEqual([
+      INK_HIGHLIGHTER.color,
+      ...points.map(() => INK_PEN_COLORS.black),
+      INK_HIGHLIGHTER.color,
+    ]);
+  });
+
+  it("自然笔感的荧光笔段：各段的轮廓一起填一次", () => {
+    const paintRun = vi
+      .spyOn(freehandPaint, "paintFreehandRun")
+      .mockImplementation(() => {});
+    try {
+      const { atrament, ctx } = canvasOf(500, 1000);
+      const rendering = {
+        ...DEFAULT_INK_PROFILE_CONFIG,
+        renderer: "freehand",
+      } as const;
+      const freehandPieces = pieces.map((piece) => ({ ...piece, rendering }));
+      replayAtramentStrokes(atrament, 500, freehandPieces);
+      expect(paintRun).toHaveBeenCalledOnce();
+      // 位图 1000 宽对逻辑宽 1000：比例 1
+      expect(paintRun.mock.calls[0]?.slice(1)).toEqual([
+        1,
+        freehandPieces,
+        rendering,
+      ]);
+      expect(ctx.strokes).toHaveLength(0);
+    } finally {
+      paintRun.mockRestore();
+    }
+  });
+
+  it("不认识的 atrament 实例（没有登记画布）：退回逐笔画，不丢笔画", () => {
+    const calls: string[] = [];
+    const stranger = {
+      beginStroke: () => calls.push("begin"),
+      draw: (x: number, y: number) => ({ x, y }),
+      endStroke: () => calls.push("end"),
+    } as unknown as Parameters<typeof replayAtramentStrokes>[0];
+    replayAtramentStrokes(stranger, 500, pieces);
+    expect(calls).toEqual(["begin", "end", "begin", "end"]);
   });
 });
 

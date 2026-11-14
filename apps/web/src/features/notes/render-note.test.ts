@@ -755,6 +755,94 @@ describe("renderNotePage：笔迹重放（复用引擎原语）", () => {
     expect(penCalls.length).toBeGreaterThanOrEqual(zigzag.length);
     expect(penCalls.every((s) => s.scale === 1)).toBe(true);
   });
+
+  it("同一笔荧光笔被局部橡皮切成的各段合在一起只上一次色（重叠处不比擦之前深）；不是同一笔的各描各的", async () => {
+    const highlighter = {
+      tool: "highlighter" as const,
+      color: INK_HIGHLIGHTER.color,
+      weight: INK_HIGHLIGHTER.weight,
+    };
+    // 来回涂的一笔被从中间切开：上一趟和下一趟在两段里，两段相互重叠
+    const upper = {
+      ...stroke(
+        [
+          [100, 100],
+          [400, 100],
+        ],
+        highlighter,
+      ),
+      cutFrom: "stroke-0001",
+    };
+    const lower = {
+      ...stroke(
+        [
+          [400, 108],
+          [100, 108],
+        ],
+        highlighter,
+      ),
+      cutFrom: "stroke-0001",
+    };
+    const hlOf = async (doc: NoteDoc) =>
+      ctxOf(await captureCanvas(doc)).strokeCalls.filter(
+        (s) => s.style === INK_HIGHLIGHTER.color,
+      );
+    const merged = await hlOf(docOf([upper, lower]));
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.path).toEqual([
+      { op: "moveTo", pts: [100, 100] },
+      { op: "lineTo", pts: [400, 100] },
+      { op: "moveTo", pts: [400, 108] },
+      { op: "lineTo", pts: [100, 108] },
+    ]);
+    // 另一笔切出来的段（记号不同）、没被切过的笔：照旧各描各的
+    expect(
+      await hlOf(docOf([upper, { ...lower, cutFrom: "stroke-0002" }])),
+    ).toHaveLength(2);
+    const { cutFrom: _mark, ...whole } = lower;
+    expect(await hlOf(docOf([upper, whole]))).toHaveLength(2);
+  });
+
+  it("长稿分页：同一笔切出的两段各在一页时，各页只画落在本页的那一段", async () => {
+    const piece = (y: number) => ({
+      ...stroke(
+        [
+          [100, y],
+          [400, y],
+        ],
+        {
+          tool: "highlighter",
+          color: INK_HIGHLIGHTER.color,
+          weight: INK_HIGHLIGHTER.weight,
+        },
+      ),
+      cutFrom: "stroke-0001",
+    });
+    const d = docOf([piece(100), piece(2600)], {
+      paperHeightLogical: TALL_PAPER_HEIGHT,
+    });
+    const pages = planAnalysisPages(d);
+    expect(pages.length).toBeGreaterThan(1);
+    const first = pages[0];
+    const last = pages.at(-1);
+    if (!first || !last) throw new Error("分页计划缺失（测试前提不成立）");
+    const pathsOf = async (page: typeof first) =>
+      ctxOf(await captureCanvas(d, ANALYSIS_PIXEL_WIDTH, page.crop))
+        .strokeCalls.filter((s) => s.style === INK_HIGHLIGHTER.color)
+        .map((s) => s.path);
+    expect(await pathsOf(first)).toEqual([
+      [
+        { op: "moveTo", pts: [100, 100 - first.crop.y] },
+        { op: "lineTo", pts: [400, 100 - first.crop.y] },
+      ],
+    ]);
+    expect(await pathsOf(last)).toEqual([
+      [
+        { op: "moveTo", pts: [100, 2600 - last.crop.y] },
+        { op: "lineTo", pts: [400, 2600 - last.crop.y] },
+      ],
+    ]);
+  });
 });
 
 // ---------- 渲染：守卫（不吞错） ----------

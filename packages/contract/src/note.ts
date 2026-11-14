@@ -115,7 +115,9 @@ export const NOTE_REFLECTION_MAX_LENGTH = 500;
  * 输出时不递增。递增时旧版本派生图不自动重生成，补图链路按需重建。
  *
  * 版本 4：荧光笔由逐段描边改为整笔一条路径一次描边——一笔之内透明度均匀、
- * 线宽不随压感变、末端画到真实采样点（apps/web 的 engine/highlighter-paint.ts）。
+ * 线宽不随压感变、末端画到真实采样点（apps/web 的 engine/highlighter-paint.ts）；
+ * 同一笔被局部橡皮切出来的各段（笔画上的 cutFrom 相同）合在一起上一次色，
+ * 重叠处不比擦之前深（engine/paint-runs.ts）。
  */
 export const NOTE_RENDER_VERSION = 4;
 
