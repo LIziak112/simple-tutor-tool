@@ -1,6 +1,7 @@
 import { and, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, responses } from "../db/schema";
+import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { requireVisibleCourseUnit } from "./course-service";
 import { requireOwnMemoRow, toMemo } from "./memo-read";
 import { assertDraftCourseVisible } from "./practice-workflow-wiring";
@@ -39,7 +40,7 @@ export function memoSourceTarget(db: Db, studentId: string, memoId: string) {
         and(
           eq(attempts.id, attemptId),
           eq(attempts.studentId, studentId),
-          isNull(attempts.abandonedAt),
+          recordableAttemptWhere(),
           eq(responses.questionId, questionId),
           isNotNull(responses.questionSnapshotJson),
           revisionId === undefined ? undefined : eq(responses.id, revisionId),
@@ -101,7 +102,7 @@ export function memoSourceTarget(db: Db, studentId: string, memoId: string) {
                 ),
                 eq(responses.questionId, content.questionId),
                 isNotNull(responses.questionSnapshotJson),
-                isNull(attempts.abandonedAt),
+                recordableAttemptWhere(),
               ),
             )
             .orderBy(desc(attempts.startedAt))

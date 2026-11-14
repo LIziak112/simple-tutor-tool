@@ -303,6 +303,8 @@ export const hintOpenedEntrySchema = z.object({
  */
 export const attemptQuestionPublicSchema = questionPublicSchema.extend({
   questionRevisionId: questionRevisionIdSchema,
+  /** 题内容版本用于清除后本机稿安全迁移；与冻结行引用身份分开。 */
+  questionVersion: z.number().int().nonnegative().optional(),
   /**
    * 组内序号（TT-05a 域④ §5.2.3/§5.8.1）：开卷冻结时按组的子题引用顺序写入
    * attempt 上下文快照的公开投影；**不在组内的题不携带**（旧快照缺省 = 独立
@@ -592,6 +594,8 @@ export const attemptResultDataSchema = z.object({
 export const attemptAnswerSaveRequestSchema = z
   .object({
     answer: studentAnswerSchema,
+    /** 新端发送冻结行身份，拒绝旧标签页把答案写到重冻后的题目。 */
+    questionRevisionId: questionRevisionIdSchema.optional(),
     /** 逐题比较版本，不影响其他题的合并。 */
     baseRevision: z.number().int().nonnegative().optional(),
     /** 同一次保存重试保持不变，避免回执丢失产生重复写入。 */

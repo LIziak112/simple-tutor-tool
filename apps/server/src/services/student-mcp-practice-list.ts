@@ -1,4 +1,5 @@
 import {
+  attemptPhaseOf,
   type StudentMcpPracticeListData,
   type StudentMcpPracticeListInput,
   studentMcpPracticeListDataSchema,
@@ -59,6 +60,9 @@ export function listStudentMcpPractices(
           title: attemptSourceMeta(db, row).title,
           sourceType: record.sourceType,
           status: record.status,
+          activatedAt: row.activatedAt,
+          frozenAt: row.frozenAt,
+          phase: attemptPhaseOf(row),
           startedAt: record.startedAt,
           submittedAt: record.submittedAt,
           answerProgress: record.answerProgress ?? null,

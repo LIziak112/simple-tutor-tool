@@ -21,6 +21,7 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark.ts";
@@ -173,7 +174,7 @@ export function courseUnitAttemptSummaries(
         eq(attempts.studentId, studentId),
         eq(attempts.sourceType, "course"),
         eq(attempts.courseId, courseId),
-        isNull(attempts.abandonedAt),
+        recordableAttemptWhere(),
       ),
     )
     .orderBy(asc(attempts.attemptNo))
@@ -477,7 +478,7 @@ export function getStudentUnitLanding(
         eq(attempts.studentId, studentId),
         eq(attempts.sourceType, "course"),
         eq(attempts.courseId, courseId),
-        isNull(attempts.abandonedAt),
+        recordableAttemptWhere(),
         eq(attempts.unitId, unitId),
       ),
     )

@@ -881,6 +881,11 @@
                     "minLength": 1,
                     "maxLength": 512
                   },
+                  "questionVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
                   "groupOrdinal": {
                     "type": "integer",
                     "minimum": 1,

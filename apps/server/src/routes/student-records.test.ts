@@ -19,6 +19,7 @@ import {
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { saveDraftAnswer } from "../services/attempt-service";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -287,7 +288,7 @@ async function getRecords(
  * - course2：课程练习第 2 次草稿（未答）；
  * - a3（on_submit）：作业草稿（未答）。
  */
-async function makeRecordsEnv(): Promise<RecordsEnv> {
+async function makeRecordsEnv(legacyA3 = false): Promise<RecordsEnv> {
   const db = createTestDb();
   const app = createApp({
     isProduction: false,
@@ -480,6 +481,17 @@ async function makeRecordsEnv(): Promise<RecordsEnv> {
     startedAt: T.bCourseStart,
     submittedAt: null,
   });
+
+  if (legacyA3)
+    db.delete(attemptContextFreezes)
+      .where(eq(attemptContextFreezes.attemptId, a3AttemptId))
+      .run();
+  for (const [id, at] of [
+    [course2AttemptId, T.course2Start],
+    [a3AttemptId, T.a3Start],
+    [bCourseAttemptId, T.bCourseStart],
+  ] as const)
+    activateTestAttempt(db, id, at);
 
   return {
     app,
@@ -861,7 +873,7 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
   });
 
   it("未冻结且无 response 的历史草稿也有总题数，读取不会冻结或创建答案", async () => {
-    const env = await makeRecordsEnv();
+    const env = await makeRecordsEnv(true);
     env.db
       .delete(attemptContextFreezes)
       .where(eq(attemptContextFreezes.attemptId, env.a3AttemptId))
