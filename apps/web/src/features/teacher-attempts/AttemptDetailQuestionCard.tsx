@@ -323,7 +323,12 @@ export function AttemptDetailQuestionCard({
       aria-label={`第 ${question.no} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <p className="text-sm font-semibold">第 {question.no} 题</p>
+        <p className="text-sm font-semibold">
+          第 {question.no} 题
+          {question.settlementSeq
+            ? ` · 第 ${question.settlementSeq} 批已提交`
+            : ""}
+        </p>
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
         >

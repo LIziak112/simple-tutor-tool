@@ -6,7 +6,7 @@ import type {
 } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
-import { memo, type ReactNode, useState } from "react";
+import { memo, type ReactNode, useContext, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,7 +32,9 @@ import {
   DraftProblemAlert,
 } from "@/features/attempt/SubmitConfirmDialog";
 import { verdictBadgeDisplayOf } from "@/features/attempt/self-review-display";
+import { LearningHostContext } from "@/features/learning-context/learning-context-store";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { QuestionMemoAction } from "@/features/memos/QuestionMemoCapture";
 import type {
   LessonQuestionHandlers,
   LessonSubmitOutcome,
@@ -179,6 +181,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
   onCardElement,
   aiTrigger,
 }: LessonQuestionCardProps) {
+  const learningLease = useContext(LearningHostContext);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [phase, setPhase] = useState<RevealPhase>({ kind: "idle" });
 
@@ -232,6 +235,10 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
       <article
         ref={registerCard}
         data-question-id={question.id}
+        data-learning-attempt={attemptId}
+        data-learning-view={learningLease?.viewId}
+        data-learning-surface="lesson"
+        data-learning-revision={question.questionRevisionId}
         tabIndex={-1}
         aria-label={`第 ${index + 1} 题`}
         className={cn(
@@ -264,7 +271,16 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
           >
             {QUESTION_TYPE_LABELS[released.snapshot.type]}
           </span>
-          <div className="ml-auto">{aiTrigger}</div>
+          <div className="ml-auto">
+            {aiTrigger}
+            <QuestionMemoAction
+              standalone
+              attemptId={attemptId}
+              questionId={question.id}
+              surface="lesson"
+              questionRevisionId={question.questionRevisionId}
+            />
+          </div>
         </div>
         <RichMarkdown
           source={displayStemMd(released.snapshot)}
@@ -316,6 +332,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
       className="flex scroll-mt-24 flex-col gap-3 outline-none"
     >
       <AttemptQuestionCard
+        learningSurface="lesson"
         index={index}
         question={question}
         attemptId={attemptId}

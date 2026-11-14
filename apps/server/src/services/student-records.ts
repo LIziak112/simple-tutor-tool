@@ -31,6 +31,7 @@ import {
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { recordAnswerProgress } from "./record-answer-progress";
 import { attemptResultCounts } from "./result-counts";
+import { settlementCountsOf } from "./settlement-counts.ts";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
 
@@ -224,6 +225,10 @@ export function listStudentRecords(
   // 查询，500 id 一块，与待批数同款模式）；协议判定走 practiceProtocolOf 单一谓词
   const v1Rows = rows.filter((row) => practiceProtocolOf(row) === "v1");
   const progressByAttempt = practiceSubmittedCounts(db, v1Rows);
+  const settlementCounts = settlementCountsOf(
+    db,
+    rows.map((row) => row.id),
+  );
   const assignmentIds = [
     ...new Set(
       rows
@@ -271,6 +276,7 @@ export function listStudentRecords(
         ? (pendingSelfReviewByAttempt.get(attempt.id) ?? 0)
         : null,
       answersReleased: released,
+      settlementCount: settlementCounts.get(attempt.id) ?? 0,
       lastActivityAt: attempt.lastActivityAt,
       startedAt: attempt.startedAt,
       submittedAt: attempt.submittedAt,

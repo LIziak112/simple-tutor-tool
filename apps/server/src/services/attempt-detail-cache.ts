@@ -38,6 +38,7 @@ function draftEtag(db: Db, attempt: Attempt, now: Date): string | null {
       hints: responses.hintsOpenedJson,
       flag: responses.studentFlag,
       submittedAt: responses.submittedAt,
+      settlementSeq: responses.settlementSeq,
     })
     .from(responses)
     .where(eq(responses.attemptId, attempt.id))

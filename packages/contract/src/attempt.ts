@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
 import { attemptScoreSummarySchema } from "./attempt-score-summary.ts";
+import { attemptSettlementProgressSchema } from "./attempt-settlement-progress.ts";
 import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import { attemptSummarySchema } from "./attempt-summary.ts";
 import {
@@ -331,6 +332,7 @@ export const attemptDraftUnitSchema = z.object({
 
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
 export const attemptDraftDataSchema = z.object({
+  settlementProgress: attemptSettlementProgressSchema.optional(),
   attempt: attemptSummarySchema,
   /** 标题（答题页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
   title: z.string().min(1),

@@ -5,13 +5,14 @@ import {
 } from "@tutor/contract";
 import { Loader2, TriangleAlert, UserRoundPlus } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
-import { Brand } from "@/components/brand";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
+import { LoginShell } from "@/features/auth/LoginShell";
 import { useRegisterPersonal } from "@/features/auth/personal-auth";
+import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import { useTeacherStatus } from "@/features/auth/teacher-auth";
-import { AuthScreenError, AuthScreenLoading } from "../teacher/SetupPage";
 
 /**
  * /p/register 个人学习账号自助注册（模块 0，Q7 定案 b：邀请码）。
@@ -23,6 +24,8 @@ import { AuthScreenError, AuthScreenLoading } from "../teacher/SetupPage";
  */
 
 export function PersonalRegisterPage() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
   const registerMutation = useRegisterPersonal();
   const navigate = useNavigate();
@@ -34,22 +37,30 @@ export function PersonalRegisterPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   if (statusQuery.isPending) {
-    return <AuthScreenLoading text="正在检查注册状态…" />;
+    return (
+      <LoginShell portal="personal">
+        <AuthScreenLoading text="正在检查注册状态…" />
+      </LoginShell>
+    );
   }
   if (statusQuery.isError) {
     return (
-      <AuthScreenError
-        message={
-          statusQuery.error instanceof Error
-            ? statusQuery.error.message
-            : "网络异常，请稍后重试"
-        }
-        onRetry={() => void statusQuery.refetch()}
-      />
+      <LoginShell portal="personal">
+        <AuthScreenError
+          message={
+            statusQuery.error instanceof Error
+              ? statusQuery.error.message
+              : "网络异常，请稍后重试"
+          }
+          onRetry={() => void statusQuery.refetch()}
+        />
+      </LoginShell>
     );
   }
   if (!statusQuery.data.hasTeacher) {
-    return <Navigate to="/t/setup" replace />;
+    return (
+      <Navigate to={loginPathWithReturnTo("/t/setup", returnTo)} replace />
+    );
   }
   if (!statusQuery.data.personalRegistrationOpen) {
     return <PersonalRegistrationClosed />;
@@ -83,7 +94,10 @@ export function PersonalRegisterPage() {
           ? { displayName: trimmedDisplayName }
           : {}),
       },
-      { onSuccess: () => navigate("/s/home", { replace: true }) },
+      {
+        onSuccess: () =>
+          navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+      },
     );
   }
 
@@ -95,10 +109,7 @@ export function PersonalRegisterPage() {
   const disabled = registerMutation.isPending;
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-background px-6 py-8 text-foreground">
-      <div className="w-full max-w-sm">
-        <Brand />
-      </div>
+    <LoginShell portal="personal">
       <header className="text-center">
         <h1 className="flex items-center justify-center gap-2 text-2xl font-semibold">
           <UserRoundPlus aria-hidden className="size-6" />
@@ -224,29 +235,31 @@ export function PersonalRegisterPage() {
       <p className="max-w-sm text-center text-xs text-muted-foreground">
         已有账号？
         <Link
-          to="/p/login"
+          to={loginPathWithReturnTo("/p/login", returnTo)}
           className="mx-1 text-primary underline-offset-4 hover:underline"
         >
           直接登录
         </Link>
       </p>
-    </main>
+    </LoginShell>
   );
 }
 
 /** 关闭态：管理员尚未配置邀请码（status.personalRegistrationOpen=false） */
 function PersonalRegistrationClosed() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-background px-6 text-center text-foreground">
+    <LoginShell portal="personal">
       <TriangleAlert aria-hidden className="size-10 text-muted-foreground" />
       <h1 className="text-xl font-semibold">个人学习注册未开放</h1>
       <p className="max-w-sm text-sm text-muted-foreground">
         本站尚未开放个人学习账号注册。管理员在管理端配置邀请码后，这里即可凭邀请码注册。
       </p>
       <Button variant="outline" className="min-h-11 px-6" asChild>
-        <Link to="/p/login">返回登录</Link>
+        <Link to={loginPathWithReturnTo("/p/login", returnTo)}>返回登录</Link>
       </Button>
-    </main>
+    </LoginShell>
   );
 }
 

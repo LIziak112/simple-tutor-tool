@@ -169,6 +169,7 @@ function judgedRoundsByQuestion(
       // 裁决（逐题提交的进行中卷已释放行可入轮次；受限行不可见不装配）
       attempt: attempts,
       rowSubmittedAt: responses.submittedAt,
+      settlementSeq: responses.settlementSeq,
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
@@ -194,7 +195,13 @@ function judgedRoundsByQuestion(
   const roundsByQuestion = new Map<string, JudgedRoundRow[]>();
   const readable = createQuestionReviewReader(db, now);
   for (const row of rows) {
-    if (!readable(row.attempt, { submittedAt: row.rowSubmittedAt })) continue;
+    if (
+      !readable(row.attempt, {
+        submittedAt: row.rowSubmittedAt,
+        settlementSeq: row.settlementSeq,
+      })
+    )
+      continue;
     const list = roundsByQuestion.get(row.questionId) ?? [];
     // 来源标注走有效判定单一出处（教师判 > 自评 > 自动；无有效判定的防御
     // 行省略键——契约 optional，历史载荷缺省不冒充客观判断）

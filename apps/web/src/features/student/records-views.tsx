@@ -139,13 +139,17 @@ export function RecordCard({
             </span>
           )}
           {isDraft &&
-            !row.answerProgress &&
             row.practiceSubmittedCount !== undefined &&
             row.practiceQuestionCount !== undefined && (
               <span className="text-xs tabular-nums text-sky-700 dark:text-sky-300">
                 {`已提交 ${row.practiceSubmittedCount}/${row.practiceQuestionCount} 题`}
               </span>
             )}
+          {(row.settlementCount ?? 0) > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {row.settlementCount} 批
+            </span>
+          )}
           {/* 待批徽章（D4 口径；未公布时服务端置 null，不显示） */}
           {row.answersReleased &&
             row.pendingCount !== null &&

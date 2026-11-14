@@ -125,6 +125,7 @@ export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
    * legacy / lesson 卷缺省 = 前端回落既有呈现。
    */
   practiceSubmittedCount: z.number().int().min(0).optional(),
+  settlementCount: z.number().int().nonnegative().optional(),
   /** 本卷题数（M4-D3，与 practiceSubmittedCount 成对出现；N=冻结行数） */
   practiceQuestionCount: z.number().int().min(0).optional(),
 });

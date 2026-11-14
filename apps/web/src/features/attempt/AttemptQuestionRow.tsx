@@ -14,6 +14,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
+import { QuestionSettlementFold } from "./QuestionSettlementFold";
 import { placeholderHeight } from "./question-placeholder-height";
 
 export { placeholderHeight } from "./question-placeholder-height";
@@ -47,6 +48,7 @@ type RowProps = Omit<
    * 离开可访问树且不可聚焦），不卸载题卡、不动 key——切回列表原 DOM 复用。
    */
   hidden?: boolean | undefined;
+  settlementSeq?: number | undefined;
   /**
    * 行 li 的附加类（QM-08 审查 P1 修复：题组单元 compare 网格里组行落次列、
    * 组外行跨两列）。只改 className 不改树位，绝不用它承载重挂语义。
@@ -107,6 +109,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   footer,
   onOpenMaterial,
   hidden = false,
+  settlementSeq,
   className,
   lazyMount = false,
   forceMount = false,
@@ -213,41 +216,43 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   return (
     <SlotsContext value={{ aiTrigger, footer }}>
       <li ref={register} hidden={hidden} className={className}>
-        {showCard ? (
-          <MemoizedQuestionCard
-            {...props}
-            aiTrigger={aiTrigger == null ? aiTrigger : aiTriggerSlot}
-            footer={footer == null ? footer : footerSlot}
-            {...(onOpenMaterial === undefined
-              ? {}
-              : { onOpenMaterial: openMaterial })}
-            question={question}
-            hints={props.hints ?? emptyHints}
-            onAnswer={handleAnswer}
-            onToggleFlag={toggleFlag}
-            onToggleUnsure={toggleUnsure}
-            onHintUnlocked={unlockHint}
-            onInkStroke={trackInkStroke}
-            onInkEdit={trackInkEdit}
-            onInkFullscreen={trackInkFullscreen}
-          />
-        ) : (
-          // 等高占位：首挂前按题干/选项数估算；窗口化卸载后回填实测高度，
-          // 重挂零位移（估算偏小带来的一次位移仍由浏览器滚动锚定兜底）。
-          <div
-            data-slot="question-placeholder"
-            className="rounded-[8px] border border-dashed border-border/70 bg-card/40"
-            style={{
-              minHeight:
-                mountCtl?.measuredHeight(question.id) ??
-                placeholderHeight(question),
-            }}
-          >
-            <span className="sr-only">
-              第 {props.index + 1} 题，滚动到此处后显示
-            </span>
-          </div>
-        )}
+        <QuestionSettlementFold seq={settlementSeq} forceOpen={forceMount}>
+          {showCard ? (
+            <MemoizedQuestionCard
+              {...props}
+              aiTrigger={aiTrigger == null ? aiTrigger : aiTriggerSlot}
+              footer={footer == null ? footer : footerSlot}
+              {...(onOpenMaterial === undefined
+                ? {}
+                : { onOpenMaterial: openMaterial })}
+              question={question}
+              hints={props.hints ?? emptyHints}
+              onAnswer={handleAnswer}
+              onToggleFlag={toggleFlag}
+              onToggleUnsure={toggleUnsure}
+              onHintUnlocked={unlockHint}
+              onInkStroke={trackInkStroke}
+              onInkEdit={trackInkEdit}
+              onInkFullscreen={trackInkFullscreen}
+            />
+          ) : (
+            // 等高占位：首挂前按题干/选项数估算；窗口化卸载后回填实测高度，
+            // 重挂零位移（估算偏小带来的一次位移仍由浏览器滚动锚定兜底）。
+            <div
+              data-slot="question-placeholder"
+              className="rounded-[8px] border border-dashed border-border/70 bg-card/40"
+              style={{
+                minHeight:
+                  mountCtl?.measuredHeight(question.id) ??
+                  placeholderHeight(question),
+              }}
+            >
+              <span className="sr-only">
+                第 {props.index + 1} 题，滚动到此处后显示
+              </span>
+            </div>
+          )}
+        </QuestionSettlementFold>
         {aiContent}
       </li>
     </SlotsContext>

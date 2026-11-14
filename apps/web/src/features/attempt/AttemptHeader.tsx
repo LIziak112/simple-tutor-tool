@@ -101,7 +101,11 @@ export function AttemptHeader({
         </DropdownMenu>
       </div>
       <AttemptEditorNotice />
-      <MemoQuickCaptureDialog open={memoOpen} onOpenChange={setMemoOpen} />
+      <MemoQuickCaptureDialog
+        source={{ anchor: { kind: "none" } }}
+        open={memoOpen}
+        onOpenChange={setMemoOpen}
+      />
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent
           className="max-h-[70dvh] overflow-y-auto"

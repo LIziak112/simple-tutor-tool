@@ -1,7 +1,9 @@
 import type { TeacherInfo } from "@tutor/contract";
+import { DEVICE_ID_HEADER, DEVICE_INFO_HEADER } from "@tutor/contract";
 import { getCookie, setCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { Db } from "../db/client";
+import { bindKnownDeviceSession } from "../services/device-service";
 import {
   getTeacherSession,
   isSecurePublicUrl,
@@ -56,6 +58,13 @@ export function createRequireTeacher(db: Db, publicUrl: string) {
         TEACHER_SESSION_COOKIE,
         token,
         sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
+      );
+      bindKnownDeviceSession(
+        db,
+        { type: "teacher", id: teacher.id },
+        c.req.header(DEVICE_ID_HEADER),
+        token,
+        c.req.header(DEVICE_INFO_HEADER),
       );
       c.set("teacher", teacher);
       await next();
