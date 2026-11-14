@@ -4,12 +4,16 @@ import type { QueryClient } from "@tanstack/react-query";
 export async function clearAccountQueries(
   queryClient: QueryClient,
   role: "student" | "teacher",
+  isCurrent: () => boolean = () => true,
 ) {
+  if (!isCurrent()) return;
   const belongsToAccount = (key: readonly unknown[]) =>
     key[0] === role || (role === "teacher" && key[0] === "admin");
   await queryClient.cancelQueries({
     predicate: (query) => belongsToAccount(query.queryKey),
   });
+  // 取消等待期间入口可能已切换；旧A不得再删除新B的查询。
+  if (!isCurrent()) return;
   queryClient.removeQueries({
     predicate: (query) =>
       belongsToAccount(query.queryKey) &&

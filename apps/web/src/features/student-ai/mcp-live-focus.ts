@@ -5,32 +5,41 @@ import {
   studentMcpLiveFocusCapabilitySchema,
 } from "@tutor/contract";
 import { useEffect, useRef } from "react";
+import {
+  learningContextStore,
+  useLearningContextSnapshot,
+} from "@/features/learning-context/learning-context-store";
 import { randomUuid } from "@/lib/uuid";
 
+/** 只负责传输与墓碑；当前题每次从唯一来源仓派生。 */
 export function createMcpLiveFocusReporter(
   send: (input: StudentMcpLiveFocusRequest) => void,
   generationOf: () => string,
   viewId = randomUuid(),
+  readQuestion: () => string | null = () => {
+    const anchor = learningContextStore.getSnapshot().source.anchor;
+    return anchor.kind === "question" ? anchor.questionId : null;
+  },
 ) {
   let sequence = 0;
-  let questionId: string | null = null;
   let active = true;
   let published = false;
-  const report = (next: string | null) => {
-    if (next === null && !published) return;
-    published = next !== null;
+  const report = (questionId: string | null) => {
+    if (questionId === null && !published) return;
+    published = questionId !== null;
     send({
       viewId,
       generation: generationOf(),
       sequence: ++sequence,
-      questionId: next,
+      questionId,
     });
   };
-  const refresh = () => {
+  const refresh = () =>
     report(
-      active && document.visibilityState === "visible" ? questionId : null,
+      active && document.visibilityState === "visible" && navigator.onLine
+        ? readQuestion()
+        : null,
     );
-  };
   const hidden = () => {
     active = false;
     refresh();
@@ -43,12 +52,16 @@ export function createMcpLiveFocusReporter(
   window.addEventListener("pagehide", hidden);
   window.addEventListener("pageshow", shown);
   window.addEventListener("online", refresh);
+  window.addEventListener("offline", refresh);
   const timer = setInterval(refresh, MCP_LIVE_FOCUS_HEARTBEAT_MS);
   return {
-    setQuestion(next: string | null) {
-      if (next === questionId) return;
-      questionId = next;
-      refresh();
+    refresh,
+    publish(questionId: string | null) {
+      report(
+        active && document.visibilityState === "visible" && navigator.onLine
+          ? questionId
+          : null,
+      );
     },
     dispose() {
       report(null);
@@ -57,40 +70,35 @@ export function createMcpLiveFocusReporter(
       window.removeEventListener("pagehide", hidden);
       window.removeEventListener("pageshow", shown);
       window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
     },
   };
 }
-
-export function useMcpLiveFocus(
-  attemptId: string,
-  questionId: string | null,
-  draft: boolean,
-): void {
+export function useMcpLiveFocus(): void {
+  const snapshot = useLearningContextSnapshot();
+  const host = snapshot.host;
+  const anchor = snapshot.source.anchor;
+  const attemptId = anchor.kind === "question" ? anchor.attemptId : null;
   const { data } = useQuery({
-    queryKey: ["student", "mcp-live-focus"],
-    enabled: draft,
+    queryKey: ["student", "mcp-live-focus", snapshot.principal],
+    enabled: host?.attemptStatus === "draft",
     refetchInterval: (query) =>
       query.state.data?.generation ? MCP_LIVE_FOCUS_HEARTBEAT_MS : false,
     queryFn: async () => {
-      const response = await fetch("/api/student/ai/mcp-live-focus");
-      if (!response.ok) throw new Error("实时定位状态不可用");
-      const value: unknown = await response.json();
+      const r = await fetch("/api/student/ai/mcp-live-focus");
+      if (!r.ok) throw new Error("实时定位状态不可用");
+      const value: unknown = await r.json();
       return typeof value === "object" && value !== null && "data" in value
         ? studentMcpLiveFocusCapabilitySchema.parse(value.data)
         : { generation: null };
     },
   });
-  const generation = draft ? data?.generation : null;
-  const generationRef = useRef(generation);
-  if (generation) generationRef.current = generation;
-  const enabled = Boolean(generation);
+  const generation = host?.attemptStatus === "draft" ? data?.generation : null;
   const reporter = useRef<ReturnType<typeof createMcpLiveFocusReporter> | null>(
     null,
   );
-  const question = useRef(questionId);
-  question.current = questionId;
   useEffect(() => {
-    if (!enabled) return;
+    if (!host || !attemptId || !generation) return;
     const current = createMcpLiveFocusReporter(
       (input) => {
         void fetch(
@@ -104,14 +112,26 @@ export function useMcpLiveFocus(
           },
         ).catch(() => {});
       },
-      () => generationRef.current ?? "",
+      () => generation,
+      host.viewId,
+      () => {
+        const latest = learningContextStore.getSnapshot();
+        const a = latest.source.anchor;
+        return latest.host === host && latest.visible && a.kind === "question"
+          ? a.questionId
+          : null;
+      },
     );
     reporter.current = current;
-    current.setQuestion(question.current);
+    current.refresh();
     return () => {
-      reporter.current = null;
+      if (reporter.current === current) reporter.current = null;
       current.dispose();
     };
-  }, [attemptId, enabled]);
-  useEffect(() => reporter.current?.setQuestion(questionId), [questionId]);
+  }, [host, attemptId, generation]);
+  const currentId = anchor.kind === "question" ? anchor.questionId : null;
+  useEffect(
+    () => reporter.current?.publish(snapshot.visible ? currentId : null),
+    [currentId, snapshot.visible],
+  );
 }

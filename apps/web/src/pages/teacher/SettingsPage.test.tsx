@@ -19,6 +19,13 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   }),
 }));
 
+vi.mock("@/lib/device-api", () => ({
+  listDevicesApi: vi.fn(async () => ({
+    devices: [],
+    unassignedSessionCount: 0,
+  })),
+}));
+
 vi.mock("@/features/auth/personal-api", () => ({
   logoutPersonalApi: vi.fn(),
 }));
@@ -79,6 +86,19 @@ beforeEach(() => {
 });
 
 describe("设置分类", () => {
+  it.each(["class", "personal"] as const)(
+    "%s账号的设备区沿用门户AI连接能力",
+    async (accountKind) => {
+      vi.mocked(fetchTeacherMe).mockResolvedValue({ ...teacher, accountKind });
+      renderPage("/t/settings?section=account");
+      expect(
+        await screen.findByRole("heading", { name: "我的设备" }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("link", { name: "前往AI连接设置" }) !== null,
+      ).toBe(accountKind === "class");
+    },
+  );
   it("未获主机授权的管理员打开旧备份书签时回落教学设置", async () => {
     renderPage("/t/settings?section=backup");
     expect(

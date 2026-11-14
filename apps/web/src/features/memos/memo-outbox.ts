@@ -1,16 +1,9 @@
-import type {
-  Memo,
-  MemoAnchor,
-  MemoCreateMedia,
-  MemoCreateText,
-  MemoDevice,
-  MemoKind,
-} from "@tutor/contract";
+import type { Memo, MemoAnchor, MemoDevice, MemoKind } from "@tutor/contract";
 import { MEMO_OUTBOX_ACCOUNT_CHANGED } from "@tutor/contract";
 import { useSyncExternalStore } from "react";
 import { ApiError } from "@/lib/api";
 import { idbKVBackend, type KVStoreBackend } from "@/lib/kv-backend";
-import { createTextMemoApi, uploadMemoMediaApi } from "@/lib/memo-api";
+import { uploadMemoOutboxItem } from "./memo-outbox-upload";
 
 /**
  * 随笔待补传队列（模块 5 第一步，计划 §8.2 第 3 条「离线也能记，联网后自动合并
@@ -31,6 +24,12 @@ export interface MemoOutboxItem {
   readonly kind: MemoKind;
   readonly text: string | undefined;
   readonly anchor: MemoAnchor;
+  readonly context?: import("@tutor/contract").LearningContext;
+  readonly reference?: import("@tutor/contract").LearningContextRequest;
+  readonly sourceView?: import("@tutor/contract").LearningContext["view"];
+  readonly sourceDisplay?: { questionNo: number; questionCount: number };
+  readonly sourcePrincipal?: string;
+  readonly deviceId?: string;
   readonly tags: readonly string[];
   readonly device: MemoDevice;
   readonly recordedAt: string;
@@ -134,6 +133,8 @@ export async function bindMemoOutboxAccount(
  */
 export async function enqueueMemo(input: MemoOutboxInput): Promise<string> {
   const account = requireAccount();
+  if (input.sourcePrincipal !== undefined && input.sourcePrincipal !== account)
+    throw new Error("账号已变化，请用记录来源的账号保存");
   const item: MemoOutboxItem = {
     ...input,
     clientId: input.clientId ?? crypto.randomUUID(),
@@ -172,7 +173,11 @@ async function uploadWithoutLocalCopy(
 ): Promise<string> {
   let memo: Memo;
   try {
-    memo = await upload(item, account);
+    memo = await uploadMemoOutboxItem(
+      item,
+      account,
+      () => accountId === account,
+    );
   } catch (err) {
     throw new Error(
       err instanceof ApiError
@@ -236,32 +241,6 @@ function isBusinessRejection(err: unknown): err is ApiError {
   );
 }
 
-async function upload(item: MemoOutboxItem, account: string): Promise<Memo> {
-  const common = {
-    clientId: item.clientId,
-    anchor: item.anchor,
-    tags: [...item.tags],
-    device: item.device,
-    recordedAt: item.recordedAt,
-  };
-  if (item.kind === "text") {
-    const body: MemoCreateText = { ...common, text: item.text ?? "" };
-    return createTextMemoApi(body, account);
-  }
-  if (item.blob === undefined) {
-    throw new ApiError("MEMO_MEDIA_MISSING", "这条随笔的媒体内容丢失", 400);
-  }
-  const fields: MemoCreateMedia = {
-    ...common,
-    kind: item.kind,
-    ...(item.text !== undefined && item.text !== "" ? { text: item.text } : {}),
-    ...(item.durationSec !== undefined
-      ? { durationSec: item.durationSec }
-      : {}),
-  };
-  return uploadMemoMediaApi(item.blob, fields, account);
-}
-
 function scheduleMemoRetry(account: string, error: unknown): void {
   if (
     accountId !== account ||
@@ -301,7 +280,11 @@ export function flushMemoOutbox(): Promise<void> {
       if (item === undefined) return;
       attempted.add(item.clientId);
       try {
-        const memo = await upload(item, account);
+        const memo = await uploadMemoOutboxItem(
+          item,
+          account,
+          () => accountId === account,
+        );
         // 等待期间换了账号：当前队列 / 页面已属于别人，只清掉旧账号的本机键
         if (accountId === account) {
           setItems(items.filter((it) => it.clientId !== item.clientId));

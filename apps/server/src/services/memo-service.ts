@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
+  LearningContext,
   Memo,
   MemoAgentCreate,
   MemoAnchor,
@@ -17,12 +18,15 @@ import {
   MEMO_VOICE_MAX_BYTES,
   normalizeMemoTags,
 } from "@tutor/contract";
-import { and, eq } from "drizzle-orm";
+import { and, eq, max } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { memos } from "../db/schema";
 import { writeFileAtomic } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
+import { requireDevice } from "./device-service";
 import { resolveAgentMemoAnchor } from "./memo-anchor";
+import { assertMemoMetadataBudget } from "./memo-budget";
+import { memoAnchorFromContext, resolveMemoContext } from "./memo-context";
 import { detectMemoMediaFormat } from "./memo-format";
 import { MEMO_BLOB_DIR, type MemoRow, toMemo } from "./memo-read";
 
@@ -73,6 +77,8 @@ interface InsertInput {
   readonly source: MemoSource;
   readonly device: MemoDevice;
   readonly recordedAt: string | undefined;
+  readonly context?: LearningContext;
+  readonly deviceId?: string;
 }
 
 /** 创建结果：created=false 表示命中幂等键、返回的是已有那条 */
@@ -81,11 +87,67 @@ export interface MemoCreateResult {
   readonly created: boolean;
 }
 
-function insertMemo(db: Db, input: InsertInput, now: Date): MemoCreateResult {
+function insertMemo(
+  db: Db,
+  input: InsertInput,
+  now: Date,
+  beforeInsert?: () => void,
+): MemoCreateResult {
+  return db.transaction(() => insertMemoRow(db, input, now, beforeInsert), {
+    behavior: "immediate",
+  });
+}
+
+function insertMemoRow(
+  db: Db,
+  input: InsertInput,
+  now: Date,
+  beforeInsert?: () => void,
+): MemoCreateResult {
+  assertMemoMetadataBudget(input);
   const existing = existingByClientId(db, input.studentId, input.clientId);
   if (existing !== undefined) {
     return { memo: toMemo(existing), created: false };
   }
+  const context = resolveMemoContext(
+    db,
+    input.studentId,
+    input.context,
+    input.anchor,
+    now,
+  );
+  if (
+    input.deviceId !== undefined &&
+    context?.deviceId != null &&
+    input.deviceId !== context.deviceId
+  ) {
+    throw new HttpError(400, "VALIDATION_ERROR", "设备标识与上下文不一致");
+  }
+  const rawDeviceId = input.deviceId ?? context?.deviceId;
+  const anchor =
+    input.anchor.kind === "none"
+      ? memoAnchorFromContext(context)
+      : input.anchor;
+  const deviceId =
+    rawDeviceId == null
+      ? null
+      : requireDevice(db, { type: "student", id: input.studentId }, rawDeviceId)
+          .deviceId;
+  const tags = normalizeMemoTags(input.tags);
+  assertMemoMetadataBudget({
+    anchor,
+    context: context === null ? null : { ...context, deviceId },
+    tags,
+    device: input.device,
+    deviceId,
+    recordedAt: input.recordedAt,
+  });
+  const seq =
+    (db
+      .select({ seq: max(memos.seq) })
+      .from(memos)
+      .where(eq(memos.studentId, input.studentId))
+      .get()?.seq ?? 0) + 1;
   const nowIso = now.toISOString();
   const recordedAt =
     input.recordedAt === undefined
@@ -93,6 +155,10 @@ function insertMemo(db: Db, input: InsertInput, now: Date): MemoCreateResult {
       : new Date(input.recordedAt).toISOString();
   const row: MemoRow = {
     id: crypto.randomUUID(),
+    seq,
+    contextJson:
+      context === null ? null : JSON.stringify({ ...context, deviceId }),
+    deviceId,
     studentId: input.studentId,
     clientId: input.clientId,
     kind: input.kind,
@@ -101,12 +167,10 @@ function insertMemo(db: Db, input: InsertInput, now: Date): MemoCreateResult {
     mediaBytes: input.media?.bytes ?? null,
     mediaSha256: input.media?.sha256 ?? null,
     durationSec: input.media?.durationSec ?? null,
-    anchorJson: JSON.stringify(input.anchor),
-    anchorAttemptId:
-      input.anchor.kind === "question" ? input.anchor.attemptId : null,
-    anchorLectureId:
-      input.anchor.kind === "lecture" ? input.anchor.lectureId : null,
-    tagsJson: JSON.stringify(normalizeMemoTags(input.tags)),
+    anchorJson: JSON.stringify(anchor),
+    anchorAttemptId: anchor.kind === "question" ? anchor.attemptId : null,
+    anchorLectureId: anchor.kind === "lecture" ? anchor.lectureId : null,
+    tagsJson: JSON.stringify(tags),
     source: input.source,
     device: input.device,
     createdAt: nowIso,
@@ -114,6 +178,7 @@ function insertMemo(db: Db, input: InsertInput, now: Date): MemoCreateResult {
     recordedAt: recordedAt > nowIso ? nowIso : recordedAt,
     deletedAt: null,
   };
+  beforeInsert?.();
   try {
     db.insert(memos).values(row).run();
   } catch (err) {
@@ -150,6 +215,8 @@ export function createTextMemo(
       source: "self",
       device: input.device ?? "other",
       recordedAt: input.recordedAt,
+      ...(input.context === undefined ? {} : { context: input.context }),
+      ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
     },
     now,
   );
@@ -167,6 +234,7 @@ export function createMediaMemo(
   input: CreateMediaMemoInput,
   now: Date = new Date(),
 ): MemoCreateResult {
+  assertMemoMetadataBudget(input);
   const existing = existingByClientId(db, input.studentId, input.clientId);
   if (existing !== undefined) {
     return { memo: toMemo(existing), created: false };
@@ -201,10 +269,6 @@ export function createMediaMemo(
       ),
     )
     .digest("hex");
-  const filePath = join(memoDir(dataDir), `${sha256}.${format}`);
-  if (!existsSync(filePath)) {
-    writeFileAtomic({ finalPath: filePath, bytes: input.bytes });
-  }
   return insertMemo(
     db,
     {
@@ -224,8 +288,15 @@ export function createMediaMemo(
       source: "self",
       device: input.device ?? "other",
       recordedAt: input.recordedAt,
+      ...(input.context === undefined ? {} : { context: input.context }),
+      ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
     },
     now,
+    () => {
+      const filePath = join(memoDir(dataDir), `${sha256}.${format}`);
+      if (!existsSync(filePath))
+        writeFileAtomic({ finalPath: filePath, bytes: input.bytes });
+    },
   );
 }
 
@@ -238,6 +309,7 @@ export function createAgentMemo(
   input: MemoAgentCreate,
   now: Date = new Date(),
 ): Memo {
+  assertMemoMetadataBudget(input);
   const anchor =
     input.anchor === undefined
       ? MEMO_ANCHOR_NONE

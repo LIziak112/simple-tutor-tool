@@ -6,6 +6,12 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { learningContextStore } from "@/features/learning-context/learning-context-store";
+import { LearningPrincipalContext } from "@/features/learning-context/learning-principal";
+import {
+  publishLearningFocus,
+  resetLearningFocusForTest,
+} from "./learning-focus-store";
 import { MemoComposer } from "./MemoComposer";
 import { enqueueMemo } from "./memo-outbox";
 
@@ -28,6 +34,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  resetLearningFocusForTest();
 });
 
 async function pickImage(): Promise<void> {
@@ -151,4 +158,51 @@ describe("MemoComposer：媒体随笔入队失败后可重新保存", () => {
     expect(screen.getByLabelText("随笔内容")).toHaveValue("一条文字");
     expect(screen.queryByRole("button", { name: "重新保存" })).toBeNull();
   });
+});
+
+it("打开记录端后阅读另一题不改变正在记录的来源", async () => {
+  const q2 = {
+    kind: "question" as const,
+    attemptId: "attempt",
+    questionId: "q2",
+    label: "第 2 题",
+  };
+  publishLearningFocus(q2);
+  mockedEnqueue.mockResolvedValue("saved");
+  render(<MemoComposer />);
+  fireEvent.change(screen.getByLabelText("随笔内容"), {
+    target: { value: "第二题的想法" },
+  });
+  act(() =>
+    publishLearningFocus({ ...q2, questionId: "q1", label: "第 1 题" }),
+  );
+  await click("保存");
+  expect(mockedEnqueue.mock.calls[0]?.[0].anchor).toEqual(q2);
+});
+
+it("仍挂载的旧主体composer不能捕获新主体的焦点来源", async () => {
+  learningContextStore.bindPrincipal("bob");
+  publishLearningFocus({
+    kind: "question",
+    attemptId: crypto.randomUUID(),
+    questionId: "bob-q",
+    label: "Bob题",
+  });
+  mockedEnqueue.mockResolvedValueOnce("queued");
+  render(
+    <LearningPrincipalContext value="alice">
+      <MemoComposer />
+    </LearningPrincipalContext>,
+  );
+  fireEvent.change(screen.getByLabelText("随笔内容"), {
+    target: { value: "Alice原界面输入" },
+  });
+  await click("保存");
+  expect(mockedEnqueue).toHaveBeenCalledWith(
+    expect.objectContaining({
+      anchor: { kind: "none" },
+      sourcePrincipal: "alice",
+    }),
+  );
+  expect(JSON.stringify(mockedEnqueue.mock.calls)).not.toContain("bob-q");
 });

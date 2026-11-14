@@ -116,7 +116,7 @@ export function ResultAiActions({
           批量复盘
         </Button>
         <AiQueueTrigger onClick={() => setOpen("queue")} />
-        <MemoQuickCaptureButton />
+        <MemoQuickCaptureButton unanchored />
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -191,7 +191,11 @@ export function ResultAiActions({
         open={open === "queue"}
         onOpenChange={close}
       />
-      <MemoQuickCaptureDialog open={open === "memo"} onOpenChange={close} />
+      <MemoQuickCaptureDialog
+        source={{ anchor: { kind: "none" } }}
+        open={open === "memo"}
+        onOpenChange={close}
+      />
     </>
   );
 }

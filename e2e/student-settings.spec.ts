@@ -69,9 +69,16 @@ test(
 
 test("学生设置与手感页未登录时回登录页", { tag: ["@student"] }, async ({
   page,
+  baseURL,
 }) => {
   for (const route of ["/s/settings", "/s/settings/ink-feel"]) {
+    const loginUrl = new URL("/s/login", baseURL);
+    loginUrl.searchParams.set("returnTo", route);
     await page.goto(route);
-    await expect(page).toHaveURL(/\/s\/login$/);
+    // 完整地址同时校验同源、精确路径和无额外参数，再核对唯一回跳值。
+    await expect(page).toHaveURL(loginUrl.href);
+    expect([...new URL(page.url()).searchParams.entries()]).toEqual([
+      ["returnTo", route],
+    ]);
   }
 });
