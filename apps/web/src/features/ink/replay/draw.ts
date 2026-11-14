@@ -4,13 +4,19 @@
  * 只负责「把 frameAt 的结果画上 canvas」：清屏 → 按可见点数截断每笔 → 复用
  * 引擎层导出的 replayAtramentStroke（与实时书写/全量重绘同一绘制原语）。
  * 按绘制顺序到达的普通笔段可直接追加；回退或替换旧笔时按矢量重建。
+ * 在途的荧光笔（整笔一条路径）不能逐段追加，放在临时层上，收笔后整笔落到
+ * 画布（engine/live-layer.ts）。
  */
 import {
   beginAtramentStroke,
   createProgrammaticAtrament,
   replayAtramentStroke,
-} from "../engine/atrament-adapter.ts";
+} from "../engine/atrament-replay.ts";
+import { isOnePathStroke } from "../engine/highlighter-paint.ts";
 import type { InkStroke } from "../engine/index.ts";
+import { createInkLiveLayer, type InkLiveLayer } from "../engine/live-layer.ts";
+import { toLogical } from "../engine/normalize.ts";
+import { INK_LOGICAL_WIDTH } from "../engine/types.ts";
 
 /** devicePixelRatio 上限 2（与 atrament-adapter 同口径，控制内存） */
 const MAX_DPR = 2;
@@ -74,10 +80,13 @@ export function createAtramentReplayCanvas(
   container.appendChild(canvas);
 
   let cssWidth = 0;
+  let cssHeight = 0;
   let clientWidth = -1;
   let clientHeight = -1;
   let orderedFrame: OrderedFrame | null = null;
   let activePen: ReturnType<typeof beginAtramentStroke> = null;
+  /** 在途荧光笔的临时层：第一次用到才创建，纯回放页不多出这个元素 */
+  let liveLayer: InkLiveLayer | null = null;
   /** 最近一次 drawFrame 的入参（resize 后原样重画） */
   let lastFrame: {
     strokes: readonly InkStroke[];
@@ -110,9 +119,16 @@ export function createAtramentReplayCanvas(
     clientWidth = width;
     clientHeight = height;
     cssWidth = width || 300;
+    cssHeight = height || 200;
     canvas.width = pixelsWide;
     canvas.height = pixelsHigh;
+    sizeLiveLayer();
     return true;
+  }
+
+  /** 临时层的坐标域与笔画同为逻辑宽 1000 */
+  function sizeLiveLayer(): void {
+    liveLayer?.setViewBox(INK_LOGICAL_WIDTH, toLogical(cssWidth, cssHeight));
   }
 
   sizeCanvas();
@@ -122,7 +138,7 @@ export function createAtramentReplayCanvas(
     throw new Error("无法创建 canvas 2d 上下文（当前环境不支持回放）");
   }
   // 程序化重放实例（构造即配置画笔状态并解绑输入监听，见
-  // engine/atrament-adapter.createProgrammaticAtrament 的唯一注释段）
+  // engine/atrament-replay.createProgrammaticAtrament 的唯一注释段）
   const atrament = createProgrammaticAtrament(canvas);
   // 收窄后的 context 引用（const + 早退后声明箭头函数，类型收窄才能进闭包）
   const ctx2d = ctx;
@@ -142,6 +158,7 @@ export function createAtramentReplayCanvas(
   function resetOrdered(): void {
     activePen?.end();
     activePen = null;
+    liveLayer?.clear();
     orderedFrame = null;
   }
 
@@ -171,19 +188,29 @@ export function createAtramentReplayCanvas(
       resetOrdered();
       clear();
       painted = 0;
-    } else if (promoted) {
+    } else if (promoted && !isOnePathStroke(previousActive)) {
       activePen?.appendThrough(previousActive.points.length);
       activePen?.end();
       activePen = null;
       painted++;
     }
+    // 刚收笔的荧光笔书写中不在画布上：和其余已完成笔画一样在这里整笔画出
     for (; painted < completed; painted++) {
       const stroke = strokes[painted];
       if (stroke) replayAtramentStroke(atrament, cssWidth, stroke);
     }
-    if (active !== null) {
-      activePen ??= beginAtramentStroke(atrament, cssWidth, active);
-      activePen?.appendThrough(points);
+    if (active !== null && isOnePathStroke(active)) {
+      if (liveLayer === null) {
+        liveLayer = createInkLiveLayer(container);
+        sizeLiveLayer();
+      }
+      liveLayer.showStroke(active, points);
+    } else {
+      liveLayer?.clear();
+      if (active !== null) {
+        activePen ??= beginAtramentStroke(atrament, cssWidth, active);
+        activePen?.appendThrough(points);
+      }
     }
     lastFrame = null;
     lastDeleted = null;
@@ -270,6 +297,8 @@ export function createAtramentReplayCanvas(
     destroy(): void {
       observer.disconnect();
       resetOrdered();
+      liveLayer?.destroy();
+      liveLayer = null;
       atrament.destroy();
       canvas.remove();
     },

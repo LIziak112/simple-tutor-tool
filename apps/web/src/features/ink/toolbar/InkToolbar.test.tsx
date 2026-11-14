@@ -56,14 +56,14 @@ function Harness({ init, onChange, ...props }: HarnessProps) {
 const button = (name: string) => screen.getByRole("button", { name });
 
 describe("InkToolbar 工具切换与选项面板", () => {
-  it("缺省提供笔、橡皮、撤销、重做、更多，当前工具按下", () => {
+  it("缺省提供笔、荧光笔、橡皮、撤销、重做、更多，当前工具按下", () => {
     render(<Harness />);
     const toolbar = screen.getByRole("toolbar", { name: "测试纸工具栏" });
     expect(
       within(toolbar)
         .getAllByRole("button")
         .map((el) => el.getAttribute("aria-label")),
-    ).toEqual(["笔", "橡皮", "撤销", "重做", "更多操作（测试纸）"]);
+    ).toEqual(["笔", "荧光笔", "橡皮", "撤销", "重做", "更多操作（测试纸）"]);
     expect(button("笔")).toHaveAttribute("aria-pressed", "true");
     expect(button("橡皮")).toHaveAttribute("aria-pressed", "false");
   });
@@ -132,6 +132,60 @@ describe("InkToolbar 工具切换与选项面板", () => {
     expect(onChange).toHaveBeenLastCalledWith(
       createInkToolbox({ active: "eraser", eraser: { size: "large" } }),
     );
+  });
+
+  it("荧光笔的面板调颜色、粗细：只改荧光笔的设置，笔的设置不动", () => {
+    const onChange = vi.fn();
+    render(
+      <Harness
+        tools={["pen", "highlighter", "eraser"]}
+        init={{ pen: { color: "red" } }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(button("荧光笔"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(button("荧光笔")).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(button("荧光笔"));
+    const panel = screen.getByRole("dialog", { name: "荧光笔设置" });
+    const colors = within(panel).getByRole("radiogroup", { name: "颜色" });
+    expect(
+      within(colors)
+        .getAllByRole("radio")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["黄", "绿", "蓝", "粉", "橙"]);
+    const sizes = within(panel).getByRole("radiogroup", { name: "粗细" });
+    expect(
+      within(sizes)
+        .getAllByRole("radio")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["细", "中", "粗"]);
+    expect(within(colors).getByRole("radio", { name: "黄" })).toBeChecked();
+    expect(within(sizes).getByRole("radio", { name: "中" })).toBeChecked();
+
+    fireEvent.click(within(colors).getByRole("radio", { name: "粉" }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({
+        active: "highlighter",
+        pen: { color: "red" },
+        highlighter: { color: "pink" },
+      }),
+    );
+    fireEvent.click(within(sizes).getByRole("radio", { name: "粗" }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({
+        active: "highlighter",
+        pen: { color: "red" },
+        highlighter: { color: "pink", size: "thick" },
+      }),
+    );
+    // 面板不收起；工具按钮的色点跟着荧光笔的颜色走（不透明展示色）
+    expect(
+      screen.getByRole("dialog", { name: "荧光笔设置" }),
+    ).toBeInTheDocument();
+    expect(
+      button("荧光笔").querySelector('[data-slot="ink-tool-color"]'),
+    ).toHaveStyle({ backgroundColor: INK_HIGHLIGHTER_SWATCH.pink });
   });
 
   it("Escape 收起面板并把焦点还给工具按钮", async () => {
@@ -330,6 +384,7 @@ describe("InkToolbar 宿主可配置项", () => {
         .map((el) => el.getAttribute("aria-label") ?? el.textContent),
     ).toEqual([
       "笔",
+      "荧光笔",
       "橡皮",
       "撤销",
       "重做",
@@ -340,10 +395,12 @@ describe("InkToolbar 宿主可配置项", () => {
   });
 });
 
-describe("InkToolbar 窄屏：重做收进更多菜单", () => {
+describe("InkToolbar 窄屏：重做收进更多菜单，工具区横向滑动", () => {
   /** 可手动触发的 ResizeObserver，配合下面的尺寸桩模拟真实布局 */
   function stubLayout() {
     const callbacks: ResizeObserverCallback[] = [];
+    /** 个别元素的位置（缺省按下面的宽度规则给） */
+    const rects = new Map<Element, DOMRect>();
     class FakeResizeObserver implements ResizeObserver {
       constructor(callback: ResizeObserverCallback) {
         callbacks.push(callback);
@@ -371,6 +428,8 @@ describe("InkToolbar 窄屏：重做收进更多菜单", () => {
     );
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
+        const placed = rects.get(this);
+        if (placed) return placed;
         const width =
           this.parentElement && isRoot(this.parentElement) ? layout.pill : 0;
         return new DOMRect(0, 0, width, 44);
@@ -380,8 +439,13 @@ describe("InkToolbar 窄屏：重做收进更多菜单", () => {
       act(() => {
         for (const callback of callbacks) callback([], {} as ResizeObserver);
       });
-    return { layout, resize };
+    return { layout, resize, rects };
   }
+  const strip = () => {
+    const el = document.querySelector('[data-slot="ink-toolbar-tools"]');
+    if (!(el instanceof HTMLElement)) throw new Error("工具区未渲染");
+    return el;
+  };
 
   it("工具区被挤（内容比可视宽）时，重做从工具栏移进更多菜单，功能不变", () => {
     const { layout, resize } = stubLayout();
@@ -418,6 +482,57 @@ describe("InkToolbar 窄屏：重做收进更多菜单", () => {
       "aria-disabled",
       "true",
     );
+  });
+
+  it("工具区放不下时：还有工具没露出来的那一侧标成渐隐，滑动后跟着变", () => {
+    const { layout, resize } = stubLayout();
+    Object.assign(layout, { stripScroll: 140, stripClient: 100 });
+    render(<Harness />);
+    // 停在最左：右边还有 40px 没露出来
+    expect(strip()).toHaveAttribute("data-fade", "end");
+    strip().scrollLeft = 20;
+    fireEvent.scroll(strip());
+    expect(strip()).toHaveAttribute("data-fade", "both");
+    strip().scrollLeft = 40;
+    fireEvent.scroll(strip());
+    expect(strip()).toHaveAttribute("data-fade", "start");
+    // 只剩内边距（4px）没露出来不算：那里没有工具
+    strip().scrollLeft = 36;
+    fireEvent.scroll(strip());
+    expect(strip()).toHaveAttribute("data-fade", "start");
+    strip().scrollLeft = 4;
+    fireEvent.scroll(strip());
+    expect(strip()).toHaveAttribute("data-fade", "end");
+    // 变宽到全部放下：不再渐隐
+    strip().scrollLeft = 0;
+    Object.assign(layout, { stripClient: 140 });
+    resize();
+    expect(strip()).not.toHaveAttribute("data-fade");
+  });
+
+  it("放得下时不标渐隐", () => {
+    const { layout } = stubLayout();
+    Object.assign(layout, { stripScroll: 140, stripClient: 140 });
+    render(<Harness />);
+    expect(strip()).not.toHaveAttribute("data-fade");
+  });
+
+  it("选中的工具被挤在可视区外：滑进可视区，两侧各留 4px", () => {
+    const { rects } = stubLayout();
+    render(<Harness />);
+    rects.set(strip(), new DOMRect(0, 0, 100, 44));
+    // 橡皮的右边超出可视区 64px
+    rects.set(button("橡皮"), new DOMRect(120, 0, 44, 44));
+    fireEvent.click(button("橡皮"));
+    expect(strip().scrollLeft).toBe(68);
+    // 笔在可视区左边之外 30px
+    rects.set(button("笔"), new DOMRect(-30, 0, 44, 44));
+    fireEvent.click(button("笔"));
+    expect(strip().scrollLeft).toBe(34);
+    // 已经在可视区里的工具：不动
+    rects.set(button("荧光笔"), new DOMRect(20, 0, 44, 44));
+    fireEvent.click(button("荧光笔"));
+    expect(strip().scrollLeft).toBe(34);
   });
 });
 

@@ -1,10 +1,15 @@
 import type { NoteBackground } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAtramentSurface } from "./atrament-adapter.ts";
+import { createProgrammaticAtrament } from "./atrament-replay.ts";
+import { onePathSvg } from "./highlighter-paint.ts";
+import { INK_LIVE_LAYER_SELECTOR } from "./live-layer.ts";
 import {
-  createAtramentSurface,
-  createProgrammaticAtrament,
-} from "./atrament-adapter.ts";
-import type { InkDoc, InkInputMode } from "./types.ts";
+  INK_HIGHLIGHTER_COLORS,
+  INK_HIGHLIGHTER_SIZES,
+  type InkDoc,
+  type InkInputMode,
+} from "./types.ts";
 
 /**
  * atrament 适配器输入生命周期接线测试（T6R.7）。
@@ -20,6 +25,8 @@ import type { InkDoc, InkInputMode } from "./types.ts";
 // ---------- 录制式 2d 上下文桩（atrament 5.1 依赖面：属性 + 路径 no-op） ----------
 
 class StubContext {
+  /** 累计描边次数（荧光笔「整笔一次描边」的观察点；beforeEach 清零） */
+  static strokeCalls = 0;
   fillStyle = "";
   strokeStyle = "";
   lineWidth = 1;
@@ -29,9 +36,14 @@ class StubContext {
   globalCompositeOperation = "source-over";
   beginPath(): void {}
   moveTo(): void {}
+  lineTo(): void {}
   quadraticCurveTo(): void {}
+  arc(): void {}
   closePath(): void {}
-  stroke(): void {}
+  stroke(): void {
+    StubContext.strokeCalls += 1;
+  }
+  fill(): void {}
   fillRect(): void {}
   clearRect(): void {}
   save(): void {}
@@ -61,6 +73,7 @@ it("统一绘制入口默认使用 0.35，实时书写与导出回放共用低�
 
 beforeEach(() => {
   ResizeObserverStub.instances.length = 0;
+  StubContext.strokeCalls = 0;
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   getContextSpy = vi
     .spyOn(HTMLCanvasElement.prototype, "getContext")
@@ -1170,5 +1183,143 @@ describe("atrament-adapter：屏幕端纸张背景（可选配置，缺省零变
     expect(
       h.canvas.style.backgroundImage.split("repeating-linear-gradient"),
     ).toHaveLength(3); // 竖线 + 横线两条渐变
+  });
+});
+
+describe("atrament-adapter：荧光笔整笔一条路径", () => {
+  /** 书写中那一笔所在的临时层路径 */
+  function livePath(h: Harness): Element {
+    const path = h.container.querySelector(`${INK_LIVE_LAYER_SELECTOR} path`);
+    if (path === null) throw new Error("临时层未挂载");
+    return path;
+  }
+  const logical = (x: number, y: number) => ({
+    x: toLogical(x),
+    y: toLogical(y),
+  });
+  const PINK_THIN = {
+    tool: "highlighter",
+    color: INK_HIGHLIGHTER_COLORS.pink,
+    weight: INK_HIGHLIGHTER_SIZES.thin,
+  } as const;
+
+  it("临时层盖在画布上、悬停圈之下；坐标域是逻辑宽 1000，随尺寸变化更新", () => {
+    const h = mountSurface();
+    const layer = h.container.querySelector(INK_LIVE_LAYER_SELECTOR);
+    expect(layer?.previousElementSibling).toBe(h.canvas);
+    expect(layer?.nextElementSibling?.getAttribute("data-slot")).toBe(
+      "ink-hover",
+    );
+    // 300×200 的容器：逻辑高 200 / 300 × 1000
+    expect(layer?.getAttribute("viewBox")).toBe("0 0 1000 666.67");
+    h.resizeTo(600, 300);
+    expect(layer?.getAttribute("viewBox")).toBe("0 0 1000 500");
+  });
+
+  it("书写中只更新临时层的一条路径，不往画布上逐段描边", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter", color: "pink", size: "thin" });
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    pointer(h.canvas, "pointermove", { clientX: 90, clientY: 30 });
+    pointer(h.canvas, "pointermove", { clientX: 30, clientY: 33 });
+    const path = livePath(h);
+    expect(path.getAttribute("d")).toBe(
+      onePathSvg([logical(30, 30), logical(90, 30), logical(30, 33)]),
+    );
+    expect(path.getAttribute("stroke")).toBe(PINK_THIN.color);
+    expect(path.getAttribute("stroke-width")).toBe(String(PINK_THIN.weight));
+    expect(StubContext.strokeCalls).toBe(0);
+    expect(strokesOf(h)).toHaveLength(0);
+  });
+
+  it("抬笔：整笔一次落到画布，临时层清空，文档里是一笔荧光笔", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter", color: "pink", size: "thin" });
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 90, y: 30 },
+      { x: 30, y: 33 },
+      { x: 90, y: 36 },
+    ]);
+    expect(StubContext.strokeCalls).toBe(1);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+    const strokes = strokesOf(h);
+    expect(strokes).toHaveLength(1);
+    expect(strokes[0]).toMatchObject(PINK_THIN);
+    expect(strokes[0]?.points.map(({ x, y }) => ({ x, y }))).toEqual([
+      logical(30, 30),
+      logical(90, 30),
+      logical(30, 33),
+      logical(90, 36),
+    ]);
+    expect(h.events.at(-1)).toEqual({ reason: "stroke", strokes: 1 });
+  });
+
+  it("撤销、重做后的全量重绘：荧光笔仍是每笔一次描边", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    for (const y of [30, 60]) {
+      writeStroke(h, [
+        { x: 30, y },
+        { x: 90, y },
+        { x: 150, y: y + 6 },
+      ]);
+    }
+    StubContext.strokeCalls = 0;
+    h.surface.undo();
+    expect(StubContext.strokeCalls).toBe(1);
+    StubContext.strokeCalls = 0;
+    h.surface.redo();
+    expect(StubContext.strokeCalls).toBe(2);
+  });
+
+  it("笔照旧逐段画在画布上，不经过临时层", () => {
+    const h = mountSurface();
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    pointer(h.canvas, "pointermove", { clientX: 90, clientY: 30 });
+    expect(StubContext.strokeCalls).toBe(2);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+  });
+
+  it("手掌先落、笔后落：手掌那一笔从临时层撤掉，不进文档", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    pointer(h.canvas, "pointerdown", pd("touch", 1, 30, 30));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "touch",
+      pointerId: 1,
+      clientX: 90,
+      clientY: 30,
+    });
+    pointer(h.canvas, "pointerdown", pd("pen", 2, 150, 120));
+    // 临时层上只剩笔刚落下的这一点
+    expect(livePath(h).getAttribute("d")).toBe(onePathSvg([logical(150, 120)]));
+    expect(strokesOf(h)).toHaveLength(0);
+    pointer(h.canvas, "pointerup", pd("pen", 2, 150, 120));
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+  });
+
+  it("尺寸变化：在途荧光笔按已收采样收笔，临时层清空", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    pointer(h.canvas, "pointermove", { clientX: 90, clientY: 30 });
+    h.resizeTo(600);
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(strokesOf(h)[0]?.points).toHaveLength(2);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+  });
+
+  it("落笔后中途换成笔：这一笔仍按落笔时的荧光笔画完", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    h.surface.setTool({ type: "pen" });
+    pointer(h.canvas, "pointermove", { clientX: 90, clientY: 30 });
+    expect(StubContext.strokeCalls).toBe(0);
+    pointer(h.canvas, "pointerup", { clientX: 90, clientY: 30 });
+    expect(strokesOf(h)[0]?.tool).toBe("highlighter");
+    expect(StubContext.strokeCalls).toBe(1);
   });
 });

@@ -38,7 +38,7 @@ import {
 import {
   createProgrammaticAtrament,
   replayAtramentStroke,
-} from "@/features/ink/engine/atrament-adapter.ts";
+} from "@/features/ink/engine/atrament-replay.ts";
 import {
   paddedStrokeBoxesOf,
   type StrokeBounds,
@@ -391,7 +391,7 @@ async function renderNotePageWithBoxes(
     if (!ctx) {
       throw new Error("渲染失败：无法创建 canvas 2d 上下文（当前环境不支持）");
     }
-    // 程序化重放实例（唯一注释段见 engine/atrament-adapter
+    // 程序化重放实例（唯一注释段见 engine/atrament-replay
     // .createProgrammaticAtrament）
     const atrament = createProgrammaticAtrament(canvas);
 

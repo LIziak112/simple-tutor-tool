@@ -1,6 +1,6 @@
 import type { AnnotationBaseRef, AnnotationDoc } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay";
 import { replayAnnotationStroke } from "./annotation-surface";
 
 /**

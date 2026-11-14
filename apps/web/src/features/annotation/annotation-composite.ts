@@ -13,7 +13,7 @@
 import type { AnnotationBaseRef, AnnotationDoc } from "@tutor/contract";
 import { ANNOTATION_MAX_PIXEL_DIM } from "@tutor/contract";
 import type Atrament from "atrament";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay.ts";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
 import { replayAnnotationStroke } from "./annotation-surface";
 

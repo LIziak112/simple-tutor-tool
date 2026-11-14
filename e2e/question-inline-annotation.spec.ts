@@ -460,7 +460,7 @@ test(
     // 320px 放不下六个按钮：重做收进「更多」，「完成标画」始终留在屏幕内
     await expect
       .poll(() => toolbarButtonNames(toolbar))
-      .toEqual(["笔", "橡皮", "撤销", "更多标画操作", "完成标画"]);
+      .toEqual(["笔", "荧光笔", "橡皮", "撤销", "更多标画操作", "完成标画"]);
     for (const button of await toolbar.getByRole("button").all()) {
       const box = await button.boundingBox();
       expect(box).not.toBeNull();
@@ -468,6 +468,27 @@ test(
       expect(box?.x).toBeGreaterThanOrEqual(0);
       expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
     }
+    // 三支工具在 320px 排不全：工具区可横向滑动，没露全的一侧渐隐；选中被挤住
+    // 的橡皮，它自己滑进可视区；切回笔再滑回来
+    const strip = toolbar.locator('[data-slot="ink-toolbar-tools"]');
+    await expect(strip).toHaveAttribute("data-fade", "end");
+    const narrowEraser = toolbar.getByRole("button", {
+      name: "橡皮",
+      exact: true,
+    });
+    await narrowEraser.click();
+    await expect(narrowEraser).toHaveAttribute("aria-pressed", "true");
+    await expect(strip).toHaveAttribute("data-fade", "start");
+    const stripBox = await strip.boundingBox();
+    const eraserBox = await narrowEraser.boundingBox();
+    expect((eraserBox?.x ?? 0) + (eraserBox?.width ?? 0)).toBeLessThanOrEqual(
+      (stripBox?.x ?? 0) + (stripBox?.width ?? 0),
+    );
+    await page.screenshot({
+      path: testInfo.outputPath("inline-toolbar-scrolled-320.png"),
+    });
+    await toolbar.getByRole("button", { name: "笔", exact: true }).click();
+    await expect(strip).toHaveAttribute("data-fade", "end");
     await toolbar.getByRole("button", { name: "更多标画操作" }).click();
     await expect
       .poll(() =>

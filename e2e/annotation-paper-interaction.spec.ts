@@ -650,10 +650,18 @@ test("圈画和草稿都用同款笔橡皮，手指不落墨", {
         );
     });
   const markToolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
-  // 圈画没有「手指书写」；其余与草稿纸同一套：笔、橡皮、撤销、重做、更多
+  // 圈画没有「手指书写」；其余与草稿纸同一套：笔、荧光笔、橡皮、撤销、重做、更多
   await expect
     .poll(() => toolbarButtonNames(markToolbar))
-    .toEqual(["笔", "橡皮", "撤销", "重做", "更多标画操作", "完成标画"]);
+    .toEqual([
+      "笔",
+      "荧光笔",
+      "橡皮",
+      "撤销",
+      "重做",
+      "更多标画操作",
+      "完成标画",
+    ]);
   const markPen = markToolbar.getByRole("button", { name: "笔", exact: true });
   await expect(markPen).toHaveAttribute("aria-pressed", "true");
   await expect(canvas).toHaveCSS("touch-action", "pan-y");
@@ -724,7 +732,14 @@ test("圈画和草稿都用同款笔橡皮，手指不落墨", {
   const paperCanvas = paper.locator("canvas");
   await expect
     .poll(() => toolbarButtonNames(paperToolbar))
-    .toEqual(["笔", "橡皮", "撤销", "重做", "更多操作（第 1 题草稿纸）"]);
+    .toEqual([
+      "笔",
+      "荧光笔",
+      "橡皮",
+      "撤销",
+      "重做",
+      "更多操作（第 1 题草稿纸）",
+    ]);
   // 草稿纸的笔是同一个选项面板（缺省黑色中号，跟随笔感设置）
   const paperPen = paperToolbar.getByRole("button", {
     name: "笔",
@@ -752,3 +767,199 @@ test("圈画和草稿都用同款笔橡皮，手指不落墨", {
   await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
 });
+
+/**
+ * 用笔在画布中间来回涂一笔（三趟压在同一条带上），取抬笔前、抬笔后的读数：
+ * 画布上涂抹带中心那个像素，和书写中那一笔所在的临时层路径。
+ */
+async function scribbleAndProbe(canvas: Locator) {
+  return canvas.evaluate((element) => {
+    if (!(element instanceof HTMLCanvasElement)) throw new Error("不是画布");
+    const rect = element.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const points: Array<[number, number]> = [
+      [cx - 80, cy],
+      [cx + 80, cy],
+      [cx - 80, cy + 2],
+      [cx + 80, cy + 4],
+    ];
+    const fire = (type: string, [x, y]: [number, number], buttons: number) =>
+      element.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: 9,
+          pointerType: "pen",
+          isPrimary: true,
+          clientX: rect.left + x,
+          clientY: rect.top + y,
+          button: 0,
+          buttons,
+          pressure: 0.5,
+        }),
+      );
+    const read = () => {
+      const scale = element.width / rect.width;
+      const pixel = Array.from(
+        element
+          .getContext("2d")
+          ?.getImageData(
+            Math.round(cx * scale),
+            Math.round((cy + 2) * scale),
+            1,
+            1,
+          ).data ?? [],
+      );
+      const path = element.parentElement?.querySelector(
+        'svg[data-slot="ink-live-layer"] path',
+      );
+      return {
+        pixel,
+        d: path?.getAttribute("d") ?? null,
+        stroke: path?.getAttribute("stroke") ?? null,
+      };
+    };
+    const [first, ...rest] = points;
+    const last = points.at(-1);
+    if (first === undefined || last === undefined) throw new Error("没有点");
+    fire("pointerdown", first, 1);
+    for (const point of rest) fire("pointermove", point, 1);
+    const writing = read();
+    fire("pointerup", last, 0);
+    return { writing, done: read() };
+  });
+}
+
+/** 颜色逐通道相差不超过 4（半透明像素存取有舍入） */
+function expectPixelNear(actual: number[], expected: number[]): void {
+  expect(actual, `像素 ${actual}`).toHaveLength(4);
+  expected.forEach((value, index) => {
+    expect(
+      Math.abs((actual[index] ?? Number.NaN) - value),
+      `像素 ${actual}，期望 ${expected}`,
+    ).toBeLessThanOrEqual(4);
+  });
+}
+
+test(
+  "荧光笔：书写中不上画布，抬笔整笔落下，来回涂抹不叠深（草稿纸与圈画）",
+  {
+    tag: ["@annotation"],
+  },
+  async ({ page }, testInfo) => {
+    const card = page.getByRole("article", { name: "第 1 题", exact: true });
+
+    // 草稿纸：切到荧光笔，面板里换成绿色、粗
+    await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+    const paper = card.locator('[data-slot="note-layer"]');
+    const paperToolbar = paper.getByRole("toolbar");
+    const paperCanvas = paper.locator("canvas");
+    const paperHighlighter = paperToolbar.getByRole("button", {
+      name: "荧光笔",
+      exact: true,
+    });
+    await paperHighlighter.click();
+    await expect(paperHighlighter).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await paperHighlighter.click();
+    const panel = page.getByRole("dialog", { name: "荧光笔设置" });
+    await expect(
+      panel.getByRole("radiogroup", { name: "颜色" }).getByRole("radio"),
+    ).toHaveCount(5);
+    await expect(
+      panel.getByRole("radiogroup", { name: "粗细" }).getByRole("radio"),
+    ).toHaveCount(3);
+    await expect(panel.getByRole("radio", { name: "黄" })).toBeChecked();
+    await panel.getByRole("radio", { name: "绿" }).click();
+    await panel.getByRole("radio", { name: "粗" }).click();
+    await expect(
+      paperHighlighter.locator('[data-slot="ink-tool-color"]'),
+    ).toHaveCSS("background-color", "rgb(74, 222, 128)");
+    await page.screenshot({
+      path: testInfo.outputPath("highlighter-panel.png"),
+    });
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+
+    const onPaper = await scribbleAndProbe(paperCanvas);
+    // 书写中：这一笔只在临时层上（一条路径），画布上还没有墨
+    expect(onPaper.writing.d).toMatch(/^M[\d.]+ [\d.]+L.*Q/);
+    expect(onPaper.writing.stroke).toBe("rgba(74, 222, 128, 0.45)");
+    expect(onPaper.writing.pixel[3]).toBe(0);
+    // 抬笔：临时层清空，画布上三趟压在一起的地方仍是一层的透明度（0.45×255≈115；
+    // 叠两层会到 178）
+    expect(onPaper.done.d).toBeNull();
+    expectPixelNear(onPaper.done.pixel, [74, 222, 128, 115]);
+    await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    // 撤销、重做：整笔消失、回来，仍是一层的透明度
+    await paperToolbar
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);
+    await paperToolbar
+      .getByRole("button", { name: "重做", exact: true })
+      .click();
+    await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    const centerPixel = (canvas: Locator) =>
+      canvas.evaluate((element) => {
+        if (!(element instanceof HTMLCanvasElement))
+          throw new Error("不是画布");
+        const rect = element.getBoundingClientRect();
+        const scale = element.width / rect.width;
+        return Array.from(
+          element
+            .getContext("2d")
+            ?.getImageData(
+              Math.round((rect.width / 2) * scale),
+              Math.round((rect.height / 2 + 2) * scale),
+              1,
+              1,
+            ).data ?? [],
+        );
+      });
+    expectPixelNear(await centerPixel(paperCanvas), [74, 222, 128, 115]);
+    // 橡皮擦得掉荧光笔
+    await paperToolbar
+      .getByRole("button", { name: "橡皮", exact: true })
+      .click();
+    await drawStrokeWithPointerEvents(paperCanvas);
+    await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);
+    await paperToolbar
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("highlighter-paper.png"),
+    });
+    await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+
+    // 圈画：各书写面的工具箱各管各的，这里的荧光笔还是缺省的黄色、中等粗细
+    const trigger = card.getByRole("button", { name: /圈画题干/ });
+    await trigger.click();
+    const markCanvas = card.locator('canvas[data-slot="annotation-canvas"]');
+    await expect(markCanvas).toHaveAttribute("data-input-enabled", "true");
+    const markToolbar = page.getByRole("toolbar", {
+      name: "第 1 题标画工具栏",
+    });
+    await markToolbar
+      .getByRole("button", { name: "荧光笔", exact: true })
+      .click();
+    const onQuestion = await scribbleAndProbe(markCanvas);
+    expect(onQuestion.writing.d).toMatch(/^M[\d.]+ [\d.]+L.*Q/);
+    expect(onQuestion.writing.stroke).toBe("rgba(250, 204, 21, 0.45)");
+    expect(onQuestion.writing.pixel[3]).toBe(0);
+    expect(onQuestion.done.d).toBeNull();
+    expectPixelNear(onQuestion.done.pixel, [250, 204, 21, 115]);
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await page.screenshot({
+      path: testInfo.outputPath("highlighter-question.png"),
+    });
+    await markToolbar
+      .getByRole("button", { name: "完成标画", exact: true })
+      .click();
+    // 退出圈画后静态显示的仍是这一笔
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  },
+);

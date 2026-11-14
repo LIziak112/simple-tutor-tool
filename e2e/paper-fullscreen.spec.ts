@@ -253,8 +253,15 @@ test(
         .poll(() => toolbarButtonNames(toolbar))
         .toEqual(
           kind === "scratch"
-            ? ["笔", "橡皮", "撤销", "重做", "更多操作（第 1 题草稿纸）"]
-            : ["笔", "橡皮", "撤销", "手指书写", "更多操作（手写答题区）"],
+            ? ["笔", "荧光笔", "橡皮", "撤销", "更多操作（第 1 题草稿纸）"]
+            : [
+                "笔",
+                "荧光笔",
+                "橡皮",
+                "撤销",
+                "手指书写",
+                "更多操作（手写答题区）",
+              ],
         );
       for (const button of await toolbar.getByRole("button").all()) {
         const box = await button.boundingBox();

@@ -3,18 +3,24 @@ import { RadioGroup } from "radix-ui";
 import { type ReactNode, useId } from "react";
 import {
   INK_ERASER_SIZE_KEYS,
+  INK_HIGHLIGHTER_COLOR_KEYS,
+  INK_HIGHLIGHTER_SIZE_KEYS,
   INK_PEN_COLOR_KEYS,
   INK_PEN_SIZE_KEYS,
   type InkToolboxState,
 } from "../engine/toolbox.ts";
 import {
   INK_ERASER_SIZES,
+  INK_HIGHLIGHTER_SIZES,
   INK_PEN_COLORS,
   INK_PEN_SIZES,
   type InkToolType,
 } from "../engine/types.ts";
 import {
   INK_ERASER_SIZE_LABEL,
+  INK_HIGHLIGHTER_COLOR_LABEL,
+  INK_HIGHLIGHTER_SIZE_LABEL,
+  INK_HIGHLIGHTER_SWATCH,
   INK_PEN_COLOR_LABEL,
   INK_PEN_SIZE_LABEL,
 } from "./tool-labels.ts";
@@ -129,6 +135,51 @@ function PenOptions({ toolbox, onChange }: PanelProps) {
   );
 }
 
+/** 荧光笔：颜色与粗细。图形用横条（像划过一行字），和笔的圆点区分开 */
+function HighlighterOptions({ toolbox, onChange }: PanelProps) {
+  const { highlighter } = toolbox;
+  return (
+    <>
+      <OptionGroup
+        label="颜色"
+        value={highlighter.color}
+        options={INK_HIGHLIGHTER_COLOR_KEYS}
+        optionLabel={INK_HIGHLIGHTER_COLOR_LABEL}
+        onChange={(color) =>
+          onChange({ ...toolbox, highlighter: { ...highlighter, color } })
+        }
+        render={(color) => (
+          <span
+            aria-hidden
+            className="h-4 w-7 rounded-sm border border-black/10"
+            style={{ backgroundColor: INK_HIGHLIGHTER_SWATCH[color] }}
+          />
+        )}
+      />
+      <OptionGroup
+        label="粗细"
+        value={highlighter.size}
+        options={INK_HIGHLIGHTER_SIZE_KEYS}
+        optionLabel={INK_HIGHLIGHTER_SIZE_LABEL}
+        onChange={(size) =>
+          onChange({ ...toolbox, highlighter: { ...highlighter, size } })
+        }
+        render={(size) => (
+          <span
+            aria-hidden
+            className="w-7 rounded-sm"
+            style={{
+              // 横条的高随线宽变：细 8、中 12、粗 18 像素
+              height: Math.round(2 + INK_HIGHLIGHTER_SIZES[size] * 0.6),
+              backgroundColor: INK_HIGHLIGHTER_SWATCH[highlighter.color],
+            }}
+          />
+        )}
+      />
+    </>
+  );
+}
+
 /** 橡皮：大小 */
 function EraserOptions({ toolbox, onChange }: PanelProps) {
   const { eraser } = toolbox;
@@ -155,7 +206,7 @@ function EraserOptions({ toolbox, onChange }: PanelProps) {
 
 /** 有选项面板的工具；其余工具（滚动）点一下即生效，没有可调项 */
 export function inkToolHasOptions(tool: InkToolType): boolean {
-  return tool === "pen" || tool === "eraser";
+  return tool === "pen" || tool === "highlighter" || tool === "eraser";
 }
 
 export function InkToolOptions({
@@ -165,6 +216,7 @@ export function InkToolOptions({
   return (
     <div className="flex flex-col gap-3">
       {tool === "pen" && <PenOptions {...panel} />}
+      {tool === "highlighter" && <HighlighterOptions {...panel} />}
       {tool === "eraser" && <EraserOptions {...panel} />}
     </div>
   );

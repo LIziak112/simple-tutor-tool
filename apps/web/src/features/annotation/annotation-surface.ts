@@ -33,13 +33,21 @@ import {
   anchorKeyForStroke,
   strokeBbox,
 } from "@/features/annotation/annotation-anchor";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
+import {
+  createProgrammaticAtrament,
+  paintOnePathOnAtrament,
+} from "@/features/ink/engine/atrament-replay.ts";
 import {
   type StrokeBounds,
   strokeBounds,
 } from "@/features/ink/engine/bounds.ts";
 import { eraseHit } from "@/features/ink/engine/erase.ts";
+import { isOnePathStroke } from "@/features/ink/engine/highlighter-paint.ts";
 import { InkStore, mintStrokeId } from "@/features/ink/engine/history.ts";
+import {
+  createInkLiveLayer,
+  type InkLiveLayer,
+} from "@/features/ink/engine/live-layer.ts";
 import {
   advancePointerMachine,
   createPointerMachineState,
@@ -158,6 +166,7 @@ function logicalToBase(baseWidth: number, value: number): number {
  * atrament 以 **CSS 单位**收点与线宽，内部乘 canvas.width/offsetWidth 落
  * 位图。cssPerBase = CSS 像素/底图像素：坐标 base×cssPerBase、线宽
  * weight_base×cssPerBase 交给 atrament 后，净落位图值 = 原底图像素值。
+ * 荧光笔整笔一次描边（同一换算，见 engine/highlighter-paint）。
  */
 export function replayAnnotationStroke(
   atrament: Atrament,
@@ -165,6 +174,7 @@ export function replayAnnotationStroke(
   s: InkStroke,
 ): void {
   if (s.points.length === 0) return;
+  if (paintOnePathOnAtrament(atrament, cssPerBase, s)) return;
   atrament.color = s.color;
   atrament.weight = s.weight * cssPerBase;
   const first = s.points[0];
@@ -208,6 +218,8 @@ export function createAnnotationSurface(
   let canvas: HTMLCanvasElement | null = null;
   let atrament: Atrament | null = null;
   let ctx2d: CanvasRenderingContext2D | null = null;
+  /** 书写中的荧光笔那一笔放在这一层，抬笔后整笔落到画布 */
+  let liveLayer: InkLiveLayer | null = null;
   let observer: ResizeObserver | null = null;
   let inputBound = false;
 
@@ -225,6 +237,8 @@ export function createAnnotationSurface(
   let livePointerKind: InkPointerKind | undefined;
   let liveTool: "pen" | "highlighter" = "pen";
   let liveBrush: { color: string; weight: number } | null = null;
+  /** 本笔是否整笔一条路径（荧光笔）：书写中只在临时层上，不往画布逐段画 */
+  let liveOnLayer = false;
   let liveStrokeIsErase = false;
   /** 本次擦除的橡皮半径（底图像素域），取落笔时的档位 */
   let liveEraseRadius = 0;
@@ -372,6 +386,12 @@ export function createAnnotationSurface(
     });
   }
 
+  /** 把书写中的整笔一条路径的那一笔（视图域）更新到临时层 */
+  function showLiveStroke(): void {
+    if (!liveBrush) return;
+    liveLayer?.showStroke({ ...liveBrush, points: livePoints });
+  }
+
   function abortLiveStroke(): void {
     if (livePrev && atrament) {
       atrament.endStroke(livePrev.x, livePrev.y);
@@ -379,6 +399,8 @@ export function createAnnotationSurface(
     finishCause = undefined;
     livePoints = [];
     livePrev = null;
+    liveOnLayer = false;
+    liveLayer?.clear();
     liveStrokeIsErase = false;
     pendingErase = new Set();
     erasePrev = undefined;
@@ -435,11 +457,18 @@ export function createAnnotationSurface(
       if (anchorKey !== undefined && !mapped.unanchored) {
         anchors[strokeId] = anchorKey;
       }
+      // 整笔一条路径的笔书写中不在画布上：先整笔落到画布（视图域这一笔，
+      // 与之后全量重绘同一画法），再提交
+      if (liveOnLayer && atrament) {
+        replayAnnotationStroke(atrament, cssPerBase(), rawStroke);
+      }
       withReason("stroke", () => store.commitAdd([mapped.stroke]));
     }
     finishCause = undefined;
     livePoints = [];
     livePrev = null;
+    liveOnLayer = false;
+    liveLayer?.clear();
     liveStrokeIsErase = false;
     pendingErase = new Set();
     erasePrev = undefined;
@@ -515,12 +544,18 @@ export function createAnnotationSurface(
       color: gesture.brush.color,
       weight: logicalToBase(baseWidth, gesture.brush.weight),
     };
+    const p = pressureOf(e);
+    liveOnLayer = isOnePathStroke({ tool: liveTool });
+    if (liveOnLayer) {
+      livePoints = [{ x, y, p, t: 0 }];
+      showLiveStroke();
+      return;
+    }
     if (!atrament) return;
     atrament.color = liveBrush.color;
     atrament.weight = liveBrush.weight * cssPerBase();
     const start = baseToCss({ x, y });
     atrament.beginStroke(start.x, start.y);
-    const p = pressureOf(e);
     livePrev = atrament.draw(start.x, start.y, start.x, start.y, p);
     livePoints = [{ x, y, p, t: 0 }];
   }
@@ -566,19 +601,22 @@ export function createAnnotationSurface(
         if (changed) redraw();
         continue;
       }
-      if (!atrament || !liveBrush) continue;
+      if (!liveBrush) continue;
       const p = pressureOf(ev);
+      const t = Math.max(0, Math.round(ev.timeStamp - liveStartStamp));
+      if (liveOnLayer) {
+        livePoints.push({ x, y, p, t });
+        continue;
+      }
+      if (!atrament) continue;
       const prev = livePrev ?? baseToCss({ x, y });
       const at = baseToCss({ x, y });
       const processed = atrament.draw(at.x, at.y, prev.x, prev.y, p);
       livePrev = processed;
-      livePoints.push({
-        x,
-        y,
-        p,
-        t: Math.max(0, Math.round(ev.timeStamp - liveStartStamp)),
-      });
+      livePoints.push({ x, y, p, t });
     }
+    // 一批采样只更新一次临时层
+    if (liveOnLayer) showLiveStroke();
   }
 
   function finishPointer(event: PointerMachineEvent): void {
@@ -710,6 +748,9 @@ export function createAnnotationSurface(
         throw new Error("无法创建 canvas 2d 上下文（当前环境不支持）");
       }
       atrament = createProgrammaticAtrament(canvas);
+      // 临时层与画布同一坐标域（底图像素），随宿主一起缩放
+      liveLayer = createInkLiveLayer(el);
+      liveLayer.setViewBox(baseWidth, baseHeight);
       applyTouchAction();
 
       if (initial) {
@@ -805,6 +846,8 @@ export function createAnnotationSurface(
       atrament?.destroy();
       atrament = null;
       ctx2d = null;
+      liveLayer?.destroy();
+      liveLayer = null;
       canvas?.remove();
       canvas = null;
       container = null;

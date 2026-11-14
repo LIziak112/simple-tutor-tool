@@ -273,11 +273,11 @@ describe("NoteLayer：收起/展开形态", () => {
     expect(onOpenChange).toHaveBeenCalledWith(true);
     // Harness 已回写 open → 工具条出现
     expect(await screen.findByRole("toolbar")).toBeInTheDocument();
-    for (const name of ["笔", "橡皮", "撤销", "更多"]) {
-      expect(
-        screen.getByRole("button", { name: new RegExp(name) }),
-      ).toBeInTheDocument();
+    // 工具名按全名找：「笔」是「荧光笔」的子串，模糊匹配会撞上两个按钮
+    for (const name of ["笔", "荧光笔", "橡皮", "撤销"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
+    expect(screen.getByRole("button", { name: /更多/ })).toBeInTheDocument();
     await waitForEngine(); // 引擎挂载（localLoaded settle 后）
   });
 

@@ -8,7 +8,7 @@ import type Atrament from "atrament";
 import {
   createProgrammaticAtrament,
   replayAtramentStroke,
-} from "../engine/atrament-adapter";
+} from "../engine/atrament-replay";
 import { strokeBounds } from "../engine/bounds";
 import { canvasToPngBlob } from "../engine/canvas-png";
 import { buildAtramentDoc, parseAtramentDoc } from "../engine/doc";

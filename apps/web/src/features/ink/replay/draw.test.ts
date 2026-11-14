@@ -7,8 +7,8 @@ const { beginStroke, draw, endStroke } = vi.hoisted(() => ({
   draw: vi.fn((x: number, y: number) => ({ x, y })),
   endStroke: vi.fn(),
 }));
-vi.mock("../engine/atrament-adapter.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../engine/atrament-adapter.ts")>()),
+vi.mock("../engine/atrament-replay.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../engine/atrament-replay.ts")>()),
   createProgrammaticAtrament: () => ({
     beginStroke,
     draw,

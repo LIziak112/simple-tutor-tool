@@ -1,5 +1,8 @@
 import type { AnnotationDoc } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { onePathSvg } from "@/features/ink/engine/highlighter-paint.ts";
+import { INK_LIVE_LAYER_SELECTOR } from "@/features/ink/engine/live-layer.ts";
+import { INK_HIGHLIGHTER_COLORS } from "@/features/ink/engine/types.ts";
 import {
   ANNOTATION_CANVAS_DATA_SLOT,
   createAnnotationSurface,
@@ -25,11 +28,14 @@ class StubContext {
   globalCompositeOperation = "source-over";
   beginPath(): void {}
   moveTo(): void {}
+  lineTo(): void {}
   quadraticCurveTo(): void {}
+  arc(): void {}
   closePath(): void {}
   stroke(): void {
     StubContext.strokeCalls += 1;
   }
+  fill(): void {}
   fillRect(): void {}
   clearRect(): void {}
   save(): void {}
@@ -943,5 +949,150 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
     // 墓碑几何 = 存储域原笔（不是视图域映射后的形状）
     expect(doc.deleted?.[0]?.points[0]?.x).toBeCloseTo(80, 5);
     expect(doc.deleted?.[0]?.id).toBe("keep-1");
+  });
+});
+
+describe("标注画布：荧光笔整笔一条路径", () => {
+  /** 书写中那一笔所在的临时层路径 */
+  function livePath(h: ReturnType<typeof mountSurface>): Element {
+    const path = h.container.querySelector(`${INK_LIVE_LAYER_SELECTOR} path`);
+    if (path === null) throw new Error("临时层未挂载");
+    return path;
+  }
+  /** 绿色粗荧光笔：26 逻辑单位 → 底图像素域 26 × 1440 / 1000 */
+  const GREEN_THICK = {
+    tool: "highlighter",
+    color: INK_HIGHLIGHTER_COLORS.green,
+    weight: 37.44,
+  } as const;
+
+  it("临时层盖在画布上，坐标域就是底图像素域", () => {
+    const h = mountSurface();
+    const layer = h.container.querySelector(INK_LIVE_LAYER_SELECTOR);
+    expect(layer?.getAttribute("viewBox")).toBe(`0 0 ${BASE_W} ${BASE_H}`);
+    expect(layer?.previousElementSibling).toBe(h.canvas);
+  });
+
+  it("书写中只更新临时层的一条路径，不往画布上逐段描边", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter", color: "green", size: "thick" });
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 80 });
+    pointer(h.canvas, "pointermove", { clientX: 200, clientY: 80 });
+    pointer(h.canvas, "pointermove", { clientX: 250, clientY: 100 });
+    const path = livePath(h);
+    expect(path.getAttribute("d")).toBe(
+      onePathSvg([toBase(150, 80), toBase(200, 80), toBase(250, 100)]),
+    );
+    expect(path.getAttribute("stroke")).toBe(GREEN_THICK.color);
+    expect(path.getAttribute("stroke-width")).toBe(String(GREEN_THICK.weight));
+    expect(StubContext.strokeCalls).toBe(0);
+    expect(h.surface.getDoc().strokes).toHaveLength(0);
+  });
+
+  it("抬笔：整笔一次落到画布，临时层清空，文档里是一笔荧光笔", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter", color: "green", size: "thick" });
+    writeStroke(h, [
+      { x: 150, y: 80 },
+      { x: 200, y: 80 },
+      { x: 250, y: 100 },
+      { x: 150, y: 90 },
+    ]);
+    expect(StubContext.strokeCalls).toBe(1);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+    const strokes = h.surface.getDoc().strokes;
+    expect(strokes).toHaveLength(1);
+    expect(strokes[0]).toMatchObject(GREEN_THICK);
+    expect(strokes[0]?.points.map(({ x, y }) => ({ x, y }))).toEqual([
+      toBase(150, 80),
+      toBase(200, 80),
+      toBase(250, 100),
+      toBase(150, 90),
+    ]);
+    expect(h.events.at(-1)).toEqual({ reason: "stroke", strokes: 1 });
+  });
+
+  it("撤销、重做后的全量重绘：荧光笔仍是每笔一次描边", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    for (const y of [80, 120]) {
+      writeStroke(h, [
+        { x: 150, y },
+        { x: 200, y },
+        { x: 250, y: y + 10 },
+      ]);
+    }
+    StubContext.strokeCalls = 0;
+    h.surface.undo();
+    expect(StubContext.strokeCalls).toBe(1);
+    StubContext.strokeCalls = 0;
+    h.surface.redo();
+    expect(StubContext.strokeCalls).toBe(2);
+  });
+
+  it("笔照旧逐段画在画布上，不经过临时层", () => {
+    const h = mountSurface();
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 80 });
+    pointer(h.canvas, "pointermove", { clientX: 200, clientY: 80 });
+    expect(StubContext.strokeCalls).toBe(2);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+  });
+
+  it("手掌先落、笔后落：手掌那一笔从临时层撤掉，不进文档", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    pointer(h.canvas, "pointerdown", {
+      pointerId: 1,
+      pointerType: "touch",
+      clientX: 150,
+      clientY: 80,
+    });
+    pointer(h.canvas, "pointermove", {
+      pointerId: 1,
+      pointerType: "touch",
+      clientX: 200,
+      clientY: 80,
+    });
+    pointer(h.canvas, "pointerdown", {
+      pointerId: 2,
+      pointerType: "pen",
+      clientX: 400,
+      clientY: 300,
+    });
+    // 临时层上只剩笔刚落下的这一点
+    expect(livePath(h).getAttribute("d")).toBe(onePathSvg([toBase(400, 300)]));
+    expect(h.surface.getDoc().strokes).toHaveLength(0);
+    pointer(h.canvas, "pointerup", {
+      pointerId: 2,
+      pointerType: "pen",
+      clientX: 400,
+      clientY: 300,
+    });
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+  });
+
+  it("布局变化：在途荧光笔按已收采样收笔，临时层清空", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 80 });
+    pointer(h.canvas, "pointermove", { clientX: 200, clientY: 80 });
+    h.triggerLayoutChange();
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+    expect(h.surface.getDoc().strokes[0]?.points).toHaveLength(2);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+    expect(StubContext.strokeCalls).toBe(1);
+  });
+
+  it("落笔后中途换成笔：这一笔仍按落笔时的荧光笔画完", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 80 });
+    h.surface.setTool({ type: "pen" });
+    pointer(h.canvas, "pointermove", { clientX: 200, clientY: 80 });
+    expect(StubContext.strokeCalls).toBe(0);
+    pointer(h.canvas, "pointerup", { clientX: 200, clientY: 80 });
+    expect(h.surface.getDoc().strokes[0]?.tool).toBe("highlighter");
+    expect(StubContext.strokeCalls).toBe(1);
   });
 });

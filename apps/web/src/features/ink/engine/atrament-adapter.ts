@@ -49,22 +49,19 @@
  * - 系统手势边缘滑动触发 pointercancel（收笔不粘笔）。
  */
 import type { InkRendering, NoteBackground } from "@tutor/contract";
-import Atrament from "atrament";
-import { paintFreehandStroke } from "./freehand-paint";
-
-const drawingCanvases = new WeakMap<Atrament, HTMLCanvasElement>();
-
+import type Atrament from "atrament";
+import {
+  createProgrammaticAtrament,
+  replayAtramentStroke,
+} from "./atrament-replay.ts";
 import { type StrokeBounds, strokeBounds } from "./bounds.ts";
 import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
 import { eraseHit } from "./erase.ts";
+import { isOnePathStroke } from "./highlighter-paint.ts";
 import { InkStore, mintStrokeId } from "./history.ts";
-import {
-  fromLogical,
-  fromLogicalPoint,
-  toLogical,
-  toLogicalPoint,
-} from "./normalize.ts";
+import { createInkLiveLayer, type InkLiveLayer } from "./live-layer.ts";
+import { fromLogical, toLogical, toLogicalPoint } from "./normalize.ts";
 import { NOTE_PAPER_BG_COLOR, paperBackgroundCss } from "./paper-style.ts";
 import {
   advancePointerMachine,
@@ -80,6 +77,7 @@ import {
   asPointerKind,
   INK_DEFAULT_SMOOTHING,
   INK_ERASE_RADIUS,
+  INK_LOGICAL_WIDTH,
   type InkDoc,
   type InkInputMode,
   type InkPenBase,
@@ -93,78 +91,6 @@ import {
 
 /** devicePixelRatio 上限 2：控制内存（长答题区 + 高分屏，§5.4.1 绘制层第 2 条） */
 const MAX_DPR = 2;
-
-/**
- * 按逻辑坐标在 Atrament 实例上重放一笔（atrament 官方程序化绘制流程）。
- * T3.3 起导出：笔迹回放（features/ink/replay）复用同一绘制原语，不另写笔迹绘制。
- * @param cssWidth 当前容器 CSS 宽（逻辑 1000 → 实际像素的换算基准）
- */
-export function replayAtramentStroke(
-  atrament: Atrament,
-  cssWidth: number,
-  s: InkStroke,
-): void {
-  const canvas = drawingCanvases.get(atrament);
-  if (s.rendering?.renderer === "freehand" && canvas) {
-    const context = canvas.getContext("2d");
-    if (context)
-      paintFreehandStroke(
-        context,
-        ((canvas.width / (canvas.offsetWidth || cssWidth)) * cssWidth) / 1000,
-        s,
-        s.rendering,
-      );
-    return;
-  }
-  const stroke = beginAtramentStroke(atrament, cssWidth, s);
-  stroke?.appendThrough(s.points.length);
-  stroke?.end();
-}
-
-/** 同一笔复用平滑后的上一点，按原顺序只绘制新增线段。 */
-export function beginAtramentStroke(
-  atrament: Atrament,
-  cssWidth: number,
-  s: InkStroke,
-) {
-  const first = s.points[0];
-  if (!first) return null;
-  atrament.smoothing = s.rendering?.smoothing ?? 0.35;
-  atrament.color = s.color;
-  atrament.weight = fromLogical(cssWidth, s.weight);
-  let prev = fromLogicalPoint(cssWidth, first.x, first.y);
-  let drawn = 0;
-  atrament.beginStroke(prev.x, prev.y);
-  return {
-    appendThrough(count: number): void {
-      for (; drawn < count; drawn++) {
-        const pt = s.points[drawn];
-        if (!pt) break;
-        const at = fromLogicalPoint(cssWidth, pt.x, pt.y);
-        prev = atrament.draw(at.x, at.y, prev.x, prev.y, pt.p);
-      }
-    },
-    end(): void {
-      atrament.endStroke(prev.x, prev.y);
-    },
-  };
-}
-
-/**
- * 构造仅用于**程序化重放**的 Atrament 实例：构造即配置 canvas 2d 画笔状态
- * （source-over / lineCap round / lineJoin round），随即 destroy() 解绑其
- * 内部指针监听——后续只经 replayAtramentStroke / beginStroke/draw/endStroke
- * 驱动绘制，不接管任何输入。适配器挂载路径（输入层自管）、笔迹回放
- * （replay/draw）与草稿渲染器（notes/render-note）三处共用这一手法。
- */
-export function createProgrammaticAtrament(
-  canvas: HTMLCanvasElement,
-): Atrament {
-  const atrament = new Atrament(canvas, { smoothing: INK_DEFAULT_SMOOTHING });
-  drawingCanvases.set(atrament, canvas);
-  atrament.destroy();
-  return atrament;
-}
 
 export interface AtramentSurfaceOptions {
   store?: InkStore;
@@ -208,6 +134,8 @@ export function createAtramentSurface(
   let container: HTMLElement | null = null;
   let canvas: HTMLCanvasElement | null = null;
   let hoverDot: HTMLDivElement | null = null;
+  /** 书写中的荧光笔那一笔放在这一层（逻辑坐标），抬笔后整笔落到画布 */
+  let liveLayer: InkLiveLayer | null = null;
   let atrament: Atrament | null = null;
   let ctx2d: CanvasRenderingContext2D | null = null;
   let observer: ResizeObserver | null = null;
@@ -235,6 +163,8 @@ export function createAtramentSurface(
   let livePointerKind: InkPointerKind | undefined;
   let liveTool: "pen" | "highlighter" = "pen";
   let liveBrush: { color: string; weight: number } | null = null;
+  /** 本笔是否整笔一条路径（荧光笔）：书写中只在临时层上，不往画布逐段画 */
+  let liveOnLayer = false;
   /**
    * 落笔时的工具快照（复审③）：一笔生命周期内的 move 采样与收笔提交都按
    * **落笔时**的工具分派——工具条在笔未抬起时切换不影响在途笔画（避免
@@ -365,6 +295,7 @@ export function createAtramentSurface(
     cssHeight = nextH;
     canvas.width = nextCanvasW;
     canvas.height = nextCanvasH;
+    liveLayer?.setViewBox(INK_LOGICAL_WIDTH, toLogical(cssWidth, cssHeight));
     // 背景间距随宽度换算，重设时同步（resize 由 ResizeObserver 触发本函数）
     applyPaperBackground();
     return true;
@@ -408,10 +339,17 @@ export function createAtramentSurface(
     }
     livePoints = [];
     livePrev = null;
+    liveOnLayer = false;
+    liveLayer?.clear();
     liveStrokeIsErase = false;
     pendingErase = new Set();
     erasePrev = undefined;
     redraw(); // 抹掉手掌已画的部分
+  }
+
+  /** 把书写中的整笔一条路径的那一笔更新到临时层 */
+  function showLiveStroke(): void {
+    if (liveBrush) liveLayer?.showStroke({ ...liveBrush, points: livePoints });
   }
 
   /**
@@ -440,35 +378,32 @@ export function createAtramentSurface(
       if (atrament && livePrev) {
         atrament.endStroke(livePrev.x, livePrev.y);
       }
-      const brush = liveBrush;
-      const points = livePoints;
-      withReason("stroke", () =>
-        store.commitAdd([
-          {
-            tool: liveTool,
-            color: brush.color,
-            weight: brush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
-            // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
-            id: mintStrokeId(),
-            ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
-            ...(livePointerKind !== undefined
-              ? { pointer: livePointerKind }
-              : {}),
-            ...(options.rendering
-              ? {
-                  rendering: {
-                    ...options.rendering,
-                    smoothing: currentSmoothing,
-                  },
-                }
-              : {}),
-            points,
-          },
-        ]),
-      );
+      const stroke: InkStroke = {
+        tool: liveTool,
+        color: liveBrush.color,
+        weight: liveBrush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
+        // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
+        id: mintStrokeId(),
+        ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
+        ...(livePointerKind !== undefined ? { pointer: livePointerKind } : {}),
+        ...(options.rendering
+          ? {
+              rendering: {
+                ...options.rendering,
+                smoothing: currentSmoothing,
+              },
+            }
+          : {}),
+        points: livePoints,
+      };
+      // 整笔一条路径的笔书写中不在画布上：这时整笔落到画布（与重绘同一画法）
+      if (liveOnLayer) replayStroke(stroke);
+      withReason("stroke", () => store.commitAdd([stroke]));
     }
     livePoints = [];
     livePrev = null;
+    liveOnLayer = false;
+    liveLayer?.clear();
     liveStrokeIsErase = false;
     pendingErase = new Set();
     erasePrev = undefined;
@@ -539,13 +474,23 @@ export function createAtramentSurface(
 
     liveBrush = gesture.kind === "draw" ? gesture.brush : null;
     liveTool = gesture.kind === "draw" ? gesture.tool : "pen";
-    if (!liveBrush || !atrament) return;
+    if (!liveBrush) return;
+    const p = pressureOf(e);
+    liveOnLayer = isOnePathStroke({
+      tool: liveTool,
+      ...(options.rendering ? { rendering: options.rendering } : {}),
+    });
+    if (liveOnLayer) {
+      livePoints = [{ ...toLogicalPoint(cssWidth, x, y), p, t: 0 }];
+      showLiveStroke();
+      return;
+    }
+    if (!atrament) return;
     atrament.color = liveBrush.color;
     atrament.smoothing = currentSmoothing;
     atrament.weight = fromLogical(cssWidth, liveBrush.weight);
     atrament.beginStroke(x, y);
     // 起点先画一个墨点（轻点可见），并记录归一化点
-    const p = pressureOf(e);
     livePrev = atrament.draw(x, y, x, y, p);
     livePoints = [{ ...toLogicalPoint(cssWidth, x, y), p, t: 0 }];
   }
@@ -610,17 +555,23 @@ export function createAtramentSurface(
         if (changed) redraw(); // 即时反馈：命中的笔画从视图中消失（提交在收笔时）
         continue;
       }
-      if (!atrament || !liveBrush) continue;
-      const p = pressureOf(ev);
-      const prev = livePrev ?? { x, y };
-      const processed = atrament.draw(x, y, prev.x, prev.y, p);
-      livePrev = processed;
-      livePoints.push({
+      if (!liveBrush) continue;
+      const point: InkStrokePoint = {
         ...toLogicalPoint(cssWidth, x, y),
-        p,
+        p: pressureOf(ev),
         t: Math.max(0, Math.round(ev.timeStamp - liveStartStamp)),
-      });
+      };
+      if (liveOnLayer) {
+        livePoints.push(point);
+        continue;
+      }
+      if (!atrament) continue;
+      const prev = livePrev ?? { x, y };
+      livePrev = atrament.draw(x, y, prev.x, prev.y, point.p);
+      livePoints.push(point);
     }
+    // 一批采样只更新一次临时层
+    if (liveOnLayer) showLiveStroke();
   }
 
   /**
@@ -793,6 +744,7 @@ export function createAtramentSurface(
       hoverDot.style.display = "none";
 
       el.appendChild(canvas);
+      liveLayer = createInkLiveLayer(el);
       el.appendChild(hoverDot);
 
       sizeCanvas();
@@ -943,6 +895,8 @@ export function createAtramentSurface(
       ctx2d = null;
       hoverDot?.remove();
       hoverDot = null;
+      liveLayer?.destroy();
+      liveLayer = null;
       canvas?.remove();
       canvas = null;
       container = null;

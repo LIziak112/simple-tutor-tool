@@ -5,7 +5,7 @@
  * 挂载 gate（「没有可靠底图不能落墨」的前端闸门）：base 非 ready 不挂画布，
  * 由父层（AnnotationLayer）只显示状态/禁用原因；本组件只在 base ready 时
  * 渲染。笔迹引擎=annotation-surface（标注专用画布，引擎件全复用 ink engine）。
- * 工具条用共用的 InkToolbar（笔/橡皮/撤销/重做/更多——触控 ≥44px）。同步状态区
+ * 工具条用共用的 InkToolbar（笔/荧光笔/橡皮/撤销/重做/更多——触控 ≥44px）。同步状态区
  * 精简为标注语境（本地落盘/同步/冲突/被拒）。
  */
 import type { AnnotationBaseRef } from "@tutor/contract";

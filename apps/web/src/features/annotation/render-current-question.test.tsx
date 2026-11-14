@@ -19,7 +19,7 @@ const ink = vi.hoisted(() => ({
   replay: vi.fn(),
   encode: vi.fn(),
 }));
-vi.mock("@/features/ink/engine/atrament-adapter", () => ({
+vi.mock("@/features/ink/engine/atrament-replay", () => ({
   createProgrammaticAtrament: () => ({ destroy: ink.destroy }),
 }));
 vi.mock("@/features/ink/engine/canvas-png", () => ({

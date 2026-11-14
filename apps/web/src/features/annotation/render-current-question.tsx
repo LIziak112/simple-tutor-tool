@@ -15,7 +15,7 @@ import { createRoot } from "react-dom/client";
 import { QuestionRenderContext } from "@/features/answering/question-render-context";
 import { formatStudentAnswer } from "@/features/attempt/answer-format";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import {
   collectFontEmbedCss,

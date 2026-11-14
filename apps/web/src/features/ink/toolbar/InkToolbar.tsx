@@ -10,13 +10,7 @@ import {
   Trash2,
   Undo2,
 } from "lucide-react";
-import {
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -34,6 +28,12 @@ import { type InkToolboxState, selectInkTool } from "../engine/toolbox.ts";
 import { INK_PEN_COLORS, type InkToolType } from "../engine/types.ts";
 import { InkToolOptions, inkToolHasOptions } from "./InkToolOptions.tsx";
 import { INK_HIGHLIGHTER_SWATCH, INK_TOOL_LABEL } from "./tool-labels.ts";
+import {
+  stripFadeStyle,
+  useKeepToolVisible,
+  useRedoInMenu,
+  useStripFade,
+} from "./toolbar-fit.ts";
 
 /** 工具栏按钮：44px 触控目标（ui-conventions iPad 硬性要求） */
 export const inkToolButtonClass = "relative size-11 shrink-0 p-0";
@@ -46,20 +46,14 @@ const TOOL_ICON: Record<InkToolType, typeof PenLine> = {
   scroll: Hand,
 };
 
-const DEFAULT_TOOLS: readonly InkToolType[] = ["pen", "eraser"];
-
-/**
- * 重做按钮占的宽度（44px 按钮 + 间距）。收进「更多」之后，要富余出这么宽才放回
- * 工具栏——少于它就放回，会立刻又被挤走，来回跳。
- */
-const REDO_SLOT_PX = 46;
+const DEFAULT_TOOLS: readonly InkToolType[] = ["pen", "highlighter", "eraser"];
 
 export interface InkToolbarProps {
   /** 可访问名前缀，如「第 1 题草稿纸」；工具栏名为「…工具栏」 */
   label: string;
   toolbox: InkToolboxState;
   onToolboxChange(next: InkToolboxState): void;
-  /** 宿主提供的工具，按显示顺序；缺省笔与橡皮 */
+  /** 宿主提供的工具，按显示顺序；缺省笔、荧光笔、橡皮 */
   tools?: readonly InkToolType[];
   /** 工具是否带选项面板。历史 Excalidraw 画布不认颜色、粗细，传 false */
   toolOptions?: boolean;
@@ -85,46 +79,9 @@ export interface InkToolbarProps {
 }
 
 /**
- * 宽度不够时把重做收进「更多」（与旧版工具栏的位置一致），工具区再不够就横向
- * 滑动；宽度按真实布局量，不写死断点。无布局的环境（单测）恒为宽版。
+ * 草稿纸、正式手写、随笔与圈画共用的工具栏；只读写工具箱状态，命令由宿主转发。
+ * 宽度不够时的收放（重做进「更多」、工具区横向滑动）见 toolbar-fit.ts。
  */
-function useRedoInMenu(
-  rootRef: RefObject<HTMLDivElement | null>,
-  stripRef: RefObject<HTMLDivElement | null>,
-): boolean {
-  const [inMenu, setInMenu] = useState(false);
-  const inMenuRef = useRef(false);
-  useEffect(() => {
-    const root = rootRef.current;
-    const strip = stripRef.current;
-    if (!root || !strip || typeof ResizeObserver === "undefined") return;
-    const measure = () => {
-      // 工具区是唯一可压缩的一段：内容比可视宽度宽，就是放不下了
-      const squeezed = strip.scrollWidth - strip.clientWidth > 1;
-      let next = squeezed;
-      if (inMenuRef.current && !squeezed) {
-        let used = 0;
-        for (const child of root.children) {
-          used += child.getBoundingClientRect().width;
-        }
-        const gap = Number.parseFloat(getComputedStyle(root).columnGap) || 0;
-        used += gap * Math.max(0, root.children.length - 1);
-        next = root.clientWidth - used < REDO_SLOT_PX;
-      }
-      if (next === inMenuRef.current) return;
-      inMenuRef.current = next;
-      setInMenu(next);
-    };
-    const observer = new ResizeObserver(measure);
-    observer.observe(root);
-    observer.observe(strip);
-    measure();
-    return () => observer.disconnect();
-  }, [rootRef, stripRef]);
-  return inMenu;
-}
-
-/** 草稿纸、正式手写、随笔与圈画共用的工具栏；只读写工具箱状态，命令由宿主转发。 */
 export function InkToolbar({
   label,
   toolbox,
@@ -149,6 +106,8 @@ export function InkToolbar({
   const rootRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const redoInMenu = useRedoInMenu(rootRef, stripRef);
+  const stripFade = useStripFade(stripRef, tools.length);
+  useKeepToolVisible(stripRef, toolbox.active);
   /** 同一时刻只开一个选项面板 */
   const [openTool, setOpenTool] = useState<InkToolType | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -266,6 +225,8 @@ export function InkToolbar({
         <div
           ref={stripRef}
           data-slot="ink-toolbar-tools"
+          data-fade={stripFade ?? undefined}
+          style={stripFadeStyle(stripFade)}
           className="-m-1 flex min-w-0 items-center gap-0.5 overflow-x-auto overscroll-x-contain p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {tools.map(toolButton)}
