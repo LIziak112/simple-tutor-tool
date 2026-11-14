@@ -646,7 +646,9 @@ describe("StudentHomePage 指标区", () => {
     });
     expect(within(redoTable).getByText("有理数随堂练习")).toBeInTheDocument();
     expect(within(redoTable).getByText("做对 4 / 5 题")).toBeInTheDocument();
-    expect(screen.getByText(/离线 1 分钟 \/ 有效 17 分钟/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/离线 1 分钟 \/ 历史焦点 17 分钟/),
+    ).toBeInTheDocument();
   });
 
   it("「查看该生全部作答」跳作答数据页（携带 studentId）", async () => {
@@ -822,4 +824,39 @@ describe("StudentHomePage 筛选联动", () => {
       });
     });
   });
+});
+
+it("活动cohort未知且中位数null时，不回退历史焦点基准", async () => {
+  const data = makeStudent();
+  const first = data.anomalies[0];
+  if (!first) throw Error("缺异常夹具");
+  mockedStudent.mockResolvedValue(
+    makeStudent({
+      anomalies: [
+        {
+          ...first,
+          reasons: ["hints"],
+          hintsUsed: 2,
+          time: {
+            metric: "question_activity_sealed",
+            version: 1,
+            value: {
+              state: "unknown",
+              reason: "no_client_evidence",
+              activeSec: null,
+              observedSec: null,
+            },
+          },
+          timeMedianSec: null,
+          medianSec: 60,
+          multipleOfMedian: null,
+        },
+      ],
+    }),
+  );
+  renderPage();
+  const label = await screen.findByText("活动用时未记录");
+  expect(
+    within(label.parentElement as HTMLElement).queryByText(/全域中位数/),
+  ).toBeNull();
 });

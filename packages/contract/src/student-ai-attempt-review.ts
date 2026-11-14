@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { responseTimeSchema } from "./attempt-time-ledger.ts";
 import { optionSchema } from "./content.ts";
 import {
   AI_BATCH_MAX_QUESTIONS,
@@ -99,6 +100,7 @@ export const aiAttemptReviewQuestionSchema = z
     /** 是否存在正式笔迹（事实存在性；本任务不携带图像，不能分析笔迹过程） */
     hasFormalInk: z.boolean(),
     /** 每题服务端记录的有效用时（秒）；null = 未记录（不当 0） */
+    time: responseTimeSchema.optional(),
     activeSec: z.number().int().min(0).nullable(),
     /** 该题缺失/不可判定说明（中文；无则空数组） */
     notes: z.array(z.string().min(1)),
@@ -196,7 +198,7 @@ export type AiAttemptReviewCounts = z.infer<typeof aiAttemptReviewCountsSchema>;
 
 export const aiAttemptReviewSnapshotSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
     attemptId: z.uuid(),
     /** 快照身份不透明戳（服务端 HMAC；与预览版本同源，见服务层） */
     snapshotVersion: z.string().min(1),

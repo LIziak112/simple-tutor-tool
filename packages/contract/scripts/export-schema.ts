@@ -210,3 +210,42 @@ await writeSchema(
     { io: "input" },
   ),
 );
+
+const reviewV2 = await import("../src/attempt-review-v2.ts");
+await writeSchema(
+  "attempt-review-v2.json",
+  "范围复盘与分片报告v2契约",
+  z.toJSONSchema(
+    z.object({
+      create: reviewV2.reviewV2CreateSchema,
+      snapshot: reviewV2.reviewV2SnapshotSchema,
+      report: reviewV2.reviewV2ReportSchema,
+      run: reviewV2.reviewV2RunPublicSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "review-facts.json",
+  "结果事实与分组维度契约",
+  z.toJSONSchema(
+    z.object({
+      fact: (await import("../src/review-facts.ts")).reviewQuestionFactSchema,
+      dimension: (await import("../src/review-facts.ts"))
+        .reviewGroupDimensionSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "review-template.json",
+  "复盘模板与展示推荐契约",
+  z.toJSONSchema(
+    z.object({
+      template: (await import("../src/review-template.ts"))
+        .reviewTemplateSchema,
+      presentation: (await import("../src/review-template.ts"))
+        .reviewPresentationSchema,
+    }),
+  ),
+);

@@ -22,6 +22,7 @@ import { parseApiIssues } from "@/features/content/api-issues";
 import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
+import { MarkdownEditor } from "@/features/content/MarkdownEditor";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { PublishConfirmDialog } from "@/features/shared/PublishConfirmDialog";
 import {
@@ -31,7 +32,6 @@ import {
   updateLecture,
   updateQuestion,
 } from "@/lib/api";
-import { MarkdownEditor } from "@/pages/teacher/MarkdownEditor";
 
 /**
  * 题目/讲义编辑抽屉（T1.12）：

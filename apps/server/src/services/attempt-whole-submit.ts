@@ -30,6 +30,7 @@ import { attemptResponseRows } from "./attempt-freeze.ts";
 import { writeFinalSettlementWithin } from "./attempt-settlement.ts";
 import { buildSubmissionEvidence } from "./attempt-submit-evidence.ts";
 import { validateSubmitRevisions } from "./attempt-submit-revisions.ts";
+import { sealResponseTimeWithin } from "./attempt-time-seal";
 import { assertSavedAnswersConfirmed } from "./attempt-timing";
 import { recordConfirmedSubmit, submissionActivityOf } from "./event-service";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
@@ -233,6 +234,12 @@ function finalizeWholeAttempt(
   if (!touchAttemptActivity(db, attemptId, nowIso))
     throw new HttpError(409, "ALREADY_SUBMITTED", "该练习已提交");
 
+  sealResponseTimeWithin(
+    db,
+    attemptId,
+    graded.map((g) => g.response.id),
+    nowIso,
+  );
   for (const g of graded) {
     db.update(responses)
       .set({

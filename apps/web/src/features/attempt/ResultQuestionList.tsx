@@ -23,7 +23,9 @@ export function ResultQuestionList({
   controller,
   lazy,
   renderQuestion,
+  showMaterials = true,
 }: {
+  showMaterials?: boolean;
   data: AttemptResultData;
   context: ReturnType<typeof useAttemptContext>["data"];
   indexOfQuestion: ReadonlyMap<string, number>;
@@ -91,10 +93,9 @@ export function ResultQuestionList({
                       if (question === undefined) return [];
                       // P1-2：solo 题级材料锚（回看自然阅读，无 reveal
                       // 跳转——与组材料列同理由）
-                      const soloMaterials = questionMaterialsOf(
-                        context,
-                        question.snapshot,
-                      );
+                      const soloMaterials = showMaterials
+                        ? questionMaterialsOf(context, question.snapshot)
+                        : [];
                       return soloMaterials.length === 0
                         ? [renderRow(questionId)]
                         : [
@@ -113,7 +114,7 @@ export function ResultQuestionList({
                       <QuestionGroupAnchor
                         key={`group:${segment.group.id}`}
                         group={segment.group}
-                        materials={segment.materials}
+                        materials={showMaterials ? segment.materials : []}
                         questionCount={segment.questionIds.length}
                         readingKey={`${data.attempt.id}|${segment.group.id}`}
                         layoutMode="stack"

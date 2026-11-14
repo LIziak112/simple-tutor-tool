@@ -22,6 +22,7 @@ import {
 } from "../db/schema";
 import { attemptAnswersPublished } from "./answer-publication.ts";
 import { assignmentReleaseByIds } from "./attempt-service";
+import { timeProjectionsOf } from "./attempt-time-projection";
 import { requireVisibleCourseUnit } from "./course-service";
 import {
   pendingMarkCounts,
@@ -243,6 +244,10 @@ export function listStudentRecords(
   ];
   const assignmentById = assignmentReleaseByIds(db, assignmentIds);
 
+  const times = timeProjectionsOf(
+    db,
+    rows.map((r) => r.id),
+  );
   const records: StudentRecordRow[] = rows.map((attempt) => {
     // 公布 gate（T2A.8/D10）：只有 assignment 来源的已交卷记录可能受限；
     // course 恒交卷即公布，draft 无结果可公布（answersReleased=true，显示进行中）
@@ -261,6 +266,7 @@ export function listStudentRecords(
     const progress = progressByAttempt.get(attempt.id);
     return {
       ...sourceOf(db, attempt, teacherId ?? ""),
+      time: times.aggregate(attempt.id),
       attemptId: attempt.id,
       status: attempt.status,
       // D2 展示口径 scoreFinal ?? scoreAuto；未公布置 null（显示「待公布」）

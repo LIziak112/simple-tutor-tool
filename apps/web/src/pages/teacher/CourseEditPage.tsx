@@ -16,6 +16,7 @@ import { CourseCatalogTab } from "@/features/courses/CourseCatalogTab";
 import { CourseHeader } from "@/features/courses/CourseHeader";
 import { CourseMembersTab } from "@/features/courses/CourseMembersTab";
 import { CourseProgressTab } from "@/features/courses/CourseProgressTab";
+import { CourseReviewSettings } from "@/features/courses/CourseReviewSettings";
 import {
   useCourseDetail,
   useUpdateCourse,
@@ -106,6 +107,13 @@ export function CourseEditPage() {
           )
         }
         onDeleted={() => void navigate("/t/courses")}
+      />
+
+      <CourseReviewSettings
+        key={detail.id}
+        courseId={detail.id}
+        examType={detail.examType}
+        reviewTemplateId={detail.reviewTemplateId}
       />
 
       <div role="tablist" aria-label="课程页签" className="flex gap-2">

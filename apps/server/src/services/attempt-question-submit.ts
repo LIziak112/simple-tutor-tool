@@ -29,6 +29,7 @@ import {
   revisionStale,
 } from "./attempt-submit-revisions.ts";
 import { attemptSummaryOf } from "./attempt-summary.ts";
+import { sealResponseTimeWithin } from "./attempt-time-seal";
 import {
   recordQuestionSubmitEvent,
   submissionActivityOf,
@@ -195,6 +196,7 @@ function finalizeLessonQuestion(
     })
     .where(eq(responses.id, row.id))
     .run();
+  sealResponseTimeWithin(db, attemptId, [row.id], nowIso);
   if (evidenceRow !== null) {
     db.insert(submissionEvidence)
       .values({

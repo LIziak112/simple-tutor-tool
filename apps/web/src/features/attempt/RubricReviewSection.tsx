@@ -11,6 +11,7 @@ import {
   rubricEffectiveOf,
   rubricMaxOf,
   rubricTotalOf,
+  studentReviewFact,
 } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,11 @@ export function RubricReviewSection({
   question: AttemptResultQuestion;
 }) {
   const client = useQueryClient();
-  const projected = question.rubricReview ?? null;
+  const projected = studentReviewFact(
+    question,
+    { id: "", title: "" },
+    true,
+  ).rubricReview;
   const [override, setOverride] = useState<RubricReview | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
   const [busy, setBusy] = useState(false);

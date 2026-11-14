@@ -11,6 +11,7 @@ import { Link, useSearchParams } from "react-router";
 import { learningStatusClass } from "@/components/learning-status";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
+import { attemptTimeLabel } from "@/features/attempt/attempt-time-label";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import { formatCnTime } from "@/lib/time";
 import { recordReviewHref } from "./record-review-navigation";
@@ -111,6 +112,9 @@ export function RecordCard({
         <p className="flex flex-wrap items-center gap-2 sm:col-span-2">
           <SourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
+          <span className="text-xs text-muted-foreground">
+            {attemptTimeLabel(row.time)}
+          </span>
           <span className="ml-auto text-xs text-muted-foreground">
             {sort === "activity_desc" ? "最近作答 " : "开始于 "}
             {formatCnTime(activityAt)}
