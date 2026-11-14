@@ -110,3 +110,42 @@ it("源内容允许501字符标题，上下文快照保留完整标题", () => {
     }).content.titles,
   ).toEqual({ course: title, unit: title, lecture: title });
 });
+
+it.each([
+  "opaque-row-ref",
+  "兼容:冻结行/17",
+  "r".repeat(512),
+  context.session.questionRevisionId,
+])(
+  "冻结题行引用沿用既有questionRevisionId契约并原样保留 %s",
+  (questionRevisionId) => {
+    const parsed = learningContextSchema.parse({
+      ...context,
+      session: { ...context.session, questionRevisionId },
+    });
+    expect(parsed.session?.questionRevisionId).toBe(questionRevisionId);
+  },
+);
+it.each(["", " ", " ref", "ref ", "r".repeat(513)])(
+  "冻结题行引用拒绝既有契约不合法值 %j",
+  (questionRevisionId) => {
+    expect(
+      learningContextSchema.safeParse({
+        ...context,
+        session: { ...context.session, questionRevisionId },
+      }).success,
+    ).toBe(false);
+  },
+);
+it("行引用放宽不改变真实attemptId/deviceId的UUID约束", () => {
+  expect(
+    learningContextSchema.safeParse({
+      ...context,
+      session: { ...context.session, attemptId: "opaque-row-ref" },
+    }).success,
+  ).toBe(false);
+  expect(
+    learningContextSchema.safeParse({ ...context, deviceId: "opaque-row-ref" })
+      .success,
+  ).toBe(false);
+});

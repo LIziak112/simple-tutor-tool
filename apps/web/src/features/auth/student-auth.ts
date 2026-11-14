@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StudentLoginRequest, StudentMeData } from "@tutor/contract";
+import { useCallback } from "react";
 import {
   currentAnnotationSession,
   resetAnnotationSession,
@@ -53,50 +54,61 @@ export function useStudentMe() {
  */
 export function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
-  return async (student: StudentMeData) => {
-    // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
-    // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
-    // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
-    // （专属链接重进）不 reset，队列照常；本地未同步内容保留（方案 §6.1）
-    const bound = currentNoteSession();
-    if (bound !== null && bound.studentId !== student.id) {
-      resetNoteSession();
-    }
-    // T6R.20：标注会话同口径（换账号停旧标注同步队列，防误 403 终态）
-    const boundAnnotation = currentAnnotationSession();
-    if (boundAnnotation !== null && boundAnnotation.studentId !== student.id) {
-      resetAnnotationSession();
-    }
-    await clearAccountQueries(queryClient, "student");
-    bindAiDisplayAccount(student.id);
-    bindPracticePreferenceAccount(student.id);
-    bindKeyboardBindingsAccount(student.id);
-    bindGroupMaterialLayoutAccount(student.id);
-    bindDraftSession({ origin: window.location.origin, studentId: student.id });
-    queryClient.setQueryData(studentMeKey, student);
-    if (portalCapabilitiesOf("student", student.accountKind).assignments) {
-      void queryClient.prefetchQuery({
-        queryKey: ["student", "assignments"],
-        queryFn: fetchStudentAssignmentsApi,
+  return useCallback(
+    async (student: StudentMeData, isCurrent: () => boolean = () => true) => {
+      if (!isCurrent()) return;
+      // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
+      // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
+      // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
+      // （专属链接重进）不 reset，队列照常；本地未同步内容保留（方案 §6.1）
+      const bound = currentNoteSession();
+      if (bound !== null && bound.studentId !== student.id) {
+        resetNoteSession();
+      }
+      // T6R.20：标注会话同口径（换账号停旧标注同步队列，防误 403 终态）
+      const boundAnnotation = currentAnnotationSession();
+      if (
+        boundAnnotation !== null &&
+        boundAnnotation.studentId !== student.id
+      ) {
+        resetAnnotationSession();
+      }
+      await clearAccountQueries(queryClient, "student", isCurrent);
+      if (!isCurrent()) return;
+      bindAiDisplayAccount(student.id);
+      bindPracticePreferenceAccount(student.id);
+      bindKeyboardBindingsAccount(student.id);
+      bindGroupMaterialLayoutAccount(student.id);
+      bindDraftSession({
+        origin: window.location.origin,
+        studentId: student.id,
       });
-    }
-    void queryClient.prefetchQuery({
-      queryKey: ["student", "courses"],
-      queryFn: fetchStudentCoursesApi,
-    });
-    void queryClient.prefetchQuery({
-      queryKey: ["student", "lectures"],
-      queryFn: fetchStudentLecturesApi,
-    });
-  };
+      queryClient.setQueryData(studentMeKey, student);
+      if (portalCapabilitiesOf("student", student.accountKind).assignments) {
+        void queryClient.prefetchQuery({
+          queryKey: ["student", "assignments"],
+          queryFn: fetchStudentAssignmentsApi,
+        });
+      }
+      void queryClient.prefetchQuery({
+        queryKey: ["student", "courses"],
+        queryFn: fetchStudentCoursesApi,
+      });
+      void queryClient.prefetchQuery({
+        queryKey: ["student", "lectures"],
+        queryFn: fetchStudentLecturesApi,
+      });
+    },
+    [queryClient],
+  );
 }
 
 /** 专属链接登录（/s/:token 页面挂载即调用） */
 export function useStudentLinkLogin() {
   const applyAuthed = useApplyStudentAuthed();
   return useMutation({
-    mutationFn: loginStudentByLinkApi,
-    onSuccess: applyAuthed,
+    mutationFn: (token: string) => loginStudentByLinkApi(token),
+    onSuccess: (student) => applyAuthed(student),
   });
 }
 
@@ -105,7 +117,7 @@ export function useLoginStudent() {
   const applyAuthed = useApplyStudentAuthed();
   return useMutation({
     mutationFn: (request: StudentLoginRequest) => loginStudentApi(request),
-    onSuccess: applyAuthed,
+    onSuccess: (student) => applyAuthed(student),
   });
 }
 

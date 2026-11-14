@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import { questionSchema } from "./content.ts";
 
 /** 内容 id 沿用源 DSL 契约，旧锚与新坐标共用，不截断合法来源。 */
@@ -24,7 +25,7 @@ export const learningContextSchema = z.object({
   session: z
     .object({
       attemptId: z.uuid(),
-      questionRevisionId: z.uuid(),
+      questionRevisionId: questionRevisionIdSchema,
       questionNo: z.number().int().positive(),
       questionCount: z.number().int().positive(),
       settlementSeq: z.number().int().positive().nullable(),
