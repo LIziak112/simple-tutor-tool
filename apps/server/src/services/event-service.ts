@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   AttemptEvent,
   EventDelivery,
@@ -8,11 +8,12 @@ import type {
 } from "@tutor/contract";
 import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { events, lectures, type NewEventRow } from "../db/schema";
+import { attempts, events, lectures, type NewEventRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { requireUsableAttempt } from "./attempt-service";
-import type { Tx } from "./question-sync";
+import { requireDevice } from "./device-service";
+import { insertEvents, validateDelivery } from "./event-write";
 
 /**
  * EventService（T2.10）——学习痕迹事件的写入与读取（架构文档 §5.2/§5.5）。
@@ -37,61 +38,6 @@ import type { Tx } from "./question-sync";
  *   同款模式）；既有 11 种事件与新事件一律携带（net/idle 无讲义语义除外）。
  */
 
-/** 事件行 → { events: [...] }（逐条校验后的合法输入）批量插入，返回落库条数 */
-function insertEvents(
-  db: Db | Tx,
-  rows: readonly NewEventRow[],
-  delivery?: EventDelivery,
-  scope?: string,
-): LearningEventBatchData {
-  const now = new Date().toISOString();
-  const result = db
-    .insert(events)
-    .values(
-      rows.map((row, index) => ({
-        ...row,
-        id:
-          delivery && scope
-            ? eventRowId(delivery.ownerId, scope, delivery.eventIds[index])
-            : randomUUID(),
-        serverTs: now,
-      })),
-    )
-    .onConflictDoNothing({ target: events.id })
-    .run();
-  return {
-    accepted: result.changes,
-    ...(delivery && { acknowledgedIds: delivery.eventIds }),
-  };
-}
-
-/** 新客户端的事件重放使用同一个主键，服务端内部事件继续使用随机主键。 */
-function eventRowId(
-  ownerId: string,
-  scope: string,
-  eventId: string | undefined,
-): string {
-  const hash = createHash("sha256")
-    .update(JSON.stringify([ownerId, scope, eventId]))
-    .digest("hex");
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-}
-
-function validateDelivery(
-  studentId: string,
-  count: number,
-  delivery?: EventDelivery,
-): void {
-  if (!delivery) return;
-  if (delivery.ownerId !== studentId)
-    throw new HttpError(403, "EVENT_ACCOUNT_CHANGED", "事件会话已切换");
-  if (
-    delivery.eventIds.length !== count ||
-    new Set(delivery.eventIds).size !== count
-  )
-    throw new HttpError(400, "EVENT_IDS_INVALID", "事件标识与批次不符");
-}
-
 /**
  * 批量追加 attempt 上下文事件（POST /api/student/attempts/:id/events）：
  * - attempt 不存在 → 404；非本人 → 403（requireUsableAttempt 统一口径）；
@@ -111,15 +57,34 @@ export function appendAttemptEvents(
   /** 作答页会话标识（批级，折进每行 payload；题内活动用时按它分组识别多端重叠） */
   viewId?: string,
   delivery?: EventDelivery,
+  deviceId?: string,
 ): LearningEventBatchData {
   validateDelivery(studentId, batch.length, delivery);
-  requireUsableAttempt(db, studentId, attemptId);
-  return insertEvents(
-    db,
-    batch.map((event) => attemptEventRow(event, attemptId, studentId, viewId)),
-    delivery,
-    `attempt:${attemptId}`,
-  );
+  return db.transaction(() => {
+    requireUsableAttempt(db, studentId, attemptId);
+    const canonicalDevice =
+      deviceId === undefined
+        ? null
+        : requireDevice(db, { type: "student", id: studentId }, deviceId)
+            .deviceId;
+    const result = insertEvents(
+      db,
+      batch.map((event) => ({
+        ...attemptEventRow(event, attemptId, studentId, viewId),
+        deviceId: canonicalDevice,
+      })),
+      delivery,
+      `attempt:${attemptId}`,
+    );
+    if (canonicalDevice !== null && result.accepted > 0)
+      db.update(attempts)
+        .set({ device: canonicalDevice })
+        .where(
+          and(eq(attempts.id, attemptId), eq(attempts.studentId, studentId)),
+        )
+        .run();
+    return result;
+  });
 }
 
 /**
@@ -134,6 +99,7 @@ export function appendLectureEvents(
   studentId: string,
   batch: readonly LectureEvent[],
   delivery?: LectureEventDelivery,
+  deviceId?: string,
 ): LearningEventBatchData {
   validateDelivery(studentId, batch.length, delivery);
   // 讲义可见性校验（一对一场景学生可见全部讲义，T2.3 口径；这里只验存在——
@@ -156,9 +122,17 @@ export function appendLectureEvents(
       throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
     }
   }
+  const canonicalDevice =
+    deviceId === undefined
+      ? null
+      : requireDevice(db, { type: "student", id: studentId }, deviceId)
+          .deviceId;
   return insertEvents(
     db,
-    batch.map((event) => lectureEventRow(event, studentId)),
+    batch.map((event) => ({
+      ...lectureEventRow(event, studentId),
+      deviceId: canonicalDevice,
+    })),
     delivery,
     delivery && `lecture:${delivery.lectureId}`,
   );

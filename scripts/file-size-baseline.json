@@ -1,7 +1,7 @@
 {
-  "apps/server/src/db/schema.ts": 2641,
+  "apps/server/src/db/schema.ts": 2623,
   "apps/server/src/mcp/server.ts": 1274,
-  "apps/server/src/routes/student.ts": 1135,
+  "apps/server/src/routes/student.ts": 1133,
   "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1195,
   "apps/server/src/services/ai-companion/student-ai-queue.ts": 2167,
   "apps/server/src/services/analytics-service.ts": 1349,
@@ -23,7 +23,7 @@
   "apps/web/src/features/export/ExportWizard.tsx": 1823,
   "apps/web/src/features/notes/note-store.ts": 1317,
   "apps/web/src/features/student/wrong-questions-ui.tsx": 1278,
-  "apps/web/src/lib/api.ts": 3265,
+  "apps/web/src/lib/api.ts": 3254,
   "apps/web/src/pages/student/StudentLessonPage.tsx": 1102,
   "apps/web/src/pages/teacher/ImportPage.tsx": 1225,
   "apps/web/src/pages/teacher/LibraryPage.tsx": 1759,
