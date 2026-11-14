@@ -162,7 +162,19 @@ for (const kind of ["class", "personal"] as const) {
           "practice-public-read-e2e",
         );
         const names = (await client.listTools()).tools.map((tool) => tool.name);
-        expect(STUDENT_MCP_TOOL_NAMES).toHaveLength(20);
+        expect(STUDENT_MCP_TOOL_NAMES).toHaveLength(25);
+        // 个人端合法组合本人教师工具；班级学生端只开放学生工具清单。
+        if (kind === "class") expect(names).toHaveLength(25);
+        expect(new Set(names).size).toBe(names.length);
+        expect(names).toEqual(
+          expect.arrayContaining([
+            "create_review_run_v2",
+            "list_review_runs_v2",
+            "claim_review_part_v2",
+            "renew_review_part_lease_v2",
+            "submit_review_part_v2",
+          ]),
+        );
         expect(names).toEqual(
           expect.arrayContaining([...STUDENT_MCP_TOOL_NAMES]),
         );
