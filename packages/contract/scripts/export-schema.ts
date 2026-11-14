@@ -157,3 +157,21 @@ await writeSchema(
     }),
   ),
 );
+
+const memoApi = await import("../src/memo-api.ts");
+const memoSharing = await import("../src/memo-sharing.ts");
+await writeSchema(
+  "memo-api.json",
+  "随笔读写、来源与分享契约",
+  z.toJSONSchema(
+    z.object({
+      memo: memoApi.memoSchema,
+      query: memoApi.memoListQuerySchema,
+      agentCreate: memoApi.memoAgentCreateSchema,
+      share: memoSharing.memoShareInputSchema,
+      shareState: memoSharing.memoShareStateSchema,
+      sharedMemo: memoSharing.sharedMemoSchema,
+      sourceTarget: memoSharing.memoSourceTargetSchema,
+    }),
+  ),
+);

@@ -1,4 +1,4 @@
-import type { MemoAnchor, MemoDevice } from "@tutor/contract";
+import type { MemoAnchor, MemoDevice, MemoKind } from "@tutor/contract";
 
 /** 随笔界面文案与小工具（模块 5 第一步）；纯函数，便于测试。 */
 
@@ -52,3 +52,10 @@ export function splitMemoTagInput(raw: string): string[] {
     ),
   );
 }
+
+/** 入队失败提示里指代媒体内容的词（text 走输入框恢复，不在此列） */
+export const MEDIA_KIND_LABEL: Record<Exclude<MemoKind, "text">, string> = {
+  voice: "这段录音",
+  image: "这张图片",
+  ink: "这页手写",
+};

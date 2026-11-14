@@ -204,6 +204,7 @@ export type ApiErr = z.infer<typeof apiErrSchema>;
 
 export * from "./learning-context-api.ts";
 export * from "./lesson-question-order.ts";
+export * from "./memo-sharing.ts";
 export * from "./question-process.ts";
 export * from "./result-counts.ts";
 export * from "./rubric.ts";

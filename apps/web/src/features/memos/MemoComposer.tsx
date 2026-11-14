@@ -1,4 +1,4 @@
-import type { MemoAnchor, MemoKind } from "@tutor/contract";
+import type { MemoAnchor } from "@tutor/contract";
 import {
   formatMemoDuration,
   MEMO_ANCHOR_NONE,
@@ -32,8 +32,10 @@ import {
   type LearningSource,
 } from "@/features/learning-context/learning-context-store";
 import { LearningPrincipalContext } from "@/features/learning-context/learning-principal";
+import { MemoTagPicker } from "./MemoTagPicker";
 import {
   detectMemoDevice,
+  MEDIA_KIND_LABEL,
   memoAnchorLabel,
   splitMemoTagInput,
 } from "./memo-format";
@@ -42,13 +44,6 @@ import { memoSourceFields } from "./memo-source-fields";
 import { useVoiceRecorder, type VoiceRecording } from "./use-voice-recorder";
 
 const MemoInkSheet = lazy(() => import("./MemoInkSheet"));
-
-/** 入队失败提示里指代媒体内容的词（text 走输入框恢复，不在此列） */
-const MEDIA_KIND_LABEL: Record<Exclude<MemoKind, "text">, string> = {
-  voice: "这段录音",
-  image: "这张图片",
-  ink: "这页手写",
-};
 
 /**
  * 随笔记录端（模块 5 第一步）：一个输入框 + 三个媒体入口（语音 / 图片 / 手写）。
@@ -271,24 +266,13 @@ export function MemoComposer({
         placeholder="随手记一句：想法、疑问、易错点…（⌘/Ctrl+Enter 保存）"
         className="w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       />
-      <div className="flex flex-wrap items-center gap-2">
-        <label htmlFor={tagsId} className="sr-only">
-          标签
-        </label>
-        <input
-          id={tagsId}
-          disabled={busy}
-          value={tagsRaw}
-          onChange={(event) => setTagsRaw(event.target.value)}
-          placeholder="标签（逗号分隔，如 易错, 疑问, 待办）"
-          className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        />
-        {tooManyTags && (
-          <span className="text-xs text-destructive">
-            标签最多 {MEMO_TAGS_MAX} 个
-          </span>
-        )}
-      </div>
+      <MemoTagPicker
+        id={tagsId}
+        value={tagsRaw}
+        onChange={setTagsRaw}
+        disabled={busy}
+        account={principal ?? null}
+      />
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"

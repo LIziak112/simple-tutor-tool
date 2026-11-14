@@ -32,6 +32,19 @@ import StudentMemosPage from "./StudentMemosPage";
  * 列表；锚自动带上且可去掉；离线时条目留在「待补传」区；删除；形态筛选改 URL。
  */
 
+vi.mock("@/lib/memo-enhancement-api", () => ({
+  memoSourceTargetApi: vi.fn(async (id: string) =>
+    id === "m-ink"
+      ? { kind: "lecture", lectureId: LECTURE, sectionId: null }
+      : {
+          kind: "attempt",
+          attemptId: ATTEMPT,
+          questionId: "q-7",
+          replaced: false,
+        },
+  ),
+  memoTagSuggestionsApi: vi.fn(async () => ({ tags: [] })),
+}));
 vi.mock("@/lib/memo-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/memo-api")>();
   return {
@@ -145,7 +158,10 @@ describe("StudentMemosPage", () => {
     renderPage();
     expect(await screen.findByText("基期现期别搞反")).toBeInTheDocument();
     expect(screen.getByText("#易错")).toBeInTheDocument();
-    const anchorLink = screen.getByRole("link", { name: /第 7 题 · 资料分析/ });
+    fireEvent.click(screen.getByRole("button", { name: /第 7 题 · 资料分析/ }));
+    const anchorLink = await screen.findByRole("link", {
+      name: /第 7 题 · 资料分析/,
+    });
     expect(anchorLink).toHaveAttribute("href", `/s/attempts/${ATTEMPT}?q=q-7`);
     const audio = document.querySelector("audio");
     expect(audio).not.toBeNull();
@@ -156,10 +172,10 @@ describe("StudentMemosPage", () => {
       "/api/student/memos/m-ink/media",
     );
     expect(screen.getByText("Agent 转记")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /第二讲 比例/ })).toHaveAttribute(
-      "href",
-      `/s/lectures/${LECTURE}`,
-    );
+    fireEvent.click(screen.getByRole("button", { name: /第二讲 比例/ }));
+    expect(
+      await screen.findByRole("link", { name: /第二讲 比例/ }),
+    ).toHaveAttribute("href", `/s/lectures/${LECTURE}`);
   });
 
   it("记录端：带当前题锚保存文字 → 调创建接口（含锚与标签）并刷新列表；锚可去掉", async () => {

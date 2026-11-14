@@ -9,6 +9,7 @@ import {
   memoCreateMediaSchema,
   memoCreateTextSchema,
   memoListQuerySchema,
+  memoShareInputSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
 import type { StudentEnv } from "../auth/require-student";
@@ -29,6 +30,13 @@ import {
   readMemoMedia,
 } from "../services/memo-read";
 import { createMediaMemo, createTextMemo } from "../services/memo-service";
+import {
+  memoShareState,
+  revokeMemoShare,
+  shareMemo,
+} from "../services/memo-sharing";
+import { memoSourceTarget } from "../services/memo-source-target";
+import { memoTagSuggestions } from "../services/memo-tag-suggestions";
 
 /**
  * 随笔学生侧路由（模块 5 第一步），由 student.ts 挂在 /api/student 之下（个人账号
@@ -140,6 +148,49 @@ export function createStudentMemoRoutes(db: Db, dataDir: string) {
         200,
         { "Cache-Control": "private, no-store" },
       );
+    })
+    .get("/memos/tags", (c) =>
+      c.json(
+        { ok: true, data: { tags: memoTagSuggestions(db, c.var.student.id) } },
+        200,
+        { "Cache-Control": "private, no-store" },
+      ),
+    )
+    .get("/memos/:id/source-target", (c) =>
+      c.json(
+        {
+          ok: true,
+          data: memoSourceTarget(db, c.var.student.id, c.req.param("id")),
+        },
+        200,
+        { "Cache-Control": "private, no-store" },
+      ),
+    )
+    .get("/memos/:id/share", (c) =>
+      c.json(
+        {
+          ok: true,
+          data: memoShareState(db, c.var.student.id, c.req.param("id")),
+        },
+        200,
+        { "Cache-Control": "private, no-store" },
+      ),
+    )
+    .put("/memos/:id/share", async (c) => {
+      const input = await parseJsonBody(c, memoShareInputSchema);
+      return c.json({
+        ok: true,
+        data: shareMemo(
+          db,
+          c.var.student.id,
+          c.req.param("id"),
+          input.teacherId,
+        ),
+      });
+    })
+    .delete("/memos/:id/share", (c) => {
+      revokeMemoShare(db, c.var.student.id, c.req.param("id"));
+      return c.json({ ok: true, data: { id: c.req.param("id") } });
     })
     .delete("/memos/:id", (c) => {
       deleteMemo(db, c.var.student.id, c.req.param("id"));

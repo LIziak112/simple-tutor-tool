@@ -12,7 +12,9 @@ import {
   useAccountLoginPath,
   useLogoutPersonal,
 } from "@/features/auth/personal-auth";
+import { portalCapabilitiesOf } from "@/features/auth/portals";
 import { useLogoutTeacher, useTeacherMe } from "@/features/auth/teacher-auth";
+import { DeviceSettingsSection } from "@/features/devices/DeviceSettingsSection";
 import { TeacherAiSettingsPanel } from "@/features/student-ai/TeacherAiSettingsPanel";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
@@ -117,6 +119,17 @@ export function SettingsPage() {
         </div>
       )}
       <div hidden={activeSection !== "account"} className="space-y-7">
+        {activeSection === "account" && (
+          <DeviceSettingsSection
+            key={`teacher:${meQuery.data.id}`}
+            owner={{ type: "teacher", id: meQuery.data.id }}
+            accountKind={meQuery.data.accountKind}
+            {...(portalCapabilitiesOf("teacher", meQuery.data.accountKind)
+              .teacherAiConnections
+              ? { connectionSettingsHref: "/t/connect" }
+              : {})}
+          />
+        )}
         <section>
           <h2 className="text-lg font-semibold">教师账号</h2>
           <dl className="mt-4 divide-y divide-border rounded-xl border border-border bg-card px-6 text-sm">
