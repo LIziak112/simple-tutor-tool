@@ -30,6 +30,7 @@ import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { SettingsNavigationProvider } from "@/features/teacher-settings/settings-navigation";
 import { BRAND_NAME } from "@/lib/brand";
+import { legacyPersonalLocation } from "@/portals/legacy-personal-location";
 import {
   type PortalCapability,
   portalCapabilitiesOf,
@@ -199,7 +200,9 @@ export function TeacherLayout() {
   if (meQuery.data?.accountKind === "personal")
     return (
       <Navigate
-        to={`/p/manage${legacyLocation.pathname.slice(2)}${legacyLocation.search}${legacyLocation.hash}`}
+        to={legacyPersonalLocation(
+          `${legacyLocation.pathname}${legacyLocation.search}${legacyLocation.hash}`,
+        )}
         replace
       />
     );

@@ -1,4 +1,5 @@
 import type { AccountKind } from "@tutor/contract";
+import { legacyPersonalLocation } from "./legacy-personal-location";
 
 /** 门户地址唯一出处；管理端复用教师认证和 Cookie。 */
 export const PORTALS = {
@@ -121,9 +122,7 @@ export function safeReturnTo(
           : teacherPath || adminPath;
   if (!allowed) return fallback;
   if (portal === "personal" && (studentPath || teacherPath)) {
-    const view = studentPath ? "learn" : "manage";
-    const tail = url.pathname.slice(2) || "/library";
-    return `/p/${view}${tail}${url.search}${url.hash}`;
+    return legacyPersonalLocation(`${url.pathname}${url.search}${url.hash}`);
   }
   return `${url.pathname}${url.search}${url.hash}`;
 }

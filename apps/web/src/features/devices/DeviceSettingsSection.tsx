@@ -1,7 +1,8 @@
 import type { AccountKind, Device } from "@tutor/contract";
 import { useId, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
+import { loginPathWithReturnTo } from "@/features/auth/return-navigation";
 import { useClearStudentSession } from "@/features/auth/student-auth";
 import { useClearTeacherSession } from "@/features/auth/teacher-auth";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
@@ -26,6 +27,7 @@ export function DeviceSettingsSection({
   const query = useDevices(owner);
   const routes = usePortalRoutes();
   const navigate = useNavigate();
+  const location = useLocation();
   const clearStudent = useClearStudentSession();
   const clearTeacher = useClearTeacherSession();
   const [notice, setNotice] = useState<string | null>(null);
@@ -39,7 +41,13 @@ export function DeviceSettingsSection({
     const portal = accountKind === "personal" ? "personal" : owner.type;
     const clear = owner.type === "student" ? clearStudent : clearTeacher;
     await clear(() =>
-      navigate(routes.portal(portal).loginPath, { replace: true }),
+      navigate(
+        loginPathWithReturnTo(
+          routes.portal(portal).loginPath,
+          location.pathname + location.search + location.hash,
+        ),
+        { replace: true },
+      ),
     );
   });
   async function perform(input: Parameters<typeof action.mutateAsync>[0]) {

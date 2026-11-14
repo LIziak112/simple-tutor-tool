@@ -1,7 +1,13 @@
 import type { InkDoc, InkUploadData } from "@tutor/contract";
 import type { GzipJsonMessages } from "@/features/runtime/client-types";
-import { ApiError, callApi, throwShellError } from "@/lib/api-response";
+import {
+  ApiError,
+  callApi,
+  isAbortReason,
+  throwShellError,
+} from "@/lib/api-response";
 import { withRequestDeadline } from "@/lib/request-deadline";
+import { combineScopeSignal } from "../response-scope";
 import type { HttpRuntime } from "./http-runtime";
 import type { ClientServices } from "./service-types";
 export function createInkClient(
@@ -54,42 +60,58 @@ export function createInkClient(
     msg: GzipJsonMessages,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    let res: Response;
+    const current = combineScopeSignal(http.signal, signal ?? null);
     try {
-      res = await (signal ? fetch(path, { signal }) : fetch(path));
-    } catch {
-      throw new Error(msg.network);
-    }
-    if (!res.ok) {
-      await throwShellError(res);
-    }
-    if (typeof DecompressionStream === "undefined") {
-      // 上传侧（gzipOrRaw）有原始 JSON 回退；解压消费只在支持的环境提供
-      throw new Error(msg.unsupported);
-    }
-    // 无字节流按传输层异常归因（浏览器保证 2xx 响应有 body——复审轮⑤）
-    if (res.body === null) {
-      throw new Error(msg.network);
-    }
-    let text: string;
-    try {
-      text = await new Response(
-        res.body.pipeThrough(new DecompressionStream("gzip")),
-      ).text();
-    } catch (err) {
-      // 读流阶段失败的归因启发式（复审轮⑤）：gzip 坏块与网络中断在这里同为
-      // 异常、无可靠类型区分——按错误文案归类：已知网络类字样 → 网络错误
-      // 文案；其余（含各实现的解压错误）→ 解压失败文案。
-      const detail = err instanceof Error ? err.message : String(err);
-      if (/terminated|aborted|network|fetch failed/i.test(detail)) {
+      current.signal.throwIfAborted();
+      let res: Response;
+      try {
+        res = await fetch(path, { signal: current.signal });
+      } catch (error) {
+        current.signal.throwIfAborted();
+        if (isAbortReason(error)) throw error;
         throw new Error(msg.network);
       }
-      throw new Error(msg.decompress);
-    }
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      throw new Error(msg.corrupt);
+      if (!res.ok) {
+        await throwShellError(res);
+      }
+      if (typeof DecompressionStream === "undefined") {
+        // 上传侧（gzipOrRaw）有原始 JSON 回退；解压消费只在支持的环境提供
+        throw new Error(msg.unsupported);
+      }
+      // 无字节流按传输层异常归因（浏览器保证 2xx 响应有 body——复审轮⑤）
+      if (res.body === null) {
+        throw new Error(msg.network);
+      }
+      let text: string;
+      try {
+        text = await new Response(
+          res.body.pipeThrough(new DecompressionStream("gzip"), {
+            signal: current.signal,
+          }),
+        ).text();
+      } catch (err) {
+        current.signal.throwIfAborted();
+        if (isAbortReason(err)) throw err;
+        // 读流阶段失败的归因启发式（复审轮⑤）：gzip 坏块与网络中断在这里同为
+        // 异常、无可靠类型区分——按错误文案归类：已知网络类字样 → 网络错误
+        // 文案；其余（含各实现的解压错误）→ 解压失败文案。
+        const detail = err instanceof Error ? err.message : String(err);
+        if (/terminated|aborted|network|fetch failed/i.test(detail)) {
+          throw new Error(msg.network);
+        }
+        throw new Error(msg.decompress);
+      }
+      current.signal.throwIfAborted();
+      try {
+        const result: unknown = JSON.parse(text);
+        current.signal.throwIfAborted();
+        return result;
+      } catch {
+        current.signal.throwIfAborted();
+        throw new Error(msg.corrupt);
+      }
+    } finally {
+      current.finish();
     }
   }
   function fetchTeacherInkStrokesApi(inkId: string): Promise<unknown> {

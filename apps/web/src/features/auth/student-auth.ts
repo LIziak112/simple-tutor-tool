@@ -47,6 +47,7 @@ export function useStudentMe() {
 /**
  * 登录成功后写入 me 缓存，按门户能力预取作业，并预取课程/讲义。
  * 导出供个人账号双会话登录复用（personal-auth.ts，模块 0）。
+ * 仅本次调用通过入口校验并提交me后返回true；外部缓存更新不算本次成功。
  */
 export function useApplyStudentAuthed() {
   const { capabilitiesFor } = usePortalRuntime();
@@ -59,7 +60,7 @@ export function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
   return useCallback(
     async (student: StudentMeData, isCurrent: () => boolean = () => true) => {
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
       // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
       // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
@@ -77,7 +78,7 @@ export function useApplyStudentAuthed() {
         resetAnnotationSession();
       }
       await clearAccountQueries(queryClient, "student", isCurrent);
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       bindAiDisplayAccount(student.id);
       bindPracticePreferenceAccount(student.id);
       bindKeyboardBindingsAccount(student.id);
@@ -101,6 +102,7 @@ export function useApplyStudentAuthed() {
         queryKey: ["student", "lectures"],
         queryFn: fetchStudentLecturesApi,
       });
+      return true;
     },
     [
       queryClient,

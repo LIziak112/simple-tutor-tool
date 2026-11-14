@@ -24,7 +24,11 @@ import { usePortalRuntime } from "@/features/runtime/portal-runtime";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useLearnerBindings } from "@/features/student/use-learner-bindings";
 import { useStudentTheme } from "@/features/student/use-student-theme";
-import { SettingsNavigationProvider } from "@/features/teacher-settings/settings-navigation";
+import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import {
+  SettingsNavigationProvider,
+  useSettingsNavigation,
+} from "@/features/teacher-settings/settings-navigation";
 
 function PersonalLearningFrame({
   me,
@@ -66,14 +70,23 @@ function ManagementFrame({
   children: ReactNode;
 }) {
   useBindInkProfiles("teacher", id);
-  return (
-    <SettingsNavigationProvider>
-      <div className="mx-auto w-full max-w-7xl px-4 py-6">{children}</div>
-    </SettingsNavigationProvider>
-  );
+  return <div className="mx-auto w-full max-w-7xl px-4 py-6">{children}</div>;
 }
 /** 独立个人门户：双会话核验只写既有角色缓存，不嵌入班级教师布局。 */
 export default function PersonalLayout() {
+  const { view } = usePortalRuntime();
+  return view === "management" ? (
+    <SettingsNavigationProvider>
+      <PersonalLayoutContent />
+    </SettingsNavigationProvider>
+  ) : (
+    <PersonalLayoutContent />
+  );
+}
+function PersonalLayoutContent() {
+  const settingsNavigation = useSettingsNavigation();
+  const leave = (action: () => void) =>
+    settingsNavigation ? settingsNavigation.leave(action) : action();
   const [workspace, setWorkspace] = useState(false);
   const { view, routes, subject } = usePortalRuntime();
   const role = view === "learning" ? "student" : "teacher";
@@ -175,8 +188,10 @@ export default function PersonalLayout() {
             >
               {"displayName" in me ? me.displayName : me.loginName}
             </NavLink>
+            {view === "learning" && <AiQueueButton />}
             <PersonalViewButton
               from={role}
+              beforeAction={leave}
               aria-label={
                 view === "learning" ? "切换到管理视角" : "切换到学习视角"
               }
@@ -192,7 +207,7 @@ export default function PersonalLayout() {
             <button
               type="button"
               className="min-h-11 px-3"
-              onClick={() => logout.mutate()}
+              onClick={() => leave(() => logout.mutate())}
               disabled={logout.isPending}
             >
               退出登录

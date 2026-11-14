@@ -18,9 +18,15 @@ import { teacherMeKey, useApplyPersonalAuthed } from "./teacher-auth";
 type Props = Omit<ComponentProps<"button">, "onClick" | "disabled" | "type"> & {
   from: PersonalSessionRole;
   to: string;
+  beforeAction?: (action: () => void) => void;
 };
 
-export function PersonalViewButton({ from, to, ...props }: Props) {
+export function PersonalViewButton({
+  from,
+  to,
+  beforeAction,
+  ...props
+}: Props) {
   const routes = usePortalRoutes();
 
   const { checkPersonalSessionApi } = usePortalClients();
@@ -58,7 +64,9 @@ export function PersonalViewButton({ from, to, ...props }: Props) {
         type="button"
         disabled={check.isPending}
         aria-busy={check.isPending}
-        onClick={() => check.mutate()}
+        onClick={() =>
+          beforeAction ? beforeAction(() => check.mutate()) : check.mutate()
+        }
       />
       {check.isError && (
         <span role="alert" className="text-sm text-destructive">

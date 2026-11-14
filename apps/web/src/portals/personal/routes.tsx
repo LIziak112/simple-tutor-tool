@@ -92,6 +92,11 @@ export const personalRoutes = (() => {
   const PersonalExportPage = lazy(
     () => import("../../pages/teacher/ExportPage"),
   );
+  const PersonalConnectPage = lazy(() =>
+    import("../../pages/teacher/ConnectPage").then((module) => ({
+      default: module.ConnectPage,
+    })),
+  );
   const PersonalSettingsPage = lazy(
     () => import("../../pages/teacher/SettingsPage"),
   );
@@ -357,6 +362,14 @@ export const personalRoutes = (() => {
           element={
             <Suspense fallback={<StudentRouteFallback />}>
               <PersonalSettingsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="connect"
+          element={
+            <Suspense fallback={<StudentRouteFallback />}>
+              <PersonalConnectPage />
             </Suspense>
           }
         />

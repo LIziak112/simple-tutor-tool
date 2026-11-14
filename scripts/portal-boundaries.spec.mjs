@@ -154,3 +154,32 @@ test("L1笔记和标注不能经barrel反向依赖作答编排", () => {
   });
   assert.ok(result.violations.some((v) => v.code === "L1_BACK_DEPENDENCY"));
 });
+test("生产可达test子目录普通模块仍检查门户路径", () => {
+  const result = check(`import {href} from './test/path';`, {
+    "apps/web/src/features/example/test/path.ts": `export const href='/s/home';`,
+  });
+  assert.ok(result.violations.some((v) => v.code === "PORTAL_ROUTE"));
+});
+for (const operator of ["&&", "||", "??"])
+  test(`拒绝${operator}后的门户正则且允许除法`, () => {
+    has(
+      String.raw`const match=x ${operator} /^\/s\/(?:home|courses)/.test(x);`,
+      "PORTAL_ROUTE",
+    );
+    assert.deepEqual(
+      check(`const ratio=x ${operator} a / b / c;`).violations,
+      [],
+    );
+  });
+test("多字符词法保持箭头与比较表达式中的正则检测", () => {
+  has(String.raw`const match=()=>/^\/s\//.test(x);`, "PORTAL_ROUTE");
+  has(String.raw`const match=x === /^\/t\//;`, "PORTAL_ROUTE");
+});
+for (const operator of ["+", "-", "*", "/", "%", "**", "<", "&", "|", "^"])
+  test(`普通${operator}运算符后的门户正则仍检查`, () => {
+    has(String.raw`const value=x ${operator} /^\/s\//;`, "PORTAL_ROUTE");
+    assert.deepEqual(
+      check(`const ratio=a / b ${operator} c / d;`).violations,
+      [],
+    );
+  });

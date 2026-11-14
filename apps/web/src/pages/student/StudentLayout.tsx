@@ -33,6 +33,7 @@ import { StudentWorkspaceContext } from "@/features/student/student-workspace-la
 import { useLearnerBindings } from "@/features/student/use-learner-bindings";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { legacyPersonalLocation } from "@/portals/legacy-personal-location";
 import { portalCapabilitiesOf } from "@/portals/registry";
 
 /**
@@ -82,7 +83,9 @@ export function StudentLayout() {
   if (meQuery.data?.accountKind === "personal")
     return (
       <Navigate
-        to={`/p/learn${legacyLocation.pathname.slice(2)}${legacyLocation.search}${legacyLocation.hash}`}
+        to={legacyPersonalLocation(
+          `${legacyLocation.pathname}${legacyLocation.search}${legacyLocation.hash}`,
+        )}
         replace
       />
     );

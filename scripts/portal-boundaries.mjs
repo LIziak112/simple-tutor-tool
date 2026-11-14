@@ -10,8 +10,7 @@ export { tokensOf };
 const FEATURE_ROOT = "apps/web/src/features/";
 const SOURCE_ROOT = "apps/web/src/";
 const codeFile = (p) => /\.(?:ts|tsx|js|mjs)$/.test(p) && !p.endsWith(".d.ts");
-const testFile = (p) =>
-  /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(p) || p.includes("/test/");
+const testFile = (p) => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(p);
 const featureFile = (p) =>
   p.startsWith(FEATURE_ROOT) && codeFile(p) && !testFile(p);
 const portalPath = (value) => /^\/(?:s|t|p|a)(?:\/|$|[?#])/.test(value);

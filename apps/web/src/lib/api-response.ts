@@ -80,7 +80,7 @@ export function parseUploadResponse<T>(
 }
 
 /** DOMException可来自不同realm，中止身份不依赖Error构造器相等。 */
-function isAbortReason(error: unknown): boolean {
+export function isAbortReason(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&

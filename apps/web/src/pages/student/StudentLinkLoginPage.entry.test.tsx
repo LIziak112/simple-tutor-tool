@@ -274,3 +274,46 @@ it("真实宿主主体切换后完成链接登录，不因新端口再次兑换�
   expect(client.getQueryData(["student", "me"])).toEqual(B);
   expect(links).toHaveLength(1);
 });
+it("入口等待清理时外部主体已切换，不把旧兑换应用到新主体", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  client.setQueryData(["student", "me"], A);
+  const gate = deferred<void>();
+  const cancel = vi
+    .spyOn(client, "cancelQueries")
+    .mockImplementationOnce(() => gate.promise);
+  const router = createMemoryRouter(
+    [
+      {
+        element: (
+          <PortalHost>
+            <Outlet />
+          </PortalHost>
+        ),
+        children: [
+          { path: "/s/:token", element: <StudentLinkLoginPage /> },
+          { path: "/s/home", element: <p>学生首页</p> },
+        ],
+      },
+    ],
+    { initialEntries: ["/s/link-external"] },
+  );
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  await ready("link-external");
+  await answer("link-external", A);
+  await waitFor(() => expect(cancel).toHaveBeenCalled());
+  await act(async () => {
+    client.setQueryData(["student", "me"], B);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    gate.resolve();
+  });
+  expect(client.getQueryData(["student", "me"])).toEqual(B);
+  expect(links).toHaveLength(1);
+});

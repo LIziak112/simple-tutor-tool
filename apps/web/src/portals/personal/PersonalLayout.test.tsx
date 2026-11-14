@@ -1,9 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PersonalSessionData } from "@tutor/contract";
+import { useEffect } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { expect, it, vi } from "vitest";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
 import { ApiError } from "@/lib/api-response";
+import { ConnectPage } from "@/pages/teacher/ConnectPage";
 import {
   createTestRuntime,
   TestPortalProvider,
@@ -42,6 +45,13 @@ const pair: PersonalSessionData = {
     createdAt: "2026-01-01T00:00:00Z",
   },
 };
+function DirtySettingsSample() {
+  const navigation = useSettingsNavigation();
+  useEffect(() => {
+    navigation?.setDraft("test", { dirty: true, discard: () => {} });
+  }, [navigation?.setDraft]);
+  return <p>未保存设置样本</p>;
+}
 function WorkspaceSample() {
   useStudentWorkspace();
   return <p>专用作答工作区</p>;
@@ -60,6 +70,7 @@ function LoginDestination() {
 function setup(entry = "/p/learn/home", unauthorized = false) {
   const check = vi.fn(async () => (unauthorized ? null : pair));
   const logout = vi.fn(async () => ({ paired: true }));
+  const teacherToken = vi.fn();
   const clients = {
     ...testClientServices,
     fetchStudentMe: vi.fn(async () => pair.student),
@@ -69,6 +80,12 @@ function setup(entry = "/p/learn/home", unauthorized = false) {
     }),
     checkPersonalSessionApi: check,
     logoutPersonalApi: logout,
+    fetchApiToken: teacherToken,
+    fetchStudentAiQueueSummaryApi: vi.fn(async () => ({
+      pendingCount: 2,
+      processingCount: 1,
+      unreadReplyCount: 4,
+    })),
   };
   function Host() {
     const location = useLocation();
@@ -92,6 +109,8 @@ function setup(entry = "/p/learn/home", unauthorized = false) {
             <Route path="*" element={<p>个人学习内容</p>} />
           </Route>
           <Route path="/p/manage" element={<PersonalLayout />}>
+            <Route path="settings" element={<DirtySettingsSample />} />
+            <Route path="connect" element={<ConnectPage />} />
             <Route path="*" element={<p>个人管理内容</p>} />
           </Route>
           <Route path="/p/login" element={<LoginDestination />} />
@@ -115,7 +134,7 @@ function setup(entry = "/p/learn/home", unauthorized = false) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { check, logout };
+  return { check, logout, teacherToken };
 }
 it("独立个人壳裁剪班级入口，切换前核验双会话，不显示教师导航", async () => {
   const { check } = setup();
@@ -175,4 +194,56 @@ it("个人管理401复用认证守卫并保留业务查询和hash", async () => 
   expect(await screen.findByTestId("login-path")).toHaveTextContent(
     "/p/login?returnTo=%2Fp%2Fmanage%2Flibrary%3Ffolder%3Df%23q2",
   );
+});
+
+for (const action of ["资源库", "切换到学习视角", "退出登录"]) {
+  it(`管理未保存设置保护顶栏${action}`, async () => {
+    const { logout, check } = setup("/p/manage/settings");
+    await screen.findByText("未保存设置样本");
+    const checked = check.mock.calls.length;
+    fireEvent.click(
+      screen.getByRole(action === "资源库" ? "link" : "button", {
+        name: action,
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "放弃未保存的更改？" }),
+    ).toBeVisible();
+    expect(logout).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledTimes(checked);
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(screen.getByText("未保存设置样本")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole(action === "资源库" ? "link" : "button", {
+        name: action,
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "放弃更改并离开" }),
+    );
+    if (action === "退出登录") await screen.findByText("个人登录页");
+    else
+      await screen.findByText(
+        action === "资源库" ? "个人管理内容" : "个人学习内容",
+      );
+  });
+}
+it("普通个人学习页保留助教队列入口", async () => {
+  setup();
+  await screen.findByText("个人学习内容");
+  expect(
+    await screen.findByRole("button", { name: "助教队列：待处理 3，新回复 4" }),
+  ).toBeVisible();
+});
+
+it("个人管理连接AI只给配对学习指路，不读取教师token", async () => {
+  const { teacherToken } = setup("/p/manage/connect");
+  const button = await screen.findByRole("button", {
+    name: "去学习视角管理 AI 连接",
+  });
+  expect(screen.getByText(/个人账号只有一枚 AI 连接 Token/)).toBeVisible();
+  expect(teacherToken).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await screen.findByText("个人学习内容");
+  expect(teacherToken).not.toHaveBeenCalled();
 });

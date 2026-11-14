@@ -102,7 +102,7 @@ export function tokensOf(source) {
       if (
         char === "/" &&
         (!previous ||
-          /^(?:=|\(|\[|\{|,|:|;|!|\?|>|&&|\|\||return|throw|case|yield)$/.test(
+          /^(?:=|\(|\[|\{|,|:|;|!|\?|>|=>|===|!==|==|!=|<=|>=|\+=|-=|\*=|\/=|&&|\|\||\?\?|[+*/%&|^~<-]|\*\*|\*\*=|typeof|void|delete|in|instanceof|await|return|throw|case|yield)$/.test(
             previous,
           ))
       ) {
@@ -121,8 +121,13 @@ export function tokensOf(source) {
         push("word", source.slice(start, at), start);
         continue;
       }
-      const start = at++;
-      push("punct", char, start);
+      const start = at;
+      const operator =
+        /^(?:\*\*=|\*\*|===|!==|=>|&&|\|\||\?\?|==|!=|<=|>=|\+=|-=|\*=|\/=|\+\+|--|\?\.)/.exec(
+          source.slice(at),
+        )?.[0];
+      at += operator?.length ?? 1;
+      push("punct", operator ?? char, start);
     }
   }
   scan();
