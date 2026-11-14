@@ -14,11 +14,15 @@ import {
   saveDraftAnswer,
 } from "../services/attempt-service.ts";
 import { respondAttemptDetail } from "./student-attempt-detail.ts";
+import { createStudentLearningContextRoutes } from "./student-learning-context";
+import { createStudentSettlementRoutes } from "./student-settlements.ts";
 
 /** 作答详情、冻结上下文、公开试卷和草稿保存的契约出口。 */
 export function createStudentAttemptRoutes(db: Db) {
   return (
     new Hono<StudentEnv>()
+      .route("/", createStudentLearningContextRoutes(db))
+      .route("/", createStudentSettlementRoutes(db))
       .put("/attempts/:id/answers/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
         return c.json({

@@ -1128,7 +1128,7 @@ export function registerTeacherTools(
           .int()
           .min(0)
           .optional()
-          .describe("最短有效用时（秒）"),
+          .describe("最短历史焦点用时（秒）；活动账读取响应 time 字段"),
         minChangeCount: z
           .number()
           .int()

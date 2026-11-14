@@ -8,6 +8,10 @@ import {
   wrongScopeSchema,
 } from "./attempt.ts";
 import {
+  attemptTimeSchema,
+  responseTimeSchema,
+} from "./attempt-time-ledger.ts";
+import {
   questionAnswersSchema,
   questionSchema,
   questionTypeSchema,
@@ -187,6 +191,7 @@ export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
   /** 交卷时间：UTC ISO；未交为 null（D5：draft 也出现在列表，前端标「进行中」） */
   submittedAt: z.string().nullable(),
   /** 有效作答用时（秒；服务端按事件计算，未计算为 null） */
+  time: attemptTimeSchema.optional(),
   activeSec: z.number().int().min(0).nullable(),
 });
 
@@ -223,6 +228,7 @@ export const teacherAttemptInkSchema = z.object({
  *   optional + nullable：题目本身无标准答案 / 未提供详解时为 null）。
  */
 export const teacherAttemptDetailQuestionSchema = z.object({
+  settlementSeq: z.number().int().positive().nullable().optional(),
   /** 题目 id（来自 DSL） */
   questionId: z.string().min(1),
   /**
@@ -273,6 +279,7 @@ export const teacherAttemptDetailQuestionSchema = z.object({
   selfReview: selfReviewRecordSchema.nullable().optional(),
   /** 行判分策略（QM-12：待自评/待批的行级判别依据）；draft 缺省不发 */
   gradingPolicy: gradingPolicySchema.nullable().optional(),
+  time: responseTimeSchema.optional(),
   /** 每题有效用时（秒；未计算为 null） */
   activeSec: z.number().int().min(0).nullable(),
   /** 已解锁提示数 */
@@ -316,6 +323,7 @@ export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
     selfReviewPendingCount: z.number().int().min(0).optional(),
     startedAt: z.string().min(1),
     submittedAt: z.string().nullable(),
+    time: attemptTimeSchema.optional(),
     activeSec: z.number().int().min(0).nullable(),
     /** 逐题列表（全卷连续题号编排；draft 与已交卷的来源差异见逐题 schema 注释） */
     questions: z.array(teacherAttemptDetailQuestionSchema),
@@ -437,6 +445,7 @@ export const pendingMarkCardSchema = teacherAttemptSourceSchema.extend({
   answerText: z.string().nullable(),
   /** 手写信息（ink 表 (attemptId, questionId) 关联，D7 同口径）；无笔迹为 null */
   ink: teacherAttemptInkSchema.nullable(),
+  time: responseTimeSchema.optional(),
   /** 每题有效用时（秒；未计算为 null） */
   activeSec: z.number().int().min(0).nullable(),
   /** 已解锁提示数 */

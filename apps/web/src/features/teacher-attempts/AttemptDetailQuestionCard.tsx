@@ -18,6 +18,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
+import { responseTimeLabel } from "@/features/attempt/attempt-time-label";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
@@ -323,7 +324,12 @@ export function AttemptDetailQuestionCard({
       aria-label={`第 ${question.no} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <p className="text-sm font-semibold">第 {question.no} 题</p>
+        <p className="text-sm font-semibold">
+          第 {question.no} 题
+          {question.settlementSeq
+            ? ` · 第 ${question.settlementSeq} 批已提交`
+            : ""}
+        </p>
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
         >
@@ -426,7 +432,7 @@ export function AttemptDetailQuestionCard({
 
       {/* 学习行为统计（activeSec/hintsUsed/changeCount） */}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-        <span>用时 {formatActiveSec(question.activeSec)}</span>
+        <span>{responseTimeLabel(question.time)}</span>
         <span className="flex items-center gap-1">
           <Lightbulb aria-hidden className="size-3.5" />
           提示 {question.hintsUsed} 次

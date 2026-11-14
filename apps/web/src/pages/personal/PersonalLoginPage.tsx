@@ -1,14 +1,15 @@
 import { teacherLoginNameSchema } from "@tutor/contract";
 import { BookOpenCheck, Loader2, LogIn, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
+import { LoginShell } from "@/features/auth/LoginShell";
 import { useLoginPersonal } from "@/features/auth/personal-auth";
+import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import { useTeacherStatus } from "@/features/auth/teacher-auth";
 import { ApiError } from "@/lib/api";
-import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
-import { AuthScreenError, AuthScreenLoading } from "../teacher/SetupPage";
 
 /**
  * /p/login 个人学习账号登录（模块 0）。
@@ -32,6 +33,8 @@ function readRememberedLoginName(): string {
 }
 
 export function PersonalLoginPage() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
   const loginMutation = useLoginPersonal();
   const navigate = useNavigate();
@@ -41,22 +44,30 @@ export function PersonalLoginPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   if (statusQuery.isPending) {
-    return <AuthScreenLoading text="正在检查初始状态…" />;
+    return (
+      <LoginShell portal="personal">
+        <AuthScreenLoading text="正在检查初始状态…" />
+      </LoginShell>
+    );
   }
   if (statusQuery.isError) {
     return (
-      <AuthScreenError
-        message={
-          statusQuery.error instanceof Error
-            ? statusQuery.error.message
-            : "网络异常，请稍后重试"
-        }
-        onRetry={() => void statusQuery.refetch()}
-      />
+      <LoginShell portal="personal">
+        <AuthScreenError
+          message={
+            statusQuery.error instanceof Error
+              ? statusQuery.error.message
+              : "网络异常，请稍后重试"
+          }
+          onRetry={() => void statusQuery.refetch()}
+        />
+      </LoginShell>
     );
   }
   if (!statusQuery.data.hasTeacher) {
-    return <Navigate to="/t/setup" replace />;
+    return (
+      <Navigate to={loginPathWithReturnTo("/t/setup", returnTo)} replace />
+    );
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -83,7 +94,7 @@ export function PersonalLoginPage() {
           } catch {
             // 存不进就算了，不影响登录
           }
-          navigate("/s/home", { replace: true });
+          navigate(safeReturnTo(returnTo, "personal"), { replace: true });
         },
       },
     );
@@ -97,7 +108,7 @@ export function PersonalLoginPage() {
     (loginMutation.error instanceof Error ? loginMutation.error.message : null);
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 py-8 text-foreground">
+    <LoginShell portal="personal">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm sm:p-8">
         <header className="text-center">
           <span
@@ -171,7 +182,7 @@ export function PersonalLoginPage() {
                   <>
                     {" "}
                     <Link
-                      to="/t/login"
+                      to={loginPathWithReturnTo("/t/login", returnTo)}
                       className="font-medium underline-offset-4 hover:underline"
                     >
                       去教师登录
@@ -209,29 +220,15 @@ export function PersonalLoginPage() {
           <p className="mt-3 text-center text-sm text-muted-foreground">
             没有账号？
             <Link
-              to="/p/register"
+              to={loginPathWithReturnTo("/p/register", returnTo)}
               className="mx-1 font-medium text-primary underline-offset-4 hover:underline"
             >
               用邀请码注册
             </Link>
           </p>
         )}
-        <p className="mt-3 text-center text-xs text-muted-foreground">
-          <Link
-            to="/"
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            返回首页选择其他身份
-          </Link>
-        </p>
-        <footer className="mt-6 text-center text-xs text-muted-foreground">
-          <p className="font-semibold">{BRAND_NAME}</p>
-          <p lang="en" className="mt-1 leading-relaxed">
-            {BRAND_TAGLINE}
-          </p>
-        </footer>
       </div>
-    </main>
+    </LoginShell>
   );
 }
 

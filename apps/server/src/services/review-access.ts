@@ -15,7 +15,8 @@ import {
 export function questionReviewReadable(
   db: Db,
   attempt: Attempt,
-  row: Pick<ResponseRow, "submittedAt">,
+  row: Pick<ResponseRow, "submittedAt"> &
+    Partial<Pick<ResponseRow, "settlementSeq">>,
   now: Date | string,
 ): boolean {
   if (attempt.abandonedAt !== null) return false;
@@ -43,6 +44,7 @@ export function questionReviewReadable(
   return (
     resolvePracticeQuestionFeedbackState({
       submitted: true,
+      settled: row.settlementSeq != null,
       attemptSubmitted: false,
       published: false,
       workflow: attemptWorkflowView(db, attempt, now)?.practiceWorkflow ?? null,
@@ -53,12 +55,17 @@ export function questionReviewReadable(
 /** 同一次列表装配按卷复用当前授权，避免每题反复读取整卷工作流。 */
 export function createQuestionReviewReader(db: Db, now: Date | string) {
   const byAttempt = new Map<string, boolean>();
-  return (attempt: Attempt, row: Pick<ResponseRow, "submittedAt">): boolean => {
+  return (
+    attempt: Attempt,
+    row: Pick<ResponseRow, "submittedAt"> &
+      Partial<Pick<ResponseRow, "settlementSeq">>,
+  ): boolean => {
     if (attempt.status === "draft" && row.submittedAt === null) return false;
-    const cached = byAttempt.get(attempt.id);
+    const key = JSON.stringify([attempt.id, row.settlementSeq != null]);
+    const cached = byAttempt.get(key);
     if (cached !== undefined) return cached;
     const readable = questionReviewReadable(db, attempt, row, now);
-    byAttempt.set(attempt.id, readable);
+    byAttempt.set(key, readable);
     return readable;
   };
 }

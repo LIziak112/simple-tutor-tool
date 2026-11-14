@@ -1,4 +1,4 @@
-import { type RefObject, useEffect } from "react";
+import { type RefObject, useEffect, useRef } from "react";
 import { LESSON_HEADING_SELECTOR } from "@/features/markdown/use-lecture-section-focus";
 
 /**
@@ -114,8 +114,11 @@ export function useLessonReadingPosition(options: {
   readonly enabled?: boolean;
   /** questionId → 题卡根元素（讲练页作答/回看两份视图共用） */
   readonly cards: RefObject<Map<string, HTMLElement>>;
+  readonly onCurrent?: ((id: string | null) => void) | undefined;
 }): void {
   const { attemptId, enabled = true, cards } = options;
+  const onCurrent = useRef(options.onCurrent);
+  onCurrent.current = options.onCurrent;
 
   useEffect(() => {
     if (!enabled) return;
@@ -142,6 +145,9 @@ export function useLessonReadingPosition(options: {
       const anchor = captureAnchor(cards);
       if (anchor === null) return;
       latest = anchor;
+      onCurrent.current?.(
+        anchor.anchor.startsWith("q:") ? anchor.anchor.slice(2) : null,
+      );
       if (save) {
         clearTimeout(saveTimer);
         saveTimer = setTimeout(persist, SAVE_DEBOUNCE_MS);

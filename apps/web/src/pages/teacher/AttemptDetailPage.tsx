@@ -6,12 +6,10 @@ import {
   attemptRoundLabel,
   isAnswered,
 } from "@/features/attempt/answer-format";
+import { attemptTimeLabel } from "@/features/attempt/attempt-time-label";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import { QuestionProcessPlayer } from "@/features/question-process/QuestionProcessPlayer";
-import {
-  AttemptDetailQuestionCard,
-  formatActiveSec,
-} from "@/features/teacher-attempts/AttemptDetailQuestionCard";
+import { AttemptDetailQuestionCard } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { AttemptReplay } from "@/features/teacher-attempts/AttemptReplay";
 import {
   AttemptStatusBadge,
@@ -207,7 +205,7 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
           {data.submittedAt !== null && (
             <span>交卷：{formatCnTime(data.submittedAt)}</span>
           )}
-          <span>用时 {formatActiveSec(data.activeSec)}</span>
+          <span>{attemptTimeLabel(data.time)}</span>
         </p>
         <DetailSummary data={data} answeredCount={answeredCount} />
       </header>

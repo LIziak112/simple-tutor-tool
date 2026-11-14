@@ -4,14 +4,7 @@ import type {
   HintOpenedEntry,
   LessonStartData,
 } from "@tutor/contract";
-import {
-  ArrowLeft,
-  CheckCircle2,
-  ListTree,
-  LoaderCircle,
-  RotateCw,
-  Sparkles,
-} from "lucide-react";
+import { CheckCircle2, ListTree, LoaderCircle, RotateCw } from "lucide-react";
 import {
   Fragment,
   memo,
@@ -23,7 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,24 +31,26 @@ import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "@/features/attempt/AttemptEditorContext";
-import {
-  type GroupContextSegment,
-  groupSegmentsOfUnit,
-  questionMaterialsOf,
-} from "@/features/attempt/attempt-context-view";
-import { useAttemptContext } from "@/features/attempt/attempt-queries";
+import { AttemptElapsedTime } from "@/features/attempt/AttemptElapsedTime";
+import type { GroupContextSegment } from "@/features/attempt/attempt-context-view";
 import { LessonResultLinks } from "@/features/attempt/LessonResultLinks";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import {
+  type HostLease,
+  LearningHostContext,
+} from "@/features/learning-context/learning-context-store";
+import { useLearningContextPublisher } from "@/features/learning-context/use-learning-context-publisher";
 import { CompletedLessonRestartDialog } from "@/features/lesson/CompletedLessonRestartDialog";
 import { LessonDraftNotices } from "@/features/lesson/LessonDraftNotices";
 import {
   LessonGroupBlock,
   LessonQuestionMaterials,
 } from "@/features/lesson/LessonGroupBlock";
+import { LessonHeaderBar as HeaderBar } from "@/features/lesson/LessonHeaderBar";
 import { LessonQuestionCard } from "@/features/lesson/LessonQuestionCard";
 import {
   isStaleLessonRestart,
@@ -63,9 +58,11 @@ import {
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
 import {
-  type LessonQuestionHandlers,
-  useLessonAttempt,
-} from "@/features/lesson/use-lesson-attempt";
+  type LessonQuestionSlot,
+  lessonQuestionOrder,
+} from "@/features/lesson/lesson-question-order";
+import { useLessonAttempt } from "@/features/lesson/use-lesson-attempt";
+import { useLessonGroupAnchors } from "@/features/lesson/use-lesson-group-anchors";
 import { useLessonReadingPosition } from "@/features/lesson/use-lesson-reading-position";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline, type OutlineItem } from "@/features/markdown/outline";
@@ -75,14 +72,12 @@ import {
   scrollToHeadingAt,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
-import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
-import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
@@ -158,212 +153,8 @@ export default function StudentLessonPage() {
 }
 
 /** 顶部工具栏：所有尺寸随正文阅读收起，圈画模式固定。 */
-function HeaderBar({
-  title,
-  backTo,
-  backLabel,
-  actions,
-  context,
-  toc,
-  readingBlocked = false,
-}: {
-  title: string;
-  /** 返回目标（落地页 /s/lectures/:id/lesson） */
-  backTo: string;
-  backLabel: string;
-  actions: ReactNode;
-  context: ReactNode;
-  /** 目录入口（讲练页正文视图传入；加载/错误态不传） */
-  toc?: ReactNode;
-  /** 阅读态工具栏锁定（窄屏目录弹层打开时不随滚动收起） */
-  readingBlocked?: boolean;
-}) {
-  const editor = useAttemptEditor();
-  const isDesktop = useDesktopViewport();
-  const toolbar = useReadingToolbar({
-    blocked: readingBlocked || editor?.active != null,
-  });
-  // 目录跳转的滚动锚点：按实际工具栏高度预留，标题不被 sticky 头遮住。
-  useEffect(() => {
-    const element = toolbar.ref.current;
-    if (!element) return;
-    const root = document.documentElement;
-    const previousPadding = root.style.scrollPaddingTop;
-    const updateHeight = () => {
-      root.style.scrollPaddingTop = `${element.getBoundingClientRect().height + 16}px`;
-    };
-    updateHeight();
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-      root.style.scrollPaddingTop = previousPadding;
-    };
-  }, [toolbar.ref]);
-  return (
-    <>
-      <nav
-        ref={toolbar.ref}
-        data-slot="lesson-header"
-        data-reading-hidden={toolbar.hidden}
-        aria-label="讲练页工具栏"
-        className="reading-toolbar sticky top-0 z-20 -mx-3 flex min-h-14 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-1.5 sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2"
-      >
-        <Link
-          to={backTo}
-          aria-label={backLabel}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-        >
-          <ArrowLeft aria-hidden className="size-5" />
-        </Link>
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-2 text-sm leading-relaxed font-semibold break-words sm:text-base">
-            <Sparkles aria-hidden className="size-4 shrink-0 text-primary" />
-            <span className="min-w-0 truncate sm:whitespace-normal sm:break-words">
-              {title}
-            </span>
-          </p>
-          {isDesktop && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              {context}
-            </div>
-          )}
-        </div>
-        {toc}
-        <MemoQuickCaptureButton />
-        {actions !== null && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {actions}
-          </div>
-        )}
-      </nav>
-      {!isDesktop && (
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          {context}
-        </div>
-      )}
-    </>
-  );
-}
 
 /** 题槽：题目 + 全卷题号（0 起，孤儿排后）+ 是否孤儿冻结题 */
-interface LessonQuestionSlot {
-  question: AttemptQuestionPublic;
-  index: number;
-  orphan: boolean;
-}
-
-/**
- * 题目在 blocks 中按出现顺序排列（孤儿冻结题排在其后）+ 伴生 byId 索引：
- * 父组件算一次传入 LessonBody，题槽渲染统一 map.get（免循环内 find 的
- * O(n²) 与 as 断言）。
- */
-function lessonQuestionOrder(data: LessonStartData): {
-  ordered: LessonQuestionSlot[];
-  byId: Map<string, LessonQuestionSlot>;
-} {
-  const byId = new Map(data.questions.map((q) => [q.id, q] as const));
-  const seen = new Set<string>();
-  const ordered: LessonQuestionSlot[] = [];
-  const slotById = new Map<string, LessonQuestionSlot>();
-  const place = (question: AttemptQuestionPublic, orphan: boolean): void => {
-    const slot: LessonQuestionSlot = {
-      question,
-      index: ordered.length,
-      orphan,
-    };
-    seen.add(question.id);
-    slotById.set(question.id, slot);
-    ordered.push(slot);
-  };
-  for (const block of data.blocks) {
-    if (block.type !== "question") continue;
-    const question = byId.get(block.questionId);
-    if (question !== undefined && !seen.has(question.id)) {
-      place(question, false);
-    }
-  }
-  for (const question of data.questions) {
-    if (!seen.has(question.id)) place(question, true);
-  }
-  return { ordered, byId: slotById };
-}
-
-/**
- * QM-14 组段呈现：冻结上下文（/attempts/:id/context）经 groupSegmentsOfUnit
- * （数据解释单源，与作答/结果视图同一实现）解释成组段——组头+共享材料在
- * **首个成员**题卡之前渲染一次（LessonGroupBlock 只承担讲练单列排版）。
- * P1-2：solo 题的题级 ::ref 材料经 questionMaterialsOf 解析，随题卡之前
- * 自然阅读（LessonQuestionMaterials）；组段材料并入成员题级引用（组∪题级
- * 单源）。context 未到位/为空（legacy 卷或旧部署）→ 空映射，渲染零变化；
- * 失败非阻断（题面渲染不依赖本载荷，页面层就地提示 + 重试）。
- */
-function useLessonGroupAnchors(
-  attemptId: string,
-  order: ReturnType<typeof lessonQuestionOrder>,
-): {
-  anchors: ReadonlyMap<string, GroupContextSegment>;
-  soloMaterials: ReadonlyMap<string, readonly AttemptContextMaterial[]>;
-  contextError: string | null;
-  contextRetry: () => void;
-  contextFetching: boolean;
-} {
-  const contextQuery = useAttemptContext(attemptId);
-  const [anchors, soloMaterials] = useMemo(() => {
-    if (contextQuery.data === undefined)
-      return [EMPTY_ANCHORS, EMPTY_SOLO_MATERIALS] as const;
-    const map = new Map<string, GroupContextSegment>();
-    const solo = new Map<string, readonly AttemptContextMaterial[]>();
-    // P1-2：题级引用映射（学生题目投影携带）——组段并集 + solo 块共用
-    const questionRefs = new Map<
-      string,
-      readonly { readonly material: string }[]
-    >([]);
-    for (const slot of order.ordered) {
-      const refs = slot.question.materialRefs;
-      if (refs !== undefined && refs.length > 0)
-        questionRefs.set(slot.question.id, refs);
-    }
-    for (const segment of groupSegmentsOfUnit(
-      contextQuery.data,
-      order.ordered.map((slot) => slot.question.id),
-      questionRefs,
-    )) {
-      if (segment.kind === "group") {
-        const first = segment.questionIds[0];
-        if (first !== undefined) map.set(first, segment);
-        continue;
-      }
-      for (const questionId of segment.questionIds) {
-        const slot = order.byId.get(questionId);
-        if (slot === undefined) continue;
-        const materials = questionMaterialsOf(contextQuery.data, slot.question);
-        if (materials.length > 0) solo.set(questionId, materials);
-      }
-    }
-    return [map, solo] as const;
-  }, [contextQuery.data, order]);
-  return {
-    anchors,
-    soloMaterials,
-    // 固定文案（不透出 error.message：网络层异常是技术信息，如 fetch failed）
-    contextError: contextQuery.isError
-      ? "共享材料加载失败，不影响作答题目。"
-      : null,
-    contextRetry: () => void contextQuery.refetch(),
-    contextFetching: contextQuery.isFetching,
-  };
-}
-
-/** 空题级材料映射（模块级稳定引用：无 context 时 useMemo 返回同一实例） */
-const EMPTY_SOLO_MATERIALS: ReadonlyMap<
-  string,
-  readonly AttemptContextMaterial[]
-> = new Map();
-
-/** 空锚点映射（模块级稳定引用：无 context 时 useMemo 返回同一实例） */
-const EMPTY_ANCHORS: ReadonlyMap<string, GroupContextSegment> = new Map();
-
 /** 讲练目录状态（页面顶部工具栏与正文共用一份：入口在顶部，目录在侧栏/弹层） */
 interface LessonOutlineState {
   items: OutlineItem[];
@@ -471,6 +262,7 @@ function LessonOutlineTrigger({ outline }: { outline: LessonOutlineState }) {
  * 父组件 useMemo 算好传入（两视图与题槽渲染同一份）。
  */
 function LessonBody({
+  learningLease,
   data,
   order,
   renderCard,
@@ -481,6 +273,7 @@ function LessonBody({
   contextFetching,
   outline,
 }: {
+  learningLease: HostLease | null;
   data: LessonStartData;
   order: {
     ordered: LessonQuestionSlot[];
@@ -528,7 +321,7 @@ function LessonBody({
     />
   );
 
-  return (
+  const body = (
     <div className="flex min-w-0 flex-col gap-5 lg:flex-row lg:items-start">
       {isDesktop && outline.open && outline.items.length > 0 && (
         <nav
@@ -692,6 +485,9 @@ function LessonBody({
       )}
     </div>
   );
+  return (
+    <LearningHostContext value={learningLease}>{body}</LearningHostContext>
+  );
 }
 
 /** 进行中卷（draft）：作答视图（伴学装配需要编辑器上下文，内容拆 Inner） */
@@ -740,8 +536,8 @@ function LessonAnswerView({
 /**
  * 作答视图内容（编辑器/草稿上下文内）：SAI-22 讲练 AI 伴学装配——
  * 身份（attempt + 题集）与阶段（当前作答题/编辑器/材料面）传共享 dock。
- * 当前作答题：初始为首个未提交题，作答交互跟随最近题（「显示答案」的
- * 提交动作不移动它——当题提交后原地即复盘，题级完成裁决在服务端 status）。
+ * 当前来源由页面publisher把已有阅读位置与显式题卡动作发布到公共仓；
+ * Dock只消费该仓，不再维护另一份AI当前题（题级完成仍由服务端status裁决）。
  * 材料面收窄：讲练题卡无圈画层 → 只呈纸面（草稿/正式手写）。
  */
 function LessonAnswerInner({
@@ -761,6 +557,25 @@ function LessonAnswerInner({
     [data.enabledCapabilities],
   );
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
+  const editor = useAttemptEditor(null);
+  const [readingQuestionId, setReadingQuestionId] = useState<string | null>(
+    null,
+  );
+  const learningQuestions = useMemo(
+    () => order.ordered.map((slot) => slot.question),
+    [order],
+  );
+  const publisher = useLearningContextPublisher({
+    route: attemptId,
+    surface: "lesson",
+    questions: learningQuestions,
+    title: data.lecture.title,
+    attemptStatus: data.attempt.status,
+    observedId: readingQuestionId,
+    isEditing: (id) =>
+      editor?.getActive()?.questionId === id ||
+      editor?.getPaper()?.questionId === id,
+  });
   // QM-14：组段呈现（作答态与完成回看同一组锚点；context 失败非阻断）
   const {
     anchors,
@@ -776,35 +591,19 @@ function LessonAnswerInner({
   const total = data.questions.length;
 
   const outline = useLessonOutline(data);
-  const editor = useAttemptEditor(null); // ---- SAI-22 讲练 AI 伴学 ----
   const cardElements = useRef(new Map<string, HTMLElement>());
   // 阅读位置：按作答卷保存「读到哪一节/哪道题」，重进本页自动回到原位。
-  useLessonReadingPosition({ attemptId, cards: cardElements });
+  useLessonReadingPosition({
+    attemptId,
+    cards: cardElements,
+    onCurrent: setReadingQuestionId,
+  });
   const onCardElement = useCallback(
     (questionId: string, el: HTMLElement | null) => {
       if (el === null) cardElements.current.delete(questionId);
       else cardElements.current.set(questionId, el);
     },
     [],
-  );
-  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
-    () =>
-      order.ordered.find(
-        (slot) => session.released[slot.question.id] === undefined,
-      )?.question.id ?? null,
-  );
-  /** 作答交互跟随最近题（包装 handlers.onAnswer；引用随 session.handlers 稳定） */
-  const handlers = useMemo<LessonQuestionHandlers>(
-    () => ({
-      ...session.handlers,
-      onAnswer: (questionId, answer, defer) => {
-        setCurrentQuestionId((previous) =>
-          previous === questionId ? previous : questionId,
-        );
-        session.handlers.onAnswer(questionId, answer, defer);
-      },
-    }),
-    [session.handlers],
   );
   const indexById = useMemo(
     () =>
@@ -834,7 +633,7 @@ function LessonAnswerInner({
       `第 ${indexById.get(questionId) ?? "？"} 题 · ${data.lecture.title}`,
     labelOf: (questionId) =>
       indexById.has(questionId) ? `第 ${indexById.get(questionId)} 题` : null,
-    currentQuestionId,
+    currentQuestionId: readingQuestionId,
     editor,
     materials: { annotation: false, paper: true },
   });
@@ -852,7 +651,7 @@ function LessonAnswerInner({
         answer={session.answers?.[question.id]}
         hints={session.hintsOpened[question.id] ?? EMPTY_HINTS}
         released={session.released[question.id]}
-        handlers={handlers}
+        handlers={session.handlers}
         onCardElement={onCardElement}
         aiTrigger={aiCompanion.triggerForQuestion(question.id)}
       />
@@ -876,6 +675,12 @@ function LessonAnswerInner({
                 讲练 · 第 {data.attempt.attemptNo} 次
               </span>
               <span aria-live="polite">{session.saveStatus}</span>
+              <AttemptElapsedTime
+                attemptId={attemptId}
+                time={data.time}
+                initialEstimate={data.timeEstimate}
+                timed={false}
+              />
             </>
           }
           toc={<LessonOutlineTrigger outline={outline} />}
@@ -906,6 +711,7 @@ function LessonAnswerInner({
 
         {aiCompanion.rail(
           <LessonBody
+            learningLease={publisher.lease}
             data={data}
             order={order}
             renderCard={renderCard}
@@ -937,6 +743,21 @@ function LessonCompletedView({
   const summary = data.summary;
   const attemptId = data.attempt.id;
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
+  const [readingQuestionId, setReadingQuestionId] = useState<string | null>(
+    null,
+  );
+  const learningQuestions = useMemo(
+    () => order.ordered.map((slot) => slot.question),
+    [order],
+  );
+  const publisher = useLearningContextPublisher({
+    route: attemptId,
+    surface: "lesson",
+    questions: learningQuestions,
+    title: data.lecture.title,
+    attemptStatus: data.attempt.status,
+    observedId: readingQuestionId,
+  });
   const outline = useLessonOutline(data);
   const cardElements = useRef(new Map<string, HTMLElement>());
   const onCardElement = useCallback(
@@ -947,7 +768,11 @@ function LessonCompletedView({
     [],
   );
   // 回看同样记住读到哪一节/哪道题：重进已完成卷回到原位。
-  useLessonReadingPosition({ attemptId, cards: cardElements });
+  useLessonReadingPosition({
+    attemptId,
+    cards: cardElements,
+    onCurrent: setReadingQuestionId,
+  });
   // QM-14：完成回看同样呈现组段（材料随冻结上下文可见，回看不依赖当前讲义）
   const {
     anchors,
@@ -963,7 +788,7 @@ function LessonCompletedView({
   const aiCompanion = useAiCompanionDock({
     attemptId,
     questions: data.questions,
-    currentQuestionId: data.questions[0]?.id ?? null,
+    currentQuestionId: readingQuestionId,
     isHandwritten: () => false,
     surfaceOf: () => null,
     flush: async () => {},
@@ -1062,6 +887,7 @@ function LessonCompletedView({
 
         {aiCompanion.rail(
           <LessonBody
+            learningLease={publisher.lease}
             data={data}
             order={order}
             renderCard={renderCard}

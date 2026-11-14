@@ -26,6 +26,7 @@ import type {
   SelfReviewRecord,
 } from "@tutor/contract";
 import {
+  aggregateResponseTimes,
   effectiveVerdictOf,
   LEARNING_PACK_GOAL_LABELS,
   LEARNING_PACK_MAX_BYTES,
@@ -35,6 +36,7 @@ import {
   learningPackSchema,
   learningPackV2JsonSchema,
   learningPackV2Schema,
+  type ResponseTime,
   renderLearningPackPrompt,
 } from "@tutor/contract";
 import { analyzeLectureStructure } from "@tutor/md-dsl";
@@ -75,17 +77,17 @@ import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
 import { frozenMaterialsFromRows } from "./attempt-question-materials";
 import {
-  answerOf,
   effectiveVerdictOfRow,
   frozenRowsInDisplayOrder,
-  selfReviewRecordOf,
 } from "./attempt-service";
+import { timeProjectionsOf } from "./attempt-time-projection";
 import { attemptTraceRowsByAttempt } from "./attempt-trace-rows";
 import {
   beijingDateTimeOf,
   beijingExportStampOf,
   SOURCE_TYPE_TEXT,
 } from "./export-csv";
+import { responseBaseOf } from "./export-response-base";
 import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { batchSerializeStudentAnswerOfRow } from "./mark-response";
@@ -568,6 +570,12 @@ export function assembleLearningPack(
       a.id.localeCompare(b.id),
   );
 
+  const timeProjection = timeProjectionsOf(
+    db,
+    orderedAttempts.map((a) => a.id),
+    request.asOf !== undefined ? asOfIso : undefined,
+  );
+
   // —— ink 条目（勾选 ink 才装配；化名贯穿文件名 D16） ——
   const inkEntryByAttemptQuestion = new Map<string, string>();
   const inkEntries: Array<{ entry: string; absPath: string; bytes: number }> =
@@ -734,6 +742,7 @@ export function assembleLearningPack(
         if (effective?.source === "self") selfJudged += 1;
       }
       summaryRows.push({
+        time: timeProjection.aggregate(attempt.id),
         attemptId: attempt.id,
         studentId: attempt.studentId,
         sourceType: source.sourceType,
@@ -770,6 +779,7 @@ export function assembleLearningPack(
           attemptId: attempt.id,
           studentId: attempt.studentId,
           questionId: row.questionId,
+          time: timeProjection.responseTime.get(row.id),
           activeSec: row.activeSec,
           hintsUsed: row.hintsUsed,
           changeCount: row.changeCount,
@@ -905,6 +915,13 @@ export function assembleLearningPack(
         pendingCount: pending,
         selfJudgedCount: selfJudged,
         correctRate: judged > 0 ? correct / judged : null,
+        timeCohorts: aggregateResponseTimes(
+          mine.flatMap((a) =>
+            (responsesByAttempt.get(a.id) ?? [])
+              .map((r) => timeProjection.responseTime.get(r.id))
+              .filter((t): t is ResponseTime => !!t),
+          ),
+        ),
         activeSecTotal: activeTotal,
         offlineShare: activeTotal > 0 ? Math.min(1, offline / activeTotal) : 0,
       };
@@ -950,6 +967,9 @@ export function assembleLearningPack(
           overall.judgedCount > 0
             ? overall.correctCount / overall.judgedCount
             : null,
+        timeCohorts: aggregateResponseTimes([
+          ...timeProjection.responseTime.values(),
+        ]),
         activeSecTotal: overall.activeSecTotal,
         offlineShare:
           overall.activeSecTotal > 0
@@ -999,6 +1019,7 @@ export function assembleLearningPack(
     roster,
     displayNameOf,
     responsesByAttempt,
+    timeProjection,
     orderedAttempts,
     displayRowsOf,
     inkEntries,
@@ -1022,7 +1043,7 @@ export function assembleLearningPack(
 // ---------- v1/v2 共享前置与骨架（复审 B3） ----------
 
 /** 装配共享前置：域校验/时间窗/scope/化名之后、版本专属装配之前的全部结果 */
-interface PackCore {
+export interface PackCore {
   readonly db: Db;
   readonly dataDir: string;
   readonly teacherId: string;
@@ -1043,6 +1064,7 @@ interface PackCore {
   }>;
   readonly displayNameOf: ReadonlyMap<string, string>;
   readonly responsesByAttempt: ReadonlyMap<string, ResponseRow[]>;
+  readonly timeProjection: ReturnType<typeof timeProjectionsOf>;
   readonly orderedAttempts: readonly Attempt[];
   /** 该 attempt 的逐题展示序（frozenRowsInDisplayOrder 统一口径；预取行喂给） */
   readonly displayRowsOf: (attempt: Attempt) => ResponseRow[];
@@ -1257,39 +1279,6 @@ function packSectionsOf<Q, R>(
  * 逐题作答行公共底座（v1/v2 同构 15 字段，复审 D19：两处手写重复收敛；
  * v2 在此之上 spread 快照关联三字段）。
  */
-function responseBaseOf(
-  core: PackCore,
-  attempt: Attempt,
-  row: ResponseRow,
-  no: number,
-): LearningPackResponse {
-  const inkFile = core.inkEntryByAttemptQuestion.get(
-    `${attempt.id}:${row.questionId}`,
-  );
-  const effectiveSourceOfRow = effectiveVerdictOfRow(row)?.source;
-  return {
-    attemptId: attempt.id,
-    studentId: attempt.studentId,
-    questionId: row.questionId,
-    no,
-    answerText: core.answerTextOf(attempt.id, row, answerOf(row.answerJson)),
-    autoCorrect: row.autoCorrect,
-    finalCorrect: row.finalCorrect,
-    // 判定来源（两线收敛接线：v2 来源标注改走 QM 有效判定单一出处）
-    ...(effectiveSourceOfRow !== undefined
-      ? { reviewSource: effectiveSourceOfRow }
-      : {}),
-    teacherMark:
-      row.teacherMark === "correct" || row.teacherMark === "wrong"
-        ? row.teacherMark
-        : null,
-    teacherComment: row.teacherComment,
-    // QM-12：自评记录与行策略（教师面数据包——判定来源可见，与教师详情同形）
-    selfReview: selfReviewRecordOf(row),
-    gradingPolicy: row.gradingPolicy,
-    ...(inkFile !== undefined ? { inkFile } : {}),
-  };
-}
 
 /**
  * 讲义切片 ::image 引用的落盘扫描（v1/v2 共用骨架，复审 D24）：
@@ -2544,13 +2533,22 @@ function renderSummaryMd(input: SummaryMdInput): string {
       (sum, row) => sum + (row.activeSec ?? 0) * row.offlineShare,
       0,
     );
+    for (const time of aggregateResponseTimes(
+      input.traceRows.flatMap((r) => (r.time ? [r.time] : [])),
+    )) {
+      lines.push(
+        time.metric === "legacy_focus"
+          ? `- 历史焦点用时：${time.activeSec === null ? "未完整记录" : secText(time.activeSec)}`
+          : `- 封存题内活动用时：${time.activeSec === null ? "未完整记录" : secText(time.activeSec)}；已知 ${time.knownCount}/${time.memberCount} 题，已知部分 ${secText(time.knownActiveSec)}`,
+      );
+    }
     const hints = input.traceRows.reduce((sum, row) => sum + row.hintsUsed, 0);
     const changes = input.traceRows.reduce(
       (sum, row) => sum + row.changeCount,
       0,
     );
     lines.push(
-      `- 有效作答总时长 ${secText(active)}；提示使用 ${hints} 次；改答 ${changes} 次；离线作答占比 ${pctOf(
+      `- 历史焦点总时长 ${secText(active)}；提示使用 ${hints} 次；改答 ${changes} 次；历史焦点离线占比 ${pctOf(
         active > 0 ? offline / active : 0,
       )}。`,
     );

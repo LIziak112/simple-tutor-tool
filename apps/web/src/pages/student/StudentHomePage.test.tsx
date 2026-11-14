@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchStudentAssignmentsApi,
   fetchStudentCoursesApi,
+  fetchStudentMe,
   fetchStudentWrongQuestionsApi,
 } from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
@@ -25,6 +26,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    fetchStudentMe: vi.fn(),
     fetchStudentAssignmentsApi: vi.fn(),
     fetchStudentCoursesApi: vi.fn(),
     fetchStudentWrongQuestionsApi: vi.fn(),
@@ -201,6 +203,14 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  vi.mocked(fetchStudentMe).mockResolvedValue({
+    id: "11111111-1111-4111-8111-111111111111",
+    displayName: "班级同学",
+    loginName: "class",
+    accountKind: "class",
+    passwordEnabled: true,
+    linkEnabled: true,
+  });
   mockedAssignments.mockReset();
   mockedCourses.mockReset();
   mockedWrong.mockReset();
@@ -461,4 +471,23 @@ describe("StudentHomePage", () => {
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
     expect(await screen.findByText("周末加练")).toBeInTheDocument();
   });
+});
+
+it("个人学习首页不展示或请求作业，空课程给本人建课指引", async () => {
+  vi.mocked(fetchStudentMe).mockResolvedValue({
+    id: "11111111-1111-4111-8111-111111111111",
+    displayName: "个人同学",
+    loginName: "personal",
+    accountKind: "personal",
+    passwordEnabled: false,
+    linkEnabled: false,
+  });
+  mockedAssignments.mockResolvedValue(ASSIGNMENTS);
+  mockedCourses.mockResolvedValue({ courses: [] });
+  renderPage();
+  await screen.findByText(/个人同学/);
+  expect(screen.queryByText("我的作业")).not.toBeInTheDocument();
+  expect(mockedAssignments).not.toHaveBeenCalled();
+  expect(screen.queryByText(/作业都完成/)).not.toBeInTheDocument();
+  expect(await screen.findByText(/管理视角.*创建课程/)).toBeInTheDocument();
 });

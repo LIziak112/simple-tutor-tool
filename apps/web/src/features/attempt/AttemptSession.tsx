@@ -4,7 +4,6 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
   MaterialRef,
-  PracticeLayout,
   StudentAnswer,
 } from "@tutor/contract";
 import {
@@ -13,36 +12,12 @@ import {
   RotateCw,
   SlidersHorizontal,
 } from "lucide-react";
-import {
-  type KeyboardEvent as ReactKeyboardEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { useSearchParams } from "react-router";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { CoordinatedAnnotationProvider } from "@/features/annotation/coordinated-annotation-context";
 import { questionBindings } from "@/features/answering/question-binding";
-import {
-  type AnswerCardFilter,
-  LiveAttemptAnswerCard,
-} from "@/features/attempt/AttemptAnswerCard";
-import {
-  AttemptBottomBar,
-  AttemptNavigatorButton,
-} from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
-import { AttemptNavigationDialog } from "@/features/attempt/AttemptNavigationDialog";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
 import { TimedAttemptControls } from "@/features/attempt/AttemptTimer";
 import { useAttemptPhase } from "@/features/attempt/attempt-clock";
@@ -55,15 +30,10 @@ import {
   recoverAttemptMaterials,
   useAttemptMaterialRecovery,
 } from "@/features/attempt/attempt-material-recovery";
-import {
-  draftStore,
-  getDraftSessionEpoch,
-} from "@/features/attempt/draft-store";
-import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
+import { getDraftSessionEpoch } from "@/features/attempt/draft-store";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptForcedMounts } from "@/features/attempt/use-attempt-forced-mounts";
-import { useAttemptSubmitFlow } from "@/features/attempt/use-attempt-submit-flow";
 import {
   DraftSyncProvider,
   useDraftSync,
@@ -73,16 +43,12 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
-import { specOf } from "@/features/keyboard/key-spec";
 import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
-import {
-  isKeyboardDevice,
-  useKeyboardDevice,
-} from "@/features/keyboard/keyboard-device";
+import { useKeyboardDevice } from "@/features/keyboard/keyboard-device";
+import { useLearningContextPublisher } from "@/features/learning-context/use-learning-context-publisher";
 import { catchUpNotes } from "@/features/notes/note-sync";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import {
-  QuestionProcessControls,
   QuestionProcessSyncNotice,
   useQuestionProcess,
 } from "@/features/question-process/session";
@@ -91,71 +57,57 @@ import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { setStudentFlagApi } from "@/lib/api";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
-import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "./AttemptEditorContext";
+import { AttemptPartialControls } from "./AttemptPartialControls";
+import { AttemptProcessDialog } from "./AttemptProcessDialog";
 import { AttemptResultLoader } from "./AttemptResultLoader";
 import { AttemptSaveDetails } from "./AttemptSaveDetails";
+import { AttemptSessionActions } from "./AttemptSessionActions";
+import {
+  AttemptSessionNavigator,
+  AttemptSessionSubmitDialogs,
+} from "./AttemptSessionDialogs";
+import { AttemptSourceSummary } from "./AttemptSourceSummary";
 import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
-import { attemptSourceLabel } from "./answer-format";
+import { attemptNavigationItemsOf } from "./attempt-navigation-items";
 import {
   type TimedAttemptDetail,
   useAttemptContext,
   useUpdateAttemptWorkflow,
 } from "./attempt-queries";
-import { consumeAttemptStartLayoutIntent } from "./attempt-start-intent";
-import {
-  readAutoSubmitChoice,
-  saveAutoSubmitChoice,
-} from "./choice-submit-mode";
-import { focusWhenReachable } from "./focus-when-reachable";
 import { useGroupMaterialLayout } from "./group-material-layout-store";
 import { LazyMountWindow } from "./lazy-mount-window";
-import {
-  type PracticeProblemPhase,
-  PracticeQuestionFooter,
-  PracticeSingleActions,
-  PracticeSubmitProblemDialog,
-} from "./PracticeQuestionSubmit";
+import { PracticeQuestionFooter } from "./PracticeQuestionSubmit";
 import {
   PracticeKeyboardHelpDialog,
   PracticeKeyboardHelpMenuItem,
   PracticeModeDialog,
-  SingleQuestionActionBar,
 } from "./PracticeWorkspace";
-import {
-  isActivatingTarget,
-  isOverlayOpen,
-  isSuppressedKeyEvent,
-  isTextEditingEvent,
-} from "./practice-keyboard";
-import {
-  currentLayout,
-  usePracticePreference,
-} from "./practice-preference-store";
-import {
-  countSubmittedQuestions,
-  firstUnsubmittedQuestionId,
-  practiceProtocolOfDraft,
-} from "./practice-protocol";
+import { countSubmittedQuestions } from "./practice-protocol";
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
-import { completionLabel, getQuestionCompletion } from "./question-completion";
+import { useAttemptPracticeSubmission } from "./use-attempt-practice-submission";
+import { useAttemptQuestionLocation } from "./use-attempt-question-location";
+import {
+  useAttemptQuestionNavigation,
+  useAttemptWorkspaceKeyboard,
+} from "./use-attempt-question-navigation";
 import {
   retryAttemptLocalPersistence,
   useAttemptSaveStatus,
 } from "./use-attempt-save-status";
+import { useAttemptSubmitConfirmation } from "./use-attempt-submit-confirmation";
 import { usePracticeQuestionSubmit } from "./use-practice-question-submit";
-import { useReadingPosition } from "./use-reading-position";
 import {
-  evidenceProblemViewsOf,
-  useSubmitEvidenceConfirm,
-} from "./use-submit-evidence-confirm";
+  attemptReadingResume,
+  useReadingPosition,
+} from "./use-reading-position";
 
 /**
  * 题卡视口懒挂载的启用阈值（性能：大量习题加载卡顿，2026-10-28）。
@@ -436,34 +388,15 @@ function AnswerView({
       [groupId]: (previous[groupId] ?? 0) + 1,
     }));
   }, []);
-  const [navigatorOpen, setNavigatorOpen] = useState(false);
-  const [navigatorFilter, setNavigatorFilter] =
-    useState<AnswerCardFilter>("all");
-  const navigatorTrigger = useRef<HTMLButtonElement>(null);
-  const navigatorJumping = useRef(false);
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
   const [saveDetailsOpen, setSaveDetailsOpen] = useState(false);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
-  const openNavigator = (trigger: HTMLButtonElement) => {
-    navigatorTrigger.current = trigger;
-    navigatorJumping.current = false;
-    setNavigatorOpen(true);
-  };
   // 快捷键帮助弹层（M3-D3 §9.2）：状态在菜单子树外——菜单项选中后菜单
   // 内容整树卸载，弹层不能寄居其中
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false);
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
   );
-  // 显式跳题信号（C 口径）：材料列回顶只认显式跳题——题号导航/上一题/
-  // 下一题/键盘切题统一走 jumpToQuestion 入口；滚动侦测
-  // （useReadingPosition）改写的 currentQuestionId 不发信号。seq 单调递增
-  // 供锚点去重，questionId 供锚点判断目标是否属于自己
-  const [jumpSignal, setJumpSignal] = useState<{
-    questionId: string;
-    seq: number;
-  } | null>(null);
-  const jumpSeqRef = useRef(0);
   /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题）；dock 装配
    *  在渲染期即调用 labelOf（绑定后 boundLabel 派生），必须先于装配声明 */
   const questionIndexById = useMemo(
@@ -642,97 +575,42 @@ function AnswerView({
     setCurrentQuestionId,
     forceMountQuestion,
     cardMountVersion,
+    attemptReadingResume(data),
   );
 
-  // ---------- 做题方式（M3-D1）：v1 新协议卷的列表/单题呈现 ----------
-  // 协议形态只信服务端投影：legacy/lesson（无 practiceWorkflow）恒列表，
-  // 现有行为零变化（计划 §6.1、§11 纪律 1 与退化边界）。
-  const [searchParams, setSearchParams] = useSearchParams();
-  const practiceProtocol = practiceProtocolOfDraft(data);
-  const practiceWorkflow =
-    practiceProtocol === "v1" ? data.practiceWorkflow : undefined;
-  // data 基线进度：单题当前题解析锚定它（提交后不因 overlay 变化自动跳题，
-  // 切题只随显式动作——§7.2）；回执 overlay 的进度（practiceProgress）用于
-  // 导航四态、进度行与题卡只读的即时更新。
-  const questionProgress =
-    practiceProtocol === "v1" ? (data.questionProgress ?? []) : [];
-  // 布局本次作答内自决：进入时按「开始页一次性 transient 预选 → 默认偏好」
-  // 取一次（M5-D3 裁决⑨：预选不经服务端，消费即清除；legacy/lesson 也消费
-  // 防同会话残留），之后只随显式切换变化，不被偏好变更或后台重取中途拉扯；
-  // 不写回默认偏好（§7.1）
-  const [practiceLayout, setPracticeLayout] = useState<PracticeLayout>(() => {
-    const startIntent = consumeAttemptStartLayoutIntent();
-    if (practiceProtocol !== "v1") return "list";
-    return startIntent ?? currentLayout();
+  const location = useAttemptQuestionLocation({
+    data,
+    questionIds,
+    currentQuestionId,
   });
-  // M3-D1.5：硬刷新直达作答页时，布局层的账号绑定 effect 晚于本组件首渲染，
-  // 已保存默认布局会在初值时被错过——store 从未绑定变已绑定的那一刻按已
-  // 保存默认布局对齐一次；用户显式切换过布局之后，绑定变化与跨标签偏好
-  // 变更都不得再拉扯当前选择（§7.1「进入时取一次」语义的补全）
-  const explicitLayoutRef = useRef(false);
-  const setPracticeLayoutExplicit = useCallback((layout: PracticeLayout) => {
-    explicitLayoutRef.current = true;
-    setPracticeLayout(layout);
-  }, []);
-  const { accountId: boundAccountId, keyboardShortcuts } =
-    usePracticePreference();
-  // 快捷键体系（2026-10-28）：生效键位（默认 + 设置页自定义）与键盘设备形态
+  const {
+    practiceProtocol,
+    practiceWorkflow,
+    practiceLayout,
+    setPracticeLayoutExplicit,
+    keyboardShortcuts,
+    singleMode,
+    resolvedSingleQuestionId,
+    singleIndex,
+    singleWorkspaceRef,
+  } = location;
+  const publisher = useLearningContextPublisher({
+    route: attemptId,
+    isEditing: (id) =>
+      editor?.getActive()?.questionId === id ||
+      editor?.getPaper()?.questionId === id,
+    surface: "attempt",
+    questions: flatQuestions,
+    title: data.title,
+    attemptStatus: data.attempt.status,
+    layout: singleMode ? "single" : "list",
+    observedId: singleMode ? resolvedSingleQuestionId : currentQuestionId,
+  });
   const keyBindings = useKeyboardBindings();
   const keyboardDevice = useKeyboardDevice();
-  const prevBoundAccountRef = useRef(boundAccountId);
-  useEffect(() => {
-    const previous = prevBoundAccountRef.current;
-    prevBoundAccountRef.current = boundAccountId;
-    if (practiceProtocol !== "v1" || explicitLayoutRef.current) return;
-    // 只在「未绑定 → 已绑定」迁移时对齐一次；换绑与解绑不拉扯
-    if (previous !== null || boundAccountId === null) return;
-    setPracticeLayout(currentLayout());
-  }, [boundAccountId, practiceProtocol]);
-  const singleMode = practiceProtocol === "v1" && practiceLayout === "single";
-  const [autoSubmitChoice, setAutoSubmitChoice] = useState(() =>
-    readAutoSubmitChoice(attemptId),
-  );
-  const canAutoSubmitChoice =
-    autoSubmitChoice && practiceWorkflow?.canSubmitQuestion === true;
+
   const navigatorMaterialsReady =
     answers !== null && attemptMaterialsEditable(materialRecovery);
-  // 单题当前题：显式跳转 > URL q（须属本卷）> 滚动当前题 > 首道未提交 > 第一题
-  const [singleQuestionId, setSingleQuestionId] = useState<string | null>(null);
-  const resolvedSingleQuestionId = useMemo(() => {
-    if (!singleMode) return null;
-    if (singleQuestionId !== null && questionIds.includes(singleQuestionId))
-      return singleQuestionId;
-    const urlQ = searchParams.get("q");
-    if (urlQ !== null && questionIds.includes(urlQ)) return urlQ;
-    if (currentQuestionId !== null && questionIds.includes(currentQuestionId))
-      return currentQuestionId;
-    return (
-      firstUnsubmittedQuestionId(questionIds, questionProgress) ??
-      questionIds[0] ??
-      null
-    );
-  }, [
-    singleMode,
-    singleQuestionId,
-    questionIds,
-    searchParams,
-    currentQuestionId,
-    questionProgress,
-  ]);
-  const singleIndex =
-    resolvedSingleQuestionId === null
-      ? -1
-      : questionIds.indexOf(resolvedSingleQuestionId);
-  // 单题专注工作区容器（M3-D3 §9.2）：tabIndex=-1 可聚焦，←/→ 的判定域。
-  const singleWorkspaceRef = useRef<HTMLDivElement | null>(null);
-  // §11-5 焦点纪律：进入单题（含菜单切换）与每次切题后焦点落回容器——
-  // 方向键域与连续键盘导航的锚点；focusWhenReachable 代数守卫下与
-  // jumpToQuestion 落焦链后到者胜（goSingleQuestion 显式传容器，目标一致）。
-  useEffect(() => {
-    if (!singleMode || resolvedSingleQuestionId === null) return;
-    focusWhenReachable(singleWorkspaceRef.current);
-  }, [singleMode, resolvedSingleQuestionId]);
-
   // ---------- 逐题提交编排（M3-D2 §10.2/§10.3）：五字段 POST + 回执 overlay +
   // 题级反馈惰性 GET。收笔（编辑器让位确认）→ 该题笔迹 flush → 草稿追平 →
   // 单题证据 → 提交；错误分诊与最后一题不自动 refetch 都在 hook 内。
@@ -752,17 +630,6 @@ function AnswerView({
   });
   const practiceProgress =
     practiceProtocol === "v1" ? practiceSubmit.progress : [];
-  // 交卷结束整卷，但仅为尚未提交题固定本次证据；已提交题沿用单题封存。
-  // 使用提交回执合并后的进度，避免本页刚提交的题仍进入整卷证据声明。
-  const submitEvidenceQuestionIds = useMemo(() => {
-    if (practiceProtocol !== "v1") return questionIds;
-    const submitted = new Set(
-      practiceSubmit.progress
-        .filter((row) => row.submittedAt !== null)
-        .map((row) => row.questionId),
-    );
-    return questionIds.filter((id) => !submitted.has(id));
-  }, [practiceProtocol, practiceSubmit.progress, questionIds]);
   // 按题查表：导航项/键盘裁决/题卡渲染多处取行，避免逐题线性 find
   const progressById = new Map(
     practiceProgress.map((row) => [row.questionId, row] as const),
@@ -772,435 +639,24 @@ function AnswerView({
     resolvedSingleQuestionId === null
       ? undefined
       : progressById.get(resolvedSingleQuestionId);
-  // 缺稿明确选择弹层（§10.3）：证据组装发现未追平草稿时不静默放行——
-  // choice（用户裁决）→ busy（确认后带 allowMissing 重提）→ error（重提失败留弹层）；
-  // 其余 outcome（提交成功/受限/stale/取消）一律收起弹层（就地提示由 hook 承担）
-  const [practiceProblem, setPracticeProblem] = useState<{
-    questionId: string;
-    phase: PracticeProblemPhase;
-  } | null>(null);
-  // 单题切题保护（M3-D3 §11-5）：本机落盘失败时记下被拦下的目标题（仍停留
-  // 本题），就地提示 + 重试；成功切题即清除
-  const [singleSwitchBlocked, setSingleSwitchBlocked] = useState<string | null>(
-    null,
-  );
-  const [localSaveRetrying, setLocalSaveRetrying] = useState(false);
-  const runPracticeSubmit = useCallback(
-    async (
-      questionId: string,
-      opts?: { allowMissing?: boolean },
-    ): Promise<void> => {
-      if (timeUp) return;
-      const outcome = await practiceSubmit.submit(questionId, opts);
-      if (
-        outcome.kind === "submitted" &&
-        processRecorderRef.current?.options.attemptId === attemptId
-      )
-        processRecorderRef.current.event(questionId, {
-          kind: "activity",
-          action: "submit",
-          scope: "question",
-        });
-      if (outcome.kind === "problems") {
-        setPracticeProblem({
-          questionId,
-          phase: {
-            kind: "choice",
-            reason: outcome.problems[0]?.reason ?? "草稿尚未保存完整",
-          },
-        });
-        return;
-      }
-      if (outcome.kind === "error") {
-        // 弹层进行中（缺稿重提失败）→ 错误相留在弹层；否则 hook 已就地提示
-        setPracticeProblem((prev) =>
-          prev !== null
-            ? {
-                questionId,
-                phase: { kind: "error", message: outcome.message },
-              }
-            : null,
-        );
-        return;
-      }
-      setPracticeProblem(null);
-    },
-    [practiceSubmit.submit, attemptId, timeUp],
-  );
-  const { getSubmittingId } = practiceSubmit;
-  const [queuedChoices, setQueuedChoices] = useState<string[]>([]);
-  const onAutoChoiceAnswer = useCallback(
-    (questionId: string, answer: StudentAnswer, defer?: boolean) => {
-      const submittingId = getSubmittingId();
-      // 已出站的本题答案不再修改。其他题的点选照常保存，并等待提交。
-      if (submittingId === questionId) return;
-      setAnswer(questionId, answer, defer);
-      if (submittingId === null && queuedChoices.length === 0) {
-        void runPracticeSubmit(questionId);
-      } else {
-        setQueuedChoices((queued) =>
-          queued.includes(questionId) ? queued : [...queued, questionId],
-        );
-      }
-    },
-    [getSubmittingId, queuedChoices.length, runPracticeSubmit, setAnswer],
-  );
-  const singleQuestion = flatQuestions[singleIndex];
-  const singleAutoSubmit =
-    canAutoSubmitChoice &&
-    singleQuestion !== undefined &&
-    questionBindings[singleQuestion.type].placement === "options-radio";
-
-  // §11 纪律 7：单题切题 replace 更新 q、回列表清除 q——不加历史条目；
-  // 其他查询参数（returnTo/aiFrom）原样保留
-  useEffect(() => {
-    if (practiceProtocol !== "v1") return;
-    const q = searchParams.get("q");
-    if (singleMode && resolvedSingleQuestionId !== null) {
-      if (q !== resolvedSingleQuestionId) {
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev);
-            next.set("q", resolvedSingleQuestionId);
-            return next;
-          },
-          { replace: true },
-        );
-      }
-    } else if (!singleMode && q !== null) {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete("q");
-          return next;
-        },
-        { replace: true },
-      );
-    }
-  }, [
+  const confirmation = useAttemptSubmitConfirmation({
+    data,
+    questions: flatQuestions,
+    questionIds,
     practiceProtocol,
-    singleMode,
-    resolvedSingleQuestionId,
-    searchParams,
-    setSearchParams,
-  ]);
-
-  const navigationItems = flatQuestions.map((question, index) => ({
-    id: question.id,
-    index,
-    completion: getQuestionCompletion(
-      question,
-      answers?.[question.id],
-      formalInkPresence.get(question.id),
-    ),
-    flagged: flaggedQuestions.has(question.id),
-    unsure: studentFlags.has(question.id),
-    // v1 卷四态口径（§9.1）：progress 缺行按未提交处理；统一公布模式下
-    // feedbackReadable=false 的已提交行在导航里只报提交事实，不显示对错。
-    // 用回执 overlay 后的进度（practiceProgress）——提交即时反映，不等服务端重取
-    ...(practiceProtocol === "v1"
-      ? {
-          practice: {
-            submitted:
-              (progressById.get(question.id)?.submittedAt ?? null) !== null,
-            feedbackReadable:
-              progressById.get(question.id)?.feedbackReadable ?? false,
-          },
-        }
-      : {}),
-  }));
-  const answered = navigationItems.filter(
-    (item) => item.completion.state === "filled",
-  ).length;
-  const unanswered = total - answered;
-  const jumpToQuestion = async (
-    id: string,
-    focusAnswer = false,
-    focusElement?: HTMLElement | null,
-  ) => {
-    if (editor && !(await editor.request(null))) return;
-    if (navigatorOpen) navigatorJumping.current = true;
-    setNavigatorOpen(false);
-    setCurrentQuestionId(id);
-    // 显式跳题信号（C 口径）：只有这条入口发材料回顶信号；seq 单调递增
-    // 供锚点去重
-    jumpSeqRef.current += 1;
-    setJumpSignal({ questionId: id, seq: jumpSeqRef.current });
-    // 懒挂载：目标题通常不在视口附近、题卡还没挂载。li 常驻，先滚到占位，
-    // 强制挂载后等 `<article>` 出现再对齐滚动与落焦（上限 3 秒，超时退回
-    // 原有兜底焦点；跳跃过程中占位会先到视口，观察器本身也会触发挂载）。
-    forceMountQuestion(id);
-    requestAnimationFrame(() => {
-      const deadline = performance.now() + 3000;
-      const align = () => {
-        const card = cardElements.current.get(id);
-        const article = card?.querySelector<HTMLElement>("article");
-        if (article === null || article === undefined) {
-          card?.scrollIntoView?.({ block: "start", behavior: "auto" });
-          if (performance.now() < deadline) {
-            requestAnimationFrame(align);
-            return;
-          }
-          focusWhenReachable(focusElement ?? card ?? null);
-          return;
-        }
-        article.scrollIntoView?.({ block: "start", behavior: "auto" });
-        // 跳题先登记已对齐的位置；邻题占位随后换成真实题卡时沿用挂载补偿。
-        preserveReadingPosition(id);
-        const fields = card?.querySelectorAll<HTMLInputElement>(
-          'input:not([type="radio"]):not([type="checkbox"])',
-        );
-        const target = focusAnswer
-          ? (Array.from(fields ?? []).find(
-              (field) => field.value.trim() === "",
-            ) ?? fields?.[0])
-          : null;
-        const answerControl = card?.querySelector<HTMLElement>(
-          'math-field, [data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"], [data-slot="question-surface"] button',
-        );
-        // 作答保护（inert——reload 后材料核对未完成）下 focus 静默失败，
-        // focusWhenReachable 按帧重试，保护解除后落焦（webkit E2E 回归）。
-        // focusElement：调用方指定的落焦点（单题模式=工作区容器），优先于题卡。
-        focusWhenReachable(
-          target ??
-            (focusAnswer ? answerControl : null) ??
-            focusElement ??
-            article,
-        );
-      };
-      align();
-    });
-  };
-  // 单题跳题（M3-D1）：与列表跳题同一收笔/滚动/聚焦链，另更新单题态与
-  // 当前题标记（AI 伴学/导航跟随显式选择，§11 纪律 1 不重建题卡）。
-  // M3-D3 切题纪律（§11-5）：切题前只要求当前题**本机**落盘成功（不要求
-  // 服务器确认，离线可继续已核对题面）；失败不切题，就地提示与重试，不清
-  // 空原稿、不跳页。列表模式自由浏览不设保护；上一题/下一题/导航跳题/键盘
-  // 切题统一走本入口。
-  // jumpToQuestion 本身非 memo（每渲染重建），此处同法不包 useCallback。
-  // M4-D2 §12.1：返回是否切题成功，供 AI 旧任务定位判断是否保留现场。
-  const goSingleQuestion = async (
-    id: string,
-    focusAnswer = false,
-  ): Promise<boolean> => {
-    // 提交在途禁切题（§7.2 busy）：上一题/下一题/导航均已禁用，此处兜底直调
-    if (practiceSubmit.submittingId !== null) return false;
-    // 先收笔再切题（闸门修复：原序先切态后收笔，收笔失败=用户选择继续书写
-    // 时已切走，错误横幅与键盘守门会指向看不见的旧题——与列表模式同序）
-    if (editor && !(await editor.request(null))) return false;
-    const from = resolvedSingleQuestionId;
-    if (from !== null && from !== id) {
-      if (!(await flushQuestionLocal(from))) {
-        setSingleSwitchBlocked(id);
-        return false;
-      }
-      // 切题先收起 AI 阅读（M4-D2 §12.1）：在本机落盘保护之后、真正切换
-      // 之前，复用 dock 既有收起链（落盘失败不切题）；收起失败时 dock 已
-      // 就地提示重试，不再叠加切题保护横幅，保留现场不切换。
-      if (!(await aiCompanion.collapseForNavigation())) return false;
-    }
-    setSingleSwitchBlocked(null);
-    setSingleQuestionId(id);
-    setCurrentQuestionId(id);
-    // 单题切题落焦工作区容器（§9.2 ←/→ 判定域；不落题面避免软键盘）；
-    // focusAnswer（交卷确认「去补全」）：显式补答意图优先落答案控件
-    await jumpToQuestion(id, focusAnswer, singleWorkspaceRef.current);
-    return true;
-  };
-  // AI 旧任务定位的统一切题入口（M4-D2 §12.1）：单题模式且目标非当前题才
-  // 走切题链（列表模式与就地展开直接放行，不触发收笔/收起）。
-  goToQuestionRef.current = async (questionId: string) => {
-    if (!singleMode || questionId === resolvedSingleQuestionId) return true;
-    return goSingleQuestion(questionId);
-  };
-
-  /** 切题保护的重试入口：本机落盘成功后继续被拦下的那次切题 */
-  const retryBlockedSwitch = async (): Promise<void> => {
-    const target = singleSwitchBlocked;
-    if (target === null || localSaveRetrying) return;
-    setLocalSaveRetrying(true);
-    try {
-      const from = resolvedSingleQuestionId;
-      if (from === null || (await flushQuestionLocal(from)))
-        await goSingleQuestion(target);
-    } finally {
-      setLocalSaveRetrying(false);
-    }
-  };
-  const jumpForMode = singleMode ? goSingleQuestion : jumpToQuestion;
-
-  // ---------- 单题专注键盘（M3-D3 §9.2 → 2026-10-28 快捷键体系） ----------
-  // 仅 v1 新协议 + 单题模式 + 键盘设备挂载（legacy/lesson 零变化，纯触屏
-  // 设备整体静默）；偏好开关关闭全失效。键位来自注册表 + 设置页自定义
-  // （keyBindings），固定命令（1–9 选选项）先匹配——改键抢不走选项数字。
-  // 守门链：默认抑制态（合成/repeat/修饰键/已被处理）→ 任一弹层打开 → busy →
-  // 书写中/纸面展开 → 答案冲突 → 切题保护拦截。一次 keydown 至多一个动作；
-  // 键盘发起的提交持同步锁（submit 串行守卫在收笔 await 之后才置位，微任务
-  // 窗口内的第二次 Enter 靠此锁挡住）。文本编辑区判定走 composedPath（含
-  // MathLive/AI 输入宿主），按钮/链接保留自身 Enter，查看结果永不入键。
-  const practiceKeyActionRef = useRef(false);
-  const onWorkspaceKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!singleMode || !keyboardShortcuts || !isKeyboardDevice()) return;
-    const native = event.nativeEvent;
-    if (isSuppressedKeyEvent(native) || isOverlayOpen()) return;
-    const currentId = resolvedSingleQuestionId;
-    if (currentId === null) return;
-    if (
-      practiceSubmit.submittingId !== null ||
-      singleSwitchBlocked !== null ||
-      (editor !== null &&
-        (editor.getActive() !== null || editor.getPaper() !== null)) ||
-      draftStore.peekAnswerConflicts(attemptId)[currentId] !== undefined
-    ) {
-      return;
-    }
-    const currentIndex = questionIds.indexOf(currentId);
-    const submitted =
-      (progressById.get(currentId)?.submittedAt ?? null) !== null;
-    const spec = specOf(native);
-    if (spec === null) return;
-    if (keyBindings["practice.select-option"].includes(spec)) {
-      // 已提交只读题不响应；文本编辑区内数字保持输入语义
-      if (submitted || isTextEditingEvent(native)) return;
-      const card = cardElements.current.get(currentId);
-      const options = card?.querySelectorAll<HTMLInputElement>(
-        '[data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"]',
-      );
-      const option = options?.[Number(spec) - 1];
-      if (option === undefined || option.disabled) return;
-      event.preventDefault();
-      // 复用既有选项控件链（React onChange → setAnswer → 草稿防丢），不另写
-      // 一套答案拼装；原生 click 会把焦点移到选项上，连续键盘导航要求焦点
-      // 留在工作区容器
-      option.click();
-      singleWorkspaceRef.current?.focus();
-      return;
-    }
-    if (keyBindings["practice.submit-or-next"].includes(spec)) {
-      if (isTextEditingEvent(native) || isActivatingTarget(native)) return;
-      event.preventDefault();
-      if (practiceKeyActionRef.current) return;
-      practiceKeyActionRef.current = true;
-      void (async () => {
-        try {
-          if (!submitted) {
-            // 工作流收紧时 Enter 退为切题/交卷（与主操作位同链）；题目级
-            // 参考答案门控已随 v2 自评实现移除（QM 判分框架下逐题提交恒可用）
-            if (timeUp || !practiceWorkflow?.canSubmitQuestion) {
-              const next = questionIds[currentIndex + 1];
-              if (next !== undefined) await goSingleQuestion(next);
-              else if (online && !denied) await openSubmitDialog();
-              return;
-            }
-            if (singleAutoSubmit) {
-              const next = questionIds[currentIndex + 1];
-              if (next !== undefined) await goSingleQuestion(next);
-              return;
-            }
-            // 与主操作按钮同链，空白也可提交。
-            await runPracticeSubmit(currentId);
-            return;
-          }
-          // 已提交只导航：查看本次结果永不入键（§9.2）
-          if (practiceSubmit.finished) return;
-          const next = questionIds[currentIndex + 1];
-          if (next !== undefined) {
-            await goSingleQuestion(next);
-            return;
-          }
-          const resume = practiceSubmit.firstUnsubmittedId;
-          if (resume !== null && resume !== currentId) {
-            await goSingleQuestion(resume);
-          }
-        } finally {
-          practiceKeyActionRef.current = false;
-        }
-      })();
-      return;
-    }
-    // ←→ 切题（可分别改键）：仅工作区容器自身持有焦点时生效，题面/输入/
-    // 按钮内的按键保持原生；prev 命中优先于 next（冲突检测拦住同时改同键）
-    const step = keyBindings["practice.prev-question"].includes(spec)
-      ? -1
-      : keyBindings["practice.next-question"].includes(spec)
-        ? 1
-        : 0;
-    if (step !== 0) {
-      if (document.activeElement !== event.currentTarget) return;
-      event.preventDefault();
-      const target = questionIds[currentIndex + step];
-      if (target !== undefined) void goSingleQuestion(target);
-      return;
-    }
-    if (keyBindings["practice.open-help"].includes(spec)) {
-      if (isTextEditingEvent(native)) return;
-      event.preventDefault();
-      setKeyboardHelpOpen(true);
-    }
-  };
-  // 冻结题与当前草稿视图的版本基线，提交前叠加本机已收到的保存回执。
-  const submitRevisions = useMemo(
-    () =>
-      flatQuestions.map((question) => ({
-        questionId: question.id,
-        questionRevisionId: question.questionRevisionId,
-        expectedAnswerRevision: data.draftRevisions?.[question.id] ?? 0,
-      })),
-    [data.draftRevisions, flatQuestions],
-  );
-
-  const { inkFlushError, runSubmit, submit, submitAbortedRef, submitError } =
-    useAttemptSubmitFlow({
-      attemptId,
-      savedOnly,
-      recoveryReady:
-        materialRecovery.state === "ready" && !draftSync.recoveryError,
-      syncDraft: draftSync.syncNow,
-      flushAnswers,
-      inkControllers,
-      questionIds: submitEvidenceQuestionIds,
-      revisions: submitRevisions,
-      events: attemptEvents,
-      onAnnotationSealFailed,
-    });
-
-  const {
-    confirmOpen,
-    phase: notePrep,
-    noteSummary,
-    open: openConfirmDialog,
-    cancel: cancelConfirmDialog,
-    confirm: confirmSubmit,
-    confirmMissing: confirmMissingSubmit,
-  } = useSubmitEvidenceConfirm({
+    progress: practiceSubmit.progress,
+    editor,
     attemptId,
-    questionIds: submitEvidenceQuestionIds,
-    run: runSubmit,
+    savedOnly,
+    recoveryReady:
+      materialRecovery.state === "ready" && !draftSync.recoveryError,
+    syncDraft: draftSync.syncNow,
+    flushAnswers,
+    inkControllers,
+    events: attemptEvents,
+    onAnnotationSealFailed,
   });
-
-  /**
-   * 打开交卷弹层：先收起题卡编辑器（未保存确认），再交给共享状态机重置
-   * 并取草稿本地快览（无网络，纯内存态——确认时以 prepareSubmitEvidence
-   * 的权威判定为准）。
-   */
-  const openSubmitDialog = useCallback(async () => {
-    if (editor && !(await editor.request(null))) return;
-    // 复位上一轮取消置位的中止标志（原实现同语义：新一轮确认链不被旧 abort 拦下）
-    submitAbortedRef.current = false;
-    openConfirmDialog();
-  }, [editor, openConfirmDialog, submitAbortedRef]);
-
-  /**
-   * 关闭交卷弹层 = 取消 = 中止准备链：置 abort 标志（runSubmit 各
-   * await 段后检查）并复位准备阶段。busy 期间 Radix 关闭路径已被弹层
-   * 封堵（Esc/遮罩/×），此处是唯一的正常关闭入口（继续作答按钮）与
-   * 防御纵深（未来新增的关闭路径同样被 abort 拦下）。
-   */
-  const closeSubmitDialog = useCallback(() => {
-    submitAbortedRef.current = true;
-    cancelConfirmDialog();
-  }, [cancelConfirmDialog, submitAbortedRef]);
-
+  const { submit, confirmOpen, openSubmitDialog } = confirmation;
   // 离线状态（T2.12）：离线时禁用交卷并提示（作答照常，草稿本地保存）
   const online = useOnlineStatus();
   const saveStatus = useAttemptSaveStatus(
@@ -1220,37 +676,94 @@ function AnswerView({
 
   // 访问权终态（T2A.6，D7）：已无权限时收起交卷入口（交卷必然同样被拒）
   const denied = draftSync.status.state === "denied";
-  const nextQueuedChoice = queuedChoices[0];
-  const queuedChoiceSubmitted =
-    nextQueuedChoice !== undefined &&
-    (progressById.get(nextQueuedChoice)?.submittedAt ?? null) !== null;
-  const canDrainChoices =
-    canAutoSubmitChoice && !denied && !practiceSubmit.finished && !timeUp;
-  const choiceQueuePaused =
-    !online ||
-    confirmOpen ||
-    practiceProblem !== null ||
-    practiceSubmit.lastError !== null ||
-    practiceSubmit.submittingId !== null ||
-    feedbackUpdate.isPending;
-
-  useEffect(() => {
-    if (nextQueuedChoice === undefined) return;
-    if (!canDrainChoices) {
-      setQueuedChoices([]);
-      return;
-    }
-    if (choiceQueuePaused || getSubmittingId() !== null) return;
-    setQueuedChoices((queued) => queued.slice(1));
-    if (!queuedChoiceSubmitted) void runPracticeSubmit(nextQueuedChoice);
-  }, [
-    canDrainChoices,
-    choiceQueuePaused,
-    getSubmittingId,
-    nextQueuedChoice,
-    queuedChoiceSubmitted,
+  const practiceSubmission = useAttemptPracticeSubmission({
+    attemptId,
+    practiceSubmit,
+    timeUp,
+    processRecorderRef,
+    setAnswer,
+    practiceWorkflow,
+    online,
+    denied,
+    confirmOpen,
+    feedbackBusy: feedbackUpdate.isPending,
+    progressById,
+  });
+  const {
+    autoSubmitChoice,
+    setAutoSubmitChoice,
+    canAutoSubmitChoice,
     runPracticeSubmit,
-  ]);
+    onAutoChoiceAnswer,
+    queuedChoices,
+  } = practiceSubmission;
+  const singleQuestion = flatQuestions[singleIndex];
+  const singleAutoSubmit =
+    canAutoSubmitChoice &&
+    singleQuestion !== undefined &&
+    questionBindings[singleQuestion.type].placement === "options-radio";
+  const { navigationItems, answered, unanswered } = attemptNavigationItemsOf({
+    flatQuestions,
+    answers,
+    formalInkPresence,
+    flaggedQuestions,
+    studentFlags,
+    practiceProtocol,
+    progressById,
+  });
+  const navigation = useAttemptQuestionNavigation({
+    editor,
+    cardElements,
+    forceMountQuestion,
+    preserveReadingPosition,
+    resolvedSingleQuestionId,
+    setSingleQuestionId: location.setSingleQuestionId,
+    setCurrentQuestionId,
+    singleWorkspaceRef,
+    singleMode,
+    practiceSubmit,
+    flushQuestionLocal,
+    collapseForNavigation: aiCompanion.collapseForNavigation,
+    onNavigate: publisher.explicit,
+  });
+  const {
+    jumpSignal,
+    singleSwitchBlocked,
+    localSaveRetrying,
+    retryBlockedSwitch,
+    goSingleQuestion,
+    jumpForMode,
+  } = navigation;
+  // AI 旧任务定位的统一切题入口（M4-D2 §12.1）：单题模式且目标非当前题才
+  // 走切题链（列表模式与就地展开直接放行，不触发收笔/收起）。
+  goToQuestionRef.current = async (questionId: string) => {
+    if (!singleMode || questionId === resolvedSingleQuestionId) return true;
+    return goSingleQuestion(questionId);
+  };
+
+  const onWorkspaceKeyDown = useAttemptWorkspaceKeyboard({
+    singleMode,
+    keyboardShortcuts,
+    resolvedSingleQuestionId,
+    practiceSubmit,
+    singleSwitchBlocked,
+    editor,
+    attemptId,
+    questionIds,
+    progressById,
+    keyBindings,
+    cardElements,
+    singleWorkspaceRef,
+    timeUp,
+    practiceWorkflow,
+    goSingleQuestion,
+    online,
+    denied,
+    openSubmitDialog,
+    singleAutoSubmit,
+    runPracticeSubmit,
+    setKeyboardHelpOpen,
+  });
 
   // 两种布局共用更多菜单里的做题方式弹窗。
   const practiceModeEditor =
@@ -1261,10 +774,7 @@ function AnswerView({
           layout: practiceLayout,
           onLayoutChange: setPracticeLayoutExplicit,
           autoSubmitChoice,
-          onAutoSubmitChoiceChange: (auto: boolean) => {
-            setAutoSubmitChoice(auto);
-            saveAutoSubmitChoice(attemptId, auto);
-          },
+          onAutoSubmitChoiceChange: setAutoSubmitChoice,
           onFeedbackModeChange: (mode: typeof practiceWorkflow.feedbackMode) =>
             feedbackUpdate.mutate({
               feedbackMode: mode,
@@ -1273,104 +783,16 @@ function AnswerView({
           feedbackBusy: feedbackUpdate.isPending,
           feedbackError: feedbackUpdate.notice,
         };
-  // 单题吸底进度：题号 + 逐题提交进度（整卷反馈不可逐题提交时报已填写）；
-  // canSubmitQuestion 只取工作流级开关——题目级参考答案门控已随 v2 自评实现移除
-  const singleCanSubmit =
-    !timeUp && practiceWorkflow?.canSubmitQuestion === true;
-  const singleProgressCount = singleCanSubmit
-    ? submittedPracticeCount
-    : answered;
-
-  const singleActions = singleMode && resolvedSingleQuestionId !== null && (
-    <div
-      inert={!attemptMaterialsEditable(materialRecovery) || answers === null}
-    >
-      <SingleQuestionActionBar
-        navigation={
-          <AttemptNavigatorButton
-            onOpen={openNavigator}
-            disabled={practiceSubmit.submittingId !== null}
-          >
-            <span aria-hidden className="hidden sm:inline">
-              答题卡
-            </span>
-            <span>
-              {singleIndex + 1}/{total}
-            </span>
-          </AttemptNavigatorButton>
-        }
-        showNext={
-          !singleProgressRow?.submittedAt &&
-          !practiceSubmit.finished &&
-          singleCanSubmit
-        }
-        hasPrev={singleIndex > 0}
-        hasNext={singleIndex < total - 1}
-        busy={practiceSubmit.submittingId !== null}
-        middle={
-          <PracticeSingleActions
-            canSubmitQuestion={singleCanSubmit}
-            finishDisabled={!online || denied || total === 0}
-            onFinish={openSubmitDialog}
-            submitted={(singleProgressRow?.submittedAt ?? null) !== null}
-            autoSubmit={singleAutoSubmit}
-            busy={practiceSubmit.submittingId !== null}
-            finished={practiceSubmit.finished}
-            hasNext={singleIndex < total - 1}
-            continueUnsubmittedId={
-              practiceSubmit.firstUnsubmittedId !== null &&
-              practiceSubmit.firstUnsubmittedId !== resolvedSingleQuestionId &&
-              practiceSubmit.firstUnsubmittedId !== questionIds[singleIndex + 1]
-                ? practiceSubmit.firstUnsubmittedId
-                : null
-            }
-            error={
-              practiceSubmit.lastError?.questionId === resolvedSingleQuestionId
-                ? practiceSubmit.lastError.message
-                : null
-            }
-            onSubmit={() => {
-              if (resolvedSingleQuestionId !== null)
-                void runPracticeSubmit(resolvedSingleQuestionId);
-            }}
-            onNext={() => {
-              const next = questionIds[singleIndex + 1];
-              if (next !== undefined) void goSingleQuestion(next);
-            }}
-            onViewResult={() => practiceSubmit.viewResult()}
-            onContinue={(id) => void goSingleQuestion(id)}
-          />
-        }
-        onPrev={() => {
-          const prev = questionIds[singleIndex - 1];
-          if (prev !== undefined) void goSingleQuestion(prev);
-        }}
-        onNext={() => {
-          const next = questionIds[singleIndex + 1];
-          if (next !== undefined) void goSingleQuestion(next);
-        }}
-      />
-    </div>
-  );
-
   return (
     <DraftSyncProvider value={{ ...draftSync, recovery: materialRecovery }}>
-      <AttemptWorkspace process={recorder}>
+      <AttemptWorkspace process={recorder} learningLease={publisher.lease}>
         <QuestionProcessSyncNotice process={questionProcess} />
-        <Dialog open={processOpen} onOpenChange={setProcessOpen}>
-          <DialogContent
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              moreTriggerRef.current?.focus();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>做题过程记录</DialogTitle>
-              <DialogDescription>管理这次练习的过程回放。</DialogDescription>
-            </DialogHeader>
-            <QuestionProcessControls process={questionProcess} />
-          </DialogContent>
-        </Dialog>
+        <AttemptProcessDialog
+          open={processOpen}
+          onOpenChange={setProcessOpen}
+          returnFocusRef={moreTriggerRef}
+          process={questionProcess}
+        />
         {/* 练习资料与保存详情分别从更多菜单打开。 */}
         <AttemptHeader
           title={data.title}
@@ -1422,18 +844,27 @@ function AnswerView({
             if (!editor || (await editor.request(null))) onBackHome();
           }}
         >
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>{attemptSourceLabel(data)}</span>
-            {data.attempt.sourceType === "assignment" && (
-              <span>
-                {data.dueAt === null
-                  ? "不限截止"
-                  : `${formatDueTime(data.dueAt)} 截止`}
-              </span>
-            )}
-            <span>共 {total} 题</span>
-          </p>
+          <AttemptSourceSummary data={data} total={total} />
         </AttemptHeader>
+        {data.practiceWorkflow && (
+          <AttemptPartialControls
+            data={data}
+            groups={contextQuery.data?.groups ?? []}
+            answers={answers}
+            progress={practiceSubmit.progress}
+            disabled={
+              !online ||
+              denied ||
+              submit.isPending ||
+              practiceSubmit.submittingId !== null
+            }
+            beforeSubmit={async () => !editor || (await editor.request(null))}
+            syncNow={draftSync.syncNow}
+            flushQuestionLocal={flushQuestionLocal}
+            flushQuestion={flushQuestion}
+            inkControllers={inkControllers}
+          />
+        )}
         <TimedAttemptControls
           timing={data.timing}
           clockAnchor={data.clockAnchor}
@@ -1685,6 +1116,9 @@ function AnswerView({
                     return (
                       <AttemptQuestionRow
                         key={question.id}
+                        settlementSeq={
+                          data.settlementProgress?.membership[question.id]
+                        }
                         className={
                           groupGrid
                             ? grouped
@@ -1960,42 +1394,19 @@ function AnswerView({
           </div>,
         )}
 
-        <AttemptNavigationDialog
-          open={navigatorOpen}
-          onOpenChange={setNavigatorOpen}
-          onCloseFocus={() => {
-            if (navigatorJumping.current) return;
-            if (singleWorkspaceRef.current?.contains(document.activeElement))
-              return;
-            navigatorTrigger.current?.focus();
-          }}
-          description={
-            <>
-              已填写 {answered}/{total} 题
-              {practiceProtocol === "v1" && (
-                <>
-                  {" "}
-                  · 已提交 {submittedPracticeCount}/{total} 题
-                </>
-              )}
-            </>
-          }
-        >
-          <LiveAttemptAnswerCard
-            attemptId={attemptId}
-            questionIds={questionIds}
-            materialsReady={navigatorOpen && navigatorMaterialsReady}
-            items={navigationItems}
-            currentId={
-              singleMode ? resolvedSingleQuestionId : currentQuestionId
-            }
-            filter={navigatorFilter}
-            onFilterChange={setNavigatorFilter}
-            onJump={jumpForMode}
-            locked={singleMode && practiceSubmit.submittingId !== null}
-            showNextUnanswered={singleMode}
-          />
-        </AttemptNavigationDialog>
+        <AttemptSessionNavigator
+          attemptId={attemptId}
+          questionIds={questionIds}
+          location={location}
+          navigation={navigation}
+          practiceSubmit={practiceSubmit}
+          currentQuestionId={currentQuestionId}
+          navigationItems={navigationItems}
+          navigatorMaterialsReady={navigatorMaterialsReady}
+          answered={answered}
+          total={total}
+          submittedPracticeCount={submittedPracticeCount}
+        />
 
         {/* 快捷键帮助（M3-D3 §9.2）：v1 卷菜单入口的落点；挂在菜单子树外。
             仅键盘设备渲染（纯触屏不出现快捷键 UI，探测成功当次会话即出现） */}
@@ -2006,37 +1417,23 @@ function AnswerView({
           />
         )}
 
-        {/* 吸底操作条：已答进度 + 保存状态 + 离线/无权限/错误提示 + 交卷（禁用态见组件）。
-            v1 卷追加已提交进度；全部收尾后主按钮换「查看本次结果」（列表模式入口，
-            单题模式主动作位同款按钮已承担） */}
-        <AttemptBottomBar
-          primaryActions={singleActions}
-          progressLabel={
-            singleMode
-              ? `第 ${singleIndex + 1} / ${total} 题 · 已${singleCanSubmit ? "提交" : "填写"} ${singleProgressCount} 题`
-              : undefined
-          }
-          progressValue={
-            singleMode
-              ? total === 0
-                ? 0
-                : singleProgressCount / total
-              : undefined
-          }
-          answered={answered}
-          total={total}
-          offline={!online}
+        <AttemptSessionActions
+          location={location}
+          navigation={navigation}
+          practiceSubmission={practiceSubmission}
+          confirmation={confirmation}
+          practiceSubmit={practiceSubmit}
+          timeUp={timeUp}
+          online={online}
           denied={denied}
+          total={total}
+          answered={answered}
+          submittedPracticeCount={submittedPracticeCount}
+          singleProgressRow={singleProgressRow}
+          singleAutoSubmit={singleAutoSubmit}
+          materialsReady={navigatorMaterialsReady}
           saveFailed={saveFailed}
-          inkFlushError={inkFlushError}
-          submitError={submitError}
-          practiceSubmittedCount={
-            practiceProtocol === "v1" ? submittedPracticeCount : undefined
-          }
-          viewResult={practiceProtocol === "v1" && practiceSubmit.finished}
-          onViewResult={() => practiceSubmit.viewResult()}
-          onOpenSubmit={openSubmitDialog}
-          onOpenNavigator={openNavigator}
+          questionIds={questionIds}
         />
 
         {practiceModeEditor !== null && (
@@ -2048,52 +1445,16 @@ function AnswerView({
           />
         )}
 
-        {/* 逐题提交缺稿明确选择弹层：choice→busy→error 相在 runPracticeSubmit 内迁移 */}
-        <PracticeSubmitProblemDialog
-          open={!timeUp && practiceProblem !== null}
-          phase={practiceProblem?.phase ?? { kind: "choice", reason: "" }}
-          onCancel={() => setPracticeProblem(null)}
-          onConfirm={() => {
-            const target = practiceProblem?.questionId;
-            if (timeUp || target === undefined) return;
-            setPracticeProblem((prev) =>
-              prev !== null ? { ...prev, phase: { kind: "busy" } } : prev,
-            );
-            void runPracticeSubmit(target, { allowMissing: true });
-          }}
-        />
-
-        <SubmitConfirmDialog
-          open={confirmOpen}
+        <AttemptSessionSubmitDialogs
+          data={data}
+          questionIndexById={questionIndexById}
+          navigationItems={navigationItems}
+          confirmation={confirmation}
+          practiceSubmission={practiceSubmission}
+          navigation={navigation}
+          timeUp={timeUp}
           savedOnly={savedOnly}
-          unansweredCount={unanswered}
-          submitting={submit.isPending}
-          verificationRequired={submit.verificationRequired}
-          preparing={notePrep.kind === "preparing"}
-          noteSummary={noteSummary}
-          noteProblems={evidenceProblemViewsOf(notePrep, questionIndexById)}
-          choiceMode={notePrep.kind === "choice"}
-          notePrepError={notePrep.kind === "error" ? notePrep.message : null}
-          dueAt={data.dueAt}
-          answerRelease={data.answerRelease}
-          onConfirm={() => void confirmSubmit()}
-          onConfirmMissing={confirmMissingSubmit}
-          onCancel={closeSubmitDialog}
-          incompleteQuestions={
-            timeUp
-              ? []
-              : navigationItems
-                  .filter((item) => item.completion.state !== "filled")
-                  .map((item) => ({
-                    id: item.id,
-                    index: item.index,
-                    label: completionLabel(item.completion),
-                  }))
-          }
-          onGoToQuestion={(id) => {
-            closeSubmitDialog();
-            void jumpForMode(id, true);
-          }}
+          unanswered={unanswered}
         />
       </AttemptWorkspace>
     </DraftSyncProvider>

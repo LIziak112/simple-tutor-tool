@@ -824,3 +824,19 @@ describe("StudentLessonPage：导航", () => {
     );
   });
 });
+
+it("非限时讲练显示活动用时和关闭偏好，续做仍使用同一偏好", async () => {
+  localStorage.removeItem("attempt:show-activity-time");
+  mockedStart.mockResolvedValue(lessonStart());
+  const view = renderPage();
+  await screen.findByText(/本次活动估计/);
+  expect(screen.getByText(/等待活动记录/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "隐藏用时" }));
+  expect(screen.queryByText(/本次活动估计/)).toBeNull();
+  expect(localStorage.getItem("attempt:show-activity-time")).toBe("off");
+  view.unmount();
+  renderPage();
+  await screen.findByRole("button", { name: "显示用时" });
+  expect(screen.queryByText(/本次活动估计/)).toBeNull();
+  localStorage.removeItem("attempt:show-activity-time");
+});

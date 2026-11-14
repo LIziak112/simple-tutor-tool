@@ -1,7 +1,9 @@
 import type { StudentMeData } from "@tutor/contract";
+import { DEVICE_ID_HEADER, DEVICE_INFO_HEADER } from "@tutor/contract";
 import { getCookie, setCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { Db } from "../db/client";
+import { bindKnownDeviceSession } from "../services/device-service";
 import { getStudentAccount } from "../services/student-service";
 import {
   getStudentSession,
@@ -61,6 +63,13 @@ export function createRequireStudent(db: Db, publicUrl: string) {
           sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
         );
       }
+      bindKnownDeviceSession(
+        db,
+        { type: "student", id: student.id },
+        c.req.header(DEVICE_ID_HEADER),
+        token,
+        c.req.header(DEVICE_INFO_HEADER),
+      );
       c.set("student", student);
       await next();
       return;

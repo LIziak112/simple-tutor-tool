@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   gradingPolicyOf,
-  type Question,
   questionEvidenceBindings,
   type TeacherAttemptCard,
   type TeacherAttemptDetailData,
@@ -16,7 +15,6 @@ import {
   wrongPracticeScopeSchema,
   wrongScopeLabelOf,
 } from "@tutor/contract";
-import { studentStemMd } from "@tutor/md-dsl";
 import {
   and,
   desc,
@@ -48,7 +46,6 @@ import {
 import { HttpError } from "../lib/http-error";
 import { hasUsableQuestionSnapshotSql } from "./attempt-final-outcome.ts";
 import {
-  answerOf,
   assertFrozenAnswerShape,
   attemptQuestionRows,
   attemptResponseRows,
@@ -58,10 +55,9 @@ import {
   ensureAttemptFrozen,
   lessonSourceContextOf,
   materialSlotOrderOf,
-  publicOfSnapshot,
-  selfReviewRecordOf,
   unitGroupedRows,
 } from "./attempt-service";
+import { attemptTimeOf, timeProjectionsOf } from "./attempt-time-projection";
 import {
   pendingMarkCount,
   pendingMarkCountsByStudent,
@@ -70,7 +66,8 @@ import {
 } from "./pending-mark";
 import { countsAsWrong } from "./response-verdict.ts";
 import { attemptResultCounts } from "./result-counts";
-import { releaseOfSnapshot, snapshotOfRow } from "./snapshot";
+import { snapshotOfRow } from "./snapshot";
+import { detailItemOf } from "./teacher-attempt-detail-item.ts";
 
 /**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
@@ -384,6 +381,10 @@ export function listTeacherAttempts(
     db,
     rows.map((row) => row.attempt),
   );
+  const cardTimes = timeProjectionsOf(
+    db,
+    rows.map(({ attempt }) => attempt.id),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -418,6 +419,7 @@ export function listTeacherAttempts(
     submittedCount: submittedCounts.get(attempt.id)?.submitted ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
+    time: cardTimes.aggregate(attempt.id),
     activeSec: attempt.activeSec,
   }));
   return { attempts: cards, total: totalRow?.n ?? 0 };
@@ -635,73 +637,6 @@ function rowVisibleInDraftOf(attempt: Attempt) {
 }
 
 /**
- * 详情单题条目组装（wrong 与非 wrong 分支共用——原两份 40 行孪生收敛）：
- * - draft（未放行行，Web-3 起按行判定）：题干经 studentStemMd 学生端投影
- *   （详情不下发参考答案）、判定字段 null（判定列显示「未交卷」）、不提供
- *   批注定位 responseId；已逐题提交的放行行走已交卷分支；
- * - submitted/graded：快照题干原文 + 参考答案/详解，responseId=冻结行 id
- *   （详情页内联批改 POST /responses/:id/mark 定位用）；
- * - unitId/unitTitle 由调用方给（wrong=题目当前单元〔错题「来自哪个练习」的
- *   展示口径〕，非 wrong=冻结分组；title 传组标题占位，下方统一回填覆盖）。
- */
-function detailItemOf(
-  row: ResponseRow,
-  snapshot: Question,
-  opts: {
-    isDraft: boolean;
-    unitId: string;
-    unitTitle: string;
-    ink: TeacherAttemptInkInfo | null;
-    materialSlots: ReadonlyMap<string, readonly string[]>;
-  },
-): Omit<TeacherAttemptDetailQuestion, "no"> {
-  const isDraft = opts.isDraft;
-  return {
-    questionId: row.questionId,
-    responseId: isDraft ? null : row.id,
-    publicQuestion: publicOfSnapshot(snapshot, row.id, {
-      materialSlots: opts.materialSlots,
-      unitId: row.unitId,
-    }),
-    unitId: opts.unitId,
-    unitTitle: opts.unitTitle,
-    type: snapshot.type,
-    difficulty: snapshot.difficulty,
-    knowledge: snapshot.knowledge,
-    stemMd: isDraft ? studentStemMd(snapshot) : snapshot.stemMd,
-    ...(snapshot.options !== undefined
-      ? { options: snapshot.options.map((option) => option.text) }
-      : {}),
-    answer: answerOf(row.answerJson),
-    autoCorrect: isDraft ? null : row.autoCorrect,
-    finalCorrect: isDraft ? null : row.finalCorrect,
-    // #6980-3：是否有实际作答（draft 行恒默认 false，判定区仅已交卷消费）
-    answered: row.answered,
-    // #6980-4：做题时学生自标「不会」（draft 亦下发，教师可提前看到）
-    studentFlag: row.studentFlag === "unsure" ? "unsure" : null,
-    teacherMark: isDraft
-      ? null
-      : row.teacherMark === "correct" || row.teacherMark === "wrong"
-        ? row.teacherMark
-        : null,
-    teacherComment: isDraft ? null : row.teacherComment,
-    // QM-12：自评记录与行策略（教师优先——teacherMark 非空时展示以教师判定
-    // 为准；draft 未交卷无自评，缺省不发）
-    ...(isDraft
-      ? {}
-      : {
-          selfReview: selfReviewRecordOf(row),
-          gradingPolicy: row.gradingPolicy,
-        }),
-    activeSec: row.activeSec,
-    hintsUsed: row.hintsUsed,
-    changeCount: row.changeCount,
-    ink: opts.ink,
-    ...(isDraft ? {} : releaseOfSnapshot(snapshot)),
-  };
-}
-
-/**
  * 教师端作答详情（D7 全字段；draft 亦可用，D5；T6R.3 起三来源统一读冻结行）：
  * - draft：题目取该 attempt 的冻结快照行（与学生草稿视图同源——懒冻结兜底
  *   升级遗留草稿；教师改题库不影响学生当前这卷，教师看到的即学生看到的），
@@ -822,9 +757,13 @@ export function getTeacherAttemptDetail(
     teacherId,
     items.map((item) => item.unitId),
   );
+  const times = timeProjectionsOf(db, [attempt.id]);
   const questionsOut: TeacherAttemptDetailQuestion[] = items.map(
     (item, index) => ({
       ...item,
+      time: times.responseTime.get(
+        times.members.find((r) => r.questionId === item.questionId)?.id ?? "",
+      ),
       // 域内查到单元标题则覆盖占位；查不到（兜底组）保留占位文案（「未分组
       // 题目」/wrong 的 questionId 占位），不再回退裸 id
       unitTitle: unitTitles.get(item.unitId) ?? item.unitTitle,
@@ -901,6 +840,7 @@ export function getTeacherAttemptDetail(
       pendingSelfReviewCounts(db, [attempt]).get(attempt.id) ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
+    time: attemptTimeOf(db, attempt.id),
     activeSec: attempt.activeSec,
     questions: questionsOut,
   };

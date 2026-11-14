@@ -5,6 +5,7 @@ import {
   learningEventBatchDataSchema,
 } from "@tutor/contract";
 import { ApiError, api, callApi } from "./api";
+import { currentDevice } from "./device-registration";
 import type { EventScope, EventStoreBackend } from "./event-queue";
 import { randomUuid } from "./uuid";
 
@@ -57,10 +58,12 @@ export function createScopedEventOutbox({
       ? {
           events: entry.events as AttemptEvent[],
           viewId: entry.viewId,
+          deviceId: currentDevice().deviceId,
           delivery,
         }
       : {
           events: entry.events as LectureEvent[],
+          deviceId: currentDevice().deviceId,
           delivery: { ...delivery, lectureId: scopeId },
         };
   };
