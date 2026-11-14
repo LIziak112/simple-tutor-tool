@@ -196,3 +196,16 @@ await writeSchema(
     { io: "input" },
   ),
 );
+
+await writeSchema(
+  "student-mcp-current.json",
+  "学生 MCP 当前上下文契约",
+  z.toJSONSchema(
+    z.object({
+      input: (await import("../src/student-mcp-current.ts"))
+        .studentMcpCurrentInputSchema,
+      data: (await import("../src/student-mcp-current.ts"))
+        .studentMcpCurrentDataSchema,
+    }),
+  ),
+);
