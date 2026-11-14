@@ -14,7 +14,7 @@ import {
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
 import { createEraseSession } from "@/features/ink/engine/erase-session.ts";
-import { toLogicalPoint } from "@/features/ink/engine/normalize.ts";
+import { toLogical, toLogicalPoint } from "@/features/ink/engine/normalize.ts";
 import {
   advancePointerMachine,
   createPointerMachineState,
@@ -23,6 +23,7 @@ import {
   type PointerMachineState,
   touchActionForInput,
 } from "@/features/ink/engine/pointer-machine.ts";
+import { createShapeGesture } from "@/features/ink/engine/shape-gesture.ts";
 import { toolConfigOf } from "@/features/ink/engine/toolbox.ts";
 import {
   INK_LOGICAL_WIDTH,
@@ -250,6 +251,15 @@ export function MaterialAnnotationOverlay({
     createPointerMachineState("pen"),
   );
   const currentStrokeRef = useRef<InkStroke | null>(null);
+  /**
+   * 图形工具或直线荧光笔的这一次拖动：预览在画布上面的临时层，抬笔给出
+   * 这一笔的点列（拖动期间 currentStrokeRef 是空的，画布上没有在途的一笔）
+   */
+  const [shaper] = useState(() =>
+    createShapeGesture({
+      layer: () => replayRef.current?.previewLayer?.() ?? null,
+    }),
+  );
   /** 本笔落笔矩形：首笔冻结基准的捕获源（一笔不混用两个排版基准） */
   const strokeBaseRef = useRef<{ width: number; height: number } | null>(null);
   const strokeStartRef = useRef(0);
@@ -556,6 +566,25 @@ export function MaterialAnnotationOverlay({
         return;
       }
       if (gesture.kind !== "draw") return;
+      if (gesture.shape !== "free") {
+        shaper.begin({
+          shape: gesture.shape,
+          from: point,
+          brush: gesture.brush,
+          // 指针捕获后可以拖出材料范围：图形只画到边上
+          ...(rect !== null && rect.width > 0
+            ? {
+                bounds: {
+                  width: INK_LOGICAL_WIDTH,
+                  height: toLogical(rect.width, rect.height),
+                },
+              }
+            : {}),
+          // 荧光笔整笔一条路径，画的就是起止点的连线，不用加密
+          sparse: gesture.tool === "highlighter",
+        });
+        return;
+      }
       currentStrokeRef.current = {
         tool: gesture.tool,
         color: gesture.brush.color,
@@ -563,7 +592,7 @@ export function MaterialAnnotationOverlay({
         points: [point],
       };
     },
-    [attemptId, storeKey, gesture, pointOf, eraseAt, setStrokesBoth],
+    [attemptId, storeKey, gesture, pointOf, eraseAt, setStrokesBoth, shaper],
   );
 
   /** 释放指针捕获（收笔/丢弃共用；捕获可能已被浏览器释放，防御忽略） */
@@ -585,7 +614,18 @@ export function MaterialAnnotationOverlay({
     releaseCapture();
     rectRef.current = null;
     lastEraseRef.current = null;
-    const stroke = currentStrokeRef.current;
+    // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
+    const live = liveGestureRef.current;
+    const shapePoints = shaper.end();
+    const stroke: InkStroke | null =
+      shapePoints !== null && live.kind === "draw"
+        ? {
+            tool: live.tool,
+            color: live.brush.color,
+            weight: live.brush.weight,
+            points: shapePoints,
+          }
+        : currentStrokeRef.current;
     if (!stroke) return;
     currentStrokeRef.current = null;
     // 首笔冻结：无基准时按本笔落笔矩形捕获冻结基准并随稿保存——之后
@@ -606,7 +646,9 @@ export function MaterialAnnotationOverlay({
     const next = [...strokesRef.current, stroke];
     setStrokesBoth(next);
     saveToDraftStore(next);
-  }, [releaseCapture, saveToDraftStore, setStrokesBoth]);
+    // 图形书写中不在画布上：预览已收起，这里立即把整笔画上去，中间不空一帧
+    if (shapePoints !== null) drawCurrent();
+  }, [releaseCapture, saveToDraftStore, setStrokesBoth, shaper, drawCurrent]);
 
   usePwaUpdateGuard(
     () =>
@@ -630,11 +672,18 @@ export function MaterialAnnotationOverlay({
         } else if (decision.action === "discard") {
           releaseCapture();
           currentStrokeRef.current = null;
+          shaper.end();
           scheduleRedraw();
         }
       }
     },
-    [beginInteraction, finishInteraction, releaseCapture, scheduleRedraw],
+    [
+      beginInteraction,
+      finishInteraction,
+      releaseCapture,
+      scheduleRedraw,
+      shaper,
+    ],
   );
 
   const handlePointerDown = useCallback(
@@ -661,12 +710,18 @@ export function MaterialAnnotationOverlay({
         eraseAt(pointOf(e), live);
         return;
       }
+      // 图形：只看拖到哪儿，更新预览
+      if (shaper.active) {
+        const to = pointOf(e);
+        shaper.through(to, Math.max(0, to.t));
+        return;
+      }
       const stroke = currentStrokeRef.current;
       if (!stroke) return;
       stroke.points.push(pointOf(e));
       scheduleRedraw();
     },
-    [pointOf, eraseAt, scheduleRedraw],
+    [pointOf, eraseAt, scheduleRedraw, shaper],
   );
 
   const handlePointerEnd = useCallback(

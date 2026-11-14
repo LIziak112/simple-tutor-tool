@@ -28,6 +28,7 @@ import {
   touchActionForInput,
 } from "../engine/pointer-machine";
 import { PAINT_SPREAD_CSS } from "../engine/region-redraw";
+import { createShapeGesture } from "../engine/shape-gesture";
 import type { InkChangeReason, ToolAwareSurface } from "../engine/surface";
 import {
   asPointerKind,
@@ -128,8 +129,13 @@ export function createFeelSurface(
   // LR-1：本笔绝对时刻与输入来源（pointerdown 捕获，随笔画提交）
   let liveStartedAt = 0;
   let livePointerKind: InkPointerKind | undefined;
-  /** 橡皮圈画在这一层（盖在两块画布上，不接指针事件） */
+  /** 橡皮圈和图形预览画在这一层（盖在两块画布上，不接指针事件） */
   let ringLayer: InkLiveLayer | null = null;
+  /**
+   * 图形工具或直线荧光笔的这一次拖动：预览在上面那一层，抬笔给出这一笔的
+   * 点列。拖动期间 live 只带这一笔的属性，点列是空的。
+   */
+  const shaper = createShapeGesture({ layer: () => ringLayer });
   /**
    * 橡皮从落下到抬起的这一次擦除：拖动途中正文不动，抬起时一次提交。
    * 只有各笔保留自己画法时（正式手写）才只重画改动的那一块；实验页的调参
@@ -251,13 +257,19 @@ export function createFeelSurface(
     // 结果里的下标属于提交前的正文：先结束这次擦除，再提交、重画
     const erasing = eraser.active;
     const erased = eraser.end();
+    // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
+    const shaped = shaper.active;
+    const shapePoints = shaper.end();
     if (!discard) {
       if (erased) {
         change("erase", () => store.commitErase(erased.removed, erased.added));
-      } else if (live && live.points.length > 0) {
-        const stroke = live;
-        change("stroke", () => store.commitAdd([stroke]));
-        if (dryCtx) paint(dryCtx, stroke, true);
+      } else if (live) {
+        const points = shaped ? shapePoints : live.points;
+        if (points !== null && points.length > 0) {
+          const stroke = { ...live, points };
+          change("stroke", () => store.commitAdd([stroke]));
+          if (dryCtx) paint(dryCtx, stroke, true);
+        }
       }
     }
     if (erasing) redrawDry();
@@ -330,6 +342,7 @@ export function createFeelSurface(
         eraser.through([{ x: first.x, y: first.y, radius: eraseRadius }]);
       } else {
         if (gesture.kind !== "draw") continue;
+        const shaped = gesture.shape !== "free";
         live = {
           tool: gesture.tool,
           ...gesture.brush,
@@ -342,15 +355,29 @@ export function createFeelSurface(
           rendering: {
             renderer: "freehand",
             smoothing: params.smoothing,
-            thinning: params.thinning,
-            streamline: params.streamline,
+            // 图形是等宽的直边：粗细不随压力变，点也不滞后（拐角不被抹圆）
+            thinning: shaped ? 0 : params.thinning,
+            streamline: shaped ? 0 : params.streamline,
             sizeScale: params.sizeScale,
-            simulatePressure: params.simulatePressure,
+            simulatePressure: shaped ? false : params.simulatePressure,
           },
-          points: [first],
+          points: shaped ? [] : [first],
         };
-        samples.push(performance.now());
-        schedule();
+        if (gesture.shape !== "free") {
+          shaper.begin({
+            shape: gesture.shape,
+            from: first,
+            brush: gesture.brush,
+            bounds: { width: 1000, height: (height / width) * 1000 },
+            // 荧光笔画的就是起止点的连线，不用加密
+            sparse: gesture.tool === "highlighter",
+            // 落到画布上的线宽带粗细倍率，预览跟它一致
+            previewWeight: gesture.brush.weight * params.sizeScale,
+          });
+        } else {
+          samples.push(performance.now());
+          schedule();
+        }
       }
       try {
         wet.setPointerCapture(event.pointerId);
@@ -381,6 +408,7 @@ export function createFeelSurface(
     if (event.type === "pointerrawupdate") stats.rawSeen = true;
     let changed = false;
     const erasePoints: ErasePoint[] = [];
+    let shapeTo: InkStrokePoint | null = null;
     for (const sample of batch.length > 0 ? batch : [event]) {
       const next = point(sample, rect);
       const previous = live?.points.at(-1);
@@ -395,6 +423,8 @@ export function createFeelSurface(
       lastStamp = sample.timeStamp;
       if (eraser.active) {
         erasePoints.push({ x: next.x, y: next.y, radius: eraseRadius });
+      } else if (shaper.active) {
+        shapeTo = next;
       } else if (live) {
         live.points.push(next);
         samples.push(performance.now());
@@ -404,6 +434,11 @@ export function createFeelSurface(
     // 橡皮：一批采样记完再重画一次，橡皮圈跟到最后一个落点
     if (eraser.active) {
       eraser.through(erasePoints);
+      return;
+    }
+    // 图形：只看这一批最后拖到哪儿，更新预览
+    if (shaper.active) {
+      if (shapeTo) shaper.through(shapeTo, Math.round(shapeTo.t));
       return;
     }
     // raw 负责真实点也不抢占 move 的预测；只接受有界、短时的未来段。

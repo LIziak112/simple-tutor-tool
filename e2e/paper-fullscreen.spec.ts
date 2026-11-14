@@ -247,17 +247,25 @@ test(
       await page.setViewportSize({ width: 320, height: 800 });
       await openFullscreen();
       const toolbar = page.getByRole("toolbar").filter({ visible: true });
-      // 320px：草稿纸的五个按钮刚好放下；正式手写多一个「手指书写」放不下，
-      // 重做收进「更多」，其余按钮一个不少
+      // 320px：四支工具加撤销、重做、更多放不下，重做收进「更多」，其余按钮
+      // 一个不少（正式手写还多一个「手指书写」，工具区可横向滑动）
       await expect
         .poll(() => toolbarButtonNames(toolbar))
         .toEqual(
           kind === "scratch"
-            ? ["笔", "荧光笔", "橡皮", "撤销", "更多操作（第 1 题草稿纸）"]
+            ? [
+                "笔",
+                "荧光笔",
+                "橡皮",
+                "形状",
+                "撤销",
+                "更多操作（第 1 题草稿纸）",
+              ]
             : [
                 "笔",
                 "荧光笔",
                 "橡皮",
+                "形状",
                 "撤销",
                 "手指书写",
                 "更多操作（手写答题区）",

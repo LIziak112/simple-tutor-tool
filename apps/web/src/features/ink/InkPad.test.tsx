@@ -120,12 +120,13 @@ afterEach(() => {
 });
 
 describe("<InkPad> 工具栏", () => {
-  it("页内引擎：笔/荧光笔/橡皮/滚动 + 撤销/重做 + 更多；撤销重做初始禁用，清空在更多里", () => {
+  it("页内引擎：笔/荧光笔/橡皮/形状/滚动 + 撤销/重做 + 更多；撤销重做初始禁用，清空在更多里", () => {
     render(<InkPad />);
     expect(toolbarButtonNames("手写答题区工具栏")).toEqual([
       "笔",
       "荧光笔",
       "橡皮",
+      "形状",
       "滚动",
       "撤销",
       "重做",
@@ -150,6 +151,7 @@ describe("<InkPad> 工具栏", () => {
       "笔",
       "荧光笔",
       "橡皮",
+      "形状",
       "滚动",
       "撤销",
       "重做",
@@ -240,6 +242,43 @@ describe("<InkPad> 工具栏", () => {
       color: "yellow",
       size: "medium",
       straight: false,
+    });
+
+    // 荧光笔改成直线：下发的工具带上 straight
+    fireEvent.click(screen.getByRole("button", { name: "荧光笔" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "荧光笔设置" })).getByRole(
+        "radio",
+        { name: "直线" },
+      ),
+    );
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "highlighter",
+      color: "yellow",
+      size: "medium",
+      straight: true,
+    });
+
+    // 形状：缺省直线，颜色粗细用笔的；在面板里换成矩形
+    fireEvent.click(screen.getByRole("button", { name: "形状" }));
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "shape",
+      shape: "line",
+      color: "blue",
+      size: "thin",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "形状" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "形状设置" })).getByRole(
+        "radio",
+        { name: "矩形" },
+      ),
+    );
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "shape",
+      shape: "rect",
+      color: "blue",
+      size: "thin",
     });
 
     fireEvent.click(screen.getByRole("button", { name: "滚动" }));

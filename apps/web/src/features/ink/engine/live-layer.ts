@@ -9,6 +9,9 @@
  * MB），路径数据还能在单测里直接断言。坐标域（viewBox）由宿主设成和笔画相同
  * 的单位，路径和线宽直接用笔画的数值。
  *
+ * 拖动中的图形（直线、箭头、矩形、椭圆，以及直线荧光笔）同样只在这一层上
+ * 出预览：拖到哪儿图形就跟到哪儿，抬笔才落成一笔画到画布上（shape-gesture.ts）。
+ *
  * 橡皮圈也画在这一层：橡皮按下或悬停时跟着走，半径就是橡皮的命中半径。
  */
 import { onePathSvg } from "./highlighter-paint.ts";
@@ -29,11 +32,27 @@ export interface InkLiveLayer {
     stroke: Pick<InkStroke, "points" | "color" | "weight">,
     count?: number,
   ): void;
+  /**
+   * 显示或更新图形的预览：顶点按顺序用直线连起来（showStroke 会把拐角抹成
+   * 曲线，矩形的角就不是角了）。与书写中的一笔共用同一条路径，clear 收起。
+   */
+  showOutline(
+    points: ReadonlyArray<{ x: number; y: number }>,
+    brush: Pick<InkStroke, "color" | "weight">,
+  ): void;
   clear(): void;
   /** 橡皮圈：让人看见橡皮擦到哪儿、多大；圆心与半径用笔画同一单位 */
   showRing(x: number, y: number, radius: number): void;
   hideRing(): void;
   destroy(): void;
+}
+
+/** 折线的 SVG 路径数据（坐标最多两位小数，与笔画坐标同精度） */
+function polylineSvg(points: ReadonlyArray<{ x: number; y: number }>): string {
+  const fmt = (value: number) => String(Math.round(value * 100) / 100);
+  return points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${fmt(p.x)} ${fmt(p.y)}`)
+    .join("");
 }
 
 export function createInkLiveLayer(host: HTMLElement): InkLiveLayer {
@@ -71,21 +90,28 @@ export function createInkLiveLayer(host: HTMLElement): InkLiveLayer {
     path.removeAttribute("d");
   }
 
+  /** 把路径数据画出来；空串等同清空 */
+  function show(d: string, brush: Pick<InkStroke, "color" | "weight">): void {
+    if (d === "") {
+      clear();
+      return;
+    }
+    path.setAttribute("d", d);
+    path.setAttribute("stroke", brush.color);
+    path.setAttribute("stroke-width", String(brush.weight));
+    path.style.display = "";
+  }
+
   return {
     setViewBox(width, height): void {
       if (!(width > 0) || !(height > 0)) return;
       svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
     },
     showStroke(stroke, count): void {
-      const d = onePathSvg(stroke.points, count);
-      if (d === "") {
-        clear();
-        return;
-      }
-      path.setAttribute("d", d);
-      path.setAttribute("stroke", stroke.color);
-      path.setAttribute("stroke-width", String(stroke.weight));
-      path.style.display = "";
+      show(onePathSvg(stroke.points, count), stroke);
+    },
+    showOutline(points, brush): void {
+      show(points.length < 2 ? "" : polylineSvg(points), brush);
     },
     clear,
     showRing(x, y, radius): void {

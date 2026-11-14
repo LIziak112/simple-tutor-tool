@@ -196,3 +196,42 @@ it("没有在途荧光笔就不创建临时层（纯回放页的 DOM 不变）",
   expect(host.children).toHaveLength(1);
   canvas.destroy();
 });
+
+it("图形预览用的临时层：要的时候才创建，盖在画布上、坐标域与笔画一致；图形落成一笔后画到画布，预览不留", () => {
+  const { host, canvas } = mountReplay();
+  expect(host.querySelector(INK_LIVE_LAYER_SELECTOR)).toBeNull();
+  const layer = canvas.previewLayer?.();
+  const node = host.querySelector(INK_LIVE_LAYER_SELECTOR);
+  expect(node?.previousElementSibling?.getAttribute("data-slot")).toBe(
+    "ink-replay-canvas",
+  );
+  expect(node?.getAttribute("viewBox")).toBe("0 0 1000 666.67");
+  layer?.showOutline(
+    [
+      { x: 100, y: 100 },
+      { x: 300, y: 100 },
+      { x: 300, y: 200 },
+    ],
+    { color: "#dc2626", weight: 2.5 },
+  );
+  expect(livePath(host)?.getAttribute("d")).toBe("M100 100L300 100L300 200");
+  // 再要一次还是同一层
+  canvas.previewLayer?.();
+  expect(host.querySelectorAll(INK_LIVE_LAYER_SELECTOR)).toHaveLength(1);
+  // 预览不上画布
+  expect(CountingContext.strokes).toBe(0);
+
+  // 落成一笔（两个采样点各一次描边）：画布上多出这一笔，临时层清空
+  const shape: InkStroke = {
+    ...pen(),
+    points: [
+      { x: 100, y: 100, p: 0.5, t: 0 },
+      { x: 300, y: 100, p: 0.5, t: 8 },
+    ],
+  };
+  canvas.drawOrdered([shape], 1, null, 0);
+  expect(CountingContext.strokes).toBe(2);
+  expect(livePath(host)?.hasAttribute("d")).toBe(false);
+  canvas.destroy();
+  expect(host.querySelector(INK_LIVE_LAYER_SELECTOR)).toBeNull();
+});

@@ -112,11 +112,12 @@ export interface InkPadProps {
 /** auto=旧行为；pen=手指只滚动；session=会话输入偏好。 */
 export type InkPadInputMode = "auto" | "pen" | "session";
 
-/** 内置工具栏提供的工具：页内引擎四种；历史 Excalidraw 画布三种 */
+/** 内置工具栏提供的工具：页内引擎五种；历史 Excalidraw 画布三种 */
 const ATRAMENT_TOOLS: readonly InkToolType[] = [
   "pen",
   "highlighter",
   "eraser",
+  "shape",
   "scroll",
 ];
 const EXCALIDRAW_TOOLS: readonly InkToolType[] = ["pen", "eraser", "scroll"];

@@ -8,6 +8,7 @@ import {
   INK_HIGHLIGHTER_SIZE_KEYS,
   INK_PEN_COLOR_KEYS,
   INK_PEN_SIZE_KEYS,
+  INK_SHAPE_KINDS,
   type InkToolboxState,
 } from "../engine/toolbox.ts";
 import {
@@ -15,18 +16,28 @@ import {
   INK_HIGHLIGHTER_SIZES,
   INK_PEN_COLORS,
   INK_PEN_SIZES,
-  type InkEraserMode,
   type InkToolType,
 } from "../engine/types.ts";
+import {
+  EraserModeGlyph,
+  HighlighterLineGlyph,
+  InkShapeGlyph,
+} from "./tool-glyphs.tsx";
 import {
   INK_ERASER_MODE_HINT,
   INK_ERASER_MODE_LABEL,
   INK_ERASER_SIZE_LABEL,
   INK_HIGHLIGHTER_COLOR_LABEL,
+  INK_HIGHLIGHTER_LINE_HINT,
+  INK_HIGHLIGHTER_LINE_LABEL,
+  INK_HIGHLIGHTER_LINES,
   INK_HIGHLIGHTER_SIZE_LABEL,
   INK_HIGHLIGHTER_SWATCH,
   INK_PEN_COLOR_LABEL,
   INK_PEN_SIZE_LABEL,
+  INK_SHAPE_HINT,
+  INK_SHAPE_LABEL,
+  type InkHighlighterLine,
 } from "./tool-labels.ts";
 
 /**
@@ -154,11 +165,35 @@ function PenOptions({ toolbox, onChange }: PanelProps) {
   );
 }
 
-/** 荧光笔：颜色与粗细。图形用横条（像划过一行字），和笔的圆点区分开 */
+/**
+ * 荧光笔：线条（手绘或直线）、颜色与粗细。图形用横条（像划过一行字），和
+ * 笔的圆点区分开
+ */
 function HighlighterOptions({ toolbox, onChange }: PanelProps) {
   const { highlighter } = toolbox;
+  const line: InkHighlighterLine = highlighter.straight ? "straight" : "free";
   return (
     <>
+      <OptionGroup
+        label="线条"
+        value={line}
+        options={INK_HIGHLIGHTER_LINES}
+        optionLabel={INK_HIGHLIGHTER_LINE_LABEL}
+        hint={INK_HIGHLIGHTER_LINE_HINT[line]}
+        onChange={(next) =>
+          onChange({
+            ...toolbox,
+            highlighter: { ...highlighter, straight: next === "straight" },
+          })
+        }
+        render={(option) => (
+          <HighlighterLineGlyph
+            line={option}
+            color={INK_HIGHLIGHTER_SWATCH[highlighter.color]}
+          />
+        )}
+        named
+      />
       <OptionGroup
         label="颜色"
         value={highlighter.color}
@@ -196,29 +231,6 @@ function HighlighterOptions({ toolbox, onChange }: PanelProps) {
         )}
       />
     </>
-  );
-}
-
-/**
- * 擦除方式的图形：一笔波浪线。整笔——整条都擦成了虚线；局部——只有中间断开
- * 一截，两头还是实线。
- */
-function EraserModeGlyph({ mode }: { mode: InkEraserMode }) {
-  const wave = "M3 13 C 7 3, 11 3, 14 10 S 21 17, 25 7";
-  return (
-    <svg
-      aria-hidden
-      viewBox="0 0 28 20"
-      className="h-5 w-7 shrink-0 fill-none stroke-foreground"
-      strokeWidth={2}
-      strokeLinecap="round"
-    >
-      {mode === "stroke" ? (
-        <path d={wave} strokeDasharray="1.5 3.5" className="opacity-50" />
-      ) : (
-        <path d={wave} pathLength={100} strokeDasharray="36 28 36" />
-      )}
-    </svg>
   );
 }
 
@@ -262,9 +274,33 @@ function EraserOptions({ toolbox, onChange }: PanelProps) {
   );
 }
 
+/** 形状：画哪一种；颜色、粗细就是笔的那两项（改了笔也跟着变） */
+function ShapeOptions({ toolbox, onChange }: PanelProps) {
+  const { shape } = toolbox;
+  return (
+    <>
+      <OptionGroup
+        label="形状"
+        value={shape.kind}
+        options={INK_SHAPE_KINDS}
+        optionLabel={INK_SHAPE_LABEL}
+        hint={INK_SHAPE_HINT[shape.kind]}
+        onChange={(kind) => onChange({ ...toolbox, shape: { ...shape, kind } })}
+        render={(kind) => <InkShapeGlyph kind={kind} className="size-6" />}
+      />
+      <PenOptions toolbox={toolbox} onChange={onChange} />
+    </>
+  );
+}
+
 /** 有选项面板的工具；其余工具（滚动）点一下即生效，没有可调项 */
 export function inkToolHasOptions(tool: InkToolType): boolean {
-  return tool === "pen" || tool === "highlighter" || tool === "eraser";
+  return (
+    tool === "pen" ||
+    tool === "highlighter" ||
+    tool === "eraser" ||
+    tool === "shape"
+  );
 }
 
 export function InkToolOptions({
@@ -276,6 +312,7 @@ export function InkToolOptions({
       {tool === "pen" && <PenOptions {...panel} />}
       {tool === "highlighter" && <HighlighterOptions {...panel} />}
       {tool === "eraser" && <EraserOptions {...panel} />}
+      {tool === "shape" && <ShapeOptions {...panel} />}
     </div>
   );
 }

@@ -56,14 +56,22 @@ function Harness({ init, onChange, ...props }: HarnessProps) {
 const button = (name: string) => screen.getByRole("button", { name });
 
 describe("InkToolbar 工具切换与选项面板", () => {
-  it("缺省提供笔、荧光笔、橡皮、撤销、重做、更多，当前工具按下", () => {
+  it("缺省提供笔、荧光笔、橡皮、形状、撤销、重做、更多，当前工具按下", () => {
     render(<Harness />);
     const toolbar = screen.getByRole("toolbar", { name: "测试纸工具栏" });
     expect(
       within(toolbar)
         .getAllByRole("button")
         .map((el) => el.getAttribute("aria-label")),
-    ).toEqual(["笔", "荧光笔", "橡皮", "撤销", "重做", "更多操作（测试纸）"]);
+    ).toEqual([
+      "笔",
+      "荧光笔",
+      "橡皮",
+      "形状",
+      "撤销",
+      "重做",
+      "更多操作（测试纸）",
+    ]);
     expect(button("笔")).toHaveAttribute("aria-pressed", "true");
     expect(button("橡皮")).toHaveAttribute("aria-pressed", "false");
   });
@@ -229,6 +237,121 @@ describe("InkToolbar 工具切换与选项面板", () => {
     expect(
       button("荧光笔").querySelector('[data-slot="ink-tool-color"]'),
     ).toHaveStyle({ backgroundColor: INK_HIGHLIGHTER_SWATCH.pink });
+  });
+
+  it("荧光笔的面板选线条：缺省手绘，可改成直线并说明怎么画；颜色粗细不动", () => {
+    const onChange = vi.fn();
+    render(
+      <Harness
+        init={{ active: "highlighter", highlighter: { color: "green" } }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(button("荧光笔"));
+    const panel = screen.getByRole("dialog", { name: "荧光笔设置" });
+    const lines = within(panel).getByRole("radiogroup", { name: "线条" });
+    expect(
+      within(lines)
+        .getAllByRole("radio")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["手绘", "直线"]);
+    expect(within(lines).getByRole("radio", { name: "手绘" })).toBeChecked();
+    expect(lines).toHaveAccessibleDescription("跟着手的轨迹划");
+    expect(
+      within(lines).getByRole("radio", { name: "直线" }),
+    ).toHaveTextContent("直线");
+
+    fireEvent.click(within(lines).getByRole("radio", { name: "直线" }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({
+        active: "highlighter",
+        highlighter: { color: "green", straight: true },
+      }),
+    );
+    expect(within(lines).getByRole("radio", { name: "直线" })).toBeChecked();
+    expect(lines).toHaveAccessibleDescription(
+      "从落笔到抬笔拉一条直线，接近横平竖直时自动摆正",
+    );
+    fireEvent.click(within(lines).getByRole("radio", { name: "手绘" }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({
+        active: "highlighter",
+        highlighter: { color: "green" },
+      }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "荧光笔设置" }),
+    ).toBeInTheDocument();
+  });
+
+  it("形状的面板：选直线、箭头、矩形、椭圆并说明怎么画；颜色粗细与笔共用", () => {
+    const onChange = vi.fn();
+    render(<Harness init={{ pen: { color: "red" } }} onChange={onChange} />);
+    fireEvent.click(button("形状"));
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({ active: "shape", pen: { color: "red" } }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(button("形状")).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(button("形状"));
+    const panel = screen.getByRole("dialog", { name: "形状设置" });
+    const kinds = within(panel).getByRole("radiogroup", { name: "形状" });
+    expect(
+      within(kinds)
+        .getAllByRole("radio")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["直线", "箭头", "矩形", "椭圆"]);
+    expect(within(kinds).getByRole("radio", { name: "直线" })).toBeChecked();
+    expect(kinds).toHaveAccessibleDescription(
+      "直线：从一头拖到另一头，接近横平竖直时自动摆正",
+    );
+
+    fireEvent.click(within(kinds).getByRole("radio", { name: "矩形" }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({
+        active: "shape",
+        pen: { color: "red" },
+        shape: { kind: "rect" },
+      }),
+    );
+    expect(kinds).toHaveAccessibleDescription("矩形：从一个角拖到对角");
+    // 颜色、粗细就是笔的那两项：在这里改，笔也跟着变
+    const colors = within(panel).getByRole("radiogroup", { name: "颜色" });
+    expect(within(colors).getByRole("radio", { name: "红" })).toBeChecked();
+    fireEvent.click(within(colors).getByRole("radio", { name: "蓝" }));
+    fireEvent.click(
+      within(within(panel).getByRole("radiogroup", { name: "粗细" })).getByRole(
+        "radio",
+        { name: "粗" },
+      ),
+    );
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({
+        active: "shape",
+        pen: { color: "blue", size: "thick" },
+        shape: { kind: "rect" },
+      }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "形状设置" }),
+    ).toBeInTheDocument();
+  });
+
+  it("形状按钮的图标就是当前选中的那种形状，色点跟着笔色走", () => {
+    render(
+      <Harness init={{ shape: { kind: "ellipse" }, pen: { color: "red" } }} />,
+    );
+    const glyph = () =>
+      button("形状").querySelector('[data-slot="ink-shape-glyph"]');
+    expect(glyph()).toHaveAttribute("data-shape", "ellipse");
+    expect(
+      button("形状").querySelector('[data-slot="ink-tool-color"]'),
+    ).toHaveStyle({ backgroundColor: "#dc2626" });
+    // 在面板里换一种形状，按钮上的图标跟着换
+    fireEvent.click(button("形状"));
+    fireEvent.click(button("形状"));
+    fireEvent.click(screen.getByRole("radio", { name: "箭头" }));
+    expect(glyph()).toHaveAttribute("data-shape", "arrow");
   });
 
   it("Escape 收起面板并把焦点还给工具按钮", async () => {
@@ -429,6 +552,7 @@ describe("InkToolbar 宿主可配置项", () => {
       "笔",
       "荧光笔",
       "橡皮",
+      "形状",
       "撤销",
       "重做",
       "手指书写",

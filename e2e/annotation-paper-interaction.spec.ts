@@ -650,13 +650,15 @@ test("圈画和草稿都用同款笔橡皮，手指不落墨", {
         );
     });
   const markToolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
-  // 圈画没有「手指书写」；其余与草稿纸同一套：笔、荧光笔、橡皮、撤销、重做、更多
+  // 圈画没有「手指书写」；其余与草稿纸同一套：笔、荧光笔、橡皮、形状、撤销、
+  // 重做、更多
   await expect
     .poll(() => toolbarButtonNames(markToolbar))
     .toEqual([
       "笔",
       "荧光笔",
       "橡皮",
+      "形状",
       "撤销",
       "重做",
       "更多标画操作",
@@ -736,6 +738,7 @@ test("圈画和草稿都用同款笔橡皮，手指不落墨", {
       "笔",
       "荧光笔",
       "橡皮",
+      "形状",
       "撤销",
       "重做",
       "更多操作（第 1 题草稿纸）",
@@ -1149,6 +1152,216 @@ test(
     await markToolbar
       .getByRole("button", { name: "完成标画", exact: true })
       .click();
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  },
+);
+
+/**
+ * 用当前工具从画布中心左上 (−100, −40) 拖到右下 (+100, +40)，取抬笔前、抬笔后
+ * 的读数：临时层上的预览路径，以及这个框的四条边中点、对角线中点（画布中心）
+ * 有没有墨。
+ */
+async function dragBoxAndProbe(canvas: Locator) {
+  return canvas.evaluate((element) => {
+    if (!(element instanceof HTMLCanvasElement)) throw new Error("不是画布");
+    const rect = element.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const fire = (type: string, x: number, y: number, buttons: number) =>
+      element.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: 13,
+          pointerType: "pen",
+          isPrimary: true,
+          clientX: rect.left + x,
+          clientY: rect.top + y,
+          button: 0,
+          buttons,
+          pressure: 0.5,
+        }),
+      );
+    /** (x, y) 周围 3 CSS px 见方里最浓的那个像素的不透明度 */
+    const inkAt = (x: number, y: number) => {
+      const scale = element.width / rect.width;
+      const data =
+        element
+          .getContext("2d")
+          ?.getImageData(
+            Math.round((x - 1.5) * scale),
+            Math.round((y - 1.5) * scale),
+            Math.ceil(3 * scale),
+            Math.ceil(3 * scale),
+          ).data ?? [];
+      let alpha = 0;
+      for (let i = 3; i < data.length; i += 4)
+        alpha = Math.max(alpha, data[i] ?? 0);
+      return alpha;
+    };
+    const read = () => ({
+      preview:
+        element.parentElement
+          ?.querySelector('svg[data-slot="ink-live-layer"] path')
+          ?.getAttribute("d") ?? null,
+      top: inkAt(cx, cy - 40),
+      right: inkAt(cx + 100, cy),
+      bottom: inkAt(cx, cy + 40),
+      left: inkAt(cx - 100, cy),
+      center: inkAt(cx, cy),
+    });
+    fire("pointerdown", cx - 100, cy - 40, 1);
+    fire("pointermove", cx - 20, cy + 10, 1);
+    fire("pointermove", cx + 100, cy + 40, 1);
+    const dragging = read();
+    fire("pointerup", cx + 100, cy + 40, 0);
+    return { dragging, done: read() };
+  });
+}
+
+/** 折线路径：M 开头，后面跟着 count 个 L */
+const polyline = (count: number) =>
+  new RegExp(`^M[\\d.]+ [\\d.]+(L[\\d.]+ [\\d.]+){${count}}$`);
+
+test(
+  "形状：面板里选一种，拖动出预览、抬笔落成一笔；荧光笔可改成直线（草稿纸与圈画）",
+  {
+    tag: ["@annotation"],
+  },
+  async ({ page }, testInfo) => {
+    const card = page.getByRole("article", { name: "第 1 题", exact: true });
+
+    // 草稿纸：点形状只切工具；再点一次出面板，缺省直线，换成矩形
+    await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+    const paper = card.locator('[data-slot="note-layer"]');
+    const paperToolbar = paper.getByRole("toolbar");
+    const paperCanvas = paper.locator("canvas");
+    const paperShape = paperToolbar.getByRole("button", {
+      name: "形状",
+      exact: true,
+    });
+    await paperShape.click();
+    await expect(paperShape).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await paperShape.click();
+    const panel = page.getByRole("dialog", { name: "形状设置" });
+    const kinds = panel.getByRole("radiogroup", { name: "形状" });
+    await expect(kinds.getByRole("radio")).toHaveCount(4);
+    await expect(kinds.getByRole("radio", { name: "直线" })).toBeChecked();
+    await expect(
+      panel.getByText("直线：从一头拖到另一头，接近横平竖直时自动摆正"),
+    ).toBeVisible();
+    // 颜色、粗细与笔共用（缺省黑色中号，跟随笔感设置）
+    await expect(panel.getByRole("radio", { name: "黑" })).toBeChecked();
+    await kinds.getByRole("radio", { name: "矩形" }).click();
+    await expect(panel.getByText("矩形：从一个角拖到对角")).toBeVisible();
+    // 形状按钮上的图标换成了矩形
+    await expect(
+      paperShape.locator('[data-slot="ink-shape-glyph"]'),
+    ).toHaveAttribute("data-shape", "rect");
+    await page.screenshot({ path: testInfo.outputPath("shape-panel.png") });
+    for (const radio of await panel.getByRole("radio").all()) {
+      const box = await radio.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(44);
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+    }
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+
+    // 拖动途中：只有临时层上的预览（五个顶点的折线），画布上没有墨、笔数不变
+    const boxOnPaper = await dragBoxAndProbe(paperCanvas);
+    expect(boxOnPaper.dragging.preview).toMatch(polyline(4));
+    expect(boxOnPaper.dragging).toMatchObject({
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+    });
+    // 抬笔：预览收起，四条边都画上了，框里是空的，算一笔
+    expect(boxOnPaper.done.preview).toBeNull();
+    for (const edge of ["top", "right", "bottom", "left"] as const)
+      expect(boxOnPaper.done[edge], edge).toBeGreaterThan(200);
+    expect(boxOnPaper.done.center).toBe(0);
+    await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    // 一个图形一步撤销；重做回来
+    await paperToolbar
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);
+    await paperToolbar
+      .getByRole("button", { name: "重做", exact: true })
+      .click();
+    await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+
+    // 荧光笔面板里把线条从「手绘」改成「直线」：同样一拖，落成穿过中心的一道
+    // 直线（两个顶点），算第二笔
+    const paperHighlighter = paperToolbar.getByRole("button", {
+      name: "荧光笔",
+      exact: true,
+    });
+    await paperHighlighter.click();
+    await paperHighlighter.click();
+    const lines = page
+      .getByRole("dialog", { name: "荧光笔设置" })
+      .getByRole("radiogroup", { name: "线条" });
+    await expect(lines.getByRole("radio", { name: "手绘" })).toBeChecked();
+    await lines.getByRole("radio", { name: "直线" }).click();
+    await expect(lines.getByRole("radio", { name: "直线" })).toBeChecked();
+    await page.screenshot({
+      path: testInfo.outputPath("highlighter-line-panel.png"),
+    });
+    await page.keyboard.press("Escape");
+    const lineOnPaper = await dragBoxAndProbe(paperCanvas);
+    expect(lineOnPaper.dragging.preview).toMatch(polyline(1));
+    expect(lineOnPaper.dragging.center).toBe(0);
+    expect(lineOnPaper.done.preview).toBeNull();
+    // 一层荧光笔的透明度（0.45 × 255 ≈ 115）
+    expect(Math.abs(lineOnPaper.done.center - 115)).toBeLessThanOrEqual(4);
+    await expect(paper.getByText("2 笔", { exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("shape-paper.png") });
+    await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+
+    // 圈画：各书写面的工具箱各管各的，这里的形状还是缺省的直线；换成箭头
+    const trigger = card.getByRole("button", { name: /圈画题干/ });
+    await trigger.click();
+    const markCanvas = card.locator('canvas[data-slot="annotation-canvas"]');
+    await expect(markCanvas).toHaveAttribute("data-input-enabled", "true");
+    const markToolbar = page.getByRole("toolbar", {
+      name: "第 1 题标画工具栏",
+    });
+    const markShape = markToolbar.getByRole("button", {
+      name: "形状",
+      exact: true,
+    });
+    await markShape.click();
+    await markShape.click();
+    const markKinds = page
+      .getByRole("dialog", { name: "形状设置" })
+      .getByRole("radiogroup", { name: "形状" });
+    await expect(markKinds.getByRole("radio", { name: "直线" })).toBeChecked();
+    await markKinds.getByRole("radio", { name: "箭头" }).click();
+    await page.keyboard.press("Escape");
+    const arrowOnQuestion = await dragBoxAndProbe(markCanvas);
+    // 箭头是一笔：杆、折到一侧箭翼、回到箭尖、再到另一侧箭翼
+    expect(arrowOnQuestion.dragging.preview).toMatch(polyline(4));
+    expect(arrowOnQuestion.dragging.center).toBe(0);
+    expect(arrowOnQuestion.done.preview).toBeNull();
+    expect(arrowOnQuestion.done.center).toBeGreaterThan(200);
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await page.screenshot({ path: testInfo.outputPath("shape-question.png") });
+    await markToolbar
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await expect(trigger).not.toHaveAccessibleName(/已有/);
+    await markToolbar
+      .getByRole("button", { name: "重做", exact: true })
+      .click();
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await markToolbar
+      .getByRole("button", { name: "完成标画", exact: true })
+      .click();
+    // 退出圈画后静态显示的仍是这一笔
     await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
   },
 );

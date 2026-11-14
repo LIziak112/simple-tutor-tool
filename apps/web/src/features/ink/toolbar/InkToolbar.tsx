@@ -6,7 +6,6 @@ import {
   MoreHorizontal,
   PenLine,
   Redo2,
-  Shapes,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -27,6 +26,7 @@ import {
 import { type InkToolboxState, selectInkTool } from "../engine/toolbox.ts";
 import { INK_PEN_COLORS, type InkToolType } from "../engine/types.ts";
 import { InkToolOptions, inkToolHasOptions } from "./InkToolOptions.tsx";
+import { InkShapeGlyph } from "./tool-glyphs.tsx";
 import { INK_HIGHLIGHTER_SWATCH, INK_TOOL_LABEL } from "./tool-labels.ts";
 import {
   stripFadeStyle,
@@ -38,22 +38,27 @@ import {
 /** 工具栏按钮：44px 触控目标（ui-conventions iPad 硬性要求） */
 export const inkToolButtonClass = "relative size-11 shrink-0 p-0";
 
-const TOOL_ICON: Record<InkToolType, typeof PenLine> = {
+/** 形状工具不在这里：它的图标是当前选中的那种形状（InkShapeGlyph） */
+const TOOL_ICON: Record<Exclude<InkToolType, "shape">, typeof PenLine> = {
   pen: PenLine,
   highlighter: Highlighter,
   eraser: Eraser,
-  shape: Shapes,
   scroll: Hand,
 };
 
-const DEFAULT_TOOLS: readonly InkToolType[] = ["pen", "highlighter", "eraser"];
+const DEFAULT_TOOLS: readonly InkToolType[] = [
+  "pen",
+  "highlighter",
+  "eraser",
+  "shape",
+];
 
 export interface InkToolbarProps {
   /** 可访问名前缀，如「第 1 题草稿纸」；工具栏名为「…工具栏」 */
   label: string;
   toolbox: InkToolboxState;
   onToolboxChange(next: InkToolboxState): void;
-  /** 宿主提供的工具，按显示顺序；缺省笔、荧光笔、橡皮 */
+  /** 宿主提供的工具，按显示顺序；缺省笔、荧光笔、橡皮、形状 */
   tools?: readonly InkToolType[];
   /** 工具是否带选项面板。历史 Excalidraw 画布不认颜色、粗细，传 false */
   toolOptions?: boolean;
@@ -143,8 +148,13 @@ export function InkToolbar({
     return null;
   };
 
-  const toolButton = (tool: InkToolType) => {
+  const iconOf = (tool: InkToolType) => {
+    if (tool === "shape") return <InkShapeGlyph kind={toolbox.shape.kind} />;
     const Icon = TOOL_ICON[tool];
+    return <Icon aria-hidden />;
+  };
+
+  const toolButton = (tool: InkToolType) => {
     const name = toolLabels?.[tool] ?? INK_TOOL_LABEL[tool];
     const active = toolbox.active === tool;
     const indicator = toolOptions ? indicatorOf(tool) : null;
@@ -165,7 +175,7 @@ export function InkToolbar({
         disabled={disabled}
         {...(hasOptions ? {} : { onClick: select })}
       >
-        <Icon aria-hidden />
+        {iconOf(tool)}
         {indicator !== null && (
           <span
             aria-hidden

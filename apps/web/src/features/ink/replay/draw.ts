@@ -49,6 +49,11 @@ export interface AtramentReplayCanvas {
     }[],
     timeMs: number,
   ): void;
+  /**
+   * 盖在画布上的临时层（与笔画同一坐标域），供拿这块画布书写的一方画
+   * 拖动中的图形预览。可选方法——既有 mock/消费方不实现时就没有预览。
+   */
+  previewLayer?(): Pick<InkLiveLayer, "showOutline" | "clear">;
   destroy(): void;
 }
 
@@ -85,7 +90,9 @@ export function createAtramentReplayCanvas(
   let clientHeight = -1;
   let orderedFrame: OrderedFrame | null = null;
   let activePen: ReturnType<typeof beginAtramentStroke> = null;
-  /** 在途荧光笔的临时层：第一次用到才创建，纯回放页不多出这个元素 */
+  /**
+   * 在途荧光笔、图形预览的临时层：第一次用到才创建，纯回放页不多出这个元素
+   */
   let liveLayer: InkLiveLayer | null = null;
   /** 最近一次 drawFrame 的入参（resize 后原样重画） */
   let lastFrame: {
@@ -129,6 +136,14 @@ export function createAtramentReplayCanvas(
   /** 临时层的坐标域与笔画同为逻辑宽 1000 */
   function sizeLiveLayer(): void {
     liveLayer?.setViewBox(INK_LOGICAL_WIDTH, toLogical(cssWidth, cssHeight));
+  }
+
+  function ensureLiveLayer(): InkLiveLayer {
+    if (liveLayer === null) {
+      liveLayer = createInkLiveLayer(container);
+      sizeLiveLayer();
+    }
+    return liveLayer;
   }
 
   sizeCanvas();
@@ -200,11 +215,7 @@ export function createAtramentReplayCanvas(
       if (stroke) replayAtramentStroke(atrament, cssWidth, stroke);
     }
     if (active !== null && isOnePathStroke(active)) {
-      if (liveLayer === null) {
-        liveLayer = createInkLiveLayer(container);
-        sizeLiveLayer();
-      }
-      liveLayer.showStroke(active, points);
+      ensureLiveLayer().showStroke(active, points);
     } else {
       liveLayer?.clear();
       if (active !== null) {
@@ -294,6 +305,7 @@ export function createAtramentReplayCanvas(
     drawFrame,
     drawOrdered,
     drawDeleted,
+    previewLayer: ensureLiveLayer,
     destroy(): void {
       observer.disconnect();
       resetOrdered();

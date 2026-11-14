@@ -1,4 +1,4 @@
-import type { NoteBackground } from "@tutor/contract";
+import type { InkRendering, NoteBackground } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAtramentSurface } from "./atrament-adapter.ts";
 import { createProgrammaticAtrament } from "./atrament-replay.ts";
@@ -124,6 +124,7 @@ function mountSurface(
     inputMode?: InkInputMode;
     background?: NoteBackground;
     initial?: InkDoc;
+    rendering?: InkRendering;
   } = {},
 ): Harness {
   const container = document.createElement("div");
@@ -141,6 +142,7 @@ function mountSurface(
   const surface = createAtramentSurface({
     ...(opts.inputMode ? { inputMode: opts.inputMode } : {}),
     ...(opts.background ? { background: opts.background } : {}),
+    ...(opts.rendering ? { rendering: opts.rendering } : {}),
   });
   if (opts.initial) surface.mount(container, opts.initial);
   else surface.mount(container);
@@ -1581,5 +1583,268 @@ describe("atrament-adapter：橡皮圈", () => {
     h.resizeTo(600);
     expect(shown(h)).toBe(false);
     expect(strokesOf(h)).toHaveLength(0);
+  });
+});
+
+describe("atrament-adapter：图形与直线荧光笔", () => {
+  function livePath(h: Harness): Element {
+    const path = h.container.querySelector(`${INK_LIVE_LAYER_SELECTOR} path`);
+    if (path === null) throw new Error("临时层未挂载");
+    return path;
+  }
+  /** 300 宽的画布：CSS 30 → 逻辑 100 */
+  const RED_THIN_RECT = {
+    type: "shape",
+    shape: "rect",
+    color: "red",
+    size: "thin",
+  } as const;
+
+  it("拖动途中只在临时层上出预览，不往画布上画，文档不变", () => {
+    const h = mountSurface();
+    h.surface.setTool(RED_THIN_RECT);
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+    pointer(h.canvas, "pointermove", { clientX: 150, clientY: 90 });
+    const path = livePath(h);
+    expect(path.getAttribute("d")).toBe(
+      "M100 100L500 100L500 300L100 300L100 100",
+    );
+    expect(path.getAttribute("stroke")).toBe("#dc2626");
+    expect(path.getAttribute("stroke-width")).toBe("2.5");
+    expect(StubContext.strokeCalls).toBe(0);
+    expect(strokesOf(h)).toHaveLength(0);
+    expect(h.events).toHaveLength(0);
+  });
+
+  it("抬笔：落成一笔普通的笔（点都在图形上），画到画布，预览收起", () => {
+    const h = mountSurface();
+    h.surface.setTool(RED_THIN_RECT);
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 90, y: 60 },
+      { x: 150, y: 90 },
+    ]);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+    const strokes = strokesOf(h);
+    expect(strokes).toHaveLength(1);
+    const stroke = strokes[0];
+    expect(stroke).toMatchObject({
+      tool: "pen",
+      color: "#dc2626",
+      weight: 2.5,
+      pointer: "pen",
+    });
+    expect(stroke?.id).toEqual(expect.any(String));
+    expect(stroke?.startedAt).toEqual(expect.any(Number));
+    expect(stroke?.points[0]).toMatchObject({ x: 100, y: 100, p: 0.51, t: 0 });
+    expect(stroke?.points.at(-1)).toMatchObject({ x: 100, y: 100 });
+    // 矩形周长 1200 个逻辑单位、间距 4：三百来个点，全在四条边上
+    expect(stroke?.points.length).toBeGreaterThan(300);
+    for (const p of stroke?.points ?? []) {
+      const onEdge = p.x === 100 || p.x === 500 || p.y === 100 || p.y === 300;
+      expect(onEdge).toBe(true);
+      expect(p.x).toBeGreaterThanOrEqual(100);
+      expect(p.x).toBeLessThanOrEqual(500);
+      expect(p.y).toBeGreaterThanOrEqual(100);
+      expect(p.y).toBeLessThanOrEqual(300);
+    }
+    expect(StubContext.strokeCalls).toBeGreaterThan(0);
+    expect(h.events).toEqual([{ reason: "stroke", strokes: 1 }]);
+  });
+
+  it("图形是一步历史：撤销整个拿掉，重做整个回来", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "shape", shape: "ellipse" });
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 150, y: 90 },
+    ]);
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(strokesOf(h)[0]?.points.length).toBeGreaterThan(100);
+    h.surface.undo();
+    expect(strokesOf(h)).toHaveLength(0);
+    h.surface.redo();
+    expect(strokesOf(h)).toHaveLength(1);
+  });
+
+  it("直线接近水平时吸附；箭头是一笔", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "shape", shape: "line" });
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 150, y: 33 },
+    ]);
+    expect(strokesOf(h)[0]?.points.every((p) => p.y === 100)).toBe(true);
+    expect(strokesOf(h)[0]?.points.at(-1)).toMatchObject({ x: 500, y: 100 });
+
+    h.surface.setTool({ type: "shape", shape: "arrow" });
+    writeStroke(h, [
+      { x: 30, y: 90 },
+      { x: 150, y: 150 },
+    ]);
+    expect(strokesOf(h)).toHaveLength(2);
+    // 箭尖经过两次（杆到箭尖、从一侧箭翼折回）
+    const tip = strokesOf(h)[1]?.points.filter(
+      (p) => p.x === 500 && p.y === 500,
+    );
+    expect(tip).toHaveLength(4);
+  });
+
+  it("只点一下或拖得太短：不落笔，不发变更，预览收起", () => {
+    const h = mountSurface();
+    h.surface.setTool(RED_THIN_RECT);
+    writeStroke(h, [{ x: 30, y: 30 }]);
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 31, y: 30 },
+    ]);
+    expect(strokesOf(h)).toHaveLength(0);
+    expect(h.events).toHaveLength(0);
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+    expect(h.surface.canUndo()).toBe(false);
+  });
+
+  it("拖出纸外：只画到纸边，点不出界", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "shape", shape: "arrow" });
+    writeStroke(h, [
+      { x: 150, y: 100 },
+      { x: 500, y: -60 },
+    ]);
+    const points = strokesOf(h)[0]?.points ?? [];
+    expect(points.length).toBeGreaterThan(0);
+    for (const p of points) {
+      expect(p.x).toBeGreaterThanOrEqual(0);
+      expect(p.x).toBeLessThanOrEqual(1000);
+      expect(p.y).toBeGreaterThanOrEqual(0);
+      // 300×200 的画布：逻辑高 666.67
+      expect(p.y).toBeLessThanOrEqual(666.67);
+    }
+  });
+
+  it("落笔后中途换成笔：这一笔仍按落笔时的图形画完", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "shape", shape: "line" });
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    h.surface.setTool({ type: "pen" });
+    pointer(h.canvas, "pointermove", { clientX: 150, clientY: 90 });
+    expect(StubContext.strokeCalls).toBe(0);
+    pointer(h.canvas, "pointerup", { clientX: 150, clientY: 90 });
+    const points = strokesOf(h)[0]?.points ?? [];
+    expect(points.length).toBeGreaterThan(50);
+    expect(points.at(-1)).toMatchObject({ x: 500, y: 300 });
+  });
+
+  it("尺寸变化：在途图形按拖到的位置落笔，预览收起", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "shape", shape: "line" });
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    pointer(h.canvas, "pointermove", { clientX: 150, clientY: 30 });
+    h.resizeTo(600);
+    expect(strokesOf(h)).toHaveLength(1);
+    // 400 个逻辑单位、间距 4：100 步，连起点和终点补的一个点共 102 点
+    expect(strokesOf(h)[0]?.points).toHaveLength(102);
+    expect(strokesOf(h)[0]?.points.at(-1)).toMatchObject({ x: 500, y: 100 });
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+  });
+
+  it("手掌先落、笔后落：手掌拖出的图形丢弃，不进文档", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "shape", shape: "rect" });
+    pointer(h.canvas, "pointerdown", pd("touch", 1, 30, 30));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "touch",
+      pointerId: 1,
+      clientX: 150,
+      clientY: 90,
+    });
+    expect(livePath(h).hasAttribute("d")).toBe(true);
+    pointer(h.canvas, "pointerdown", pd("pen", 2, 60, 60));
+    expect(livePath(h).hasAttribute("d")).toBe(false);
+    expect(strokesOf(h)).toHaveLength(0);
+    pointer(h.canvas, "pointermove", {
+      pointerId: 2,
+      clientX: 120,
+      clientY: 120,
+    });
+    pointer(h.canvas, "pointerup", pd("pen", 2, 120, 120));
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(strokesOf(h)[0]?.points[0]).toMatchObject({ x: 200, y: 200 });
+  });
+
+  it("直线荧光笔：预览和落笔都是一条直线，落成只有起止两点的荧光笔笔画", () => {
+    const h = mountSurface();
+    h.surface.setTool({
+      type: "highlighter",
+      color: "pink",
+      size: "thin",
+      straight: true,
+    });
+    pointer(h.canvas, "pointerdown", { clientX: 30, clientY: 30 });
+    pointer(h.canvas, "pointermove", { clientX: 90, clientY: 45 });
+    pointer(h.canvas, "pointermove", { clientX: 150, clientY: 33 });
+    expect(livePath(h).getAttribute("d")).toBe("M100 100L500 100");
+    expect(livePath(h).getAttribute("stroke")).toBe(
+      INK_HIGHLIGHTER_COLORS.pink,
+    );
+    expect(StubContext.strokeCalls).toBe(0);
+    pointer(h.canvas, "pointerup", { clientX: 150, clientY: 33 });
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(strokesOf(h)[0]).toMatchObject({
+      tool: "highlighter",
+      color: INK_HIGHLIGHTER_COLORS.pink,
+      weight: INK_HIGHLIGHTER_SIZES.thin,
+    });
+    expect(strokesOf(h)[0]?.points.map(({ x, y, p }) => ({ x, y, p }))).toEqual(
+      [
+        { x: 100, y: 100, p: 0.51 },
+        { x: 500, y: 100, p: 0.51 },
+      ],
+    );
+    // 整笔一次描边
+    expect(StubContext.strokeCalls).toBe(1);
+  });
+
+  it("不带直线选项的荧光笔照旧是手写轨迹", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "highlighter" });
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 90, y: 45 },
+      { x: 150, y: 33 },
+    ]);
+    expect(strokesOf(h)[0]?.points).toHaveLength(3);
+  });
+
+  it("手感配置下：图形不带画法参数（按标准平滑重放，拐角不被抹圆）；直线荧光笔与手写荧光笔一样带上", () => {
+    const rendering: InkRendering = {
+      renderer: "atrament",
+      smoothing: 0.9,
+      thinning: 0.35,
+      streamline: 0.15,
+      sizeScale: 1,
+      simulatePressure: false,
+    };
+    const h = mountSurface({ rendering });
+    h.surface.setTool({ type: "pen" });
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 90, y: 30 },
+    ]);
+    h.surface.setTool({ type: "shape", shape: "rect" });
+    writeStroke(h, [
+      { x: 30, y: 60 },
+      { x: 150, y: 120 },
+    ]);
+    h.surface.setTool({ type: "highlighter", straight: true });
+    writeStroke(h, [
+      { x: 30, y: 150 },
+      { x: 150, y: 150 },
+    ]);
+    const [pen, shape, highlighter] = strokesOf(h);
+    expect(pen?.rendering).toMatchObject({ renderer: "atrament" });
+    expect(shape?.rendering).toBeUndefined();
+    expect(highlighter?.rendering).toMatchObject({ renderer: "atrament" });
   });
 });

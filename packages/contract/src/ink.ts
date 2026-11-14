@@ -30,7 +30,11 @@ export const inkEngineKindSchema = z.enum(["atrament", "excalidraw"]);
  */
 export const INK_MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
-/** 一个笔迹点：x/y 归一化坐标、p 压力（0–1，无压感恒 0.5）、t 相对本笔起点毫秒数 */
+/**
+ * 一个笔迹点：x/y 归一化坐标、p 压力（0–1，无压感恒 0.5）、t 相对本笔起点毫秒数。
+ * 形状工具落成的笔画各点 p 恒为 0.51（不是量出来的压感，是「整笔等粗」的
+ * 意思，原因见 apps/web 的 engine/shape-points.ts）。
+ */
 export const inkStrokePointSchema = z.object({
   x: z.number(),
   y: z.number(),

@@ -40,6 +40,8 @@
  *    预览圈；当前工具是橡皮时改为显示橡皮圈（鼠标同样），大小即擦除范围。
  * 7a. 橡皮：整笔或局部（engine/erase-gesture.ts，与圈画共用）。拖动途中
  *    正文不动、只重画改动到的那一块，抬起时一次提交成一个历史条目。
+ * 7b. 图形与直线荧光笔（engine/shape-gesture.ts，与圈画共用）：拖动途中
+ *    只在临时层上画预览，抬笔落成一笔普通笔画；没拖出大小不落笔。
  * 8. 屏幕端纸张背景（T6R.7）：可选配置 background（缺省 white=不设置任何
  *    背景样式，旧作答组件零变化）；格线/横线经 engine/paper-style 与 PNG
  *    渲染同源常量生成 CSS 背景，resize 时随宽度换算重设。
@@ -75,6 +77,7 @@ import {
   touchActionForInput,
 } from "./pointer-machine.ts";
 import { PAINT_SPREAD_CSS } from "./region-redraw.ts";
+import { createShapeGesture } from "./shape-gesture.ts";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import { createTouchGuards } from "./touch-guards.ts";
 import {
@@ -192,6 +195,11 @@ export function createAtramentSurface(
   });
   /** 本次擦除的橡皮半径（逻辑单位），同样取落笔时的档位 */
   let liveEraseRadius = INK_ERASE_RADIUS;
+  /**
+   * 图形工具或直线荧光笔从落下到抬起的这一次拖动（shaper.active 即本次手势
+   * 在画图形）：预览在临时层上，抬笔时给出这一笔的点列。
+   */
+  const shaper = createShapeGesture({ layer: () => liveLayer });
   /** 上一次 draw() 返回的已处理坐标（atrament 平滑过滤后的位置） */
   let livePrev: { x: number; y: number } | null = null;
 
@@ -369,6 +377,7 @@ export function createAtramentSurface(
     liveOnLayer = false;
     liveLayer?.clear();
     eraser.end();
+    shaper.end();
     redraw(); // 抹掉手掌已画的部分（手掌用橡皮擦掉的也画回来）
   }
 
@@ -400,31 +409,41 @@ export function createAtramentSurface(
         );
       }
       redraw();
-    } else if (livePoints.length > 0 && liveBrush) {
-      if (atrament && livePrev) {
-        atrament.endStroke(livePrev.x, livePrev.y);
+    } else {
+      // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
+      const shaped = shaper.active;
+      const points = shaped ? shaper.end() : livePoints;
+      if (points !== null && points.length > 0 && liveBrush) {
+        if (atrament && livePrev) {
+          atrament.endStroke(livePrev.x, livePrev.y);
+        }
+        // 用笔画的图形不带手感参数：重放时按标准平滑，拐角不被抹圆、线画到头
+        const plain = shaped && liveTool === "pen";
+        const stroke: InkStroke = {
+          tool: liveTool,
+          color: liveBrush.color,
+          weight: liveBrush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
+          // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
+          id: mintStrokeId(),
+          ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
+          ...(livePointerKind !== undefined
+            ? { pointer: livePointerKind }
+            : {}),
+          ...(options.rendering && !plain
+            ? {
+                rendering: {
+                  ...options.rendering,
+                  smoothing: currentSmoothing,
+                },
+              }
+            : {}),
+          points,
+        };
+        // 整笔一条路径的笔、图形书写中都不在画布上：这时整笔落到画布（与
+        // 重绘同一画法）
+        if (liveOnLayer || shaped) replayStroke(stroke);
+        withReason("stroke", () => store.commitAdd([stroke]));
       }
-      const stroke: InkStroke = {
-        tool: liveTool,
-        color: liveBrush.color,
-        weight: liveBrush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
-        // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
-        id: mintStrokeId(),
-        ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
-        ...(livePointerKind !== undefined ? { pointer: livePointerKind } : {}),
-        ...(options.rendering
-          ? {
-              rendering: {
-                ...options.rendering,
-                smoothing: currentSmoothing,
-              },
-            }
-          : {}),
-        points: livePoints,
-      };
-      // 整笔一条路径的笔书写中不在画布上：这时整笔落到画布（与重绘同一画法）
-      if (liveOnLayer) replayStroke(stroke);
-      withReason("stroke", () => store.commitAdd([stroke]));
     }
     livePoints = [];
     livePrev = null;
@@ -490,7 +509,21 @@ export function createAtramentSurface(
 
     liveBrush = gesture.kind === "draw" ? gesture.brush : null;
     liveTool = gesture.kind === "draw" ? gesture.tool : "pen";
-    if (!liveBrush) return;
+    if (!liveBrush || gesture.kind !== "draw") return;
+    if (gesture.shape !== "free") {
+      shaper.begin({
+        shape: gesture.shape,
+        from: toLogicalPoint(cssWidth, x, y),
+        brush: liveBrush,
+        bounds: {
+          width: INK_LOGICAL_WIDTH,
+          height: toLogical(cssWidth, cssHeight),
+        },
+        // 荧光笔整笔一条路径，画的就是起止点的连线，不用加密
+        sparse: liveTool === "highlighter",
+      });
+      return;
+    }
     const p = pressureOf(e);
     liveOnLayer = isOnePathStroke({
       tool: liveTool,
@@ -549,6 +582,17 @@ export function createAtramentSurface(
     // 橡皮：一批采样记完再重画一次（即时反馈；提交在收笔时）
     if (eraser.active) {
       eraser.through(events.map((ev) => erasePointOf(eventToCss(ev, rect))));
+      return;
+    }
+
+    // 图形：只看这一批最后拖到哪儿，更新预览
+    if (shaper.active) {
+      const last = events.at(-1) ?? e;
+      const { x, y } = eventToCss(last, rect);
+      shaper.through(
+        toLogicalPoint(cssWidth, x, y),
+        Math.max(0, Math.round(last.timeStamp - liveStartStamp)),
+      );
       return;
     }
 

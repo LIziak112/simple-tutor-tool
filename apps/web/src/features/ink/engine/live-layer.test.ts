@@ -88,6 +88,46 @@ describe("书写中那一笔的临时层", () => {
     expect(path.hasAttribute("d")).toBe(false);
   });
 
+  it("图形预览：顶点按顺序用直线连起来（拐角不抹圆），同一条路径上更新", () => {
+    const { layer, svg, path } = mount();
+    const brush = { color: "#dc2626", weight: 4 };
+    layer.showOutline(
+      [
+        { x: 10, y: 20 },
+        { x: 110.126, y: 20 },
+        { x: 110.126, y: 80.5 },
+      ],
+      brush,
+    );
+    expect(path.style.display).toBe("");
+    expect(path.getAttribute("d")).toBe("M10 20L110.13 20L110.13 80.5");
+    expect(path.getAttribute("stroke")).toBe("#dc2626");
+    expect(path.getAttribute("stroke-width")).toBe("4");
+    // 拖动途中每次整条换掉
+    layer.showOutline(
+      [
+        { x: 10, y: 20 },
+        { x: 60, y: 90 },
+      ],
+      brush,
+    );
+    expect(path.getAttribute("d")).toBe("M10 20L60 90");
+    expect(svg.querySelectorAll("path")).toHaveLength(1);
+    // 不到两个顶点没有可画的，等同清空；clear 同样收起
+    layer.showOutline([{ x: 10, y: 20 }], brush);
+    expect(path.style.display).toBe("none");
+    expect(path.hasAttribute("d")).toBe(false);
+    layer.showOutline(
+      [
+        { x: 0, y: 0 },
+        { x: 5, y: 5 },
+      ],
+      brush,
+    );
+    layer.clear();
+    expect(path.style.display).toBe("none");
+  });
+
   it("橡皮圈：圆心、半径用笔画同一单位，描边粗细不随缩放变；收起后不显示", () => {
     const { layer, svg } = mount();
     const ring = svg.querySelector('circle[data-slot="ink-eraser-ring"]');

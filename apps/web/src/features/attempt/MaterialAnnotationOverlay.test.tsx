@@ -13,6 +13,7 @@ import {
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
 import { selectInkTool } from "@/features/ink/engine/toolbox.ts";
+import { INK_HIGHLIGHTER_COLORS } from "@/features/ink/engine/types.ts";
 import {
   resetSessionInputPreference,
   setSessionInputPreference,
@@ -33,8 +34,11 @@ import { MaterialAnnotationOverlay } from "./MaterialAnnotationOverlay";
 // 绘制层复用 ink/replay/draw（jsdom 无 2d 上下文）——按仓内惯例 mock 本模块，
 // 按实际可见笔画统一记录全量与顺序绘制的入参。
 const drawFrameMock = vi.fn();
+/** 图形预览所在的临时层（真实实现盖在回放画布上） */
+const previewMock = { showOutline: vi.fn(), clear: vi.fn() };
 vi.mock("@/features/ink/replay/draw", () => ({
   createAtramentReplayCanvas: () => ({
+    previewLayer: () => previewMock,
     drawFrame: drawFrameMock,
     drawOrdered: (
       strokes: InkStroke[],
@@ -931,6 +935,201 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
       color: "#15803d",
       weight: 9,
     });
+  });
+});
+
+describe("材料圈画：图形与直线荧光笔", () => {
+  beforeEach(() => {
+    installDraftBackend(memoryBackend());
+    drawFrameMock.mockClear();
+    previewMock.showOutline.mockClear();
+    previewMock.clear.mockClear();
+  });
+
+  /** 挂一份圈画态的材料，输入层 500×400（1 CSS px = 2 逻辑单位） */
+  async function mountWith(
+    initialToolbox: NonNullable<
+      Parameters<typeof CoordinatedAnnotationProvider>[0]["initialToolbox"]
+    >,
+  ) {
+    const { container } = render(
+      <AttemptEditorProvider>
+        <CoordinatedAnnotationProvider initialToolbox={initialToolbox}>
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+            <div>画图形的材料</div>
+          </MaterialAnnotationOverlay>
+        </CoordinatedAnnotationProvider>
+      </AttemptEditorProvider>,
+    );
+    fireEvent.click(screen.getByTestId("toggle-annotation"));
+    const root = overlayRootOf(container);
+    await waitInkReady(root);
+    const layer = inputLayerOf(container);
+    mockLayerRect(layer);
+    return { root, layer };
+  }
+  const pen = (clientX: number, clientY: number) => ({
+    pointerId: 1,
+    button: 0,
+    pointerType: "pen",
+    clientX,
+    clientY,
+    pressure: 0.5,
+  });
+  const storedStrokes = () => {
+    const stored = draftStore.getMaterialInk("att-1", "mat-1");
+    return stored?.engine === "atrament" ? stored.data.strokes : [];
+  };
+
+  it("拖动中只出预览、不存稿；抬笔落成一笔普通的笔（点都在图形上）并保存、冻结基准", async () => {
+    const { root, layer } = await mountWith({
+      active: "shape",
+      shape: { kind: "rect" },
+    });
+    await act(async () => {
+      fireEvent.pointerDown(layer, pen(50, 50));
+      fireEvent.pointerMove(layer, pen(250, 150));
+    });
+    await flushFrame();
+    // (50,50) → (250,150) 即逻辑 (100,100) → (500,300)；圈画缺省红色细笔
+    expect(previewMock.showOutline).toHaveBeenLastCalledWith(
+      [
+        { x: 100, y: 100 },
+        { x: 500, y: 100 },
+        { x: 500, y: 300 },
+        { x: 100, y: 300 },
+        { x: 100, y: 100 },
+      ],
+      { color: "#dc2626", weight: 2.5 },
+    );
+    expect(storedStrokes()).toHaveLength(0);
+    expect(root).toHaveAttribute("data-stroke-count", "0");
+    // 画布上没有在途的一笔
+    for (const [drawn] of drawFrameMock.mock.calls) {
+      expect(drawn).toEqual([]);
+    }
+
+    previewMock.clear.mockClear();
+    await act(async () => {
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    await flushFrame();
+    expect(previewMock.clear).toHaveBeenCalled();
+    const strokes = storedStrokes();
+    expect(strokes).toHaveLength(1);
+    expect(strokes[0]).toMatchObject({
+      tool: "pen",
+      color: "#dc2626",
+      weight: 2.5,
+    });
+    expect(strokes[0]?.rendering).toBeUndefined();
+    const points = strokes[0]?.points ?? [];
+    expect(points.length).toBeGreaterThan(300);
+    expect(points[0]).toMatchObject({ x: 100, y: 100, p: 0.51, t: 0 });
+    expect(points.at(-1)).toMatchObject({ x: 100, y: 100 });
+    for (const p of points) {
+      expect(p.x === 100 || p.x === 500 || p.y === 100 || p.y === 300).toBe(
+        true,
+      );
+    }
+    expect(root).toHaveAttribute("data-stroke-count", "1");
+    expect(drawFrameMock.mock.lastCall?.[0]).toEqual(strokes);
+    // 这是首笔：按落笔时的矩形冻结
+    expect(draftStore.getMaterialInkBase("att-1", "mat-1")).toEqual({
+      cssWidth: 500,
+      cssHeight: 400,
+    });
+  });
+
+  it("只点一下或拖得太短：不落笔、不存稿、不冻结基准", async () => {
+    const { root, layer } = await mountWith({ active: "shape" });
+    await act(async () => {
+      fireEvent.pointerDown(layer, pen(50, 50));
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+      fireEvent.pointerDown(layer, pen(50, 50));
+      fireEvent.pointerMove(layer, pen(52, 50));
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    await flushFrame();
+    expect(storedStrokes()).toHaveLength(0);
+    expect(draftStore.getMaterialInkBase("att-1", "mat-1")).toBeNull();
+    expect(root).toHaveAttribute("data-stroke-count", "0");
+    expect(previewMock.showOutline).not.toHaveBeenCalled();
+  });
+
+  it("拖出材料范围：只画到边上，点不出界", async () => {
+    const { layer } = await mountWith({
+      active: "shape",
+      shape: { kind: "line" },
+    });
+    await act(async () => {
+      fireEvent.pointerDown(layer, pen(400, 300));
+      fireEvent.pointerMove(layer, pen(700, 600));
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    // 500×400 的输入层 → 逻辑 1000×800
+    expect(storedStrokes()[0]?.points.at(-1)).toMatchObject({
+      x: 1000,
+      y: 800,
+    });
+  });
+
+  it("手掌先落、笔后落：手掌拖出的图形丢弃，预览收起，不存稿", async () => {
+    const { layer } = await mountWith({
+      active: "shape",
+      shape: { kind: "rect" },
+    });
+    await act(async () => {
+      fireEvent.pointerDown(layer, { ...pen(50, 50), pointerType: "touch" });
+    });
+    // 材料圈画固定笔写：手指不落墨，由笔来画
+    expect(previewMock.showOutline).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.pointerDown(layer, { ...pen(50, 50), pointerId: 2 });
+      fireEvent.pointerMove(layer, { ...pen(250, 150), pointerId: 2 });
+    });
+    expect(previewMock.showOutline).toHaveBeenCalled();
+    previewMock.clear.mockClear();
+    await act(async () => {
+      // 第二支指针到达：在途图形按拖到的位置落笔
+      fireEvent.pointerDown(layer, { ...pen(300, 300), pointerId: 3 });
+    });
+    expect(previewMock.clear).toHaveBeenCalled();
+    expect(storedStrokes()).toHaveLength(1);
+  });
+
+  it("直线荧光笔：预览是一条直线，落成只有起止两点的荧光笔笔画", async () => {
+    const { layer } = await mountWith({
+      active: "highlighter",
+      highlighter: { straight: true },
+    });
+    await act(async () => {
+      fireEvent.pointerDown(layer, pen(50, 50));
+      // 接近水平：吸附
+      fireEvent.pointerMove(layer, pen(250, 53));
+    });
+    expect(previewMock.showOutline).toHaveBeenLastCalledWith(
+      [
+        { x: 100, y: 100 },
+        { x: 500, y: 100 },
+      ],
+      { color: INK_HIGHLIGHTER_COLORS.yellow, weight: 16 },
+    );
+    await act(async () => {
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    const strokes = storedStrokes();
+    expect(strokes).toHaveLength(1);
+    expect(strokes[0]).toMatchObject({
+      tool: "highlighter",
+      color: INK_HIGHLIGHTER_COLORS.yellow,
+      weight: 16,
+    });
+    expect(strokes[0]?.points.map(({ x, y, p }) => ({ x, y, p }))).toEqual([
+      { x: 100, y: 100, p: 0.51 },
+      { x: 500, y: 100, p: 0.51 },
+    ]);
   });
 });
 

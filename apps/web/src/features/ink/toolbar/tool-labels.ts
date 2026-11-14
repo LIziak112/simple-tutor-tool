@@ -63,6 +63,24 @@ export const INK_HIGHLIGHTER_SIZE_LABEL: Record<InkHighlighterSize, string> = {
   thick: "粗",
 };
 
+/** 荧光笔的线条：跟着手走，还是从落笔到抬笔拉一条直线 */
+export type InkHighlighterLine = "free" | "straight";
+
+export const INK_HIGHLIGHTER_LINES: readonly InkHighlighterLine[] = [
+  "free",
+  "straight",
+];
+
+export const INK_HIGHLIGHTER_LINE_LABEL: Record<InkHighlighterLine, string> = {
+  free: "手绘",
+  straight: "直线",
+};
+
+export const INK_HIGHLIGHTER_LINE_HINT: Record<InkHighlighterLine, string> = {
+  free: "跟着手的轨迹划",
+  straight: "从落笔到抬笔拉一条直线，接近横平竖直时自动摆正",
+};
+
 export const INK_ERASER_MODE_LABEL: Record<InkEraserMode, string> = {
   stroke: "整笔",
   partial: "局部",
@@ -85,4 +103,12 @@ export const INK_SHAPE_LABEL: Record<InkShapeKind, string> = {
   arrow: "箭头",
   rect: "矩形",
   ellipse: "椭圆",
+};
+
+/** 每种形状怎么画：选项下面的一行说明（形状选项只有图标，这里带上名字） */
+export const INK_SHAPE_HINT: Record<InkShapeKind, string> = {
+  line: "直线：从一头拖到另一头，接近横平竖直时自动摆正",
+  arrow: "箭头：从箭尾拖到箭尖，接近横平竖直时自动摆正",
+  rect: "矩形：从一个角拖到对角",
+  ellipse: "椭圆：从一个角拖到对角，画出框里的椭圆",
 };

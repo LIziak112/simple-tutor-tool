@@ -53,6 +53,7 @@ import {
   touchActionForInput,
 } from "@/features/ink/engine/pointer-machine.ts";
 import { PAINT_SPREAD_CSS } from "@/features/ink/engine/region-redraw.ts";
+import { createShapeGesture } from "@/features/ink/engine/shape-gesture.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface.ts";
 import { createTouchGuards } from "@/features/ink/engine/touch-guards.ts";
 import {
@@ -227,6 +228,11 @@ export function createAnnotationSurface(
   });
   /** 本次擦除的橡皮半径（底图像素域），取落笔时的档位 */
   let liveEraseRadius = 0;
+  /**
+   * 图形工具或直线荧光笔的这一次拖动：预览在临时层上（画布域），抬笔给出
+   * 这一笔的点列。近似原位时和手写一样，整笔在视图域成形、提交前映射回去。
+   */
+  const shaper = createShapeGesture({ layer: () => liveLayer });
   let livePrev: { x: number; y: number } | null = null;
 
   let reasonOverride: InkChangeReason | null = null;
@@ -400,6 +406,7 @@ export function createAnnotationSurface(
     liveOnLayer = false;
     liveLayer?.clear();
     eraser.end();
+    shaper.end();
     redraw();
   }
 
@@ -415,6 +422,56 @@ export function createAnnotationSurface(
       },
       ring: { ...at, radius: liveEraseRadius },
     };
+  }
+
+  /**
+   * 把这一笔（画布域的点列）锚定、换算回存储域并提交。paintWhole：这一笔
+   * 书写中不在画布上（整笔一条路径的笔、图形），提交前先整笔画上去。
+   */
+  function commitStroke(
+    brush: { color: string; weight: number },
+    points: InkStroke["points"],
+    paintWhole: boolean,
+  ): void {
+    if (atrament && livePrev) {
+      atrament.endStroke(livePrev.x, livePrev.y);
+    }
+    const strokeId = mintStrokeId();
+    const rawStroke: InkStroke = {
+      tool: liveTool,
+      color: brush.color,
+      weight: brush.weight, // 画布（视图）域像素；近似模式提交前换算回存储域
+      // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
+      id: strokeId,
+      ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
+      ...(livePointerKind !== undefined ? { pointer: livePointerKind } : {}),
+      points,
+    };
+    // LR-6：收笔即锚——重叠面积最大的带键块为锚；全不相交取最近块；
+    // 无带键块（旧布局）不锚（P1 不伪造，anchoredRatio 如实降低）。
+    // 近似原位模式：anchorBlocks 供给**视图域**块（当前布局），锚键两侧同键。
+    const bbox = strokeBbox(rawStroke);
+    let anchorKey: string | undefined;
+    if (bbox !== null) {
+      const blocks = anchorBlocks?.();
+      anchorKey =
+        blocks === undefined ? undefined : anchorKeyForStroke(bbox, blocks);
+    }
+    // 近似原位：锚定后整笔换算回存储域（与 inverseReproject 同式），存储域
+    // 语义（撤销/墓碑/压实/上传校验）零变化
+    const mapped = view
+      ? view.strokeToStored(rawStroke, anchorKey)
+      : { stroke: rawStroke, unanchored: false };
+    // 评审 #12019 顺手项：映射走 root 兜底（锚键不在保存块表）时不写
+    // anchors——否则服务端锚校验把整次上传 400 掉；anchoredRatio 如实降低
+    if (anchorKey !== undefined && !mapped.unanchored) {
+      anchors[strokeId] = anchorKey;
+    }
+    // 先整笔落到画布（视图域这一笔，与之后全量重绘同一画法），再提交
+    if (paintWhole && atrament) {
+      replayAnnotationStroke(atrament, cssPerBase(), rawStroke);
+    }
+    withReason("stroke", () => store.commitAdd([mapped.stroke]));
   }
 
   /** 收笔：按已收真实采样提交（不补造终点；落笔快照分派，同引擎口径） */
@@ -439,49 +496,13 @@ export function createAnnotationSurface(
         );
       }
       redraw();
-    } else if (livePoints.length > 0 && liveBrush) {
-      if (atrament && livePrev) {
-        atrament.endStroke(livePrev.x, livePrev.y);
+    } else {
+      // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
+      const shaped = shaper.active;
+      const points = shaped ? shaper.end() : livePoints;
+      if (points !== null && points.length > 0 && liveBrush) {
+        commitStroke(liveBrush, points, liveOnLayer || shaped);
       }
-      const brush = liveBrush;
-      const points = livePoints;
-      const strokeId = mintStrokeId();
-      const rawStroke: InkStroke = {
-        tool: liveTool,
-        color: brush.color,
-        weight: brush.weight, // 画布（视图）域像素；近似模式提交前换算回存储域
-        // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（pointerdown 捕获）
-        id: strokeId,
-        ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
-        ...(livePointerKind !== undefined ? { pointer: livePointerKind } : {}),
-        points,
-      };
-      // LR-6：收笔即锚——重叠面积最大的带键块为锚；全不相交取最近块；
-      // 无带键块（旧布局）不锚（P1 不伪造，anchoredRatio 如实降低）。
-      // 近似原位模式：anchorBlocks 供给**视图域**块（当前布局），锚键两侧同键。
-      const bbox = strokeBbox(rawStroke);
-      let anchorKey: string | undefined;
-      if (bbox !== null) {
-        const blocks = anchorBlocks?.();
-        anchorKey =
-          blocks === undefined ? undefined : anchorKeyForStroke(bbox, blocks);
-      }
-      // 近似原位：锚定后整笔换算回存储域（与 inverseReproject 同式），存储域
-      // 语义（撤销/墓碑/压实/上传校验）零变化
-      const mapped = view
-        ? view.strokeToStored(rawStroke, anchorKey)
-        : { stroke: rawStroke, unanchored: false };
-      // 评审 #12019 顺手项：映射走 root 兜底（锚键不在保存块表）时不写
-      // anchors——否则服务端锚校验把整次上传 400 掉；anchoredRatio 如实降低
-      if (anchorKey !== undefined && !mapped.unanchored) {
-        anchors[strokeId] = anchorKey;
-      }
-      // 整笔一条路径的笔书写中不在画布上：先整笔落到画布（视图域这一笔，
-      // 与之后全量重绘同一画法），再提交
-      if (liveOnLayer && atrament) {
-        replayAnnotationStroke(atrament, cssPerBase(), rawStroke);
-      }
-      withReason("stroke", () => store.commitAdd([mapped.stroke]));
     }
     finishCause = undefined;
     livePoints = [];
@@ -553,6 +574,19 @@ export function createAnnotationSurface(
       color: gesture.brush.color,
       weight: logicalToBase(baseWidth, gesture.brush.weight),
     };
+    if (gesture.shape !== "free") {
+      shaper.begin({
+        shape: gesture.shape,
+        from: { x, y },
+        brush: liveBrush,
+        // 间距、最小跨度、箭翼这些按 1000 宽定义的量换到底图像素域
+        unit: logicalToBase(baseWidth, 1),
+        bounds: { width: baseWidth, height: baseHeight },
+        // 荧光笔整笔一条路径，画的就是起止点的连线，不用加密
+        sparse: liveTool === "highlighter",
+      });
+      return;
+    }
     const p = pressureOf(e);
     liveOnLayer = isOnePathStroke({ tool: liveTool });
     if (liveOnLayer) {
@@ -597,6 +631,16 @@ export function createAnnotationSurface(
       eraser.through(
         batch.map((at) => at.point),
         batch.at(-1)?.ring,
+      );
+      return;
+    }
+
+    // 图形：只看这一批最后拖到哪儿，更新预览
+    if (shaper.active) {
+      const last = events.at(-1) ?? e;
+      shaper.through(
+        eventToBase(last, rect),
+        Math.max(0, Math.round(last.timeStamp - liveStartStamp)),
       );
       return;
     }
