@@ -1,16 +1,5 @@
 import type { NoteBackground } from "@tutor/contract";
-import {
-  CircleAlert,
-  Eraser,
-  Hand,
-  Highlighter,
-  LoaderCircle,
-  PenLine,
-  Pointer,
-  Redo2,
-  Trash,
-  Undo2,
-} from "lucide-react";
+import { CircleAlert, LoaderCircle, Pointer } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -28,26 +17,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  COLOR_LABEL,
-  CompactInkToolbar,
-  SIZE_LABEL,
-  toolButtonClass,
-} from "./CompactInkToolbar";
-import {
   create,
   type InkChangeReason,
   type InkDoc,
   type InkEngine,
   type InkEngineKind,
-  type InkPenColor,
-  type InkPenSize,
-  type InkToolType,
 } from "./engine/index.ts";
 import { fromLogical } from "./engine/normalize.ts";
 import {
   PAPER_GROW_STEP_CSS_PX,
   PAPER_GROW_TRIGGER_CSS_PX,
 } from "./engine/paper-style.ts";
+import { createInkToolbox, toolConfigOf } from "./engine/toolbox.ts";
+import type { InkToolType } from "./engine/types.ts";
 import { useInkProfileSelection } from "./ink-profile-store";
 import {
   getSessionInputPreference,
@@ -55,6 +37,7 @@ import {
   onSessionInputPreferenceChange,
   setSessionInputPreference,
 } from "./input-preference.ts";
+import { InkToolbar, inkToolButtonClass } from "./toolbar/InkToolbar.tsx";
 
 /**
  * <InkPad>：手写引擎的 React 外壳（T2.7，架构 §5.4.1 "组件拆为两层"）。
@@ -66,7 +49,9 @@ import {
  * - 自动加高（§5.4.1 绘制层第 4 条）：最后一笔接近答题区底部时自动增高；
  * - 输入模式：缺省 "auto" 自动探测；"pen" 固定笔写、手指滚动；
  *   "session" 订阅会话偏好并提供「手指书写」切换。
- * - 工具栏触控目标不小于 44px（ui-conventions iPad 硬性要求）。
+ * - 内置工具栏就是共用的 InkToolbar（toolbar/InkToolbar.tsx）。页内引擎提供
+ *   笔、荧光笔、橡皮、滚动；历史 Excalidraw 画布只认笔、橡皮、选择，不认
+ *   颜色和粗细，所以不带选项面板。
  */
 export interface InkPadProps {
   /** 底层引擎：atrament（页内答题区，默认）/ excalidraw（全屏作答） */
@@ -102,7 +87,6 @@ export interface InkPadProps {
    * 是否渲染内置工具条（默认开启）。纸面由外层提供工具栏时关闭。
    */
   showToolbar?: boolean;
-  compactToolbar?: boolean;
   /**
    * 受控纸高（CSS px，T6R.9 NoteLayer 专用）：提供时画布容器高度恒为此值、
    * **禁用内部 CSS px 直增自动加高**——新草稿的加高决策统一走
@@ -128,12 +112,16 @@ export interface InkPadProps {
 /** auto=旧行为；pen=手指只滚动；session=会话输入偏好。 */
 export type InkPadInputMode = "auto" | "pen" | "session";
 
-/** 颜色按钮的色块（黑/蓝/红） */
-const COLOR_SWATCH: Record<InkPenColor, string> = {
-  black: "#1f2328",
-  blue: "#1d4ed8",
-  red: "#dc2626",
-};
+/** 内置工具栏提供的工具：页内引擎四种；历史 Excalidraw 画布三种 */
+const ATRAMENT_TOOLS: readonly InkToolType[] = [
+  "pen",
+  "highlighter",
+  "eraser",
+  "scroll",
+];
+const EXCALIDRAW_TOOLS: readonly InkToolType[] = ["pen", "eraser", "scroll"];
+/** 滚动工具位在 Excalidraw 中是选择（套索移动） */
+const EXCALIDRAW_TOOL_LABELS = { scroll: "选择" } as const;
 
 /** 非 session 档的常量订阅（不订阅任何源）与常量快照（恒 pen）——
  * useSyncExternalStore 不得条件调用（复审⑪），非 session 档用稳定常量 */
@@ -143,17 +131,9 @@ const SNAPSHOT_PEN = (): InkSessionInputPreference => "pen";
 /**
  * 「手指书写」切换按钮（T6R.7 衔接注记①定案后的共用件，T6R.9 复审⑭）：
  * 正式手写和 InkPad 内置工具条共用会话偏好、
- * 形态/文案/title 一处维护（含 44px 触控目标）。
+ * 形态/文案/title 一处维护（与工具栏按钮同形，44px 触控目标）。
  */
-export function SessionPrefToggleButton({
-  disabled,
-  className,
-  iconOnly = false,
-}: {
-  disabled?: boolean;
-  className?: string;
-  iconOnly?: boolean;
-}) {
+export function SessionPrefToggleButton({ disabled }: { disabled?: boolean }) {
   const sessionPref = useSyncExternalStore(
     onSessionInputPreferenceChange,
     getSessionInputPreference,
@@ -163,12 +143,12 @@ export function SessionPrefToggleButton({
       type="button"
       variant={sessionPref === "finger" ? "secondary" : "ghost"}
       aria-pressed={sessionPref === "finger"}
-      aria-label={iconOnly ? "手指书写" : undefined}
+      aria-label="手指书写"
       disabled={disabled}
       onClick={() =>
         setSessionInputPreference(sessionPref === "pen" ? "finger" : "pen")
       }
-      className={className ?? toolButtonClass}
+      className={inkToolButtonClass}
       title={
         sessionPref === "pen"
           ? "手指书写（无笔设备：手指直接书写）"
@@ -176,7 +156,6 @@ export function SessionPrefToggleButton({
       }
     >
       <Pointer aria-hidden />
-      {!iconOnly && "手指书写"}
     </Button>
   );
 }
@@ -192,17 +171,26 @@ export function InkPad({
   inputMode = "auto",
   background,
   showToolbar = true,
-  compactToolbar = false,
   paperHeight,
   onEngineRebuild,
   maxDeletedPoints,
   inputEnabled = true,
 }: InkPadProps) {
   const profile = useInkProfileSelection();
+  /** 工具箱：笔的颜色、粗细跟随笔感设置，设置变化时重新取值 */
+  const [toolbox, setToolbox] = useState(() =>
+    createInkToolbox({
+      pen: { color: profile.config.color, size: profile.config.size },
+    }),
+  );
   useEffect(() => {
     localEngineRef.current?.setProfile?.(profile.config);
-    setPenColor(profile.config.color);
-    setPenSize(profile.config.size);
+    const { color, size } = profile.config;
+    setToolbox((current) =>
+      current.pen.color === color && current.pen.size === size
+        ? current
+        : { ...current, pen: { color, size } },
+    );
   }, [profile.config]);
   const containerRef = useRef<HTMLDivElement>(null);
   /** 内部引擎实例引用（engineRef prop 为对外透出） */
@@ -217,9 +205,6 @@ export function InkPad({
   const onEngineRebuildRef = useRef(onEngineRebuild);
   onEngineRebuildRef.current = onEngineRebuild;
 
-  const [toolType, setToolType] = useState<InkToolType>("pen");
-  const [penColor, setPenColor] = useState<InkPenColor>("black");
-  const [penSize, setPenSize] = useState<InkPenSize>("medium");
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [height, setHeight] = useState(initialHeight);
@@ -365,26 +350,12 @@ export function InkPad({
     );
   }, [inputMode, sessionPref, retryKey]);
 
-  // 工具/颜色/粗细变化 → 下发引擎
+  // 工具箱变化 → 下发引擎；引擎重建（retryKey）后新实例回到缺省工具，同样重发。
+  // excalidraw 未就绪时适配器内部排队，无需依赖 ready
+  // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键变化=引擎重建，需重发当前工具，effect 体内不读取
   useEffect(() => {
-    const ink = localEngineRef.current;
-    if (!ink) return;
-    switch (toolType) {
-      case "pen":
-        ink.setTool({ type: "pen", color: penColor, size: penSize });
-        break;
-      case "highlighter":
-        ink.setTool({ type: "highlighter" });
-        break;
-      case "eraser":
-        ink.setTool({ type: "eraser" });
-        break;
-      case "scroll":
-        ink.setTool({ type: "scroll" });
-        break;
-    }
-    // excalidraw 未就绪时适配器内部排队，无需依赖 ready
-  }, [toolType, penColor, penSize]);
+    localEngineRef.current?.setTool(toolConfigOf(toolbox));
+  }, [toolbox, retryKey]);
 
   const handleUndo = useCallback(() => localEngineRef.current?.undo(), []);
   const handleRedo = useCallback(() => localEngineRef.current?.redo(), []);
@@ -400,193 +371,32 @@ export function InkPad({
       data-slot="ink-pad"
       className={`flex flex-col gap-2 [touch-action:manipulation] ${fill ? "h-full min-h-0" : ""}`}
     >
-      {/* 工具栏（T6R.9：showToolbar=false 时整体不渲染——NoteLayer 自带精简
-          工具条；画布与引擎生命周期不受影响）：笔/荧光笔/橡皮/滚动（或套索）
-          + 颜色三选 + 粗细三档 + 撤销/重做/清空 */}
-      {showToolbar && compactToolbar && (
-        <CompactInkToolbar
+      {/* 工具栏（T6R.9：showToolbar=false 时整体不渲染——纸面由外层提供工具栏；
+          画布与引擎生命周期不受影响） */}
+      {showToolbar && (
+        <InkToolbar
           label={label}
-          tool={toolType}
-          onToolChange={setToolType}
-          color={penColor}
-          onColorChange={setPenColor}
-          size={penSize}
-          onSizeChange={setPenSize}
+          toolbox={toolbox}
+          onToolboxChange={setToolbox}
+          tools={engine === "atrament" ? ATRAMENT_TOOLS : EXCALIDRAW_TOOLS}
+          toolOptions={engine === "atrament"}
+          {...(engine === "atrament"
+            ? {}
+            : { toolLabels: EXCALIDRAW_TOOL_LABELS })}
           canUndo={canUndo}
           canRedo={canRedo}
           onUndo={handleUndo}
           onRedo={handleRedo}
           onClearRequest={() => setClearOpen(true)}
-          advanced
+          clearLabel="清空画布"
           disabled={toolsDisabled}
           fingerToggle={
+            // 输入偏好切换（T6R.7）：会话内共享，多画布同源
             inputMode === "session" && (
-              <SessionPrefToggleButton
-                iconOnly
-                disabled={toolsDisabled}
-                className="size-11 shrink-0 p-0"
-              />
+              <SessionPrefToggleButton disabled={toolsDisabled} />
             )
           }
         />
-      )}
-      {showToolbar && !compactToolbar && (
-        <div
-          role="toolbar"
-          aria-label={`${label}工具栏`}
-          className="flex flex-wrap items-center gap-1.5"
-        >
-          <Button
-            type="button"
-            variant={toolType === "pen" ? "secondary" : "ghost"}
-            aria-pressed={toolType === "pen"}
-            disabled={toolsDisabled}
-            onClick={() => setToolType("pen")}
-            className={`${toolButtonClass} h-11`}
-            title="笔"
-          >
-            <PenLine aria-hidden />笔
-          </Button>
-          <Button
-            type="button"
-            variant={toolType === "highlighter" ? "secondary" : "ghost"}
-            aria-pressed={toolType === "highlighter"}
-            disabled={toolsDisabled}
-            onClick={() => setToolType("highlighter")}
-            className={`${toolButtonClass} h-11`}
-            title="荧光笔"
-          >
-            <Highlighter aria-hidden />
-            荧光笔
-          </Button>
-          <Button
-            type="button"
-            variant={toolType === "eraser" ? "secondary" : "ghost"}
-            aria-pressed={toolType === "eraser"}
-            disabled={toolsDisabled}
-            onClick={() => setToolType("eraser")}
-            className={`${toolButtonClass} h-11`}
-            title="橡皮（整笔擦除）"
-          >
-            <Eraser aria-hidden />
-            橡皮
-          </Button>
-          <Button
-            type="button"
-            variant={toolType === "scroll" ? "secondary" : "ghost"}
-            aria-pressed={toolType === "scroll"}
-            disabled={toolsDisabled}
-            onClick={() => setToolType("scroll")}
-            className={`${toolButtonClass} h-11`}
-            title={
-              engine === "atrament"
-                ? "滚动模式（无笔设备：暂停书写，放行页面滚动）"
-                : "选择/套索"
-            }
-          >
-            <Hand aria-hidden />
-            {engine === "atrament" ? "滚动" : "选择"}
-          </Button>
-
-          {/* 输入偏好切换（T6R.7，仅新草稿形态显示）：会话内共享，多画布同源 */}
-          {inputMode === "session" && (
-            <SessionPrefToggleButton disabled={toolsDisabled} />
-          )}
-
-          {/* 颜色三选（黑/蓝/红）；荧光笔固定黄色，禁用切换 */}
-          {(toolType === "pen" || toolType === "highlighter") && (
-            <div className="ml-1 flex items-center gap-1">
-              {(Object.keys(COLOR_SWATCH) as InkPenColor[]).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  aria-label={`颜色：${COLOR_LABEL[c]}`}
-                  aria-pressed={penColor === c}
-                  disabled={toolsDisabled || toolType === "highlighter"}
-                  onClick={() => setPenColor(c)}
-                  className={`flex size-11 items-center justify-center rounded-lg border transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${
-                    penColor === c && toolType === "pen"
-                      ? "border-ring bg-muted"
-                      : "border-transparent hover:bg-muted"
-                  }`}
-                >
-                  <span
-                    aria-hidden
-                    className="size-5 rounded-full border border-black/10"
-                    style={{ background: COLOR_SWATCH[c] }}
-                  />
-                </button>
-              ))}
-            </div>
-          )}
-          {/* 粗细三档（细/中/粗） */}
-          {toolType === "pen" && (
-            <div className="flex items-center gap-1">
-              {(Object.keys(SIZE_LABEL) as InkPenSize[]).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  aria-label={`粗细：${SIZE_LABEL[s]}`}
-                  aria-pressed={penSize === s}
-                  disabled={toolsDisabled}
-                  onClick={() => setPenSize(s)}
-                  className={`flex size-11 flex-col items-center justify-center gap-0.5 rounded-lg border text-xs transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${
-                    penSize === s
-                      ? "border-ring bg-muted font-semibold"
-                      : "border-transparent hover:bg-muted"
-                  }`}
-                >
-                  <span
-                    aria-hidden
-                    className="rounded-full bg-foreground"
-                    style={{
-                      width: `${6 + (s === "thin" ? 0 : s === "medium" ? 4 : 8)}px`,
-                      height: `${6 + (s === "thin" ? 0 : s === "medium" ? 4 : 8)}px`,
-                    }}
-                  />
-                  {SIZE_LABEL[s]}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="ml-auto flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={!canUndo || loadError !== null}
-              onClick={handleUndo}
-              className={`${toolButtonClass} h-11`}
-              title="撤销"
-            >
-              <Undo2 aria-hidden />
-              撤销
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={!canRedo || loadError !== null}
-              onClick={handleRedo}
-              className={`${toolButtonClass} h-11`}
-              title="重做"
-            >
-              <Redo2 aria-hidden />
-              重做
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label="清空画布"
-              disabled={toolsDisabled}
-              onClick={() => setClearOpen(true)}
-              className={`${toolButtonClass} h-11 text-destructive`}
-              title="清空画布"
-            >
-              <Trash aria-hidden />
-              清空
-            </Button>
-          </div>
-        </div>
       )}
 
       {/* 画布容器：页内形态高度固定（自动加高）；全屏形态（fill）占满余下空间。

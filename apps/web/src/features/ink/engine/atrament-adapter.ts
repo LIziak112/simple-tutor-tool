@@ -82,12 +82,12 @@ import {
   INK_ERASE_RADIUS,
   type InkDoc,
   type InkInputMode,
-  type InkPenColor,
-  type InkPenSize,
+  type InkPenBase,
   type InkPointerKind,
   type InkStroke,
   type InkStrokePoint,
   type InkToolConfig,
+  resolveGesture,
   resolveToolSpec,
 } from "./types.ts";
 
@@ -216,10 +216,7 @@ export function createAtramentSurface(
 
   /** 当前工具配置（pen 的可选属性以 base 补全） */
   let tool: InkToolConfig = { type: "pen" };
-  let base: { color: InkPenColor; size: InkPenSize } = {
-    color: "black",
-    size: "medium",
-  };
+  let base: InkPenBase = { color: "black", size: "medium" };
 
   /**
    * 指针生命周期状态机（T6R.7）：活动指针/输入模式/auto 模式的笔观测
@@ -244,6 +241,8 @@ export function createAtramentSurface(
    * 「中途切橡皮→收笔误走橡皮分支→笔迹被静默丢弃」）。
    */
   let liveStrokeIsErase = false;
+  /** 本次擦除的橡皮半径（逻辑单位），同样取落笔时的档位 */
+  let liveEraseRadius = INK_ERASE_RADIUS;
   /** 上一次 draw() 返回的已处理坐标（atrament 平滑过滤后的位置） */
   let livePrev: { x: number; y: number } | null = null;
   /** 橡皮拖动中待删除的笔画下标集合（一次拖动合并为一个历史条目） */
@@ -518,26 +517,28 @@ export function createAtramentSurface(
     liveStartedAt = Date.now();
     livePointerKind = asPointerKind(e.pointerType);
     // 落笔快照（复审③）：本笔的 move 采样与收笔提交都按此刻的工具分派
-    liveStrokeIsErase = tool.type === "eraser";
+    const resolved = resolveGesture(tool, base);
+    base = resolved.base;
+    const gesture = resolved.gesture;
+    liveStrokeIsErase = gesture.kind === "erase";
 
-    if (liveStrokeIsErase) {
+    if (gesture.kind === "erase") {
+      liveEraseRadius = gesture.radius;
       erasePrev = { x: toLogical(cssWidth, x), y: toLogical(cssWidth, y) };
       pendingErase = new Set(
         eraseHit(
           store.peekStrokes(),
           toLogical(cssWidth, x),
           toLogical(cssWidth, y),
-          INK_ERASE_RADIUS,
+          liveEraseRadius,
         ),
       );
       redraw();
       return;
     }
 
-    const resolved = resolveToolSpec(tool, base);
-    liveBrush = resolved.brush;
-    base = resolved.base;
-    liveTool = tool.type === "highlighter" ? "highlighter" : "pen";
+    liveBrush = gesture.kind === "draw" ? gesture.brush : null;
+    liveTool = gesture.kind === "draw" ? gesture.tool : "pen";
     if (!liveBrush || !atrament) return;
     atrament.color = liveBrush.color;
     atrament.smoothing = currentSmoothing;
@@ -594,7 +595,7 @@ export function createAtramentSurface(
           eraseView,
           toLogical(cssWidth, x),
           toLogical(cssWidth, y),
-          INK_ERASE_RADIUS,
+          liveEraseRadius,
           eraseBoxes,
           erasePrev,
         );

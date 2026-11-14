@@ -213,9 +213,8 @@ test(
             .getByRole("button", { name: "撤销", exact: true })
             .click();
           await expect(paper.getByText("2 笔", { exact: true })).toBeVisible();
-          await paper.getByRole("button", { name: /更多/ }).click();
-          await page
-            .getByRole("menuitem", { name: "重做", exact: true })
+          await paper
+            .getByRole("button", { name: "重做", exact: true })
             .click();
           await card.locator("[data-paper-trigger]").click();
           await mark(card);

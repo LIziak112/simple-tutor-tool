@@ -968,6 +968,63 @@ describe("atrament-adapter：回归（撤销/重做/橡皮/鼠标/load）", () =
     expect(strokesOf(h)).toHaveLength(1);
     expect(strokesOf(h)[0]?.points[0]?.x).toBeGreaterThan(800);
   });
+
+  it("橡皮大小决定命中范围：同一位置小号擦不到、中号擦得到；再远一点只有大号擦得到", () => {
+    const h = mountSurface();
+    // 横线 y=40；画布宽 300 → 1 CSS px = 3.33 逻辑单位，笔宽 4（半宽 2）
+    const line = [
+      { x: 100, y: 40 },
+      { x: 200, y: 40 },
+    ];
+    const tapAt = (y: number) => {
+      pointer(h.canvas, "pointerdown", pd("pen", 1, 150, y));
+      pointer(h.canvas, "pointerup", {
+        pointerType: "pen",
+        clientX: 150,
+        clientY: y,
+      });
+    };
+    writeStroke(h, line);
+    // 离线 4px = 13.3 逻辑单位：小号 8+2 够不着，中号 14+2 够得着
+    h.surface.setTool({ type: "eraser", size: "small" });
+    tapAt(44);
+    expect(strokesOf(h)).toHaveLength(1);
+    h.surface.setTool({ type: "eraser", size: "medium" });
+    tapAt(44);
+    expect(strokesOf(h)).toHaveLength(0);
+
+    h.surface.setTool({ type: "pen" });
+    writeStroke(h, line);
+    // 离线 6px = 20 逻辑单位：不带大小（缺省中号）够不着，大号 24+2 够得着
+    h.surface.setTool({ type: "eraser" });
+    tapAt(46);
+    expect(strokesOf(h)).toHaveLength(1);
+    h.surface.setTool({ type: "eraser", size: "large" });
+    tapAt(46);
+    expect(strokesOf(h)).toHaveLength(0);
+  });
+
+  it("橡皮大小按落笔时为准：拖动途中改大小不影响这一次拖动", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 100, y: 40 },
+      { x: 200, y: 40 },
+    ]);
+    h.surface.setTool({ type: "eraser", size: "small" });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 150, 80));
+    h.surface.setTool({ type: "eraser", size: "large" });
+    pointer(h.canvas, "pointermove", {
+      pointerType: "pen",
+      clientX: 150,
+      clientY: 46,
+    });
+    pointer(h.canvas, "pointerup", {
+      pointerType: "pen",
+      clientX: 150,
+      clientY: 46,
+    });
+    expect(strokesOf(h)).toHaveLength(1);
+  });
   it("鼠标书写 → 撤销 → 重做 → 橡皮整笔擦除（reason 分型不变）", () => {
     const h = mountSurface();
     writeStroke(

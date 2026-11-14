@@ -594,6 +594,37 @@ describe("标注画布：历史与工具", () => {
     expect(h.events.some((e) => e.reason === "erase")).toBe(true);
   });
 
+  it("橡皮大小决定命中范围（小 11.52 / 中 20.16 / 大 34.56 底图像素，另加半笔宽 2.88）", () => {
+    const h = mountSurface();
+    // 横线 y=70；1 CSS px = 2.22 底图像素
+    const line = [
+      { x: 150, y: 70 },
+      { x: 250, y: 70 },
+    ];
+    const tapAt = (y: number) => {
+      pointer(h.canvas, "pointerdown", { clientX: 200, clientY: y });
+      pointer(h.canvas, "pointerup", { clientX: 200, clientY: y });
+    };
+    writeStroke(h, line);
+    // 离线 8px = 17.8 底图像素：小号 14.4 够不着，中号 23.04 够得着
+    h.surface.setTool({ type: "eraser", size: "small" });
+    tapAt(78);
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+    h.surface.setTool({ type: "eraser", size: "medium" });
+    tapAt(78);
+    expect(h.surface.getDoc().strokes).toHaveLength(0);
+
+    h.surface.setTool({ type: "pen" });
+    writeStroke(h, line);
+    // 离线 12px = 26.7 底图像素：缺省中号够不着，大号 37.44 够得着
+    h.surface.setTool({ type: "eraser" });
+    tapAt(82);
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+    h.surface.setTool({ type: "eraser", size: "large" });
+    tapAt(82);
+    expect(h.surface.getDoc().strokes).toHaveLength(0);
+  });
+
   it("初始文档（恢复笔迹）随挂载载入", () => {
     const initial: AnnotationDoc = {
       version: 1,

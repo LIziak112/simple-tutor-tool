@@ -106,6 +106,38 @@ it("自然笔感橡皮快速拖动扫过笔画，远处笔迹不变且可一步�
   expect(points()).toEqual(original);
 });
 
+it("橡皮大小决定命中范围：小号擦不到的距离中号擦得到，更远只有大号擦得到", () => {
+  // 竖线 x=150；画布宽 500 → 1 CSS px = 2 逻辑单位，笔宽 4（半宽 2）
+  let stamp = 0;
+  const line = () => {
+    send("pointerdown", 150, 1, ++stamp, { clientY: 20 });
+    send("pointermove", 150, 1, ++stamp, { clientY: 100 });
+    send("pointerup", 150, 1, ++stamp, { clientY: 100 });
+  };
+  const tapAt = (x: number) => {
+    send("pointerdown", x, 1, ++stamp, { clientY: 60 });
+    send("pointerup", x, 1, ++stamp, { clientY: 60 });
+  };
+  line();
+  // 离线 6px = 12 逻辑单位：小号 8+2 够不着，中号 14+2 够得着
+  surface.setTool({ type: "eraser", size: "small" });
+  tapAt(156);
+  expect(points()).toHaveLength(1);
+  surface.setTool({ type: "eraser", size: "medium" });
+  tapAt(156);
+  expect(points()).toHaveLength(0);
+
+  surface.setTool({ type: "pen" });
+  line();
+  // 离线 10px = 20 逻辑单位：缺省中号够不着，大号 24+2 够得着
+  surface.setTool({ type: "eraser" });
+  tapAt(160);
+  expect(points()).toHaveLength(1);
+  surface.setTool({ type: "eraser", size: "large" });
+  tapAt(160);
+  expect(points()).toHaveLength(0);
+});
+
 it("预测只显示；真实点替换预测，取消不补造终点", () => {
   send("pointerdown");
   send("pointermove", 30, 1, 30, {

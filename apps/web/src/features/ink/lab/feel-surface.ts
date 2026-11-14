@@ -33,10 +33,10 @@ import {
   INK_ERASE_RADIUS,
   type InkDoc,
   type InkInputMode,
-  type InkPenColor,
-  type InkPenSize,
+  type InkPenBase,
   type InkPointerKind,
   type InkToolConfig,
+  resolveGesture,
   resolveToolSpec,
 } from "../engine/types";
 
@@ -107,10 +107,7 @@ export function createFeelSurface(
   let params = { ...initialParams };
   let machine = createPointerMachineState("pen");
   let tool: InkToolConfig = { type: "pen", color: "black", size: "medium" };
-  let base: { color: InkPenColor; size: InkPenSize } = {
-    color: "black",
-    size: "medium",
-  };
+  let base: InkPenBase = { color: "black", size: "medium" };
   let host: HTMLElement | null = null;
   let dry: HTMLCanvasElement | null = null;
   let wet: HTMLCanvasElement | null = null;
@@ -133,6 +130,7 @@ export function createFeelSurface(
   let pendingErase = new Set<number>();
   let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
   let eraseActive = false;
+  let eraseRadius = INK_ERASE_RADIUS;
   let reason: InkChangeReason = "stroke";
   const samples: number[] = [];
   const renders: number[] = [];
@@ -299,20 +297,23 @@ export function createFeelSurface(
       liveStartedAt = Date.now();
       livePointerKind = asPointerKind(event.pointerType);
       const first = point(event, rect);
-      eraseActive = tool.type === "eraser";
-      if (eraseActive) {
+      // 落笔快照：这一次手势按此刻的工具（含橡皮大小）分派
+      const resolved = resolveGesture(tool, base);
+      base = resolved.base;
+      const gesture = resolved.gesture;
+      eraseActive = gesture.kind === "erase";
+      if (gesture.kind === "erase") {
+        eraseRadius = gesture.radius;
         erasePrev = first;
         pendingErase = new Set(
-          eraseHit(store.peekStrokes(), first.x, first.y, INK_ERASE_RADIUS),
+          eraseHit(store.peekStrokes(), first.x, first.y, eraseRadius),
         );
         redrawDry();
       } else {
-        const resolved = resolveToolSpec(tool, base);
-        base = resolved.base;
-        if (!resolved.brush) continue;
+        if (gesture.kind !== "draw") continue;
         live = {
-          tool: tool.type === "highlighter" ? "highlighter" : "pen",
-          ...resolved.brush,
+          tool: gesture.tool,
+          ...gesture.brush,
           // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（down 捕获）
           id: mintStrokeId(),
           ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
@@ -366,7 +367,7 @@ export function createFeelSurface(
           eraseStrokes,
           next.x,
           next.y,
-          INK_ERASE_RADIUS,
+          eraseRadius,
           eraseBoxes,
           erasePrev,
         )) {

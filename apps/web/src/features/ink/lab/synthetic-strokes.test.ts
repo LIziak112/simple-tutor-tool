@@ -166,7 +166,7 @@ describe("toolConfigFromStroke（引擎层反查；注入前切换工具用）",
     };
   }
 
-  it("荧光笔笔画映射到 highlighter 工具", () => {
+  it("荧光笔笔画映射到 highlighter 工具，并按颜色与线宽反查档位", () => {
     expect(
       toolConfigFromStroke(
         strokeOf({
@@ -175,7 +175,16 @@ describe("toolConfigFromStroke（引擎层反查；注入前切换工具用）",
           weight: 16,
         }),
       ),
-    ).toEqual({ type: "highlighter" });
+    ).toEqual({ type: "highlighter", color: "yellow", size: "medium" });
+    expect(
+      toolConfigFromStroke(
+        strokeOf({
+          tool: "highlighter",
+          color: "rgba(244, 114, 182, 0.45)",
+          weight: 26,
+        }),
+      ),
+    ).toEqual({ type: "highlighter", color: "pink", size: "thick" });
   });
 
   it("笔笔画按 CSS 颜色与逻辑线宽反查档位", () => {

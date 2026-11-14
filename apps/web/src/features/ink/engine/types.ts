@@ -69,8 +69,11 @@ export interface InkDocDataByEngine {
   excalidraw: InkExcalidrawData;
 }
 
-/** 工具类型：笔 / 荧光笔 / 整笔橡皮 / 滚动模式（无笔设备的回退开关，§5.4.1 输入层第 3 条） */
-export type InkToolType = "pen" | "highlighter" | "eraser" | "scroll";
+/**
+ * 工具类型：笔 / 荧光笔 / 橡皮 / 形状 / 滚动模式（无笔设备的回退开关，§5.4.1
+ * 输入层第 3 条）。形状落成普通 pen 笔画，橡皮不产生笔画——落库形状不变。
+ */
+export type InkToolType = "pen" | "highlighter" | "eraser" | "shape" | "scroll";
 
 /**
  * 输入模式（T6R.7，方案 §4.1）：
@@ -83,17 +86,64 @@ export type InkToolType = "pen" | "highlighter" | "eraser" | "scroll";
  */
 export type InkInputMode = "auto" | "pen" | "finger";
 
-/** 笔粗细档位（§5.4.1 绘制层第 3 条：笔 2–3 档粗细） */
-export type InkPenSize = "thin" | "medium" | "thick";
+/**
+ * 笔粗细档位。账号手感设置（契约 ink-profile）只用 thin/medium/thick 三档，
+ * 工具栏另开放极细与特粗；笔画只存逻辑线宽，档位增减不动契约。
+ */
+export type InkPenSize = "hairline" | "thin" | "medium" | "thick" | "heavy";
 
-/** 笔颜色（§5.4.1 绘制层第 3 条：黑/蓝/红） */
-export type InkPenColor = "black" | "blue" | "red";
+/** 笔颜色。账号手感设置只用黑/蓝/红，工具栏另开放绿/橙/紫。 */
+export type InkPenColor =
+  | "black"
+  | "blue"
+  | "red"
+  | "green"
+  | "orange"
+  | "purple";
 
-/** setTool 参数：可选属性缺省表示沿用上一次的设置 */
+/** 荧光笔颜色（均为半透明色，盖在字上仍能透出字） */
+export type InkHighlighterColor =
+  | "yellow"
+  | "green"
+  | "blue"
+  | "pink"
+  | "orange";
+
+/** 荧光笔粗细档位 */
+export type InkHighlighterSize = "thin" | "medium" | "thick";
+
+/** 橡皮模式：stroke 碰到即删整笔；partial 只擦掉碰到的那一段 */
+export type InkEraserMode = "stroke" | "partial";
+
+/** 橡皮大小档位 */
+export type InkEraserSize = "small" | "medium" | "large";
+
+/** 形状工具的形状种类 */
+export type InkShapeKind = "line" | "arrow" | "rect" | "ellipse";
+
+/** 一笔的成形方式：free 为手写轨迹，其余由起止点生成 */
+export type InkStrokeShape = "free" | InkShapeKind;
+
+/**
+ * setTool 参数。pen/shape 的颜色与粗细缺省表示沿用上一次的设置（两者共用同一
+ * 份记忆）；其余可选属性缺省取固定缺省值（黄色中档荧光笔、整笔中号橡皮、直线）。
+ */
 export type InkToolConfig =
   | { type: "pen"; color?: InkPenColor; size?: InkPenSize }
-  | { type: "highlighter" }
-  | { type: "eraser" }
+  | {
+      type: "highlighter";
+      color?: InkHighlighterColor;
+      size?: InkHighlighterSize;
+      /** 画直线：起止点连成一条线，接近水平或竖直时吸附 */
+      straight?: boolean;
+    }
+  | { type: "eraser"; mode?: InkEraserMode; size?: InkEraserSize }
+  | {
+      type: "shape";
+      shape?: InkShapeKind;
+      color?: InkPenColor;
+      size?: InkPenSize;
+    }
   | { type: "scroll" };
 
 /** 笔/荧光笔的绘制参数（逻辑单位）；适配器负责换算到容器实际宽度 */
@@ -105,28 +155,56 @@ export interface InkBrushSpec {
 /** 默认低平滑强度，实时书写、导出与回放使用同一设置。 */
 export const INK_DEFAULT_SMOOTHING = 0.35;
 
-/** 三档笔粗细（逻辑单位，宽度 1000 基准；2–3 档粗细） */
+/** 笔粗细（逻辑单位，宽度 1000 基准）。thin/medium/thick 的取值不可改：已落库笔迹按线宽反查档位 */
 export const INK_PEN_SIZES: Record<InkPenSize, number> = {
+  hairline: 1.5,
   thin: 2.5,
   medium: 4,
   thick: 6,
+  heavy: 9,
 };
 
-/** 笔颜色 → CSS 颜色（黑/蓝/红） */
+/** 笔颜色 → CSS 颜色。黑/蓝/红的取值不可改：已落库笔迹按颜色反查档位 */
 export const INK_PEN_COLORS: Record<InkPenColor, string> = {
   black: "#1f2328",
   blue: "#1d4ed8",
   red: "#dc2626",
+  green: "#15803d",
+  orange: "#ea580c",
+  purple: "#7e22ce",
 };
 
-/** 荧光笔：黄色半透明、加粗（alpha 保证覆盖在笔迹上仍可透出字） */
+/** 荧光笔颜色 → CSS 颜色（统一 0.45 透明度；yellow 即旧版唯一的荧光笔颜色） */
+export const INK_HIGHLIGHTER_COLORS: Record<InkHighlighterColor, string> = {
+  yellow: "rgba(250, 204, 21, 0.45)",
+  green: "rgba(74, 222, 128, 0.45)",
+  blue: "rgba(96, 165, 250, 0.45)",
+  pink: "rgba(244, 114, 182, 0.45)",
+  orange: "rgba(251, 146, 60, 0.45)",
+};
+
+/** 荧光笔粗细（逻辑单位；medium 即旧版唯一的荧光笔线宽） */
+export const INK_HIGHLIGHTER_SIZES: Record<InkHighlighterSize, number> = {
+  thin: 10,
+  medium: 16,
+  thick: 26,
+};
+
+/** 缺省荧光笔：黄色半透明、中档线宽 */
 export const INK_HIGHLIGHTER: InkBrushSpec = {
-  color: "rgba(250, 204, 21, 0.45)",
-  weight: 16,
+  color: INK_HIGHLIGHTER_COLORS.yellow,
+  weight: INK_HIGHLIGHTER_SIZES.medium,
 };
 
-/** 整笔橡皮命中半径（逻辑单位） */
-export const INK_ERASE_RADIUS = 14;
+/** 橡皮命中半径（逻辑单位；medium 即旧版唯一的橡皮半径） */
+export const INK_ERASER_SIZES: Record<InkEraserSize, number> = {
+  small: 8,
+  medium: 14,
+  large: 24,
+};
+
+/** 缺省橡皮命中半径（逻辑单位） */
+export const INK_ERASE_RADIUS = INK_ERASER_SIZES.medium;
 
 /** 默认笔配置 */
 export const DEFAULT_INK_TOOL: Required<
@@ -137,19 +215,26 @@ export const DEFAULT_INK_TOOL: Required<
   size: "medium",
 };
 
+/** 笔与形状共用的颜色、粗细记忆 */
+export interface InkPenBase {
+  color: InkPenColor;
+  size: InkPenSize;
+}
+
 /**
  * 把 InkToolConfig 解析成具体绘制参数（纯函数，供适配器与测试使用）。
- * pen 类的可选属性缺省时沿用 base（上一次生效值）。
+ * pen/shape 的可选属性缺省时沿用 base（上一次生效值）。
  */
 export function resolveToolSpec(
   tool: InkToolConfig,
-  base: { color: InkPenColor; size: InkPenSize },
+  base: InkPenBase,
 ): {
   brush: InkBrushSpec | null;
-  base: { color: InkPenColor; size: InkPenSize };
+  base: InkPenBase;
 } {
   switch (tool.type) {
-    case "pen": {
+    case "pen":
+    case "shape": {
       const next = {
         color: tool.color ?? base.color,
         size: tool.size ?? base.size,
@@ -163,31 +248,105 @@ export function resolveToolSpec(
       };
     }
     case "highlighter":
-      return { brush: INK_HIGHLIGHTER, base };
+      return {
+        brush: {
+          color: INK_HIGHLIGHTER_COLORS[tool.color ?? "yellow"],
+          weight: INK_HIGHLIGHTER_SIZES[tool.size ?? "medium"],
+        },
+        base,
+      };
     case "eraser":
     case "scroll":
       return { brush: null, base };
   }
 }
 
-/** CSS 颜色 → 笔颜色档位（逆向查找表，模块级一次构建，零分配查询） */
-const PEN_COLOR_BY_CSS = new Map<string, InkPenColor>(
-  Object.entries(INK_PEN_COLORS).map(([k, v]) => [v, k as InkPenColor]),
-);
+/**
+ * 一次落笔要做的事（落笔时按当时的工具配置取快照，一笔之内不再变）：
+ * - draw：落成一笔 pen/highlighter 笔画，shape 决定点序列怎么来；
+ * - erase：整笔或局部擦除，radius 为逻辑单位；
+ * - none：滚动模式，不接管指针。
+ */
+export type InkGesture =
+  | {
+      kind: "draw";
+      tool: "pen" | "highlighter";
+      brush: InkBrushSpec;
+      shape: InkStrokeShape;
+    }
+  | { kind: "erase"; mode: InkEraserMode; radius: number }
+  | { kind: "none" };
 
-/** 逻辑线宽 → 笔粗细档位（逆向查找表） */
-const PEN_SIZE_BY_WEIGHT = new Map<number, InkPenSize>(
-  Object.entries(INK_PEN_SIZES).map(([k, v]) => [v, k as InkPenSize]),
-);
+/** 工具配置 → 落笔手势（纯函数；三个书写面与材料圈画共用，避免各自分支漂移） */
+export function resolveGesture(
+  tool: InkToolConfig,
+  base: InkPenBase,
+): { gesture: InkGesture; base: InkPenBase } {
+  const resolved = resolveToolSpec(tool, base);
+  const draw = (
+    stroke: "pen" | "highlighter",
+    shape: InkStrokeShape,
+  ): InkGesture =>
+    resolved.brush
+      ? { kind: "draw", tool: stroke, brush: resolved.brush, shape }
+      : { kind: "none" };
+  switch (tool.type) {
+    case "pen":
+      return { gesture: draw("pen", "free"), base: resolved.base };
+    case "shape":
+      return {
+        gesture: draw("pen", tool.shape ?? "line"),
+        base: resolved.base,
+      };
+    case "highlighter":
+      return {
+        gesture: draw("highlighter", tool.straight ? "line" : "free"),
+        base: resolved.base,
+      };
+    case "eraser":
+      return {
+        gesture: {
+          kind: "erase",
+          mode: tool.mode ?? "stroke",
+          radius: INK_ERASER_SIZES[tool.size ?? "medium"],
+        },
+        base: resolved.base,
+      };
+    case "scroll":
+      return { gesture: { kind: "none" }, base: resolved.base };
+  }
+}
+
+/** 取值 → 档位的逆向查找表（模块级一次构建，零分配查询） */
+function invert<K extends string, V>(record: Record<K, V>): Map<V, K> {
+  return new Map(
+    (Object.entries(record) as Array<[K, V]>).map(([key, value]) => [
+      value,
+      key,
+    ]),
+  );
+}
+
+const PEN_COLOR_BY_CSS = invert(INK_PEN_COLORS);
+const PEN_SIZE_BY_WEIGHT = invert(INK_PEN_SIZES);
+const HIGHLIGHTER_COLOR_BY_CSS = invert(INK_HIGHLIGHTER_COLORS);
+const HIGHLIGHTER_SIZE_BY_WEIGHT = invert(INK_HIGHLIGHTER_SIZES);
 
 /**
  * 笔画 → 工具配置（resolveToolSpec 的逆向；重放、统计、合成注入共用）。
  * InkStroke 只存 CSS 颜色与逻辑线宽（契约形状），档位在此反查；
- * 未知值回退默认笔（black/medium），不抛错——回退语义集中在引擎层，
- * 消费方不再各自 Object.entries 扫描。
+ * 未知值回退缺省档位（笔 black/medium、荧光笔 yellow/medium），不抛错——回退
+ * 语义集中在引擎层，消费方不再各自 Object.entries 扫描。形状笔画与手写笔画
+ * 落库形状相同，一律反查为 pen。
  */
 export function toolConfigFromStroke(stroke: InkStroke): InkToolConfig {
-  if (stroke.tool === "highlighter") return { type: "highlighter" };
+  if (stroke.tool === "highlighter") {
+    return {
+      type: "highlighter",
+      color: HIGHLIGHTER_COLOR_BY_CSS.get(stroke.color) ?? "yellow",
+      size: HIGHLIGHTER_SIZE_BY_WEIGHT.get(stroke.weight) ?? "medium",
+    };
+  }
   return {
     type: "pen",
     color: PEN_COLOR_BY_CSS.get(stroke.color) ?? "black",

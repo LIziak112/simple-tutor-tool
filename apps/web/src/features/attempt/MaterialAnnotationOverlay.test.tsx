@@ -12,6 +12,7 @@ import {
   CoordinatedAnnotationProvider,
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
+import { selectInkTool } from "@/features/ink/engine/toolbox.ts";
 import {
   resetSessionInputPreference,
   setSessionInputPreference,
@@ -74,7 +75,9 @@ function PenToolToggle() {
     <button
       type="button"
       data-testid="toggle-pen"
-      onClick={() => coordinated?.setTool("pen")}
+      onClick={() =>
+        coordinated?.setToolbox(selectInkTool(coordinated.toolbox, "pen"))
+      }
     >
       切换画笔
     </button>
@@ -733,7 +736,7 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     });
     const { container } = render(
       <AttemptEditorProvider>
-        <CoordinatedAnnotationProvider initialTool="eraser">
+        <CoordinatedAnnotationProvider initialToolbox={{ active: "eraser" }}>
           <AnnotationToggle questionId="q1" />
           <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
             <div>擦除材料</div>
@@ -766,6 +769,85 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
       expect(stored.data.strokes).toHaveLength(0);
     }
     expect(root).toHaveAttribute("data-stroke-count", "0");
+  });
+
+  it.each([
+    { size: "small", left: 1 },
+    { size: "medium", left: 0 },
+  ] as const)(
+    "橡皮大小跟随协同工具箱：离笔迹 12 逻辑单位处，$size 号擦后剩 $left 笔",
+    async ({ size, left }) => {
+      // 横线 y=100（笔宽 2.5，半宽 1.25）；小号 8+1.25 够不着，中号 14+1.25 够得着
+      draftStore.saveMaterialInk(
+        "att-1",
+        "mat-1",
+        inkDocOf([strokeAt(100, 100)]),
+      );
+      draftStore.saveMaterialInkBase("att-1", "mat-1", {
+        cssWidth: 500,
+        cssHeight: 400,
+      });
+      const { container } = render(
+        <AttemptEditorProvider>
+          <CoordinatedAnnotationProvider
+            initialToolbox={{ active: "eraser", eraser: { size } }}
+          >
+            <AnnotationToggle questionId="q1" />
+            <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+              <div>擦除材料</div>
+            </MaterialAnnotationOverlay>
+          </CoordinatedAnnotationProvider>
+        </AttemptEditorProvider>,
+      );
+      fireEvent.click(screen.getByTestId("toggle-annotation"));
+      const root = overlayRootOf(container);
+      await waitInkReady(root);
+      const layer = inputLayerOf(container);
+      mockLayerRect(layer);
+      await act(async () => {
+        // 画布宽 500 → 1 CSS px = 2 逻辑单位；(55,56) = 逻辑 (110,112)
+        fireEvent.pointerDown(layer, {
+          pointerId: 1,
+          button: 0,
+          pointerType: "pen",
+          clientX: 55,
+          clientY: 56,
+          pressure: 0.5,
+        });
+        fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+      });
+      expect(root).toHaveAttribute("data-stroke-count", String(left));
+    },
+  );
+
+  it("笔色、粗细跟随协同工具箱：落笔写入对应的颜色与线宽", async () => {
+    const { container } = render(
+      <AttemptEditorProvider>
+        <CoordinatedAnnotationProvider
+          initialToolbox={{ pen: { color: "green", size: "heavy" } }}
+        >
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+            <div>换色材料</div>
+          </MaterialAnnotationOverlay>
+        </CoordinatedAnnotationProvider>
+      </AttemptEditorProvider>,
+    );
+    fireEvent.click(screen.getByTestId("toggle-annotation"));
+    const root = overlayRootOf(container);
+    await waitInkReady(root);
+    const layer = inputLayerOf(container);
+    mockLayerRect(layer);
+    await drawStroke(layer, 50);
+    const stored = draftStore.getMaterialInk("att-1", "mat-1");
+    expect(stored?.engine).toBe("atrament");
+    if (stored?.engine !== "atrament") return;
+    expect(stored.data.strokes).toHaveLength(1);
+    expect(stored.data.strokes[0]).toMatchObject({
+      tool: "pen",
+      color: "#15803d",
+      weight: 9,
+    });
   });
 });
 
@@ -1163,7 +1245,7 @@ describe("材料圈画固定阅读框（已有基准常显）", () => {
 
       const { container } = render(
         <AttemptEditorProvider>
-          <CoordinatedAnnotationProvider initialTool="eraser">
+          <CoordinatedAnnotationProvider initialToolbox={{ active: "eraser" }}>
             <AnnotationToggle questionId="q1" />
             <PenToolToggle />
             <MaterialAnnotationOverlay

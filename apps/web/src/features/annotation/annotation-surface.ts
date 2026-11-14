@@ -52,13 +52,14 @@ import {
 import type { InkChangeReason } from "@/features/ink/engine/surface.ts";
 import {
   asPointerKind,
-  INK_ERASE_RADIUS,
   INK_LOGICAL_WIDTH,
   type InkInputMode,
+  type InkPenBase,
   type InkPointerKind,
   type InkStroke,
   type InkStrokePoint,
   type InkToolConfig,
+  resolveGesture,
   resolveToolSpec,
 } from "@/features/ink/engine/types.ts";
 
@@ -211,13 +212,7 @@ export function createAnnotationSurface(
   let inputBound = false;
 
   let tool: InkToolConfig = { type: "pen" };
-  let base: {
-    color: "black" | "blue" | "red";
-    size: "thin" | "medium" | "thick";
-  } = {
-    color: "red",
-    size: "medium",
-  };
+  let base: InkPenBase = { color: "red", size: "medium" };
 
   let machine: PointerMachineState = createPointerMachineState(
     options.inputMode ?? "auto",
@@ -231,6 +226,8 @@ export function createAnnotationSurface(
   let liveTool: "pen" | "highlighter" = "pen";
   let liveBrush: { color: string; weight: number } | null = null;
   let liveStrokeIsErase = false;
+  /** 本次擦除的橡皮半径（底图像素域），取落笔时的档位 */
+  let liveEraseRadius = 0;
   let livePrev: { x: number; y: number } | null = null;
   let pendingErase = new Set<number>();
   let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
@@ -487,9 +484,15 @@ export function createAnnotationSurface(
     // LR-1：落笔绝对时刻（epoch ms）与输入来源（pointerType 直录，空串守卫）
     liveStartedAt = Date.now();
     livePointerKind = asPointerKind(e.pointerType);
-    liveStrokeIsErase = tool.type === "eraser";
+    // 落笔快照：这一次手势按此刻的工具（含橡皮大小）分派
+    const resolved = resolveGesture(tool, base);
+    base = resolved.base;
+    const gesture = resolved.gesture;
+    liveStrokeIsErase = gesture.kind === "erase";
 
-    if (liveStrokeIsErase) {
+    if (gesture.kind === "erase") {
+      // 引擎档位按 1000 纸基准定义 → 底图像素域等比换算
+      liveEraseRadius = logicalToBase(baseWidth, gesture.radius);
       // 近似原位：橡皮命中在存储域做——指针点先映射回存储域（ratio 供半径换算）
       const stored = view ? view.pointToStored({ x, y }) : { x, y, ratio: 1 };
       erasePrev = { x: stored.x, y: stored.y };
@@ -498,21 +501,19 @@ export function createAnnotationSurface(
           store.peekStrokes(),
           stored.x,
           stored.y,
-          logicalToBase(baseWidth, INK_ERASE_RADIUS) * stored.ratio,
+          liveEraseRadius * stored.ratio,
         ),
       );
       redraw();
       return;
     }
 
-    const resolved = resolveToolSpec(tool, base);
-    base = resolved.base;
-    liveTool = tool.type === "highlighter" ? "highlighter" : "pen";
-    if (!resolved.brush) return;
+    if (gesture.kind !== "draw") return;
+    liveTool = gesture.tool;
     // 引擎档位按 1000 纸基准定义 → 底图像素域等比换算（视觉粗细同档）
     liveBrush = {
-      color: resolved.brush.color,
-      weight: logicalToBase(baseWidth, resolved.brush.weight),
+      color: gesture.brush.color,
+      weight: logicalToBase(baseWidth, gesture.brush.weight),
     };
     if (!atrament) return;
     atrament.color = liveBrush.color;
@@ -540,7 +541,7 @@ export function createAnnotationSurface(
       eraseBoxes = eraseView.map((s) => strokeBounds(s));
     }
 
-    const radius = logicalToBase(baseWidth, INK_ERASE_RADIUS);
+    const radius = liveEraseRadius;
     for (const ev of events) {
       const { x, y } = eventToBase(ev, rect);
       if (eraseView && eraseBoxes) {

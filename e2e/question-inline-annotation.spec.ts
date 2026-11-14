@@ -10,6 +10,7 @@ import {
   openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
+  toolbarButtonNames,
   uniqueSuffix,
 } from "./helpers";
 
@@ -456,6 +457,10 @@ test(
     await first.getByRole("button", { name: /圈画题干/ }).click();
     const toolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
     await expect(toolbar).toBeVisible();
+    // 320px 放不下六个按钮：重做收进「更多」，「完成标画」始终留在屏幕内
+    await expect
+      .poll(() => toolbarButtonNames(toolbar))
+      .toEqual(["笔", "橡皮", "撤销", "更多标画操作", "完成标画"]);
     for (const button of await toolbar.getByRole("button").all()) {
       const box = await button.boundingBox();
       expect(box).not.toBeNull();
@@ -463,6 +468,36 @@ test(
       expect(box?.x).toBeGreaterThanOrEqual(0);
       expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
     }
+    await toolbar.getByRole("button", { name: "更多标画操作" }).click();
+    await expect
+      .poll(() =>
+        page
+          .getByRole("menuitem")
+          .evaluateAll((items) =>
+            items.map((item) => item.textContent?.trim()),
+          ),
+      )
+      .toEqual(["重做", "清空标画（可撤销）"]);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // 窄屏下选项面板也不超出屏幕
+    await toolbar.getByRole("button", { name: "笔", exact: true }).click();
+    const narrowPanel = page.getByRole("dialog", { name: "笔设置" });
+    await expect(narrowPanel).toBeVisible();
+    const panelBox = await narrowPanel.boundingBox();
+    expect(panelBox?.x).toBeGreaterThanOrEqual(0);
+    expect((panelBox?.x ?? 0) + (panelBox?.width ?? 0)).toBeLessThanOrEqual(
+      320,
+    );
+    for (const radio of await narrowPanel.getByRole("radio").all()) {
+      const box = await radio.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(44);
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+      expect(box?.x).toBeGreaterThanOrEqual(0);
+      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
+    }
+    await page.keyboard.press("Escape");
+    await expect(narrowPanel).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("inline-original-320.png"),
     });

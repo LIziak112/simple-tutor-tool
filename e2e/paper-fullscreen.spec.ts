@@ -14,6 +14,7 @@ import {
   openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
+  toolbarButtonNames,
   uniqueSuffix,
 } from "./helpers";
 
@@ -211,14 +212,8 @@ test(
       };
       const beforeStrokes = storedStrokes();
       await openFullscreen();
-      if (kind === "scratch") {
-        await card.getByRole("button", { name: /更多操作/ }).click();
-        await page.getByRole("menuitem", { name: "重做" }).click();
-      } else {
-        await card.getByRole("button", { name: /更多操作/ }).click();
-        await page.getByRole("menuitem", { name: "重做", exact: true }).click();
-      }
-      await expect(page.getByRole("menu")).toHaveCount(0);
+      // iPad 宽度下重做是工具栏上的按钮（320px 放不下时收进「更多」，见下）
+      await card.getByRole("button", { name: "重做", exact: true }).click();
       await expect.poll(count).toBe(3);
       await drawStrokeWithPointerEvents(canvas);
       await expect.poll(count).toBe(4);
@@ -252,17 +247,31 @@ test(
       await page.setViewportSize({ width: 320, height: 800 });
       await openFullscreen();
       const toolbar = page.getByRole("toolbar").filter({ visible: true });
-      await expect(toolbar.getByRole("button")).toHaveCount(
-        kind === "scratch" ? 4 : 5,
-      );
-      await expect(
-        toolbar.getByRole("button", { name: "手指书写", exact: true }),
-      ).toHaveCount(kind === "scratch" ? 0 : 1);
+      // 320px：草稿纸的五个按钮刚好放下；正式手写多一个「手指书写」放不下，
+      // 重做收进「更多」，其余按钮一个不少
+      await expect
+        .poll(() => toolbarButtonNames(toolbar))
+        .toEqual(
+          kind === "scratch"
+            ? ["笔", "橡皮", "撤销", "重做", "更多操作（第 1 题草稿纸）"]
+            : ["笔", "橡皮", "撤销", "手指书写", "更多操作（手写答题区）"],
+        );
       for (const button of await toolbar.getByRole("button").all()) {
         const box = await button.boundingBox();
         expect(box?.width).toBeGreaterThanOrEqual(44);
         expect(box?.x).toBeGreaterThanOrEqual(0);
         expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
+      }
+      if (kind === "formal") {
+        // 收进菜单的重做照常可用；做完撤回去，不影响后面的笔数
+        await toolbar.getByRole("button", { name: /更多操作/ }).click();
+        await page.getByRole("menuitem", { name: "重做", exact: true }).click();
+        await expect(page.getByRole("menu")).toHaveCount(0);
+        await expect.poll(count).toBe(4);
+        await toolbar
+          .getByRole("button", { name: "撤销", exact: true })
+          .click();
+        await expect.poll(count).toBe(3);
       }
       await expect
         .poll(() =>

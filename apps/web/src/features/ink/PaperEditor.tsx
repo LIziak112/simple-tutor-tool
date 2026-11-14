@@ -1,15 +1,10 @@
 import type { NoteBackground, QuestionProcessFinish } from "@tutor/contract";
 import { type ReactNode, useEffect, useState } from "react";
-import { NoteToolbar } from "@/features/notes/NoteToolbar";
-import type {
-  InkChangeReason,
-  InkDoc,
-  InkEngine,
-  InkPenColor,
-  InkPenSize,
-} from "./engine";
+import type { InkChangeReason, InkDoc, InkEngine } from "./engine";
+import { createInkToolbox, toolConfigOf } from "./engine/toolbox.ts";
 import { InkPad, SessionPrefToggleButton } from "./InkPad";
 import { useInkProfileSelection } from "./ink-profile-store";
+import { InkToolbar } from "./toolbar/InkToolbar.tsx";
 
 /** 草稿与正式作答共用纸面和工具栏，正文由调用方各自保存。 */
 export function PaperEditor({
@@ -20,7 +15,6 @@ export function PaperEditor({
   inputEnabled,
   paperHeight,
   background = "grid",
-  compact = true,
   clearLabel,
   menuExtras,
   onClearRequest,
@@ -29,7 +23,7 @@ export function PaperEditor({
   showToolbar = true,
   mountPad = true,
   initialHeight,
-  moreTitle = "更多（重做/颜色/粗细/清空）",
+  moreTitle = "更多（清空）",
   allowFingerWriting = false,
 }: {
   label: string;
@@ -43,7 +37,6 @@ export function PaperEditor({
   inputEnabled: boolean;
   paperHeight?: number | undefined;
   background?: NoteBackground;
-  compact?: boolean;
   clearLabel: string;
   menuExtras?: ReactNode;
   onClearRequest(): void;
@@ -56,39 +49,39 @@ export function PaperEditor({
   allowFingerWriting?: boolean;
 }) {
   const profile = useInkProfileSelection();
-  const [tool, setTool] = useState<"pen" | "eraser">("pen");
-  const [color, setColor] = useState<InkPenColor>(profile.config.color);
-  const [size, setSize] = useState<InkPenSize>(profile.config.size);
+  /** 工具箱：笔的颜色、粗细跟随笔感设置，设置变化时重新取值 */
+  const [toolbox, setToolbox] = useState(() =>
+    createInkToolbox({
+      pen: { color: profile.config.color, size: profile.config.size },
+    }),
+  );
   const [history, setHistory] = useState({ undo: false, redo: false });
   const [generation, setGeneration] = useState(0);
   useEffect(() => {
-    setColor(profile.config.color);
-    setSize(profile.config.size);
+    const { color, size } = profile.config;
+    setToolbox((current) =>
+      current.pen.color === color && current.pen.size === size
+        ? current
+        : { ...current, pen: { color, size } },
+    );
   }, [profile.config]);
   // 引擎重建或纸面重新启用后重新下发当前工具。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 重建与启用是必要的触发器
   useEffect(() => {
-    engineRef.current?.setTool(
-      tool === "pen" ? { type: "pen", color, size } : { type: "eraser" },
-    );
+    engineRef.current?.setTool(toolConfigOf(toolbox));
     setHistory({
       undo: engineRef.current?.canUndo() ?? false,
       redo: engineRef.current?.canRedo() ?? false,
     });
-  }, [tool, color, size, engineRef, generation, inputEnabled]);
+  }, [toolbox, engineRef, generation, inputEnabled]);
   return (
     <div data-slot="paper-editor" className="flex min-w-0 flex-col gap-2">
       {showToolbar && (
         <div inert={!inputEnabled}>
-          <NoteToolbar
-            compact={compact}
+          <InkToolbar
             label={label}
-            tool={tool}
-            onToolChange={setTool}
-            color={color}
-            onColorChange={setColor}
-            size={size}
-            onSizeChange={setSize}
+            toolbox={toolbox}
+            onToolboxChange={setToolbox}
             canUndo={history.undo}
             canRedo={history.redo}
             onUndo={() => engineRef.current?.undo()}
@@ -97,14 +90,7 @@ export function PaperEditor({
             clearLabel={clearLabel}
             moreTitle={moreTitle}
             menuExtras={menuExtras}
-            fingerToggle={
-              allowFingerWriting && (
-                <SessionPrefToggleButton
-                  iconOnly={compact}
-                  {...(compact ? { className: "size-11 shrink-0 p-0" } : {})}
-                />
-              )
-            }
+            fingerToggle={allowFingerWriting && <SessionPrefToggleButton />}
           />
         </div>
       )}

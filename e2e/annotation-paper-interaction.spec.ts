@@ -8,6 +8,7 @@ import {
   openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
+  toolbarButtonNames,
   uniqueSuffix,
 } from "./helpers";
 
@@ -535,8 +536,8 @@ test("清空标画菜单不退出模式，清空可撤销且刷新保留空稿",
   await expect(toolbar).toBeVisible();
   await toolbar.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
-  await toolbar.getByRole("button", { name: "更多标画操作" }).click();
-  await page.getByRole("menuitem", { name: "重做", exact: true }).click();
+  // 宽度够时重做是工具栏上的独立按钮（窄屏收进「更多」，见 320px 用例）
+  await toolbar.getByRole("button", { name: "重做", exact: true }).click();
   await expect(trigger).not.toHaveAccessibleName(/已有/);
   await page.reload();
   await expect(trigger).not.toHaveAccessibleName(/已有/);
@@ -649,19 +650,66 @@ test("圈画和草稿都用同款笔橡皮，手指不落墨", {
         );
     });
   const markToolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
-  await expect(markToolbar.getByRole("button")).toHaveCount(5);
-  await expect(
-    markToolbar.getByRole("button", { name: "手指书写", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    markToolbar.getByRole("button", { name: "笔", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  // 圈画没有「手指书写」；其余与草稿纸同一套：笔、橡皮、撤销、重做、更多
+  await expect
+    .poll(() => toolbarButtonNames(markToolbar))
+    .toEqual(["笔", "橡皮", "撤销", "重做", "更多标画操作", "完成标画"]);
+  const markPen = markToolbar.getByRole("button", { name: "笔", exact: true });
+  await expect(markPen).toHaveAttribute("aria-pressed", "true");
   await expect(canvas).toHaveCSS("touch-action", "pan-y");
   await touchStroke(canvas);
   await expect(trigger).not.toHaveAccessibleName(/已有/);
+
+  // 再点一次当前的笔：弹出选项面板（6 色 5 档）；选色后面板不收起、圈画不退出
+  await markPen.click();
+  const penPanel = page.getByRole("dialog", { name: "笔设置" });
+  await expect(penPanel).toBeVisible();
+  await expect(
+    penPanel.getByRole("radiogroup", { name: "颜色" }).getByRole("radio"),
+  ).toHaveCount(6);
+  await expect(
+    penPanel.getByRole("radiogroup", { name: "粗细" }).getByRole("radio"),
+  ).toHaveCount(5);
+  await expect(penPanel.getByRole("radio", { name: "红" })).toBeChecked();
+  await penPanel.getByRole("radio", { name: "蓝" }).click();
+  await expect(penPanel).toBeVisible();
+  await expect(penPanel.getByRole("radio", { name: "蓝" })).toBeChecked();
+  await expect(markPen.locator('[data-slot="ink-tool-color"]')).toHaveCSS(
+    "background-color",
+    "rgb(29, 78, 216)",
+  );
+  await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+  // 键盘：方向键在同组里移动并选中（按住再松开，和真人按键一样有先后），
+  // Escape 收起面板、焦点回到笔按钮
+  await page.keyboard.down("ArrowRight");
+  await expect(penPanel.getByRole("radio", { name: "红" })).toBeChecked();
+  await page.keyboard.up("ArrowRight");
+  await page.keyboard.press("Escape");
+  await expect(penPanel).toHaveCount(0);
+  await expect(markPen).toBeFocused();
+  await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+  // 面板开着直接落笔：面板收起，这一笔照常写上
+  await markPen.click();
+  await expect(penPanel).toBeVisible();
   await drawStrokeWithPointerEvents(canvas);
+  await expect(penPanel).toHaveCount(0);
   await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
-  await markToolbar.getByRole("button", { name: "橡皮", exact: true }).click();
+
+  // 点未选中的橡皮只切工具、不弹面板；再点一次才出橡皮大小
+  const markEraser = markToolbar.getByRole("button", {
+    name: "橡皮",
+    exact: true,
+  });
+  await markEraser.click();
+  await expect(markEraser).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await markEraser.click();
+  const eraserPanel = page.getByRole("dialog", { name: "橡皮设置" });
+  await expect(
+    eraserPanel.getByRole("radiogroup", { name: "大小" }).getByRole("radio"),
+  ).toHaveCount(3);
+  await page.keyboard.press("Escape");
+  await expect(eraserPanel).toHaveCount(0);
   await drawStrokeWithPointerEvents(canvas);
   await expect(trigger).not.toHaveAccessibleName(/已有/);
   await markToolbar.getByRole("button", { name: "撤销", exact: true }).click();
@@ -674,7 +722,24 @@ test("圈画和草稿都用同款笔橡皮，手指不落墨", {
   const paper = card.locator('[data-slot="note-layer"]');
   const paperToolbar = paper.getByRole("toolbar");
   const paperCanvas = paper.locator("canvas");
-  await expect(paperToolbar.getByRole("button")).toHaveCount(4);
+  await expect
+    .poll(() => toolbarButtonNames(paperToolbar))
+    .toEqual(["笔", "橡皮", "撤销", "重做", "更多操作（第 1 题草稿纸）"]);
+  // 草稿纸的笔是同一个选项面板（缺省黑色中号，跟随笔感设置）
+  const paperPen = paperToolbar.getByRole("button", {
+    name: "笔",
+    exact: true,
+  });
+  await paperPen.click();
+  const paperPenPanel = page.getByRole("dialog", { name: "笔设置" });
+  await expect(paperPenPanel.getByRole("radio", { name: "黑" })).toBeChecked();
+  await expect(
+    paperPenPanel
+      .getByRole("radiogroup", { name: "粗细" })
+      .getByRole("radio", { name: "中" }),
+  ).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(paperPenPanel).toHaveCount(0);
   await expect(paperCanvas).toHaveCSS("touch-action", "pan-y");
   await touchStroke(paperCanvas);
   await expect(paper.getByText("1 笔", { exact: true })).toHaveCount(0);

@@ -4,11 +4,15 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { useCoordinatedAnnotation } from "@/features/annotation/coordinated-annotation-context";
+import {
+  createAnnotationToolbox,
+  useCoordinatedAnnotation,
+} from "@/features/annotation/coordinated-annotation-context";
 import { eraseHit } from "@/features/ink/engine/erase.ts";
 import { toLogicalPoint } from "@/features/ink/engine/normalize.ts";
 import {
@@ -19,11 +23,11 @@ import {
   type PointerMachineState,
   touchActionForInput,
 } from "@/features/ink/engine/pointer-machine.ts";
+import { toolConfigOf } from "@/features/ink/engine/toolbox.ts";
 import {
-  INK_ERASE_RADIUS,
   INK_LOGICAL_WIDTH,
-  INK_PEN_COLORS,
-  INK_PEN_SIZES,
+  type InkGesture,
+  resolveGesture,
 } from "@/features/ink/engine/types.ts";
 import {
   type AtramentReplayCanvas,
@@ -41,6 +45,9 @@ import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 
 /** 首笔前材料就绪等待上限（同题面 STEP_TIMEOUT_MS 口径） */
 const MATERIAL_READY_TIMEOUT_MS = 15_000;
+
+/** 无共享工具箱（单测、独立挂载）时用圈画缺省：红色细笔 */
+const FALLBACK_TOOLBOX = createAnnotationToolbox();
 
 /**
  * 材料表面就绪等待（题面 awaitQuestionSurfaceReady 的材料版，不栅格化）：
@@ -127,7 +134,7 @@ export interface MaterialAnnotationOverlayProps {
  *   变化先收笔等决策矩阵与其单测共用），固定笔写、手指滚动；
  * - 绘制：ink/replay/draw 的 createAtramentReplayCanvas（与回放/导出同一
  *   atrament 绘制原语、DPR 上限 2、尺寸变化自重画）；
- * - 笔色/笔粗/橡皮半径：INK_PEN_COLORS / INK_PEN_SIZES / INK_ERASE_RADIUS，
+ * - 笔色/笔粗/橡皮大小：跟随协同工具箱，经 resolveGesture 换成落笔规格；
  *   橡皮命中走 eraseHit（半径内含半笔宽，与题面圈画同手感）；
  * - 矢量坐标一律按 INK_LOGICAL_WIDTH(1000) 归一化存储（normalize.ts）。
  * 笔迹按 attemptId + inkKey 合并存入 draftStore（本机稿；交卷不清除，
@@ -147,9 +154,14 @@ export function MaterialAnnotationOverlay({
 }: MaterialAnnotationOverlayProps) {
   const editor = useAttemptEditor();
   const coordinated = useCoordinatedAnnotation();
-  const tool = coordinated?.tool ?? "pen";
-  const color = coordinated?.color ?? "red";
-  const size = coordinated?.size ?? "thin";
+  const toolbox = coordinated?.toolbox ?? FALLBACK_TOOLBOX;
+  /** 当前工具对应的手势（落笔时取快照，见 liveGestureRef） */
+  const gesture = useMemo(
+    () => resolveGesture(toolConfigOf(toolbox), toolbox.pen).gesture,
+    [toolbox],
+  );
+  /** 本次手势的工具快照：一笔之内的采样都按落笔时的工具分派 */
+  const liveGestureRef = useRef<InkGesture>({ kind: "none" });
   const storeKey = inkKey ?? materialId;
 
   const isAssociated =
@@ -469,12 +481,12 @@ export function MaterialAnnotationOverlay({
   );
 
   const eraseAt = useCallback(
-    (point: { x: number; y: number }) => {
+    (point: { x: number; y: number }, radius: number) => {
       const hits = eraseHit(
         strokesRef.current,
         point.x,
         point.y,
-        INK_ERASE_RADIUS,
+        radius,
         undefined,
         lastEraseRef.current ?? undefined,
       );
@@ -532,19 +544,21 @@ export function MaterialAnnotationOverlay({
         rect !== null ? { width: rect.width, height: rect.height } : null;
       strokeStartRef.current = Date.now();
       const point = pointOf(e);
-      if (tool === "eraser") {
+      liveGestureRef.current = gesture;
+      if (gesture.kind === "erase") {
         lastEraseRef.current = null;
-        eraseAt(point);
+        eraseAt(point, gesture.radius);
         return;
       }
+      if (gesture.kind !== "draw") return;
       currentStrokeRef.current = {
-        tool: "pen",
-        color: INK_PEN_COLORS[color],
-        weight: INK_PEN_SIZES[size],
+        tool: gesture.tool,
+        color: gesture.brush.color,
+        weight: gesture.brush.weight,
         points: [point],
       };
     },
-    [attemptId, storeKey, tool, color, size, pointOf, eraseAt, setStrokesBoth],
+    [attemptId, storeKey, gesture, pointOf, eraseAt, setStrokesBoth],
   );
 
   /** 释放指针捕获（收笔/丢弃共用；捕获可能已被浏览器释放，防御忽略） */
@@ -637,8 +651,9 @@ export function MaterialAnnotationOverlay({
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (!isSampleMove(machineRef.current, e.pointerId)) return;
-      if (tool === "eraser") {
-        eraseAt(pointOf(e));
+      const live = liveGestureRef.current;
+      if (live.kind === "erase") {
+        eraseAt(pointOf(e), live.radius);
         return;
       }
       const stroke = currentStrokeRef.current;
@@ -646,7 +661,7 @@ export function MaterialAnnotationOverlay({
       stroke.points.push(pointOf(e));
       scheduleRedraw();
     },
-    [tool, pointOf, eraseAt, scheduleRedraw],
+    [pointOf, eraseAt, scheduleRedraw],
   );
 
   const handlePointerEnd = useCallback(
@@ -785,7 +800,7 @@ export function MaterialAnnotationOverlay({
       }}
       className={`absolute inset-0 [&_canvas]:pointer-events-none ${
         isAnnotationActive
-          ? tool === "eraser"
+          ? gesture.kind === "erase"
             ? "cursor-cell"
             : "cursor-crosshair"
           : ""

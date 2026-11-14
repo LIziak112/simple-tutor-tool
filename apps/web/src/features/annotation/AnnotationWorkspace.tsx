@@ -5,7 +5,7 @@
  * 挂载 gate（「没有可靠底图不能落墨」的前端闸门）：base 非 ready 不挂画布，
  * 由父层（AnnotationLayer）只显示状态/禁用原因；本组件只在 base ready 时
  * 渲染。笔迹引擎=annotation-surface（标注专用画布，引擎件全复用 ink engine）。
- * 工具条复用 NoteToolbar（笔/橡皮/撤销/更多——触控 ≥44px）。同步状态区
+ * 工具条用共用的 InkToolbar（笔/橡皮/撤销/重做/更多——触控 ≥44px）。同步状态区
  * 精简为标注语境（本地落盘/同步/冲突/被拒）。
  */
 import type { AnnotationBaseRef } from "@tutor/contract";
@@ -22,9 +22,12 @@ import {
 } from "@/components/ui/dialog";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
-import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
-import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import {
+  createInkToolbox,
+  toolConfigOf,
+} from "@/features/ink/engine/toolbox.ts";
+import { InkToolbar } from "@/features/ink/toolbar/InkToolbar.tsx";
 import { studentAnnotationBasePngUrl } from "@/lib/api";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { blocksInBaseDomain } from "./annotation-anchor";
@@ -136,9 +139,10 @@ export function AnnotationWorkspace({
     });
   }, [coordinator?.register, session, attemptId, questionId, phase]);
   const surfaceHostRef = useRef<HTMLDivElement | null>(null);
-  const [tool, setTool] = useState<"pen" | "eraser">("pen");
-  const [penColor, setPenColor] = useState<InkPenColor>("red");
-  const [penSize, setPenSize] = useState<InkPenSize>("medium");
+  // 独立标注工作区沿用原先的红色中号笔（题面圈画的共享工具箱是红色细笔）
+  const [toolbox, setToolbox] = useState(() =>
+    createInkToolbox({ pen: { color: "red", size: "medium" } }),
+  );
   const [historyTick, setHistoryTick] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
   /** 裁决/重试出口的异步失败就地呈现（网络错误等不让按钮静默失效） */
@@ -207,12 +211,8 @@ export function AnnotationWorkspace({
   // 工具变化 → setTool（不重建引擎）
   useEffect(() => {
     if (!docReady) return;
-    surfaceRef.current?.setTool(
-      tool === "pen"
-        ? { type: "pen", color: penColor, size: penSize }
-        : { type: "eraser" },
-    );
-  }, [tool, penColor, penSize, docReady]);
+    surfaceRef.current?.setTool(toolConfigOf(toolbox));
+  }, [toolbox, docReady]);
 
   // 外部换稿守卫（自写自载）：docVersion 推进而非本引擎产物 → load 重放
   useEffect(() => {
@@ -234,21 +234,17 @@ export function AnnotationWorkspace({
 
   return (
     <div data-slot="annotation-workspace" className="flex flex-col gap-2">
-      <NoteToolbar
+      <InkToolbar
         label={label}
-        tool={tool}
-        onToolChange={setTool}
-        color={penColor}
-        onColorChange={setPenColor}
-        size={penSize}
-        onSizeChange={setPenSize}
+        toolbox={toolbox}
+        onToolboxChange={setToolbox}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={() => surfaceRef.current?.undo()}
         onRedo={() => surfaceRef.current?.redo()}
         onClearRequest={() => setClearOpen(true)}
         clearLabel="清空标注"
-        moreTitle="更多（重做/颜色/粗细/清空）"
+        moreTitle="更多（清空）"
       />
 
       {/* 底图 + 笔迹画布：同一盒（img 定尺寸，画布铺满其上——同 scale 变换） */}

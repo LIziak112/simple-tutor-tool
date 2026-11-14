@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type {
   AnnotationDoc,
@@ -588,19 +589,45 @@ it("标画收起保活到期释放空画布，重新打开恢复引擎", async (
 
 it("无 CoordinatedAnnotationProvider 的挂载语境（讲练页）工具切换仍生效", async () => {
   // 回归：协同标画 Context 默认值曾携带具体值，导致无 Provider 时
-  // `coordinated.tool ?? localTool` 永不回退，橡皮/颜色/粗细切换全部失灵
+  // `coordinated.toolbox ?? localToolbox` 永不回退，橡皮/颜色/粗细切换全部失灵
   render(<Harness />);
   await settleGeometry();
   fireEvent.click(screen.getByText("标画"));
   await waitFor(() =>
     expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
   );
+  // 圈画缺省红色细笔
+  expect(engine.setTool).toHaveBeenLastCalledWith({
+    type: "pen",
+    color: "red",
+    size: "thin",
+  });
   const eraser = screen.getByRole("button", { name: "橡皮" });
   expect(eraser).toHaveAttribute("aria-pressed", "false");
   fireEvent.click(eraser);
   await waitFor(() => expect(eraser).toHaveAttribute("aria-pressed", "true"));
   await waitFor(() =>
-    expect(engine.setTool).toHaveBeenLastCalledWith({ type: "eraser" }),
+    expect(engine.setTool).toHaveBeenLastCalledWith({
+      type: "eraser",
+      mode: "stroke",
+      size: "medium",
+    }),
+  );
+  // 颜色、粗细同样生效：回到笔，再点一次打开面板改色
+  const pen = screen.getByRole("button", { name: "笔" });
+  fireEvent.click(pen);
+  fireEvent.click(pen);
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "笔设置" })).getByRole("radio", {
+      name: "蓝",
+    }),
+  );
+  await waitFor(() =>
+    expect(engine.setTool).toHaveBeenLastCalledWith({
+      type: "pen",
+      color: "blue",
+      size: "thin",
+    }),
   );
 });
 it("切题 flush 由固定原稿唯一宿主收笔并等待本机保存", async () => {

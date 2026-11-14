@@ -5,22 +5,32 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
+import {
+  createInkToolbox,
+  type InkToolboxInit,
+  type InkToolboxState,
+} from "@/features/ink/engine/toolbox.ts";
+
+/** 圈画的工具箱：缺省红色细笔（批注题面，不抢题干的黑字） */
+export function createAnnotationToolbox(
+  init: InkToolboxInit = {},
+): InkToolboxState {
+  return createInkToolbox({
+    ...init,
+    pen: { color: "red", size: "thin", ...init.pen },
+  });
+}
 
 /**
- * 材料与原题协同标画的共享笔态（笔/橡皮、颜色、粗细）。
+ * 材料与原题协同标画的共享工具箱（当前工具及各工具的设置）。
  * 默认值恒为 null：消费方（如 QuestionAnnotationOverlay）必须以
- * `coordinated?.tool ?? 本地 state` 回退——无 Provider 的挂载语境（讲练页、
+ * `coordinated?.toolbox ?? 本地 state` 回退——无 Provider 的挂载语境（讲练页、
  * 单测）本地状态才真正生效，杜绝「默认值携带具体值导致回退永不命中」的
  * 静默失效。
  */
 export interface CoordinatedAnnotationState {
-  tool: "pen" | "eraser";
-  color: InkPenColor;
-  size: InkPenSize;
-  setTool: (tool: "pen" | "eraser") => void;
-  setColor: (color: InkPenColor) => void;
-  setSize: (size: InkPenSize) => void;
+  toolbox: InkToolboxState;
+  setToolbox: (next: InkToolboxState) => void;
 }
 
 const CoordinatedAnnotationContext =
@@ -28,31 +38,16 @@ const CoordinatedAnnotationContext =
 
 export function CoordinatedAnnotationProvider({
   children,
-  initialTool = "pen",
-  initialColor = "red",
-  initialSize = "thin",
+  initialToolbox,
 }: {
   children: ReactNode;
-  initialTool?: "pen" | "eraser";
-  initialColor?: InkPenColor;
-  initialSize?: InkPenSize;
+  /** 初始工具箱，只需给出与圈画缺省不同的字段 */
+  initialToolbox?: InkToolboxInit;
 }) {
-  const [tool, setTool] = useState<"pen" | "eraser">(initialTool);
-  const [color, setColor] = useState<InkPenColor>(initialColor);
-  const [size, setSize] = useState<InkPenSize>(initialSize);
-
-  const value = useMemo(
-    () => ({
-      tool,
-      color,
-      size,
-      setTool,
-      setColor,
-      setSize,
-    }),
-    [tool, color, size],
+  const [toolbox, setToolbox] = useState(() =>
+    createAnnotationToolbox(initialToolbox),
   );
-
+  const value = useMemo(() => ({ toolbox, setToolbox }), [toolbox]);
   return (
     <CoordinatedAnnotationContext.Provider value={value}>
       {children}
@@ -60,7 +55,7 @@ export function CoordinatedAnnotationProvider({
   );
 }
 
-/** 无 Provider 时返回 null，由消费方回退到自己的本地笔态 */
+/** 无 Provider 时返回 null，由消费方回退到自己的本地工具箱 */
 export function useCoordinatedAnnotation(): CoordinatedAnnotationState | null {
   return useContext(CoordinatedAnnotationContext);
 }
