@@ -499,6 +499,9 @@ export function createStudentAiRoutes(
             studentId: c.var.student.id,
             attemptId: body.attemptId,
             questionId: body.questionId,
+            ...(body.questionRevisionId !== undefined
+              ? { questionRevisionId: body.questionRevisionId }
+              : {}),
             question: body.question,
             channel: body.channel,
             mutationId: body.mutationId,

@@ -21,6 +21,7 @@ import {
   attempts,
 } from "../db/schema";
 import { attemptAnswersPublished } from "./answer-publication.ts";
+import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { assignmentReleaseByIds } from "./attempt-service";
 import { timeProjectionsOf } from "./attempt-time-projection";
 import { requireVisibleCourseUnit } from "./course-service";
@@ -71,6 +72,28 @@ import { sourceOf } from "./teacher-attempt-service";
 
 /** 最近活动时间排序/筛选键（D6/D10 同一口径：lastActivityAt / submittedAt / startedAt 的最大值） */
 const lastActivitySql = sql<string>`max(coalesce(${attempts.lastActivityAt}, ${attempts.startedAt}), coalesce(${attempts.submittedAt}, ${attempts.startedAt}))`;
+
+/** MCP的最近会话定位包含opened；与入账列表分开，复用同一来源权限与排序。 */
+export function latestReachableStudentDraft(
+  db: Db,
+  studentId: string,
+  now: Date | string,
+) {
+  const excluded = lostAccessDraftIds(db, studentId, now);
+  return db
+    .select()
+    .from(attempts)
+    .where(
+      and(
+        eq(attempts.studentId, studentId),
+        eq(attempts.status, "draft"),
+        isNull(attempts.abandonedAt),
+        excluded.size > 0 ? notInArray(attempts.id, [...excluded]) : undefined,
+      ),
+    )
+    .orderBy(desc(lastActivitySql), desc(attempts.startedAt), desc(attempts.id))
+    .get();
+}
 
 /**
  * assignment 来源 draft 是否仍可从正常入口到达（在册且作业未软删；
@@ -173,7 +196,7 @@ export function listStudentRecords(
   const where = and(
     eq(attempts.studentId, studentId),
     // 作废卷（2026-10 讲练随时重开）不入记录
-    isNull(attempts.abandonedAt),
+    recordableAttemptWhere(),
     excluded.size > 0 ? notInArray(attempts.id, [...excluded]) : undefined,
     query.sourceType !== undefined
       ? eq(attempts.sourceType, query.sourceType)

@@ -18,6 +18,7 @@ import {
   freezeInputsOfNewAttempt,
   insertFrozenResponses,
 } from "./attempt-freeze.ts";
+import { refreshOpenedAttempt } from "./attempt-opened-refresh.ts";
 import { withAllowRedo } from "./attempt-redo-policy";
 import { attemptSummaryOf } from "./attempt-summary.ts";
 import { requireVisibleCourseUnit } from "./course-service";
@@ -99,7 +100,10 @@ export function startAttempt(
   // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft 再判策略位（hall-15313）
   const draft = existing.find((row) => row.status === "draft");
   if (draft !== undefined) {
-    return withAllowRedo(attemptSummaryOf(draft), assignment.allowRedo);
+    return withAllowRedo(
+      attemptSummaryOf(refreshOpenedAttempt(db, draft)),
+      assignment.allowRedo,
+    );
   }
 
   // 显式重做（hall-15313）：已交卷后开新卷（attemptNo 递增、从空白开始、历次可回看）；
@@ -127,7 +131,10 @@ export function startAttempt(
         .all();
       const inFlight = rows.find((row) => row.status === "draft");
       if (inFlight !== undefined) {
-        return withAllowRedo(attemptSummaryOf(inFlight), assignment.allowRedo);
+        return withAllowRedo(
+          attemptSummaryOf(refreshOpenedAttempt(db, inFlight)),
+          assignment.allowRedo,
+        );
       }
       return withAllowRedo(
         createAssignmentAttempt(
@@ -277,7 +284,7 @@ export function startCourseAttempt(
         .where(eq(attempts.id, draft.id))
         .run();
     } else if (draft !== undefined) {
-      return attemptSummaryOf(draft);
+      return attemptSummaryOf(refreshOpenedAttempt(db, draft));
     }
 
     const maxAttemptNo = existing.reduce(

@@ -407,7 +407,9 @@ function assemble(
 ): LearningRecord {
   const teacher = role === "teacher";
   const snapshot = snapshotOf(row);
-  const pub = publicOfSnapshot(snapshot, row.id);
+  const pub = publicOfSnapshot(snapshot, row.id, {
+    questionVersion: row.questionVersion,
+  });
   const showJudgment = teacher || questionReviewReadable(db, attempt, row, now);
   const selfReview = showJudgment ? selfReviewRecordOf(row) : null;
   const effectiveVerdict = teacher ? effectiveVerdictOfRow(row) : null;

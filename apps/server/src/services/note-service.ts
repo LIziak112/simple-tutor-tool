@@ -41,7 +41,6 @@ import {
   noteImageMetaSchema,
   noteIssueIsLimit,
   noteRecordMetaSchema,
-  noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
   questionGroupPublicSchema,
 } from "@tutor/contract";
@@ -68,7 +67,11 @@ import {
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
-import { touchAttemptActivity } from "./attempt-activity";
+import {
+  assertAttemptWriteProof,
+  assertAttemptWriteVersion,
+  touchAttemptActivity,
+} from "./attempt-activity";
 import {
   answersReleased,
   assignmentReleaseByIds,
@@ -266,38 +269,11 @@ export function writeNoteBodyFile(
   });
 }
 
-// ---------- CAS 冲突错误构造 ----------
+import {
+  noteVersionHashOf,
+  revisionConflict,
+} from "./note-version-conflict.ts";
 
-/**
- * 409 NOTE_REVISION_CONFLICT + 当前版本摘要（_current：客户端据此提示
- * 「保留云端或将本地另存一份」，方案 §6.2 禁止自动覆盖/拼接）。
- */
-function revisionConflict(db: Db, existing: NoteRow | undefined): HttpError {
-  // 无 head（revision=0）时除 revision 外全空；有 head 时补版本 hash——
-  // 组装经契约 noteRevisionConflictCurrentSchema.parse（复审⑤：摘要形态
-  // 契约化，服务端与实现漂移即编程错误在这里当场暴露）
-  const head = existing?.currentVersionId
-    ? db
-        .select({ hash: noteVersions.hash })
-        .from(noteVersions)
-        .where(eq(noteVersions.id, existing.currentVersionId))
-        .get()
-    : undefined;
-  return new HttpError(
-    409,
-    "NOTE_REVISION_CONFLICT",
-    "草稿已在别处保存了更新的版本（其他标签页/设备），请刷新后选择保留哪一份",
-    {
-      _current: noteRevisionConflictCurrentSchema.parse({
-        noteId: existing?.id ?? null,
-        revision: existing?.currentRevision ?? 0,
-        versionId: existing?.currentVersionId ?? null,
-        hash: head?.hash ?? null,
-        serverSavedAt: existing?.serverSavedAt ?? null,
-      }),
-    },
-  );
-}
 /** 版本行 → 回执（预检幂等命中与跨进程约束兜底共用一处组装） */
 function receiptOf(row: NoteVersionRow): NoteVersionReceipt {
   return {
@@ -405,6 +381,7 @@ export function saveNoteVersion(
   //    严格（快照非空——requireAttemptQuestion 返回行 id 即 questionRevisionId）；
   //    correction/supplement 宽松（软删/历史缺失题的订正与补充照常可写）
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  assertAttemptWriteProof(attempt, meta);
   const phase = meta.phase ?? "scratch";
   const { id: questionRevisionId } =
     phase === "scratch"
@@ -527,6 +504,7 @@ export function saveNoteVersion(
     );
     // 7. 事务：CAS 复核 + 目标行先查后插 + 不可变版本行 + 统一守卫切头
     db.transaction((tx) => {
+      assertAttemptWriteVersion(tx, attempt);
       const row = tx.select().from(notes).where(phaseWhere).get();
       if (row === undefined) {
         // 首版：先插 revision=0 的空白 notes 行（FK 要求版本行先于头指针
@@ -601,14 +579,12 @@ export function saveNoteVersion(
           "草稿头指针切换未命中（并发写竞争，本次写入已回滚）",
         );
       }
-      const previousHash = existing?.currentVersionId
-        ? tx
-            .select({ hash: noteVersions.hash })
-            .from(noteVersions)
-            .where(eq(noteVersions.id, existing.currentVersionId))
-            .get()?.hash
-        : undefined;
-      if (phase === "scratch" && previousHash !== hash)
+      const previousHash = noteVersionHashOf(tx, existing?.currentVersionId);
+      if (
+        phase === "scratch" &&
+        previousHash !== hash &&
+        (previousHash !== undefined || strokeCount > 0)
+      )
         touchAttemptActivity(tx, attemptId, now);
     });
   } catch (err) {
@@ -1472,6 +1448,7 @@ export function getStudentQuestionNotebook(
     const question =
       snapshot !== null
         ? publicOfSnapshot(snapshot, row.response.id, {
+            questionVersion: row.response.questionVersion,
             // QM-13：matching 槽位集合按该卷冻结材料槽位序展开（跨卷轮次
             // 各自取用，不混卷）
             materialSlots: materialSlotOrderOf(db, row.attempt.id),

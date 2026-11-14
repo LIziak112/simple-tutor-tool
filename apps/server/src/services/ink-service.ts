@@ -20,7 +20,11 @@ import {
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { pngSize } from "../lib/png";
-import { touchAttemptActivity } from "./attempt-activity";
+import {
+  assertAttemptWriteProof,
+  assertAttemptWriteVersion,
+  touchAttemptActivity,
+} from "./attempt-activity";
 import {
   assertRowNotSubmitted,
   requireAttemptQuestion,
@@ -172,6 +176,7 @@ export function saveInk(
   meta?: InkWriteMeta,
 ): InkUploadData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  assertAttemptWriteProof(attempt, meta);
   if (attempt.status !== "draft") {
     throw new HttpError(
       409,
@@ -205,6 +210,7 @@ export function saveInk(
 
   return db.transaction(
     (tx) => {
+      assertAttemptWriteVersion(tx, attempt);
       // 取得写锁后重查提交状态，防止另一个进程在预检与写入之间封卷。
       const latest = tx
         .select({ status: attempts.status, deadlineAt: attempts.deadlineAt })
@@ -270,7 +276,7 @@ export function saveInk(
         );
       }
       // 活动时间比较实际矢量内容，不把 PNG 编码、压缩方式或协议时间戳当作答。
-      let contentChanged = true;
+      let contentChanged = strokeCountOf(doc) > 0;
       if (current) {
         try {
           const previous = parseStrokesDoc(

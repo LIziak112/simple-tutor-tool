@@ -296,7 +296,7 @@ function finalizeWholeAttempt(
       activeSec: totalActiveSec,
     })
     .where(and(eq(attempts.id, attemptId), eq(attempts.status, "draft")))
-    .returning({ id: attempts.id })
+    .returning({ id: attempts.id, activatedAt: attempts.activatedAt })
     .get();
   if (!completed)
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
@@ -328,6 +328,7 @@ function finalizeWholeAttempt(
   }));
   const attemptAfter: Attempt = {
     ...attempt,
+    activatedAt: completed.activatedAt,
     status: finalStatus,
     submittedAt: nowIso,
     scoreAuto,

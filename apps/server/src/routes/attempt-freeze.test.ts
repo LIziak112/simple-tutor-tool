@@ -11,6 +11,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { runMigrations } from "../db/migrate.ts";
 import {
   attemptContextFreezes,
   attempts,
@@ -18,7 +19,11 @@ import {
   responses,
   students,
 } from "../db/schema";
-import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDbBeforeActivationGuards,
+  createTestDir,
+} from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
@@ -113,8 +118,10 @@ async function loginStudent(app: App, name: string): Promise<string> {
 }
 
 /** 全套前置：教师 + 导入样例 + 张三/李四（都被指派）+ 一份双学生作业 */
-async function makeEnv(): Promise<Env> {
-  const db = createTestDb();
+async function makeEnv(legacySchema = false): Promise<Env> {
+  const db = legacySchema
+    ? createTestDbBeforeActivationGuards()
+    : createTestDb();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
@@ -362,6 +369,7 @@ function downgradeToLegacyDraft(db: Db, attemptId: string): void {
         .run();
     }
   }
+  runMigrations(db);
 }
 
 describe("T6R.3 建卷冻结：assignment 来源", () => {
@@ -844,7 +852,7 @@ $-1$ 是正数。[[错误]]
 
 describe("T6R.3 迁移三分支（升级遗留行）", () => {
   it("分支①升级前已交卷：沿用既有交卷快照，不重写、不补冻结标记（frozenAt 保持 null）", async () => {
-    const { app, db, aCookie, assignmentId } = await makeEnv();
+    const { app, db, aCookie, assignmentId } = await makeEnv(true);
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     await putAnswer(app, aCookie, attemptId, Q.judge, {
       kind: "judge",
@@ -862,6 +870,7 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
       .where(eq(attempts.id, attemptId))
       .run();
 
+    runMigrations(db);
     const { res, body } = await getAttempt(app, aCookie, attemptId);
     expect(res.status).toBe(200);
     const result = (body as { data: { summary: { total: number } } }).data;
@@ -876,7 +885,7 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
   });
 
   it("分支②升级前进行中：首次恢复访问懒冻结当前可取得版本，保留已有答案，标记 legacy_unverified", async () => {
-    const { app, db, aCookie, assignmentId } = await makeEnv();
+    const { app, db, aCookie, assignmentId } = await makeEnv(true);
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     // 张三已答一题（有草稿）——随后系统「升级」，还原升级前草稿形态
     expect(
@@ -926,7 +935,8 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
   });
 
   it("分支②软删题：升级前答过、恢复时已被软删 → 行保留答案但按「历史题目缺失」计，不进视图、不拿当前题库回填", async () => {
-    const { app, db, teacherCookie, aCookie, assignmentId } = await makeEnv();
+    const { app, db, teacherCookie, aCookie, assignmentId } =
+      await makeEnv(true);
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     await putAnswer(app, aCookie, attemptId, Q.fill, {
       kind: "fill",
@@ -957,7 +967,7 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
   });
 
   it("分支③损坏快照：懒冻结不回填、视图按缺失计（不拿当前题伪造）", async () => {
-    const { app, db, aCookie, assignmentId } = await makeEnv();
+    const { app, db, aCookie, assignmentId } = await makeEnv(true);
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     await putAnswer(app, aCookie, attemptId, Q.judge, {
       kind: "judge",
@@ -993,7 +1003,7 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
   });
 
   it("陈旧提交：懒冻结后旧页面（不携带版本集合）提交非空卷被可诊断拒绝（409 QUESTION_REVISION_STALE）", async () => {
-    const { app, db, aCookie, assignmentId } = await makeEnv();
+    const { app, db, aCookie, assignmentId } = await makeEnv(true);
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     await putAnswer(app, aCookie, attemptId, Q.judge, {
       kind: "judge",
@@ -1121,7 +1131,8 @@ describe("T6R.3 交卷回传题目版本验证（questionRevisionId）", () => {
 
 describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 存量标记 / 导出序", () => {
   it("幽灵行不卡批改状态机：存量卷含软删已答的题 → 交卷后待批只含真实题，批完即 graded（幽灵行不计入重算/谓词/队列/题数）", async () => {
-    const { app, db, teacherCookie, aCookie, assignmentId } = await makeEnv();
+    const { app, db, teacherCookie, aCookie, assignmentId } =
+      await makeEnv(true);
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     // 张三答对五道客观题 + 答过 fill（将被软删成幽灵行）；fillMath 不答（真实待批）
     for (const [qid, answer] of [
@@ -1220,7 +1231,7 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
   });
 
   it("懒冻结存量卷展示序走遗留 join 序：多单元存量草稿（单元二先答）→ 懒冻结后展示序 = 组卷序（单元一在前）", async () => {
-    const { app, db, teacherCookie, aCookie } = await makeEnv();
+    const { app, db, teacherCookie, aCookie } = await makeEnv(true);
     // 导入第二份练习生成另一单元，布置双单元作业（单元一练习四、单元二练习五）
     const otherMd = PRACTICE_MD.replace("unit: 练习四", "unit: 练习五").replace(
       /练习四-/g,
@@ -1276,7 +1287,7 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
   });
 
   it("存量 wrong 卷：首次恢复访问只补冻结标记（frozenAt=startedAt、legacyUnverified=false），不重读题库", async () => {
-    const { app, db, aCookie, assignmentId } = await makeEnv();
+    const { app, db, aCookie, assignmentId } = await makeEnv(true);
     // 交一份含判错题的卷 → 组 wrong 重练卷
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     await putAnswer(app, aCookie, attemptId, Q.judge, {
@@ -1308,6 +1319,7 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
       .where(eq(attempts.id, wrongAttemptId))
       .run();
 
+    runMigrations(db);
     // 首次恢复访问：只补标记（frozenAt 回填 startedAt，非当下时刻；非 legacy）
     const { res } = await getAttempt(app, aCookie, wrongAttemptId);
     expect(res.status).toBe(200);

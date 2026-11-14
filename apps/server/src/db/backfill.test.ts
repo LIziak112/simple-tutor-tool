@@ -314,6 +314,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
       {
+        key: "attempt_activation_v1",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
         key: "nested_course_catalog_v1",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
@@ -370,10 +374,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(13);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(14);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(13);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(14);
   });
 });
 
@@ -528,7 +532,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(13);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(14);
     expect(
       db
         .select()
@@ -714,6 +718,12 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       >
     ).map((row) => {
       delete row.teacher_id; // 新增归属列不参与保真对比
+      if (table === "attempts" && "activated_at" in row) {
+        expect(row.activated_at).toBe(
+          row.status === "draft" ? null : row.started_at,
+        );
+        delete row.activated_at;
+      }
       if (table === "courses") {
         // 0069 新增展示推荐列：旧课必须为 NULL，原有全部列仍逐行保真。
         expect(row.exam_type ?? null).toBeNull();
@@ -1397,6 +1407,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
       {
+        key: "attempt_activation_v1",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
         key: "nested_course_catalog_v1",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
@@ -1453,7 +1467,7 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(13);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(14);
   });
 });
 

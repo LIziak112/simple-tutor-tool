@@ -156,3 +156,41 @@ export function lastReplyReceipt(
     return null;
   }
 }
+
+/** 首条学生消息行（创建时插入；视图读取与 refresh 替换正文共用） */
+export function firstStudentMessageRow(
+  db: Db | QueueTx,
+  taskId: string,
+): typeof aiMessages.$inferSelect | undefined {
+  return asDb(db)
+    .select()
+    .from(aiMessages)
+    .where(and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "student")))
+    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
+    .get();
+}
+
+/** 首条学生消息（任务问题正文；数据残缺是故障不是空问题） */
+export function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
+  const row = firstStudentMessageRow(db, taskId);
+  if (row === undefined) {
+    throw new HttpError(
+      500,
+      "AI_CONTEXT_BROKEN",
+      "任务缺少首条学生消息，数据不完整",
+    );
+  }
+  return row.contentMd;
+}
+
+export function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
+  return (
+    asDb(db)
+      .select({ id: aiMessages.id })
+      .from(aiMessages)
+      .where(
+        and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "assistant")),
+      )
+      .get() !== undefined
+  );
+}

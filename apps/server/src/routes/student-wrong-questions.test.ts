@@ -9,6 +9,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { runMigrations } from "../db/migrate.ts";
 import {
   attemptContextFreezes,
   attempts,
@@ -16,7 +17,11 @@ import {
   responses,
   students,
 } from "../db/schema.ts";
-import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDbBeforeActivationGuards,
+  createTestDir,
+} from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -119,8 +124,10 @@ function extractSessionToken(res: Response, cookie = "tutor_session"): string {
 }
 
 /** 组装被测环境：教师 + 课程（练习单元可见）+ 成员学生甲 */
-async function makeWrongEnv(): Promise<WrongEnv> {
-  const db = createTestDb();
+async function makeWrongEnv(legacySchema = false): Promise<WrongEnv> {
+  const db = legacySchema
+    ? createTestDbBeforeActivationGuards()
+    : createTestDb();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
@@ -647,7 +654,7 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
   });
 
   it("轮次 courseId：course 轮=练习课程、assignment 轮=作业所属课程（attempt 冗余列置空回退作业行）、无课程作业轮为 null", async () => {
-    const env = await makeWrongEnv();
+    const env = await makeWrongEnv(true);
     // judge1/judge2：课程练习判错（T1）
     const a1 = await startCourseAttempt(env);
     await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: false });
@@ -693,6 +700,7 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
       .set({ courseId: null })
       .where(eq(attempts.id, a2))
       .run();
+    runMigrations(env.db);
     const fallback = await getWrongQuestions(env);
     const judge1Fallback = fallback.data?.questions.find(
       (card) => card.questionId === Q.judge1,

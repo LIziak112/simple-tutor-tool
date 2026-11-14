@@ -32,6 +32,7 @@ import {
 } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
@@ -2844,9 +2845,10 @@ describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示
     assertNoQuestionBlockText(body);
   });
 
-  it("开卷后：历次 1 条（draft、attemptNo=1）+ summary（hasDraft）；完成后带得分与交卷时间", async () => {
+  it("激活后：历次 1 条（draft、attemptNo=1）+ summary（hasDraft）；完成后带得分与交卷时间", async () => {
     const env = await makeEnv();
-    await startOk(env);
+    const started = await startOk(env);
+    activateTestAttempt(env.db, started.data.attempt.id);
     const landing = await (
       (await landingOf(env)) as Response & { json(): Promise<unknown> }
     ).json();
@@ -2928,10 +2930,8 @@ describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示
         summary: { count: number; hasDraft: boolean } | null;
       };
     };
-    expect(landing.data.attempts.map((row) => row.attemptId)).toEqual([
-      newAttemptId,
-    ]);
-    expect(landing.data.summary).toMatchObject({ count: 1, hasDraft: true });
+    expect(landing.data.attempts).toEqual([]);
+    expect(landing.data.summary).toBeNull();
 
     // start 幂等取回新卷（旧卷已作废不再返回）
     const startAgain = await startOk(env);
@@ -3511,6 +3511,7 @@ it-1
 
   it("细项6：重导后孤儿冻结题继续可见，嵌入单元过滤不变", async () => {
     const { env, attemptId } = await makeQmEnv();
+    activateTestAttempt(env.db, attemptId);
     // 重导：材料/组与全部题目换成新 id（旧冻结题成孤儿）
     const previous = process.env.NEW_CONTENT_ENABLED;
     process.env.NEW_CONTENT_ENABLED = "true";

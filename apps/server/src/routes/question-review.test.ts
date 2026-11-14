@@ -363,6 +363,10 @@ describe("question-review 三 kind 行级口径", () => {
       answered: true,
     });
 
+    db.update(attempts)
+      .set({ activatedAt: T3 })
+      .where(eq(attempts.id, "qa-3"))
+      .run();
     const { status, body } = await getReview(app, cookie, STU_A);
     expect(status).toBe(200);
     const data = body.data as {

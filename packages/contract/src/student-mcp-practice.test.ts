@@ -129,7 +129,10 @@ describe("学生 MCP 公开读取契约", () => {
     expect(
       output.safeParse({ ...data, canSettlePartially: true }).success,
     ).toBe(false);
-    expect(output.safeParse({ ...data, phase: "active" }).success).toBe(false);
+    expect(output.parse({ ...data, phase: "active" }).phase).toBe("active");
+    expect(
+      output.safeParse({ ...data, phase: "authorized_to_submit" }).success,
+    ).toBe(false);
   });
 
   it.each(["answers", "solutionMd", "teacherComment", "autoCorrect", "score"])(

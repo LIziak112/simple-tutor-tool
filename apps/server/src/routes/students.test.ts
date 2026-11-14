@@ -922,6 +922,7 @@ describe("T-PR4 Web-4：学生列表活动三列与排序", () => {
     db.insert(attempts)
       .values({
         id: "wa-2",
+        activatedAt: "2026-09-09T08:00:00.000Z",
         studentId: s1,
         sourceType: "lesson",
         assignmentId: null,

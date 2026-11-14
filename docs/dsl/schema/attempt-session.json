@@ -1,309 +1,482 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "oneOf": [
-    {
-      "type": "object",
-      "properties": {
-        "time": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "metric": {
-                  "type": "string",
-                  "const": "question_activity_sealed"
-                },
-                "version": {
-                  "type": "number",
-                  "const": 1
-                },
-                "memberCount": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "knownCount": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "unknownCount": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "knownActiveSec": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "knownObservedSec": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "activeSec": {
-                  "anyOf": [
-                    {
+  "type": "object",
+  "properties": {
+    "settlement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "time": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "metric": {
+                      "type": "string",
+                      "const": "question_activity_sealed"
+                    },
+                    "version": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "memberCount": {
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991
                     },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "observedSec": {
-                  "anyOf": [
-                    {
+                    "knownCount": {
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991
                     },
-                    {
-                      "type": "null"
+                    "unknownCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "knownActiveSec": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "knownObservedSec": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "activeSec": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedSec": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
-                  ]
+                  },
+                  "required": [
+                    "metric",
+                    "version",
+                    "memberCount",
+                    "knownCount",
+                    "unknownCount",
+                    "knownActiveSec",
+                    "knownObservedSec",
+                    "activeSec",
+                    "observedSec"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "metric": {
+                      "type": "string",
+                      "const": "legacy_focus"
+                    },
+                    "version": {
+                      "type": "null"
+                    },
+                    "activeSec": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "metric",
+                    "version",
+                    "activeSec"
+                  ],
+                  "additionalProperties": false
                 }
-              },
-              "required": [
-                "metric",
-                "version",
-                "memberCount",
-                "knownCount",
-                "unknownCount",
-                "knownActiveSec",
-                "knownObservedSec",
-                "activeSec",
-                "observedSec"
-              ],
-              "additionalProperties": false
+              ]
             },
-            {
-              "type": "object",
-              "properties": {
-                "metric": {
-                  "type": "string",
-                  "const": "legacy_focus"
+            "seq": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "questionCount": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "activeSec": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
                 },
-                "version": {
+                {
                   "type": "null"
-                },
-                "activeSec": {
-                  "anyOf": [
-                    {
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "partial"
+            }
+          },
+          "required": [
+            "seq",
+            "createdAt",
+            "questionCount",
+            "activeSec",
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "time": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "metric": {
+                      "type": "string",
+                      "const": "question_activity_sealed"
+                    },
+                    "version": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "memberCount": {
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991
                     },
-                    {
-                      "type": "null"
+                    "knownCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "unknownCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "knownActiveSec": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "knownObservedSec": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "activeSec": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedSec": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
-                  ]
+                  },
+                  "required": [
+                    "metric",
+                    "version",
+                    "memberCount",
+                    "knownCount",
+                    "unknownCount",
+                    "knownActiveSec",
+                    "knownObservedSec",
+                    "activeSec",
+                    "observedSec"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "metric": {
+                      "type": "string",
+                      "const": "legacy_focus"
+                    },
+                    "version": {
+                      "type": "null"
+                    },
+                    "activeSec": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "metric",
+                    "version",
+                    "activeSec"
+                  ],
+                  "additionalProperties": false
                 }
-              },
-              "required": [
-                "metric",
-                "version",
-                "activeSec"
-              ],
-              "additionalProperties": false
-            }
-          ]
-        },
-        "seq": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-        },
-        "questionCount": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "activeSec": {
-          "anyOf": [
-            {
+              ]
+            },
+            "seq": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "questionCount": {
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "activeSec": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "final"
+            }
+          },
+          "required": [
+            "seq",
+            "createdAt",
+            "questionCount",
+            "activeSec",
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "opened",
+        "active",
+        "finished",
+        "abandoned"
+      ]
+    },
+    "activateRequest": {
+      "type": "object",
+      "properties": {
+        "expectedFrozenAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
             },
             {
               "type": "null"
             }
           ]
-        },
-        "kind": {
-          "type": "string",
-          "const": "partial"
         }
       },
       "required": [
-        "seq",
-        "createdAt",
-        "questionCount",
-        "activeSec",
-        "kind"
+        "expectedFrozenAt"
       ],
       "additionalProperties": false
     },
-    {
+    "activateData": {
       "type": "object",
       "properties": {
-        "time": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "metric": {
-                  "type": "string",
-                  "const": "question_activity_sealed"
-                },
-                "version": {
-                  "type": "number",
-                  "const": 1
-                },
-                "memberCount": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "knownCount": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "unknownCount": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "knownActiveSec": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "knownObservedSec": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "activeSec": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "observedSec": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "metric",
-                "version",
-                "memberCount",
-                "knownCount",
-                "unknownCount",
-                "knownActiveSec",
-                "knownObservedSec",
-                "activeSec",
-                "observedSec"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "metric": {
-                  "type": "string",
-                  "const": "legacy_focus"
-                },
-                "version": {
-                  "type": "null"
-                },
-                "activeSec": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "metric",
-                "version",
-                "activeSec"
-              ],
-              "additionalProperties": false
-            }
-          ]
+        "attemptId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
         },
-        "seq": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "createdAt": {
+        "activatedAt": {
           "type": "string",
           "format": "date-time",
           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
         },
-        "questionCount": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+        "phase": {
+          "type": "string",
+          "enum": [
+            "active",
+            "finished"
+          ]
         },
-        "activeSec": {
+        "frozenAt": {
           "anyOf": [
             {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
             },
             {
               "type": "null"
             }
           ]
-        },
-        "kind": {
-          "type": "string",
-          "const": "final"
         }
       },
       "required": [
-        "seq",
-        "createdAt",
-        "questionCount",
-        "activeSec",
-        "kind"
+        "attemptId",
+        "activatedAt",
+        "phase",
+        "frozenAt"
       ],
       "additionalProperties": false
+    },
+    "writeProof": {
+      "type": "object",
+      "properties": {
+        "expectedFrozenAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "openedQuery": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "sourceType": {
+              "type": "string",
+              "const": "course"
+            },
+            "courseId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "unitId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "sourceType",
+            "courseId",
+            "unitId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sourceType": {
+              "type": "string",
+              "const": "assignment"
+            },
+            "assignmentId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          "required": [
+            "sourceType",
+            "assignmentId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sourceType": {
+              "type": "string",
+              "const": "lesson"
+            },
+            "lectureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "courseId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          "required": [
+            "sourceType",
+            "lectureId"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
-  ]
+  },
+  "required": [
+    "settlement",
+    "phase",
+    "activateRequest",
+    "activateData",
+    "writeProof",
+    "openedQuery"
+  ],
+  "additionalProperties": false
 }

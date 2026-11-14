@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attemptWriteProofFields } from "./attempt-session.ts";
 import { inkRenderingSchema } from "./ink-profile.ts";
 
 /**
@@ -205,6 +206,7 @@ export const inkDocSchema = z
 
 /** 正式笔迹上传并发元信息；正文与图片整体作为一次幂等变更。 */
 export const inkWriteMetaSchema = z.object({
+  ...attemptWriteProofFields,
   baseRevision: z.number().int().min(0),
   mutationId: z.string().uuid(),
 });

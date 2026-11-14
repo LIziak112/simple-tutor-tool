@@ -42,6 +42,7 @@ export function detailItemOf(
     rubricReview: isDraft ? null : rubricReviewOf(opts.db, row, snapshot),
     responseId: isDraft ? null : row.id,
     publicQuestion: publicOfSnapshot(snapshot, row.id, {
+      questionVersion: row.questionVersion,
       materialSlots: opts.materialSlots,
       unitId: row.unitId,
     }),
