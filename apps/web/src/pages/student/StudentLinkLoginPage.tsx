@@ -1,6 +1,5 @@
-import { useEffect } from "react";
 import { Link, Navigate, useParams } from "react-router";
-import { useStudentLinkLogin } from "@/features/auth/student-auth";
+import { useStudentLinkEntry } from "@/features/auth/use-student-link-entry";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
@@ -9,24 +8,15 @@ import { ScreenError, ScreenLoading } from "./StudentScreen";
  * /s/:token 学生专属链接登录页（T2.3，§5.7 专属链接）。
  * 挂载即调 GET /api/public/s/:token：成功（Cookie 已写 + me 缓存已更新）跳 /s/home；
  * 失败（401 LINK_INVALID 等）显示中文指引与「去密码登录」入口。
- * StrictMode 双挂载会触发两次 mutate——登录幂等（重复登录只是多写一行会话）。
+ * 自动入口拥有兑换生命周期，StrictMode重放只发一次，切换/卸载会取消旧请求。
  */
 export default function StudentLinkLoginPage() {
   useStudentTheme();
   const { token = "" } = useParams<{ token: string }>();
-  const linkLogin = useStudentLinkLogin();
-  // mutate 引用在 TanStack Query 中稳定（可安全进依赖；对象本身每次渲染都是新引用）
-  const { mutate: loginByLink } = linkLogin;
+  const linkLogin = useStudentLinkEntry(token);
 
-  useEffect(() => {
-    if (token.length > 0) {
-      loginByLink(token);
-    }
-  }, [token, loginByLink]);
-
-  // 尚未提交（isIdle，挂载第一帧）与提交后等待中都显示加载——
-  // 避免把「还没开始」误判成「已成功」而提前跳转
-  if (linkLogin.isPending || linkLogin.isIdle) {
+  // 新入口第一帧及兑换期间都加载，旧token的成功结果不能触发跳转。
+  if (linkLogin.isPending) {
     return <ScreenLoading text="正在通过专属链接登录…" />;
   }
 
@@ -55,7 +45,7 @@ export default function StudentLinkLoginPage() {
     return (
       <ScreenError
         message={err instanceof Error ? err.message : "网络异常，请稍后重试"}
-        onRetry={() => linkLogin.mutate(token)}
+        onRetry={linkLogin.retry}
       />
     );
   }
