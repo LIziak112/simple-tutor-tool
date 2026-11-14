@@ -52,6 +52,7 @@ export function useAccountMutation<Data, Variables = void>(
           if (!operation.isCurrent()) throw new AuthCancelledError();
           throw error;
         }
+        operation.assertCurrent();
         await input.complete(data, operation);
         if (!operation.consumed) operation.assertCurrent();
         return data;

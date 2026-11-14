@@ -1,10 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { PersonalSessionData, PersonalSessionRole } from "@tutor/contract";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 import type { ApiServices } from "@/features/runtime/ports/api-services";
 import { ApiError } from "@/lib/api-response";
-import { type AuthOperation, createAuthOperation } from "./auth-operation";
+import {
+  AuthCancelledError,
+  type AuthOperation,
+  createAuthOperation,
+} from "./auth-operation";
 
 type Status = "pending" | "verified" | "login" | "error";
 interface Verification {
@@ -64,18 +68,20 @@ export function usePersonalPair(
         if (active) setResult({ ...identity, status: "verified" });
       })
       .catch((error: unknown) => {
-        if (active)
-          setResult({
-            ...identity,
-            status:
-              error instanceof ApiError && error.status === 401
-                ? "login"
-                : "error",
-            error:
-              error instanceof Error
-                ? error
-                : new Error("会话核验失败，请重试"),
-          });
+        if (!active) return;
+        const current = operation.isCurrent();
+        const failure = current
+          ? error instanceof Error
+            ? error
+            : new Error("会话核验失败，请重试")
+          : new AuthCancelledError();
+        const status =
+          current && error instanceof ApiError && error.status === 401
+            ? "login"
+            : "error";
+        // 登录结果留门到实际导航消费；普通错误不再使用本次凭据。
+        if (status === "error") operation.finish();
+        setResult({ ...identity, status, error: failure });
       });
     return () => {
       active = false;
@@ -89,12 +95,33 @@ export function usePersonalPair(
     result.revision === revision
       ? result
       : null;
+  const consumeLogin = useCallback(
+    (navigate: () => void) => {
+      if (current?.status !== "login") return;
+      try {
+        current.operation.consume(navigate);
+      } catch (error) {
+        if (!(error instanceof AuthCancelledError)) throw error;
+        setResult({ ...current, status: "error", error });
+      } finally {
+        current.operation.finish();
+      }
+    },
+    [current],
+  );
   return {
     status:
-      current?.status === "verified" && !current.operation.isCurrent()
+      (current?.status === "verified" || current?.status === "login") &&
+      !current.operation.isCurrent()
         ? "error"
         : (current?.status ?? "pending"),
-    error: current?.error,
+    error:
+      current &&
+      (current.status === "verified" || current.status === "login") &&
+      !current.operation.isCurrent()
+        ? new AuthCancelledError()
+        : current?.error,
+    consumeLogin,
     retry: () => setRevision((n) => n + 1),
   };
 }

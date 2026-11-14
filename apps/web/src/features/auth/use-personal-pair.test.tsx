@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PersonalSessionData } from "@tutor/contract";
 import { expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api-response";
 import {
   createTestRuntime,
   TestPortalProvider,
@@ -159,3 +160,72 @@ for (const timing of ["before-result", "after-own-commit"] as const)
     result.unmount();
     cache.clear();
   });
+
+for (const outcome of ["null", "401"] as const)
+  it(`pair ${outcome}排队登录在最终消费前同ID写入后不得导航，且可重试`, async () => {
+    const cache = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    cache.setQueryData(["student", "me"], pair.student);
+    cache.setQueryData(["teacher", "me"], pair.teacher);
+    let fail = true;
+    const clients = {
+      ...testClientServices,
+      checkPersonalSessionApi: vi.fn(async () => {
+        if (!fail) return pair;
+        if (outcome === "401")
+          throw new ApiError("UNAUTHORIZED", "真实401", 401);
+        return null;
+      }),
+    };
+    const runtime = createTestRuntime({ clients });
+    const view = renderHook(() => usePersonalPair("student", "s", vi.fn()), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={cache}>
+          <TestPortalProvider runtime={runtime}>{children}</TestPortalProvider>
+        </QueryClientProvider>
+      ),
+    });
+    await waitFor(() => expect(view.result.current.status).toBe("login"));
+    const navigate = vi.fn();
+    act(() => {
+      cache.setQueryData(["teacher", "me"], pair.teacher);
+      view.result.current.consumeLogin(navigate);
+    });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(view.result.current.status).toBe("error");
+    fail = false;
+    act(() => view.result.current.retry());
+    await waitFor(() => expect(view.result.current.status).toBe("verified"));
+    view.unmount();
+    cache.clear();
+  });
+it("当前有效pair401消费正常登录且释放操作监听", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  cache.setQueryData(["student", "me"], pair.student);
+  cache.setQueryData(["teacher", "me"], pair.teacher);
+  const runtime = createTestRuntime({
+    clients: {
+      ...testClientServices,
+      checkPersonalSessionApi: vi.fn(async () => {
+        throw new ApiError("UNAUTHORIZED", "真实401", 401);
+      }),
+    },
+  });
+  const view = renderHook(() => usePersonalPair("student", "s", vi.fn()), {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={cache}>
+        <TestPortalProvider runtime={runtime}>{children}</TestPortalProvider>
+      </QueryClientProvider>
+    ),
+  });
+  await waitFor(() => expect(view.result.current.status).toBe("login"));
+  const navigate = vi.fn();
+  act(() => view.result.current.consumeLogin(navigate));
+  expect(navigate).toHaveBeenCalledOnce();
+  expect(cache.getQueryCache().hasListeners()).toBe(false);
+  view.unmount();
+  cache.clear();
+});

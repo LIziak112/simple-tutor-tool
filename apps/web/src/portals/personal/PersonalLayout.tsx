@@ -1,5 +1,5 @@
 import type { StudentMeData, TeacherInfo } from "@tutor/contract";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   Navigate,
   NavLink,
@@ -115,6 +115,11 @@ function PersonalLayoutContent() {
       { replace: true },
     ),
   );
+  const loginTarget = `${routes.portal("personal").loginPath}?${new URLSearchParams({ returnTo: location.pathname + location.search + location.hash })}`;
+  useEffect(() => {
+    if (verification.status === "login")
+      verification.consumeLogin(() => navigate(loginTarget, { replace: true }));
+  }, [verification.status, verification.consumeLogin, navigate, loginTarget]);
   const me = role === "student" ? student.data : teacher.data;
   if (
     (student.isError && role === "student") ||
@@ -127,13 +132,6 @@ function PersonalLayoutContent() {
       >
         {() => null}
       </PortalGuard>
-    );
-  if (verification.status === "login")
-    return (
-      <Navigate
-        to={`${routes.portal("personal").loginPath}?${new URLSearchParams({ returnTo: location.pathname + location.search + location.hash })}`}
-        replace
-      />
     );
   if (verification.status === "error")
     return (

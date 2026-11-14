@@ -5,12 +5,16 @@ import type {
   TeacherInfo,
 } from "@tutor/contract";
 import { expect, it, vi } from "vitest";
+import { teacherLandingAfterAuth } from "@/portals/teacher-auth-landing";
 import {
   createTestRuntime,
   TestPortalProvider,
   testClientServices,
 } from "@/test/portal-fixture";
 import { act, renderHook, waitFor } from "@/test/render-with-portal";
+import { useApplyIdentity } from "./auth-apply";
+import { useClearIdentitySessions } from "./auth-clear";
+import { createAuthOperation } from "./auth-operation";
 import { useLoginPersonal, useRegisterPersonal } from "./personal-auth";
 import { useLoginStudent, useStudentLinkLogin } from "./student-auth";
 import {
@@ -282,3 +286,149 @@ it("个人mutation部分提交后外部双身份B保住两侧cache，调用级�
   view.unmount();
   cache.clear();
 });
+
+it("同Me新意图B已提交后晚旧RPC A不得撤销B凭据", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const actor = { ...teacher, accountKind: "class" as const };
+  cache.setQueryData(["teacher", "me"], actor);
+  const pending = new Map<string, (data: typeof actor) => void>();
+  const login = vi.fn(
+    (input: { loginName: string }) =>
+      new Promise<typeof actor>((resolve) =>
+        pending.set(input.loginName, resolve),
+      ),
+  );
+  const runtime = createTestRuntime({
+    clients: { ...testClientServices, loginTeacher: login },
+  });
+  const view = renderHook(() => useLoginTeacher(), {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={cache}>
+        <TestPortalProvider runtime={runtime}>{children}</TestPortalProvider>
+      </QueryClientProvider>
+    ),
+  });
+  let a: Promise<unknown> = Promise.resolve();
+  act(() => {
+    a = view.result.current
+      .mutateAsync({ ...credentials, loginName: "intent-a" })
+      .catch((error) => error);
+  });
+  await waitFor(() => expect(pending.has("intent-a")).toBe(true));
+  let confirmation:
+    | {
+        isCurrent(): boolean;
+        readonly signal: AbortSignal;
+        confirm(action: () => void): boolean;
+      }
+    | undefined;
+  let b: Promise<unknown> = Promise.resolve();
+  act(() => {
+    b = view.result.current.mutateAsync(
+      { ...credentials, loginName: "intent-b" },
+      {
+        onSuccess: (_data, _input, own) => {
+          confirmation = own;
+        },
+      },
+    );
+  });
+  await waitFor(() => expect(pending.has("intent-b")).toBe(true));
+  await act(async () => {
+    pending.get("intent-b")?.(actor);
+    await b;
+  });
+  expect(confirmation?.isCurrent()).toBe(true);
+  if (!confirmation) throw new Error("missing B confirmation");
+  let releaseLanding: (response: Response) => void = () => {};
+  let landingSignal: AbortSignal | null | undefined;
+  const send = vi.fn<typeof fetch>((_input, init) => {
+    landingSignal = init?.signal;
+    return new Promise((resolve) => {
+      releaseLanding = resolve;
+    });
+  });
+  vi.stubGlobal("fetch", send);
+  const landing = teacherLandingAfterAuth(
+    "teacher",
+    actor,
+    cache,
+    confirmation,
+  );
+  await waitFor(() => expect(send).toHaveBeenCalledOnce());
+  let oldError: unknown;
+  await act(async () => {
+    pending.get("intent-a")?.(actor);
+    oldError = await a;
+  });
+  console.log(
+    JSON.stringify({
+      oldOutcome: (oldError as Error)?.name,
+      newReceiptCurrent: confirmation?.isCurrent(),
+      newSignalAborted: confirmation?.signal.aborted,
+      currentTeacher: cache.getQueryData<{ id: string }>(["teacher", "me"])?.id,
+      rpcCount: login.mock.calls.length,
+    }),
+  );
+  expect(oldError).toMatchObject({ name: "AuthCancelledError" });
+  expect(confirmation?.isCurrent()).toBe(true);
+  expect(confirmation?.signal.aborted).toBe(false);
+  expect(landingSignal?.aborted).toBe(false);
+  releaseLanding(
+    new Response(
+      JSON.stringify({ ok: true, data: { students: [{ id: "b-only" }] } }),
+    ),
+  );
+  await expect(landing).resolves.toBe("/t/students/b-only");
+  const navigate = vi.fn();
+  expect(confirmation?.confirm(navigate)).toBe(true);
+  expect(navigate).toHaveBeenCalledOnce();
+  view.unmount();
+  cache.clear();
+  vi.unstubAllGlobals();
+});
+
+for (const kind of ["apply", "clear"] as const)
+  it(`失效supplied操作不能经${kind} owner撤销新receipt`, async () => {
+    const cache = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    cache.setQueryData(["teacher", "me"], teacher);
+    const stale = createAuthOperation(cache);
+    stale.select(["teacher"]);
+    const runtime = createTestRuntime();
+    const view = renderHook(
+      () => ({ apply: useApplyIdentity(), clear: useClearIdentitySessions() }),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={cache}>
+            <TestPortalProvider runtime={runtime}>
+              {children}
+            </TestPortalProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    let receipt: ReturnType<typeof createAuthOperation> | undefined;
+    await act(async () => {
+      receipt =
+        kind === "apply"
+          ? await view.result.current.apply({ teacher })
+          : await view.result.current.clear(["teacher"]);
+    });
+    expect(receipt?.isCurrent()).toBe(true);
+    await act(async () => {
+      await expect(
+        kind === "apply"
+          ? view.result.current.apply({ teacher }, undefined, stale)
+          : view.result.current.clear(["teacher"], undefined, stale),
+      ).rejects.toMatchObject({ name: "AuthCancelledError" });
+    });
+    expect(receipt?.isCurrent()).toBe(true);
+    expect(receipt?.signal.aborted).toBe(false);
+    view.unmount();
+    stale.finish();
+    cache.clear();
+  });

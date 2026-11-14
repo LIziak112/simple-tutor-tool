@@ -36,6 +36,7 @@ export function useAuthOperationOwner() {
   const owned = useRef<AuthOperation | null>(null);
   useEffect(() => () => owned.current?.finish(), []);
   return useCallback((operation: AuthOperation) => {
+    operation.assertCurrent();
     if (owned.current !== operation) owned.current?.finish();
     owned.current = operation;
     return operation;
