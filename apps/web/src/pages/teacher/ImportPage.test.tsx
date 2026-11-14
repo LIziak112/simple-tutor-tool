@@ -84,7 +84,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-vi.mock("./MarkdownEditor", () => ({
+vi.mock("@/features/content/MarkdownEditor", () => ({
   MarkdownEditor: ({
     value,
     onChange,

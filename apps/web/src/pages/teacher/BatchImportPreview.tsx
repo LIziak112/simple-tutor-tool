@@ -33,6 +33,7 @@ import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { buildFixPrompt } from "@/features/content/error-prompt";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
+import { MarkdownEditor } from "@/features/content/MarkdownEditor";
 import { useClipboardCopy } from "@/features/content/use-clipboard";
 import { libraryInvalidations } from "@/features/library/library-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -43,7 +44,6 @@ import type {
   ImportOptions,
   PickedFile,
 } from "./ImportPage";
-import { MarkdownEditor } from "./MarkdownEditor";
 import { ImportMediaSummaryCard, StatsBar } from "./SingleImportPreview";
 
 /**

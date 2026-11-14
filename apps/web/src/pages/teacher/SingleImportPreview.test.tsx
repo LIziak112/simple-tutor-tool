@@ -17,7 +17,7 @@ const previewState = vi.hoisted(() => ({
   blockedSource: null as string | null,
   pending: null as Promise<void> | null,
 }));
-vi.mock("./MarkdownEditor", () => ({
+vi.mock("@/features/content/MarkdownEditor", () => ({
   MarkdownEditor: ({
     value,
     onChange,
