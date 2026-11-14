@@ -938,7 +938,7 @@ test(
     });
     await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
 
-    // 圈画：各书写面的工具箱各管各的，这里的荧光笔还是缺省的黄色、中等粗细
+    // 圈画：工具箱和草稿纸的分开（本机记忆也分开记），这里的荧光笔还是缺省的黄色、中等粗细
     const trigger = card.getByRole("button", { name: /圈画题干/ });
     await trigger.click();
     const markCanvas = card.locator('canvas[data-slot="annotation-canvas"]');
@@ -1113,7 +1113,7 @@ test(
     await expect(paper.getByText("2 笔", { exact: true })).toBeVisible();
     await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
 
-    // 圈画：各书写面的工具箱各管各的，这里的橡皮还是缺省的整笔
+    // 圈画：工具箱和草稿纸的分开（本机记忆也分开记），这里的橡皮还是缺省的整笔
     const trigger = card.getByRole("button", { name: /圈画题干/ });
     await trigger.click();
     const markCanvas = card.locator('canvas[data-slot="annotation-canvas"]');
@@ -1322,7 +1322,7 @@ test(
     await page.screenshot({ path: testInfo.outputPath("shape-paper.png") });
     await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
 
-    // 圈画：各书写面的工具箱各管各的，这里的形状还是缺省的直线；换成箭头
+    // 圈画：工具箱和草稿纸的分开（本机记忆也分开记），这里的形状还是缺省的直线；换成箭头
     const trigger = card.getByRole("button", { name: /圈画题干/ });
     await trigger.click();
     const markCanvas = card.locator('canvas[data-slot="annotation-canvas"]');
@@ -1363,5 +1363,127 @@ test(
       .click();
     // 退出圈画后静态显示的仍是这一笔
     await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  },
+);
+
+test(
+  "工具箱记忆：草稿纸上选的笔、橡皮、形状刷新后还在，当前工具回到笔；圈画另记一份",
+  {
+    tag: ["@annotation"],
+  },
+  async ({ page }, testInfo) => {
+    const card = page.getByRole("article", { name: "第 1 题", exact: true });
+    const paper = card.locator('[data-slot="note-layer"]');
+    const paperToolbar = paper.getByRole("toolbar");
+    const tool = (toolbar: Locator, name: string) =>
+      toolbar.getByRole("button", { name, exact: true });
+    /** 切到某支工具并打开它的面板 */
+    const openPanel = async (toolbar: Locator, name: string) => {
+      const button = tool(toolbar, name);
+      if ((await button.getAttribute("aria-pressed")) !== "true")
+        await button.click();
+      await button.click();
+      return page.getByRole("dialog", { name: `${name}设置` });
+    };
+    const option = (panel: Locator, name: string) =>
+      panel.getByRole("radio", { name, exact: true });
+    const openPaper = () =>
+      card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+
+    // 草稿纸：笔改成蓝色特粗，橡皮改成局部，形状改成椭圆，停在形状上
+    await openPaper();
+    let panel = await openPanel(paperToolbar, "笔");
+    await expect(option(panel, "黑")).toBeChecked();
+    await option(panel, "蓝").click();
+    await option(panel, "特粗").click();
+    await page.keyboard.press("Escape");
+    panel = await openPanel(paperToolbar, "橡皮");
+    await option(panel, "局部").click();
+    await page.keyboard.press("Escape");
+    panel = await openPanel(paperToolbar, "形状");
+    await option(panel, "椭圆").click();
+    await page.keyboard.press("Escape");
+    await expect(tool(paperToolbar, "形状")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await openPaper();
+
+    // 圈画：缺省红色细笔，不跟草稿纸走；这里改成绿色
+    const trigger = card.getByRole("button", { name: /圈画题干/ });
+    await trigger.click();
+    const markToolbar = page.getByRole("toolbar", {
+      name: "第 1 题标画工具栏",
+    });
+    panel = await openPanel(markToolbar, "笔");
+    await expect(option(panel, "红")).toBeChecked();
+    await expect(option(panel, "细")).toBeChecked();
+    await option(panel, "绿").click();
+    await page.keyboard.press("Escape");
+    await tool(markToolbar, "完成标画").click();
+
+    // 记在本机、按账号分开，内容里没有「当前工具」
+    const saved = await page.evaluate(() =>
+      Object.entries(localStorage)
+        .filter(([key]) => key.startsWith("ownclass:ink-toolbox:"))
+        .map(([, value]) => JSON.parse(value) as unknown),
+    );
+    expect(saved).toEqual([
+      {
+        version: 1,
+        scopes: {
+          paper: {
+            pen: { color: "blue", size: "heavy" },
+            highlighter: { color: "yellow", size: "medium", straight: false },
+            eraser: { mode: "partial", size: "medium" },
+            shape: { kind: "ellipse" },
+            penBasis: { color: "black", size: "medium" },
+          },
+          annotation: {
+            pen: { color: "green", size: "thin" },
+            highlighter: { color: "yellow", size: "medium", straight: false },
+            eraser: { mode: "stroke", size: "medium" },
+            shape: { kind: "line" },
+          },
+        },
+      },
+    ]);
+
+    // 刷新：草稿纸重新打开，当前工具是笔（不是上次停的形状），各项设置还在
+    await page.reload();
+    await openPaper();
+    await expect(tool(paperToolbar, "笔")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(
+      tool(paperToolbar, "笔").locator('[data-slot="ink-tool-color"]'),
+    ).toHaveCSS("background-color", "rgb(29, 78, 216)");
+    await expect(
+      tool(paperToolbar, "形状").locator('[data-slot="ink-shape-glyph"]'),
+    ).toHaveAttribute("data-shape", "ellipse");
+    // 真写一笔：落在纸上的就是蓝色
+    const written = await scribbleAndProbe(paper.locator("canvas"));
+    expectPixelNear(written.done.pixel, [29, 78, 216, 255]);
+    panel = await openPanel(paperToolbar, "笔");
+    await expect(option(panel, "蓝")).toBeChecked();
+    await expect(option(panel, "特粗")).toBeChecked();
+    await page.screenshot({ path: testInfo.outputPath("memory-paper.png") });
+    await page.keyboard.press("Escape");
+    panel = await openPanel(paperToolbar, "橡皮");
+    await expect(option(panel, "局部")).toBeChecked();
+    await page.keyboard.press("Escape");
+    await openPaper();
+
+    // 圈画刷新后还是绿色细笔
+    await trigger.click();
+    await expect(
+      tool(markToolbar, "笔").locator('[data-slot="ink-tool-color"]'),
+    ).toHaveCSS("background-color", "rgb(21, 128, 61)");
+    panel = await openPanel(markToolbar, "笔");
+    await expect(option(panel, "绿")).toBeChecked();
+    await expect(option(panel, "细")).toBeChecked();
+    await page.keyboard.press("Escape");
+    await tool(markToolbar, "完成标画").click();
   },
 );

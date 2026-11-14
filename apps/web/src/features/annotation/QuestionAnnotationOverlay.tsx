@@ -20,6 +20,7 @@ import {
   toolConfigOf,
 } from "@/features/ink/engine/toolbox.ts";
 import { InkToolbar } from "@/features/ink/toolbar/InkToolbar.tsx";
+import { useRememberedToolbox } from "@/features/ink/toolbox-memory.ts";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import {
   processStrokes,
@@ -124,9 +125,11 @@ export const QuestionAnnotationOverlay = forwardRef<
   const [error, setError] = useState<string | null>(null);
   // 无 Provider（讲练页、单测）时 coordinated 为 null：本地工具箱即唯一事实源，
   // 切换照常生效；有 Provider 时（作答页）共享工具箱优先，材料层同步跟随。
+  // 两边各工具的设置都取自本机记忆里圈画那一份（toolbox-memory.ts）。
   const coordinated = useCoordinatedAnnotation();
-  const [localToolbox, setLocalToolbox] = useState(() =>
-    createAnnotationToolbox(),
+  const [localToolbox, setLocalToolbox] = useRememberedToolbox(
+    "annotation",
+    createAnnotationToolbox,
   );
   const toolbox = coordinated?.toolbox ?? localToolbox;
   const setToolbox = useCallback(
@@ -134,7 +137,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       setLocalToolbox(next);
       coordinated?.setToolbox(next);
     },
-    [coordinated],
+    [coordinated, setLocalToolbox],
   );
 
   const [, setHistory] = useState(0);

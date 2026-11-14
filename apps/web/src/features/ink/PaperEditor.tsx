@@ -5,6 +5,7 @@ import { createInkToolbox, toolConfigOf } from "./engine/toolbox.ts";
 import { InkPad, SessionPrefToggleButton } from "./InkPad";
 import { useInkProfileSelection } from "./ink-profile-store";
 import { InkToolbar } from "./toolbar/InkToolbar.tsx";
+import { useRememberedToolbox } from "./toolbox-memory.ts";
 
 /** 草稿与正式作答共用纸面和工具栏，正文由调用方各自保存。 */
 export function PaperEditor({
@@ -49,22 +50,20 @@ export function PaperEditor({
   allowFingerWriting?: boolean;
 }) {
   const profile = useInkProfileSelection();
-  /** 工具箱：笔的颜色、粗细跟随笔感设置，设置变化时重新取值 */
-  const [toolbox, setToolbox] = useState(() =>
-    createInkToolbox({
-      pen: { color: profile.config.color, size: profile.config.size },
-    }),
+  /**
+   * 工具箱：各支工具的设置按账号记在本机，所有草稿纸、正式手写、随笔共用一份
+   * （toolbox-memory.ts）。笔的缺省颜色、粗细跟随笔感设置，设置变化时重新取值。
+   */
+  const [toolbox, setToolbox] = useRememberedToolbox(
+    "paper",
+    () =>
+      createInkToolbox({
+        pen: { color: profile.config.color, size: profile.config.size },
+      }),
+    profile.config,
   );
   const [history, setHistory] = useState({ undo: false, redo: false });
   const [generation, setGeneration] = useState(0);
-  useEffect(() => {
-    const { color, size } = profile.config;
-    setToolbox((current) =>
-      current.pen.color === color && current.pen.size === size
-        ? current
-        : { ...current, pen: { color, size } },
-    );
-  }, [profile.config]);
   // 引擎重建或纸面重新启用后重新下发当前工具。
   // biome-ignore lint/correctness/useExhaustiveDependencies: 重建与启用是必要的触发器
   useEffect(() => {

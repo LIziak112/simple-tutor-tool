@@ -1,5 +1,6 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -21,6 +22,8 @@ import {
 } from "@/features/attempt/AttemptEditorContext";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
+import { bindInkProfileAccount } from "@/features/ink/ink-profile-store";
+import { getRememberedTools } from "@/features/ink/toolbox-memory.ts";
 import { preparePwaUpdate } from "@/lib/pwa-update-safety";
 import {
   annotationKeyOf,
@@ -629,6 +632,55 @@ it("无 CoordinatedAnnotationProvider 的挂载语境（讲练页）工具切换
       size: "thin",
     }),
   );
+});
+it("有账号时圈画工具的设置记在本机：重新打开还是上次选的，当前工具回到笔", async () => {
+  localStorage.clear();
+  bindInkProfileAccount({ role: "student", id: "memory-1" });
+  try {
+    const first = render(<Harness />);
+    await settleGeometry();
+    fireEvent.click(screen.getByText("标画"));
+    await waitFor(() =>
+      expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
+    );
+    const pen = screen.getByRole("button", { name: "笔" });
+    fireEvent.click(pen);
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "笔设置" })).getByRole(
+        "radio",
+        { name: "蓝" },
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+    await waitFor(() =>
+      expect(engine.setTool).toHaveBeenLastCalledWith({
+        type: "eraser",
+        mode: "stroke",
+        size: "medium",
+      }),
+    );
+    first.unmount();
+
+    render(<Harness />);
+    await settleGeometry();
+    fireEvent.click(screen.getByText("标画"));
+    await waitFor(() =>
+      expect(engine.setTool).toHaveBeenLastCalledWith({
+        type: "pen",
+        color: "blue",
+        size: "thin",
+      }),
+    );
+    // 圈画这一份和草稿纸那一份分开记
+    expect(getRememberedTools("paper")).toEqual({});
+    expect(getRememberedTools("annotation")).toMatchObject({
+      pen: { color: "blue", size: "thin" },
+    });
+  } finally {
+    cleanup();
+    bindInkProfileAccount(null);
+    localStorage.clear();
+  }
 });
 it("切题 flush 由固定原稿唯一宿主收笔并等待本机保存", async () => {
   render(<Harness />);

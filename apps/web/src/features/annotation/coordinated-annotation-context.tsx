@@ -1,15 +1,10 @@
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useMemo,
-  useState,
-} from "react";
+import { createContext, type ReactNode, useContext, useMemo } from "react";
 import {
   createInkToolbox,
   type InkToolboxInit,
   type InkToolboxState,
 } from "@/features/ink/engine/toolbox.ts";
+import { useRememberedToolbox } from "@/features/ink/toolbox-memory.ts";
 
 /** 圈画的工具箱：缺省红色细笔（批注题面，不抢题干的黑字） */
 export function createAnnotationToolbox(
@@ -44,10 +39,11 @@ export function CoordinatedAnnotationProvider({
   /** 初始工具箱，只需给出与圈画缺省不同的字段 */
   initialToolbox?: InkToolboxInit;
 }) {
-  const [toolbox, setToolbox] = useState(() =>
+  // 各支工具的设置按账号记在本机（圈画单独一份，见 toolbox-memory.ts）
+  const [toolbox, setToolbox] = useRememberedToolbox("annotation", () =>
     createAnnotationToolbox(initialToolbox),
   );
-  const value = useMemo(() => ({ toolbox, setToolbox }), [toolbox]);
+  const value = useMemo(() => ({ toolbox, setToolbox }), [toolbox, setToolbox]);
   return (
     <CoordinatedAnnotationContext.Provider value={value}>
       {children}
