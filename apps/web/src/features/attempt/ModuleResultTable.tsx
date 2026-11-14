@@ -36,7 +36,9 @@ export function ModuleResultTable({
   released,
   activity,
   wrongPractice,
+  initialDimension,
 }: {
+  initialDimension?: ReviewGroupDimension | undefined;
   units: readonly AttemptResultUnit[];
   released: boolean;
   activity: AttemptActivity | undefined;
@@ -52,7 +54,7 @@ export function ModuleResultTable({
     [units, released, activity],
   );
   const [selectedDimension, setDimension] =
-    useState<ReviewGroupDimension | null>(null);
+    useState<ReviewGroupDimension | null>(initialDimension ?? null);
   const dimension = selectedDimension ?? defaultReviewDimension(facts);
   const rows = useMemo(
     () =>
@@ -120,6 +122,7 @@ export function ModuleResultTable({
           <label className="flex items-center gap-2 text-sm">
             分组维度
             <select
+              className="min-h-11 rounded border border-border bg-background px-2"
               aria-label="分组维度"
               value={dimension}
               onChange={(event) =>

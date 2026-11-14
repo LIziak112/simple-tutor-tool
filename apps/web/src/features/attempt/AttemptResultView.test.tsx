@@ -81,6 +81,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const DATA: AttemptResultData = {
+  reviewPresentation: {
+    examType: null,
+    templateId: "objective",
+    unitTemplateIds: [],
+  },
   attempt: {
     id: "55555555-5555-4555-8555-555555555555",
     sourceType: "assignment",
@@ -370,14 +375,10 @@ describe("得分汇总卡", () => {
     expect(screen.getByText("第 4 题")).toBeInTheDocument();
     view.unmount();
 
-    // 对照：单单元（DATA 本体）不渲染节标题；按模块表仍有一行但模块名不是按钮
+    // 单单元且没有分批时，不重复显示汇总分组表。
     renderView();
     expect(screen.queryByRole("heading", { name: "练习四" })).toBeNull();
-    expect(
-      within(screen.getByTestId("module-results")).queryByRole("button", {
-        name: "练习四",
-      }),
-    ).toBeNull();
+    expect(screen.queryByTestId("module-results")).toBeNull();
   });
 });
 

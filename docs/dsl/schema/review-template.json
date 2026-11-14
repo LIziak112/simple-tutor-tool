@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "template": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "appliesTo": {
+          "type": "object",
+          "properties": {
+            "examTypes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "composition": {
+              "type": "string",
+              "enum": [
+                "objective",
+                "subjective",
+                "mixed"
+              ]
+            },
+            "hasMaterials": {
+              "type": "boolean"
+            },
+            "questionTypes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "judge",
+                  "choice",
+                  "multi",
+                  "fill",
+                  "solve",
+                  "apply",
+                  "find-error",
+                  "response",
+                  "matching",
+                  "ordering"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "sections": {
+          "minItems": 1,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "summary",
+                  "group_stats",
+                  "questions",
+                  "rubric_matrix",
+                  "material_reading",
+                  "answer_comparison",
+                  "time_distribution",
+                  "agent_report",
+                  "memo_excerpt"
+                ]
+              },
+              "visible": {
+                "default": true,
+                "type": "boolean"
+              },
+              "options": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "dimension": {
+                    "type": "string",
+                    "enum": [
+                      "unit",
+                      "settlement",
+                      "type",
+                      "material",
+                      "knowledge"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "visible",
+              "options"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "agentReport": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string",
+              "enum": [
+                "objective",
+                "essay"
+              ]
+            }
+          },
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "title",
+        "appliesTo",
+        "sections"
+      ],
+      "additionalProperties": false
+    },
+    "presentation": {
+      "type": "object",
+      "properties": {
+        "examType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "templateId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unitTemplateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "examType",
+        "templateId",
+        "unitTemplateIds"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "template",
+    "presentation"
+  ],
+  "additionalProperties": false
+}

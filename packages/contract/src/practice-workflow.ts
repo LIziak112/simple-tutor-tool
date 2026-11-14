@@ -28,6 +28,7 @@ export const practiceFeedbackModeSchema = z.enum([
  */
 export const practiceRecommendationSchema = z
   .object({
+    reviewTemplateId: z.string().min(1).max(80).optional(),
     layout: practiceLayoutSchema.optional(),
     feedback: practiceFeedbackModeSchema.optional(),
     /** 推荐时长（分钟，模块 2 限时测试）：开卷页「限时」的缺省值；只推荐，学习者可改可不限时 */
@@ -102,7 +103,10 @@ export const practiceWorkflowSchema = z
       }),
     canSubmitQuestion: z.boolean(),
     canSettlePartially: z.boolean().optional(),
-    partialSettlementRestriction: z.enum(["timed_attempt", "teacher_restricted", "attempt_finished"]).nullable().optional(),
+    partialSettlementRestriction: z
+      .enum(["timed_attempt", "teacher_restricted", "attempt_finished"])
+      .nullable()
+      .optional(),
     restrictionReason: practiceRestrictionReasonSchema.nullable(),
     /** UTC ISO（Z 后缀）或 null；与 assignmentDueAtSchema 同策略但本文件
      * 不从 content.ts 导入（M5 content 将反向引用 practice 推荐字段，避免环） */

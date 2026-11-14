@@ -214,8 +214,24 @@ await writeSchema(
 await writeSchema(
   "review-facts.json",
   "结果事实与分组维度契约",
-  z.toJSONSchema(z.object({
-    fact: (await import("../src/review-facts.ts")).reviewQuestionFactSchema,
-    dimension: (await import("../src/review-facts.ts")).reviewGroupDimensionSchema,
-  })),
+  z.toJSONSchema(
+    z.object({
+      fact: (await import("../src/review-facts.ts")).reviewQuestionFactSchema,
+      dimension: (await import("../src/review-facts.ts"))
+        .reviewGroupDimensionSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "review-template.json",
+  "复盘模板与展示推荐契约",
+  z.toJSONSchema(
+    z.object({
+      template: (await import("../src/review-template.ts"))
+        .reviewTemplateSchema,
+      presentation: (await import("../src/review-template.ts"))
+        .reviewPresentationSchema,
+    }),
+  ),
 );

@@ -26,6 +26,7 @@ import {
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
 import { reviewEvidenceMetadataSchema } from "./review-facts.ts";
+import { reviewPresentationSchema } from "./review-template.ts";
 import { rubricReviewSchema } from "./rubric.ts";
 import {
   effectiveVerdictSchema,
@@ -532,6 +533,7 @@ export const attemptResultUnitSchema = z.object({
 
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
 export const attemptResultDataSchema = z.object({
+  reviewPresentation: reviewPresentationSchema.optional(),
   attempt: attemptSummarySchema,
   /** 标题（结果页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
   title: z.string().min(1),
