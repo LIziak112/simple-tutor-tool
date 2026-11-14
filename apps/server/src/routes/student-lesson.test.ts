@@ -1416,6 +1416,7 @@ describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题�
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0]?.payloadJson ?? "{}")).toEqual({
       type: "question_submit",
+      submissionOrigin: { channel: "web" },
       clientTs: expect.any(Number),
       questionId: S.choice,
     });
