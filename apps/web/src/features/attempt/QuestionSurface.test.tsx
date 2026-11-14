@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import type { QuestionPublic } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
-import { QuestionSurface } from "./QuestionSurface";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 
 const question: QuestionPublic = {
   id: "surface",

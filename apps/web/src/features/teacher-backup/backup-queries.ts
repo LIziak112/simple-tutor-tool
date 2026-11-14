@@ -1,12 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BACKUP_OPERATOR_REQUIRED, type TeacherInfo } from "@tutor/contract";
 import { teacherMeKey } from "@/features/auth/teacher-auth";
-import {
-  ApiError,
-  downloadBackupApi,
-  fetchBackupSnapshots,
-  restoreBackupApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * 备份与恢复的查询封装（T4.5，纯消费接口；设置页「备份与恢复」区数据源）：
@@ -41,6 +37,8 @@ function useUpdateBackupAccessOnDenial() {
 
 /** 最近快照列表（设置页展示时间 + 大小 + 文件名） */
 export function useBackupSnapshots() {
+  const { fetchBackupSnapshots } = usePortalClients();
+
   const updateAccessOnDenial = useUpdateBackupAccessOnDenial();
   return useQuery({
     queryKey: backupSnapshotsKey,
@@ -51,6 +49,8 @@ export function useBackupSnapshots() {
 
 /** 下载完整备份 zip（返回下载文件名供页面展示） */
 export function useDownloadBackup() {
+  const { downloadBackupApi } = usePortalClients();
+
   const updateAccessOnDenial = useUpdateBackupAccessOnDenial();
   return useMutation({
     mutationFn: () => updateAccessOnDenial(downloadBackupApi),
@@ -59,6 +59,8 @@ export function useDownloadBackup() {
 
 /** 从备份 zip 恢复整库（multipart zip + 登录密码；返回恢复摘要） */
 export function useRestoreBackup() {
+  const { restoreBackupApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const updateAccessOnDenial = useUpdateBackupAccessOnDenial();
   return useMutation({

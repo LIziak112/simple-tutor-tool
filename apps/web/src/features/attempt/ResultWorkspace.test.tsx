@@ -1,12 +1,12 @@
+import { MemoryRouter } from "react-router";
+import { expect, it, vi } from "vitest";
 import {
   fireEvent,
   render,
   screen,
   waitFor,
   within,
-} from "@testing-library/react";
-import { MemoryRouter } from "react-router";
-import { expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import { ResultWorkspace } from "./ResultWorkspace";
 
 it("从底栏打开答题卡，开合保留定位范围和正文实例", async () => {

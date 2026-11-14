@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { contentTreeKey } from "@/features/content/content-queries";
 import {
@@ -8,6 +7,7 @@ import {
   studentLectureKey,
   studentLecturesKey,
 } from "@/features/student/student-queries";
+import { act, renderHook } from "@/test/render-with-portal";
 import {
   useCreateCourse,
   useDeleteCourse,

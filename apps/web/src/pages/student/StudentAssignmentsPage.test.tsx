@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { StudentAssignment } from "@tutor/contract";
 import { beforeEach, expect, it, vi } from "vitest";
 import { ApiError, fetchStudentAssignmentsApi } from "@/lib/api";
+import { fireEvent, screen, waitFor, within } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAssignmentsPage from "./StudentAssignmentsPage";
 

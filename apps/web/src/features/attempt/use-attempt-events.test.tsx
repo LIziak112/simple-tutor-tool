@@ -1,10 +1,9 @@
-import { act, render } from "@testing-library/react";
 import type { StudentAnswer } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
-} from "@/features/attempt/AttemptEditorContext";
+} from "@/features/answering/AttemptEditorContext";
 import {
   bumpNoteBaseRevisionForTest,
   installNoteBackend,
@@ -15,6 +14,7 @@ import {
 import { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { memoryKVBackend } from "@/lib/kv-backend";
+import { act, render } from "@/test/render-with-portal";
 import { useAttemptEvents } from "./use-attempt-events";
 
 /**

@@ -79,6 +79,16 @@ export function parseUploadResponse<T>(
   return data.data;
 }
 
+/** DOMException可来自不同realm，中止身份不依赖Error构造器相等。 */
+function isAbortReason(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AbortError"
+  );
+}
+
 /**
  * 调用 hc 接口并解包响应壳（T1.9 起）：
  * - 成功 → 返回 data 部分；
@@ -97,7 +107,7 @@ export async function callApi<T>(
     // 中止身份保留（T6R.8 复审⑬）：AbortError 原样上抛——调用方（note-sync）
     // 据此区分「会话切换主动中止（丢弃）」与网络错误（退避）；其余失败
     // 归并中文网络文案
-    if (err instanceof Error && err.name === "AbortError") throw err;
+    if (isAbortReason(err)) throw err;
     throw new Error(
       "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
     );
@@ -134,7 +144,8 @@ async function readShell(res: Response): Promise<unknown> {
   let body: unknown;
   try {
     body = await res.json();
-  } catch {
+  } catch (error) {
+    if (isAbortReason(error)) throw error;
     throw invalidApiResponse(res.status, diagnostics);
   }
   const response = parseApiResponse(body, res.status, diagnostics);

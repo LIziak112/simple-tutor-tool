@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReportListData } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +8,7 @@ import {
   fetchReportDetail,
   fetchStudentReports,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 
 /**
  * 学生画像页「AI 报告」区组件测试（T4.7，D24——T4.2 占位换实数据）：

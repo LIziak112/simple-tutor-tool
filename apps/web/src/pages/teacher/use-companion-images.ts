@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { postTeacherMediaApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import {
   type ImagePairing,
   MEDIA_UPLOAD_CONCURRENCY,
@@ -62,6 +63,8 @@ export interface UseCompanionImages {
 export function useCompanionImages(
   pickedFiles: readonly PickedFile[],
 ): UseCompanionImages {
+  const { postTeacherMediaApi } = usePortalClients();
+
   const [images, setImages] = useState<CompanionImageInput[]>([]);
   const [uploads, setUploads] = useState<Record<string, CompanionUploadState>>(
     {},
@@ -182,7 +185,7 @@ export function useCompanionImages(
         }
       })();
     }
-  }, [images, pairedPaths, uploads]);
+  }, [images, pairedPaths, uploads, postTeacherMediaApi]);
 
   // 已上传 → src 改写映射（多 md 引用同一张图时多个 src 指向同一 serverSrc）
   const rewriteMap = useMemo(() => {

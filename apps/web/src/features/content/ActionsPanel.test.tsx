@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
 import type { ImportAction, ImportPreviewData } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import {
   ActionsPanel,
   describeImportNames,

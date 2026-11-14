@@ -5,6 +5,7 @@ import {
   type QuestionAnswers,
 } from "@tutor/contract";
 import { answerKindViews, dispatchComparison } from "@/features/answering";
+import { formatReferenceAnswers } from "@/features/answering/answer-format";
 import { prepareQuestion } from "@/features/answering/prepare-question";
 import { questionBindings } from "@/features/answering/question-binding";
 import type { ReferenceMaterial } from "@/features/answering/types";
@@ -12,7 +13,6 @@ import {
   AnswerComparisonShell,
   referenceColumnOf,
 } from "@/features/answering/views/comparison";
-import { formatReferenceAnswers } from "./answer-format";
 
 /**
  * 本人答案 vs 参考答案的两栏对照（结果视图/逐题反馈/讲练页题卡共用）。

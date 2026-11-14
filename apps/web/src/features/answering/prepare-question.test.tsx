@@ -1,8 +1,8 @@
-import { render } from "@testing-library/react";
 import type { QuestionPublic } from "@tutor/contract";
 import { processor } from "@tutor/md-dsl";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getQuestionCompletion } from "../attempt/question-completion";
+import { getQuestionCompletion } from "@/features/answering/question-completion";
+import { render } from "@/test/render-with-portal";
 import {
   analyzeSlots,
   expectedSlotCountOf,

@@ -182,9 +182,13 @@ test("作答页：不浮随手记按钮、题卡入口记一条并锚到原题",
 
   // 随笔页：卡片上的锚链接回到那道题
   await page.goto("/s/memos");
-  const anchorLink = page
-    .locator("article")
-    .getByRole("link", { name: /^第 1 题/ });
+  const sourceCard = page.locator("article").filter({
+    hasText: "判断题里「正数」的定义要再看",
+  });
+  await sourceCard.getByRole("button", { name: /查看来源/ }).click();
+  const anchorLink = sourceCard.getByRole("link", {
+    name: new RegExp(`${courseName}.*${unitName}.*第\\s*1\\s*题`),
+  });
   await expect(anchorLink).toBeVisible();
   await anchorLink.click();
   await page.waitForURL(`**/s/attempts/${attemptId}?q=*`);

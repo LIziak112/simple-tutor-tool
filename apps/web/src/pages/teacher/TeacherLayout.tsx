@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, Navigate, Outlet, useLocation } from "react-router";
 import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,14 +26,14 @@ import {
 import { PersonalViewButton } from "@/features/auth/PersonalViewButton";
 import { PortalGuard } from "@/features/auth/PortalGuard";
 import { useAccountLoginPath } from "@/features/auth/personal-auth";
-import {
-  type PortalCapability,
-  portalCapabilitiesOf,
-} from "@/features/auth/portals";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { SettingsNavigationProvider } from "@/features/teacher-settings/settings-navigation";
 import { BRAND_NAME } from "@/lib/brand";
+import {
+  type PortalCapability,
+  portalCapabilitiesOf,
+} from "@/portals/registry";
 
 interface NavItemSpec {
   to: string;
@@ -168,6 +168,7 @@ function TeacherNavigation({
 }
 
 export function TeacherLayout() {
+  const legacyLocation = useLocation();
   useEffect(() => {
     document.documentElement.classList.add("teacher-theme");
     return () => document.documentElement.classList.remove("teacher-theme");
@@ -195,6 +196,13 @@ export function TeacherLayout() {
     isNavActive(item, pathname),
   );
 
+  if (meQuery.data?.accountKind === "personal")
+    return (
+      <Navigate
+        to={`/p/manage${legacyLocation.pathname.slice(2)}${legacyLocation.search}${legacyLocation.hash}`}
+        replace
+      />
+    );
   return (
     <PortalGuard portal="teacher" loginPath={loginPath} query={meQuery}>
       {(me) => (

@@ -1,5 +1,4 @@
 import type {
-  AnalyticsAnomalyQuestion,
   AnalyticsAssignmentCell,
   AnalyticsAssignmentColumn,
   AnalyticsFocusCard,
@@ -41,6 +40,7 @@ import {
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
+import { buildAnomalies } from "./analytics-anomalies";
 import {
   type AnalyticsContext,
   buildContext,
@@ -48,6 +48,7 @@ import {
   loadAnalyticsResponses,
   medianOf,
 } from "./analytics-context";
+import { timeCohortStats, timeSeconds } from "./analytics-time";
 import { latestAttemptOf } from "./assignment-service";
 import { answerOf, effectiveVerdictOfRow } from "./attempt-service";
 import { attemptTraceRowsByAttempt } from "./attempt-trace-rows";
@@ -111,11 +112,6 @@ function weekKeyOfMs(weekStartMs: number): string {
 /** submittedAt（UTC ISO）→ 该作答所在自然周的周一北京日期键（YYYY-MM-DD） */
 function beijingWeekKeyOf(iso: string): string {
   return weekKeyOfMs(beijingWeekStartMs(Date.parse(iso)));
-}
-
-/** 保留 2 位小数（异常倍数展示用） */
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
 }
 
 /** JSON.parse 的窄化包装：坏数据返回 undefined（列由写入链路保证为合法 JSON） */
@@ -775,66 +771,6 @@ function buildOffline(
   };
 }
 
-// ---------- 用时异常题（D6） ----------
-
-/**
- * 学生的用时异常题：activeSec > 该题中位数 2 倍（slow）或 hintsUsed ≥ 2
- * （hints）；中位数取 ctx.domainMedianByQuestion（域内全部已交作答口径，见
- * buildContext 注释）。按提交时间倒序。
- */
-function buildAnomalies(
-  ctx: AnalyticsContext,
-  scoped: readonly Attempt[],
-): AnalyticsAnomalyQuestion[] {
-  const out: AnalyticsAnomalyQuestion[] = [];
-  for (const attempt of scoped) {
-    for (const response of ctx.responsesByAttempt.get(attempt.id) ?? []) {
-      const medianSec =
-        ctx.domainMedianByQuestion.get(response.questionId) ?? null;
-      const reasons: Array<"slow" | "hints"> = [];
-      if (
-        response.activeSec !== null &&
-        medianSec !== null &&
-        response.activeSec > 2 * medianSec
-      ) {
-        reasons.push("slow");
-      }
-      if (response.hintsUsed >= 2) reasons.push("hints");
-      if (reasons.length === 0) continue;
-      const snapshot = snapshotOfRow(response);
-      const meta = ctx.questionMeta.get(response.questionId);
-      out.push({
-        attemptId: attempt.id,
-        questionId: response.questionId,
-        stemMd: snapshot?.stemMd ?? meta?.stemMd ?? "",
-        type:
-          snapshot?.type ??
-          (meta?.type as AnalyticsQuestionRow["type"] | undefined) ??
-          "fill",
-        difficulty: snapshot?.difficulty ?? meta?.difficulty ?? 2,
-        knowledge:
-          snapshot?.knowledge ??
-          ctx.knowledgeFallback.get(response.questionId) ??
-          [],
-        activeSec: response.activeSec,
-        medianSec,
-        multipleOfMedian:
-          response.activeSec !== null && medianSec !== null && medianSec > 0
-            ? round2(response.activeSec / medianSec)
-            : null,
-        hintsUsed: response.hintsUsed,
-        reasons,
-        submittedAt: attempt.submittedAt ?? "",
-      });
-    }
-  }
-  return out.sort(
-    (a, b) =>
-      b.submittedAt.localeCompare(a.submittedAt) ||
-      a.questionId.localeCompare(b.questionId),
-  );
-}
-
 // ---------- 重做概览（画像页，D1 独立指标） ----------
 
 /**
@@ -1110,11 +1046,13 @@ function buildQuestionRows(ctx: AnalyticsContext): AnalyticsQuestionRow[] {
       }
       if (response.activeSec !== null) secs.push(response.activeSec);
       // D6 判定（与画像异常同一口径：全域中位数 + 提示数）
-      const domainMedian = ctx.domainMedianByQuestion.get(questionId) ?? null;
+      const comparisonTime = ctx.times.responseTime.get(response.id);
+      const comparisonSec = timeSeconds(comparisonTime);
+      const domainMedian = ctx.times.median(questionId, comparisonTime);
       if (
-        (response.activeSec !== null &&
+        (comparisonSec !== null &&
           domainMedian !== null &&
-          response.activeSec > 2 * domainMedian) ||
+          comparisonSec > 2 * domainMedian) ||
         response.hintsUsed >= 2
       ) {
         anomalyCount += 1;
@@ -1152,6 +1090,11 @@ function buildQuestionRows(ctx: AnalyticsContext): AnalyticsQuestionRow[] {
       pendingCount: pending,
       selfJudgedCount: selfJudged,
       correctRate: judged > 0 ? correct / judged : null,
+      timeCohorts: timeCohortStats(
+        group.rows.map(({ response }) =>
+          ctx.times.responseTime.get(response.id),
+        ),
+      ),
       avgSec:
         secs.length > 0
           ? Math.round(secs.reduce((sum, sec) => sum + sec, 0) / secs.length)

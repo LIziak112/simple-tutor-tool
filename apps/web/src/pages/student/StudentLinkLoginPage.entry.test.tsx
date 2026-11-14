@@ -1,16 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { StudentMeData } from "@tutor/contract";
+import { StrictMode } from "react";
+import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { currentDraftSession } from "@/features/persistence/draft-store";
+import { PortalHost } from "@/portals/PortalHost";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import type { StudentMeData } from "@tutor/contract";
-import { StrictMode } from "react";
-import { createMemoryRouter, RouterProvider } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { currentDraftSession } from "@/features/attempt/draft-store";
+} from "@/test/render-with-portal";
 import StudentLinkLoginPage from "./StudentLinkLoginPage";
 
 function deferred<T>() {
@@ -237,4 +238,39 @@ describe("专属链接真实页面入口生命周期（StrictMode，真实RPC/fe
     await home();
     expect(second.client.getQueryData(["student", "me"])).toEqual(B);
   });
+});
+
+it("真实宿主主体切换后完成链接登录，不因新端口再次兑换同token", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  client.setQueryData(["student", "me"], A);
+  const router = createMemoryRouter(
+    [
+      {
+        element: (
+          <PortalHost>
+            <Outlet />
+          </PortalHost>
+        ),
+        children: [
+          { path: "/s/:token", element: <StudentLinkLoginPage /> },
+          { path: "/s/home", element: <p>学生首页</p> },
+        ],
+      },
+    ],
+    { initialEntries: ["/s/link-real-host"] },
+  );
+  render(
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+  await ready("link-real-host");
+  await answer("link-real-host", B);
+  await home();
+  expect(client.getQueryData(["student", "me"])).toEqual(B);
+  expect(links).toHaveLength(1);
 });

@@ -2,7 +2,8 @@ import { AI_PROMPT_BODY_MAX_CHARS } from "@tutor/contract";
 import { Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import {
   useSaveStudentAiPrompts,
   useStudentAiPrompts,

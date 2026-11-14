@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { AttemptResultLoadBoundary } from "./AttemptResultLoader";
 
 it("结果模块加载失败提供重新加载入口，不显示空白页", () => {

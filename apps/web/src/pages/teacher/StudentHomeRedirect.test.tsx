@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { StudentHomeRedirect } from "../../App";
 
 /** 评审 #11802 顺手①：旧画像链接 → 学生主页重定向的测试锁 */

@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { NotebookRound, StudentNotebookData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchStudentNotebookApi } from "@/lib/api";
+import { fireEvent, screen, waitFor } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentQuestionNotebookPage from "./StudentQuestionNotebookPage";
 

@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import type { PracticeQuestionProgress } from "@tutor/contract";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { AttemptAnswerCard } from "./AttemptAnswerCard";
 import {
   PracticeModeDialog,

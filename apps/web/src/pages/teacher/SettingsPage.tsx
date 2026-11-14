@@ -5,16 +5,23 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
+import {
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router";
 import { Button } from "@/components/ui/button";
 import { AuthScreenLoading } from "@/features/auth/AuthScreen";
 import {
   useAccountLoginPath,
   useLogoutPersonal,
 } from "@/features/auth/personal-auth";
-import { portalCapabilitiesOf } from "@/features/auth/portals";
+import { loginPathWithReturnTo } from "@/features/auth/return-navigation";
 import { useLogoutTeacher, useTeacherMe } from "@/features/auth/teacher-auth";
 import { DeviceSettingsSection } from "@/features/devices/DeviceSettingsSection";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { TeacherAiSettingsPanel } from "@/features/student-ai/TeacherAiSettingsPanel";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
@@ -22,6 +29,7 @@ import { PracticeFeedbackSection } from "@/features/teacher-settings/PracticeFee
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
+import { portalCapabilitiesOf } from "@/portals/registry";
 
 const SECTIONS = [
   { id: "teaching", label: "学生作答方式", shortLabel: "作答方式" },
@@ -32,18 +40,28 @@ const SECTIONS = [
 
 /** 分类写入 URL；配置控制器持续挂载，切换时保留未保存状态。 */
 export function SettingsPage() {
+  const routes = usePortalRoutes();
+
   // 登录回执会预填身份，整站备份权限由 /me 单独读取。
   const meQuery = useTeacherMe({ freshOnMount: true });
-  const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/t/login");
+  const loginPath = useAccountLoginPath(
+    meQuery.data?.accountKind,
+    routes.management("login"),
+  );
   const navigate = useNavigate();
-  const onLoggedOut = () => navigate(loginPath, { replace: true });
+  const location = useLocation();
+  const loginTarget = loginPathWithReturnTo(
+    loginPath,
+    location.pathname + location.search + location.hash,
+  );
+  const onLoggedOut = () => navigate(loginTarget, { replace: true });
   const logoutTeacherMutation = useLogoutTeacher(onLoggedOut);
   const logoutPersonalMutation = useLogoutPersonal("teacher", onLoggedOut);
   const settingsNavigation = useSettingsNavigation();
   const [searchParams] = useSearchParams();
   if (meQuery.isPending) return <AuthScreenLoading text="正在加载设置…" />;
   if (meQuery.isError || !meQuery.data)
-    return <Navigate to={loginPath} replace />;
+    return <Navigate to={loginTarget} replace />;
   const canManageBackup = meQuery.data.canManageInstanceBackup === true;
   const sections = canManageBackup
     ? SECTIONS
@@ -75,7 +93,7 @@ export function SettingsPage() {
         {sections.map(({ id, label, shortLabel }) => (
           <Link
             key={id}
-            to={`/t/settings?section=${id}`}
+            to={routes.management(`settings?section=${id}`)}
             aria-label={label}
             aria-current={activeSection === id ? "page" : undefined}
             className="teacher-settings-link"
@@ -105,7 +123,7 @@ export function SettingsPage() {
             </p>
           </div>
           <Link
-            to="/t/connect"
+            to={routes.management("connect")}
             className="flex min-h-11 items-center gap-2 text-sm font-medium text-primary"
           >
             管理 AI 连接
@@ -126,7 +144,7 @@ export function SettingsPage() {
             accountKind={meQuery.data.accountKind}
             {...(portalCapabilitiesOf("teacher", meQuery.data.accountKind)
               .teacherAiConnections
-              ? { connectionSettingsHref: "/t/connect" }
+              ? { connectionSettingsHref: routes.management("connect") }
               : {})}
           />
         )}
@@ -148,7 +166,7 @@ export function SettingsPage() {
           </dl>
           {meQuery.data.isAdmin && (
             <Link
-              to="/a"
+              to={routes.portal("admin").homePath}
               className="mt-3 flex min-h-11 items-center gap-2 text-sm font-medium text-primary"
             >
               <ShieldCheck aria-hidden className="size-4" />

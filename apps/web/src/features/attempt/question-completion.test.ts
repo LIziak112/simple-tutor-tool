@@ -1,6 +1,6 @@
 import type { QuestionPublic } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { getQuestionCompletion } from "./question-completion";
+import { getQuestionCompletion } from "@/features/answering/question-completion";
 
 const question: QuestionPublic = {
   id: "q",

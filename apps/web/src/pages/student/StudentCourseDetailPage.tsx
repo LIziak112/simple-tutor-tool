@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { formatResultCounts } from "@/features/attempt/result-counts";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { StudentCourseAttachments } from "@/features/student/StudentCourseAttachments";
 import { StudentCourseCatalog } from "@/features/student/StudentCourseCatalog";
 import { useStudentCourse } from "@/features/student/student-queries";
@@ -17,7 +18,7 @@ import {
   StudentListSkeleton,
   StudentSectionLink,
 } from "@/features/student/student-ui";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * /s/courses/:id 课程目录页（T2A.5；T2A.6 单元项接入作答）：
@@ -63,6 +64,8 @@ function UnitStatusBadge({ item }: { item: StudentCourseItem }) {
   );
 }
 export default function StudentCourseDetailPage() {
+  const routes = usePortalRoutes();
+
   const { id = "" } = useParams<{ id: string }>();
   const courseQuery = useStudentCourse(id);
 
@@ -74,7 +77,7 @@ export default function StudentCourseDetailPage() {
     <section aria-label="课程目录" className="flex flex-col gap-4">
       <header className="flex items-center gap-2">
         <Link
-          to="/s/courses"
+          to={routes.learning("courses")}
           aria-label="返回我的课程"
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
@@ -108,7 +111,7 @@ export default function StudentCourseDetailPage() {
               你可能已被移出这门课，或课程已结束归档。有疑问请联系老师。
             </p>
             <Link
-              to="/s/courses"
+              to={routes.learning("courses")}
               className="flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               返回我的课程
@@ -136,7 +139,7 @@ export default function StudentCourseDetailPage() {
             title="老师还没有发布内容"
             description="课程内容发布后会自动出现在这里。"
             action={
-              <StudentSectionLink to="/s/courses">
+              <StudentSectionLink to={routes.learning("courses")}>
                 返回我的课程
               </StudentSectionLink>
             }

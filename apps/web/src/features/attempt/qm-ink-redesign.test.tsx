@@ -1,17 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertPublicQuestion,
   publicContentSignatureOf,
 } from "@/features/annotation/question-base-image";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import {
   getScratchContextLabel,
   renderScratchContext,
 } from "@/features/answering/scratch-context";
+import { cleanup, fireEvent, render, screen } from "@/test/render-with-portal";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
-import { QuestionSurface } from "./QuestionSurface";
 
 vi.mock("@/lib/api", () => ({
   fetchAttemptInkApi: vi.fn(async () => null),

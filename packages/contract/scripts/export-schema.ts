@@ -210,3 +210,73 @@ await writeSchema(
     { io: "input" },
   ),
 );
+
+const reviewV2 = await import("../src/attempt-review-v2.ts");
+await writeSchema(
+  "attempt-review-v2.json",
+  "范围复盘与分片报告v2契约",
+  z.toJSONSchema(
+    z.object({
+      create: reviewV2.reviewV2CreateSchema,
+      snapshot: reviewV2.reviewV2SnapshotSchema,
+      report: reviewV2.reviewV2ReportSchema,
+      run: reviewV2.reviewV2RunPublicSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "review-facts.json",
+  "结果事实与分组维度契约",
+  z.toJSONSchema(
+    z.object({
+      fact: (await import("../src/review-facts.ts")).reviewQuestionFactSchema,
+      dimension: (await import("../src/review-facts.ts"))
+        .reviewGroupDimensionSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "review-template.json",
+  "复盘模板与展示推荐契约",
+  z.toJSONSchema(
+    z.object({
+      template: (await import("../src/review-template.ts"))
+        .reviewTemplateSchema,
+      presentation: (await import("../src/review-template.ts"))
+        .reviewPresentationSchema,
+    }),
+  ),
+);
+
+const memoApi = await import("../src/memo-api.ts");
+const memoSharing = await import("../src/memo-sharing.ts");
+await writeSchema(
+  "memo-api.json",
+  "随笔读写、来源与分享契约",
+  z.toJSONSchema(
+    z.object({
+      memo: memoApi.memoSchema,
+      query: memoApi.memoListQuerySchema,
+      agentCreate: memoApi.memoAgentCreateSchema,
+      share: memoSharing.memoShareInputSchema,
+      shareState: memoSharing.memoShareStateSchema,
+      sharedMemo: memoSharing.sharedMemoSchema,
+      sourceTarget: memoSharing.memoSourceTargetSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "student-mcp-current.json",
+  "学生 MCP 当前上下文契约",
+  z.toJSONSchema(
+    z.object({
+      input: (await import("../src/student-mcp-current.ts"))
+        .studentMcpCurrentInputSchema,
+      data: (await import("../src/student-mcp-current.ts"))
+        .studentMcpCurrentDataSchema,
+    }),
+  ),
+);

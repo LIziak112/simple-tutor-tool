@@ -4,10 +4,10 @@ import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LoginShell } from "@/features/auth/LoginShell";
-import { safeReturnTo } from "@/features/auth/portals";
 import { useLoginStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useStudentTheme } from "@/features/student/use-student-theme";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+import { safeReturnTo } from "@/portals/registry";
 
 /**
  * /s/login 学生密码登录页（T2.3，§5.7 登录名+密码）。

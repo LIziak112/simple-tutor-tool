@@ -1,4 +1,3 @@
-import { screen } from "@testing-library/react";
 import type {
   StudentAssignmentListData,
   StudentCourseListData,
@@ -12,6 +11,7 @@ import {
   fetchStudentMe,
   fetchStudentWrongQuestionsApi,
 } from "@/lib/api";
+import { screen } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentHomePage from "./StudentHomePage";
 

@@ -43,11 +43,13 @@ import {
   TimeLimitPicker,
   timeLimitStartOption,
 } from "@/features/attempt/TimeLimitPicker";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { formatRelativeTime } from "@/lib/time";
 
 /**
@@ -178,6 +180,8 @@ function RedoConfirmDialog({
 }
 
 export default function StudentCourseUnitPage() {
+  const routes = usePortalRoutes();
+
   const { id: courseId = "", unitId = "" } = useParams<{
     id: string;
     unitId: string;
@@ -206,7 +210,7 @@ export default function StudentCourseUnitPage() {
             你可能已被移出这门课，或课程已结束归档。有疑问请联系老师。
           </p>
           <Link
-            to="/s/courses"
+            to={routes.learning("courses")}
             className="flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             返回我的课程
@@ -226,7 +230,7 @@ export default function StudentCourseUnitPage() {
         }
         onRetry={
           notVisible
-            ? () => void navigate("/s/courses")
+            ? () => void navigate(routes.learning("courses"))
             : () => void landingQuery.refetch()
         }
       />
@@ -264,6 +268,8 @@ function UnitLandingView({
   unitId: string;
   landing: StudentUnitLandingData;
 }) {
+  const routes = usePortalRoutes();
+
   const navigate = useNavigate();
   const startAttempt = useStartCourseAttempt(courseId, unitId);
   const redoTriggerRef = useRef<HTMLButtonElement>(null);
@@ -313,7 +319,7 @@ function UnitLandingView({
   }, [boundAccountId, landing.practiceRecommendation]);
 
   const enterAttempt = (attemptId: string) => {
-    void navigate(`/s/attempts/${attemptId}`);
+    void navigate(routes.learning(`attempts/${attemptId}`));
   };
 
   const timeLimitOption = timeLimitStartOption(timeLimit);
@@ -372,7 +378,7 @@ function UnitLandingView({
     <section aria-label="单元练习" className="flex flex-col gap-4">
       <header className="flex items-center gap-2">
         <Link
-          to={`/s/courses/${courseId}`}
+          to={routes.learning(`courses/${courseId}`)}
           aria-label="返回课程目录"
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >

@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { CourseDetailData } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { CourseTreeItems } from "./CourseTreeItems";
 
 const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));

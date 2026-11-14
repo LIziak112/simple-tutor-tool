@@ -1,11 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiPolicyOverrideData } from "@tutor/contract";
-import {
-  fetchAiPolicyOverrideApi,
-  fetchTeacherAiSettingsApi,
-  putAiPolicyOverrideApi,
-  saveTeacherAiSettingsApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
 
 /**
  * SAI-07 教学配置查询封装（教师设置区与学生/作业覆盖字段的数据源）。
@@ -33,6 +29,8 @@ export const aiPolicyOverrideDraftKey = (type: string, id: string) =>
 
 /** 读教师全局 AI 设置 */
 export function useTeacherAiSettings() {
+  const { fetchTeacherAiSettingsApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherAiSettingsKey,
     queryFn: fetchTeacherAiSettingsApi,
@@ -42,11 +40,14 @@ export function useTeacherAiSettings() {
 
 /** 保存教师全局 AI 设置（409 AI_SETTINGS_STALE 等错误由组件按 ApiError 分支） */
 export function useSaveTeacherAiSettings() {
+  const { saveTeacherAiSettingsApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     // 包一层丢弃 react-query 传入的 mutation 上下文（不进 API 函数签名）
-    mutationFn: (request: Parameters<typeof saveTeacherAiSettingsApi>[0]) =>
-      saveTeacherAiSettingsApi(request),
+    mutationFn: (
+      request: Parameters<ApiServices["saveTeacherAiSettingsApi"]>[0],
+    ) => saveTeacherAiSettingsApi(request),
     onSuccess: (data) => {
       queryClient.setQueryData(teacherAiSettingsKey, data);
       void queryClient.invalidateQueries({ queryKey: teacherAiSettingsKey });
@@ -58,6 +59,8 @@ export function useSaveTeacherAiSettings() {
 export function useAiPolicyOverride(
   subject: { type: "student" | "assignment"; id: string } | null,
 ) {
+  const { fetchAiPolicyOverrideApi } = usePortalClients();
+
   return useQuery({
     queryKey: aiPolicyOverrideKey(
       subject?.type ?? "pending",
@@ -74,6 +77,8 @@ export function useAiPolicyOverride(
 
 /** 保存学生/作业的 AI 策略覆盖（成功后写回缓存 + 失效重取） */
 export function usePutAiPolicyOverride() {
+  const { putAiPolicyOverrideApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: {

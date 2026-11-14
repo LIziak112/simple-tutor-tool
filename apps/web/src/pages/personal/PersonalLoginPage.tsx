@@ -7,9 +7,9 @@ import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
 import { useLoginPersonal } from "@/features/auth/personal-auth";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import { useTeacherStatus } from "@/features/auth/teacher-auth";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /p/login 个人学习账号登录（模块 0）。

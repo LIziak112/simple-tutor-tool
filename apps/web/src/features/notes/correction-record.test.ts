@@ -25,6 +25,8 @@ import {
   SESSION_A,
   waitForLocalSaved,
 } from "@/features/notes/note-test-utils";
+import { bindServiceLease } from "@/features/runtime/service-leases";
+import { testClientServices } from "@/test/portal-fixture";
 
 /**
  * correction-record（T6R.15 前端）测试：订正/补充稿的本地记录编排——
@@ -81,6 +83,7 @@ const CORRECTION_SCOPE = { ...SCOPE, phase: "correction" as const };
 const SUPPLEMENT_SCOPE = { ...SCOPE, phase: "supplement" as const };
 
 beforeEach(() => {
+  bindServiceLease(SESSION_A, testClientServices);
   installNoteBackend(memoryNoteBackend());
   docMock.mockReset();
 });

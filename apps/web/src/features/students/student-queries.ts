@@ -7,13 +7,7 @@ import type {
   StudentSummary,
   StudentUpdateRequest,
 } from "@tutor/contract";
-import {
-  createStudentApi,
-  fetchStudentsApi,
-  resetStudentLinkApi,
-  resetStudentPasswordApi,
-  updateStudentApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 学生管理查询与写操作（T2.1 教师端学生页）。
@@ -27,6 +21,8 @@ export const studentsKey = (includeArchived: boolean) =>
 
 /** 学生列表（三态齐全由页面接 isPending/isError） */
 export function useStudents(includeArchived: boolean) {
+  const { fetchStudentsApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentsKey(includeArchived),
     queryFn: () => fetchStudentsApi(includeArchived),
@@ -47,6 +43,8 @@ function useInvalidateStudents() {
 
 /** 新增学生（响应含一次性初始密码明文，由调用方弹窗展示） */
 export function useCreateStudent() {
+  const { createStudentApi } = usePortalClients();
+
   const invalidate = useInvalidateStudents();
   return useMutation<StudentCreateData, Error, StudentCreateRequest>({
     mutationFn: createStudentApi,
@@ -56,6 +54,8 @@ export function useCreateStudent() {
 
 /** 更新学生（开关登录方式 / 改名 / 归档等） */
 export function useUpdateStudent() {
+  const { updateStudentApi } = usePortalClients();
+
   const invalidate = useInvalidateStudents();
   return useMutation<
     StudentSummary,
@@ -69,6 +69,8 @@ export function useUpdateStudent() {
 
 /** 重置学生密码（响应含一次性新密码明文） */
 export function useResetStudentPassword() {
+  const { resetStudentPasswordApi } = usePortalClients();
+
   const invalidate = useInvalidateStudents();
   return useMutation<StudentResetPasswordData, Error, string>({
     mutationFn: resetStudentPasswordApi,
@@ -78,6 +80,8 @@ export function useResetStudentPassword() {
 
 /** 重置专属链接（旧链接立即失效；响应含新 linkToken） */
 export function useResetStudentLink() {
+  const { resetStudentLinkApi } = usePortalClients();
+
   const invalidate = useInvalidateStudents();
   return useMutation<StudentResetLinkData, Error, string>({
     mutationFn: resetStudentLinkApi,

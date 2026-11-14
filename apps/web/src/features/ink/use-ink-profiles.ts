@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { ApiError } from "@/lib/api";
-import { fetchInkProfiles } from "./ink-profile-api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import {
   bindInkProfileAccount,
   type InkProfileAccount,
@@ -11,6 +12,8 @@ export function useBindInkProfiles(
   role: InkProfileAccount["role"],
   id: string | undefined,
 ) {
+  const { fetchInkProfiles } = usePortalClients();
+
   useEffect(() => {
     let active = true;
     if (!id) {
@@ -35,5 +38,5 @@ export function useBindInkProfiles(
       active = false;
       bindInkProfileAccount(null);
     };
-  }, [role, id]);
+  }, [role, id, fetchInkProfiles]);
 }

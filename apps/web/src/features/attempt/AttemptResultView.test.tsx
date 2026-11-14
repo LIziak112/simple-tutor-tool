@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render as renderReact,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -14,6 +7,13 @@ import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub"
 import { correctionStubDatasets } from "@/features/notes/correction-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import { fetchAttemptContextApi } from "@/lib/api";
+import {
+  fireEvent,
+  render as renderReact,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { AttemptResultView } from "./AttemptResultView";
 
 // SAI-22 起结果视图接 AI 复盘装配（查询客户端必需）；每次渲染独立 client，
@@ -81,6 +81,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const DATA: AttemptResultData = {
+  reviewPresentation: {
+    examType: null,
+    templateId: "objective",
+    unitTemplateIds: [],
+  },
   attempt: {
     id: "55555555-5555-4555-8555-555555555555",
     sourceType: "assignment",
@@ -370,14 +375,10 @@ describe("得分汇总卡", () => {
     expect(screen.getByText("第 4 题")).toBeInTheDocument();
     view.unmount();
 
-    // 对照：单单元（DATA 本体）不渲染节标题；按模块表仍有一行但模块名不是按钮
+    // 对照：单单元且未分批不渲染节标题，也不显示与汇总重复的分组表。
     renderView();
     expect(screen.queryByRole("heading", { name: "练习四" })).toBeNull();
-    expect(
-      within(screen.getByTestId("module-results")).queryByRole("button", {
-        name: "练习四",
-      }),
-    ).toBeNull();
+    expect(screen.queryByTestId("module-results")).toBeNull();
   });
 });
 

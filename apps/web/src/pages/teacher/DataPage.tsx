@@ -2,6 +2,7 @@ import { ClipboardCheck, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { useStudents } from "@/features/students/student-queries";
 import {
   AttemptListFilters,
@@ -106,6 +107,8 @@ function DataPageEmpty({ filtered }: { filtered: boolean }) {
 }
 
 export function DataPage() {
+  const routes = usePortalRoutes();
+
   const [searchParams, setSearchParams] = useSearchParams();
   // URL query 是筛选/视图/分页的单一事实来源（刷新与返回不丢）
   const state = useMemo(
@@ -158,7 +161,10 @@ export function DataPage() {
         <div className="flex gap-2">
           <ExportCsvButton params={exportCsvParamsOf(state)} />
           <Button variant="outline" className="min-h-11" asChild>
-            <Link to="/t/data/pending" aria-label="打开待批队列">
+            <Link
+              to={routes.management("data/pending")}
+              aria-label="打开待批队列"
+            >
               <ClipboardCheck aria-hidden />
               待批队列
             </Link>

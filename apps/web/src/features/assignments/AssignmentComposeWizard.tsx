@@ -3,7 +3,6 @@ import type {
   AssignmentCheckHint,
   CourseDetailItem,
   LibraryUnitSummary,
-  QuestionType,
 } from "@tutor/contract";
 import { defaultAssignmentTitle } from "@tutor/contract";
 import {
@@ -28,7 +27,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { QUESTION_TYPE_LABELS } from "@/features/content/question-meta";
+import {
+  checkHintLine,
+  distributionText,
+  dueRelativeHint,
+} from "@/features/assignments/assignment-compose-text";
 import {
   DragHandle,
   SortableItem,
@@ -44,8 +47,9 @@ import {
   useLibraryUnits,
 } from "@/features/library/library-queries";
 import { useStudents } from "@/features/students/student-queries";
-import { ApiError } from "@/lib/api";
-import { formatDueTime, localInputToUtcIso } from "@/lib/time";
+import { ApiError } from "@/lib/api-response";
+
+import { localInputToUtcIso } from "@/lib/time";
 import { AssignmentRecipientsStep } from "./AssignmentRecipientsStep";
 import { useCheckAssignment, useCreateAssignment } from "./assignment-queries";
 import { DiscardConfirmDialog } from "./DiscardConfirmDialog";
@@ -79,32 +83,10 @@ interface WizardUnit {
 }
 
 /** 题型分布文本（如「判断×1 单选×2」）；未知题型回退原键 */
-function distributionText(distribution: Record<string, number>): string {
-  return Object.entries(distribution)
-    .map(
-      ([type, count]) =>
-        `${QUESTION_TYPE_LABELS[type as QuestionType] ?? type}×${count}`,
-    )
-    .join(" ");
-}
 
 /** D15 提示行文本：「张三：已在〈课程〉中做过〈单元〉n 次（已看过答案）」 */
-function checkHintLine(hint: AssignmentCheckHint): string {
-  return `${hint.studentName}：已在〈${hint.courseName ?? "课程"}〉中做过〈${hint.unitTitle}〉${hint.submittedCount} 次（已看过答案）`;
-}
 
 /** 截止时间的「x 天后」相对提示（§4-8，与课程页定时发布同一口径） */
-function dueRelativeHint(localValue: string): string | null {
-  if (localValue.length === 0) return null;
-  const utc = localInputToUtcIso(localValue);
-  const days = Math.ceil(
-    (Date.parse(utc) - Date.now()) / (24 * 60 * 60 * 1000),
-  );
-  if (Number.isNaN(days)) return null;
-  if (days < 0) return `该时间已过（北京时间 ${formatDueTime(utc)}）`;
-  if (days === 0) return "今天截止（北京时间）";
-  return `${days} 天后截止（北京时间 ${formatDueTime(utc)}）`;
-}
 
 const STEP_LABELS = ["① 对象", "② 内容", "③ 确认"] as const;
 

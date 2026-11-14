@@ -1,11 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  fetchStudentAssignmentsApi,
-  fetchStudentCourseApi,
-  fetchStudentCoursesApi,
-  fetchStudentLectureApi,
-  fetchStudentLecturesApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 学生端数据查询（T2.3；T2A.5 扩展课程与讲义 D5 可见性）。
@@ -21,6 +15,8 @@ export const studentAssignmentsKey = ["student", "assignments"] as const;
 
 /** 我的作业（按布置时间倒序，含完成状态） */
 export function useStudentAssignments({ enabled = true } = {}) {
+  const { fetchStudentAssignmentsApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentAssignmentsKey,
     enabled,
@@ -35,6 +31,8 @@ export const studentCoursesKey = ["student", "courses"] as const;
 
 /** 我的课程（成员且未归档的课程，含可见讲义/单元计数与完成进度占位） */
 export function useStudentCourses() {
+  const { fetchStudentCoursesApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentCoursesKey,
     queryFn: fetchStudentCoursesApi,
@@ -49,6 +47,8 @@ export const studentCourseKey = (id: string) =>
 
 /** 课程可见目录（D5 过滤：分节/讲义/单元条目，单元带题数；403 = 非成员或已归档） */
 export function useStudentCourse(id: string) {
+  const { fetchStudentCourseApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentCourseKey(id),
     queryFn: () => fetchStudentCourseApi(id),
@@ -63,6 +63,8 @@ export const studentLecturesKey = ["student", "lectures"] as const;
 
 /** 讲义摘要列表（D5：去重并集 + 按课程分组双视图） */
 export function useStudentLectures() {
+  const { fetchStudentLecturesApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentLecturesKey,
     queryFn: fetchStudentLecturesApi,
@@ -80,6 +82,8 @@ export const studentLectureKey = (id: string, courseId?: string | undefined) =>
  * courseId 缺省时服务端取第一个可见该讲义的课程。
  */
 export function useStudentLecture(id: string, courseId?: string | undefined) {
+  const { fetchStudentLectureApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentLectureKey(id, courseId),
     queryFn: () => fetchStudentLectureApi(id, courseId),

@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AttemptQuestionPublic,
   AttemptResultQuestion,
@@ -10,7 +9,8 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
-import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
+import { AttemptEditorProvider } from "@/features/answering/AttemptEditorContext";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { LessonQuestionCard } from "./LessonQuestionCard";
 import type {
   LessonQuestionHandlers,

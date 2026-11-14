@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronUp, ListPlus } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   AiQueueItem,
   type AiQueueNavigate,
@@ -33,6 +34,8 @@ export function AiQueueBatchCard({
   onAction: (taskId: string, action: AiQueueAction) => void;
   actionPending: boolean;
 }) {
+  const routes = usePortalRoutes();
+
   const [expanded, setExpanded] = useState(false);
   const { batch, items } = entry;
   const first = items[0];
@@ -74,7 +77,7 @@ export function AiQueueBatchCard({
               className={`h-auto min-h-11 flex-col gap-0 px-2.5 py-1 text-xs ${
                 unread ? "border-primary/50 bg-primary/5" : ""
               }`}
-              disabled={aiQueueTargetOf(task, origin) === null}
+              disabled={aiQueueTargetOf(routes, task, origin) === null}
               aria-label={`${questionLabel}：${statusLabel}，${replied ? "查看回复" : "回到本题"}`}
               onClick={() => onNavigate(task, origin, replied)}
             >

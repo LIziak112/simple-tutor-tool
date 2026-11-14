@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
 import type { SharedFileSummary } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { previewSharedFile } from "@/lib/api";
+import { render, screen } from "@/test/render-with-portal";
 import { SharedPreviewSheet } from "./SharedPreviewSheet";
 
 /**

@@ -1,7 +1,7 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { LessonLandingData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchLessonLandingApi, restartLessonAttemptApi } from "@/lib/api";
+import { act, fireEvent, screen, waitFor } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLessonLandingPage from "./StudentLessonLandingPage";
 

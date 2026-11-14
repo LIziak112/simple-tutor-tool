@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { AttemptDraftData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,14 +11,14 @@ import {
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
 import {
-  installDraftBackend,
-  memoryBackend,
-} from "@/features/attempt/draft-store";
-import {
   installNoteBackend,
   memoryNoteBackend,
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
+import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
 import {
   createStudentAiTaskApi,
@@ -35,6 +28,14 @@ import {
   listStudentAiTasksApi,
 } from "@/lib/api";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import StudentAttemptPage from "./StudentAttemptPage";
 
 // 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，
@@ -235,8 +236,8 @@ beforeEach(() => {
   installNoteBackend(memoryNoteBackend());
   installAnnotationBackend(memoryAnnotationBackend());
   const session = { origin: "https://page.test", studentId: "student-ai" };
-  bindNoteSession(session);
-  bindAnnotationSession(session);
+  bindNoteSession(session, testClientServices);
+  bindAnnotationSession(session, testClientServices);
   installDraftBackend(memoryBackend());
   installEventStore(memoryEventStore());
   vi.clearAllMocks();

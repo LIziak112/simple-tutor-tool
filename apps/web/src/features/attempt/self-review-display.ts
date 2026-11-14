@@ -1,4 +1,4 @@
-import type { AttemptResultQuestion } from "@tutor/contract";
+import { type AttemptResultQuestion, reviewVerdictOf } from "@tutor/contract";
 
 /**
  * 判定徽章显示参数（QM-11，TT-09b）：结果视图/题级反馈/讲练题卡三面共用的
@@ -35,38 +35,9 @@ export function verdictBadgeDisplayOf(
     | "answered"
   >,
 ): VerdictBadgeDisplay {
-  if (
-    (question.gradingPolicy ?? null) === "reference_self" &&
-    question.teacherMark === null
-  ) {
-    // reference_self 行 autoCorrect/finalCorrect 恒 null（TT-09a 判分口径，
-    // 自评不写 finalCorrect），有效显示 = 自评记录；未评/已撤回
-    // （record=null）→ 已完成、待自评。自评是显性交锋——本分支恒无「未做」
-    const verdict = question.selfReview?.record?.verdict ?? null;
-    if (verdict !== null) {
-      return {
-        verdict: verdict === "correct",
-        correctLabel: "自评正确",
-        wrongLabel: "自评错误",
-      };
-    }
-    return { verdict: null, pendingLabel: "已完成、待自评" };
-  }
-  // 其余行（auto/manual_only/旧行/教师已判）沿既有 finalCorrect 路径零变化
-  // （reviewQuestionState 同口径）：finalCorrect 优先、autoCorrect 兜底，
-  // 两者均空才是待批（M6 授权题级反馈口径，与服务端 effectiveVerdictOf
-  // 的自动回落一致；进行中单题反馈的行级 finalCorrect 尚未写入，丢兜底
-  // 会让客观题误报待批、汇总与徽章漂移）
-  const verdict = question.finalCorrect ?? question.autoCorrect;
-  // #6980-3：判错且未做且无人工显式判定 → 灰显「未做」（教师批错/自评错的
-  // 未做行不掩盖，显式判定照常红显）
-  const explicit =
-    question.teacherMark !== null ||
-    (question.selfReview?.record?.verdict ?? null) !== null;
-  return {
-    verdict,
-    ...(verdict === false && !question.answered && !explicit
-      ? { notDone: true }
-      : {}),
-  };
+  const { source: _source, ...display } = reviewVerdictOf({
+    ...question,
+    selfReviewVerdict: question.selfReview?.record?.verdict ?? null,
+  });
+  return display;
 }

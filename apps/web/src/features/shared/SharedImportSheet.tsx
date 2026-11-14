@@ -10,12 +10,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ActionsPanel } from "@/features/content/ActionsPanel";
+import { StatsBar } from "@/features/content/ImportStatsBar";
 import {
   useImportSharedFile,
   useSharedPreview,
 } from "@/features/shared/shared-queries";
-import { ApiError } from "@/lib/api";
-import { StatsBar } from "@/pages/teacher/SingleImportPreview";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * 共享文件「导入到我的资源库」预览抽屉（T2B.7，D17）：复用单文件预览组件

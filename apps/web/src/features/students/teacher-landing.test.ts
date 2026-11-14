@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchStudentsApi } from "@/lib/api";
+import { testClientServices, testPortalRoutes } from "@/test/portal-fixture";
 import { resolveTeacherLanding, teacherLandingPath } from "./teacher-landing";
 
 /**
@@ -20,17 +21,23 @@ beforeEach(() => {
 
 describe("teacherLandingPath（纯函数）", () => {
   it("恰好 1 名学生 → 直接落到该生学生主页", () => {
-    expect(teacherLandingPath([{ id: "s1" }])).toBe("/t/students/s1");
-  });
-
-  it("3 名学生 → 学生列表", () => {
-    expect(teacherLandingPath([{ id: "s1" }, { id: "s2" }, { id: "s3" }])).toBe(
-      "/t/students",
+    expect(teacherLandingPath(testPortalRoutes, [{ id: "s1" }])).toBe(
+      "/t/students/s1",
     );
   });
 
+  it("3 名学生 → 学生列表", () => {
+    expect(
+      teacherLandingPath(testPortalRoutes, [
+        { id: "s1" },
+        { id: "s2" },
+        { id: "s3" },
+      ]),
+    ).toBe("/t/students");
+  });
+
   it("0 名学生 → 学生列表（空态有新增学生指引）", () => {
-    expect(teacherLandingPath([])).toBe("/t/students");
+    expect(teacherLandingPath(testPortalRoutes, [])).toBe("/t/students");
   });
 });
 
@@ -64,11 +71,15 @@ describe("resolveTeacherLanding（登录时的落点解析）", () => {
         },
       ],
     });
-    await expect(resolveTeacherLanding()).resolves.toBe("/t/students/active-1");
+    await expect(
+      resolveTeacherLanding(testPortalRoutes, testClientServices),
+    ).resolves.toBe("/t/students/active-1");
   });
 
   it("学生列表取失败 → 回落学生列表，不阻塞登录", async () => {
     mockedStudents.mockRejectedValue(new Error("network down"));
-    await expect(resolveTeacherLanding()).resolves.toBe("/t/students");
+    await expect(
+      resolveTeacherLanding(testPortalRoutes, testClientServices),
+    ).resolves.toBe("/t/students");
   });
 });

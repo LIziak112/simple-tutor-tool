@@ -439,6 +439,20 @@ describe("POST /api/student/lectures/:id/lesson/start（讲练开卷，幂等 cr
   it("开卷投影：blocks 切段（无题块）、questions 公开平铺、attempt 归属与 lecture 上下文；三层泄露断言", async () => {
     const env = await makeEnv();
     const body = await startOk(env);
+    const parsed = lessonStartOkSchema.parse(body).data;
+    expect(parsed.time).toMatchObject({
+      metric: "question_activity_sealed",
+      version: 1,
+      knownCount: 0,
+    });
+    expect(parsed.timeEstimate).toEqual({
+      metric: "question_activity_estimate",
+      version: 1,
+      activeSecTotal: 0,
+    });
+    expect(JSON.stringify(parsed)).not.toMatch(
+      /boundarySeq|inputDigest|attempt_event_receipts|start_ms|end_ms/,
+    );
 
     // 讲义切段：md 段（可渲染正文）与题目槽交替，题块原文绝不在段内
     expect(body.data.blocks.map((b) => b.type)).toEqual([

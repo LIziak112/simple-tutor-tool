@@ -1,11 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiPromptSettingsPutRequest } from "@tutor/contract";
-import {
-  fetchStudentAiPromptsApi,
-  fetchTeacherAiPromptsApi,
-  saveStudentAiPromptsApi,
-  saveTeacherAiPromptsApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * AI 提示词槽位查询封装（hall-9533，出题助手/学情包/复习包「复制给 AI」
@@ -28,6 +23,8 @@ export const studentAiPromptsKey = ["student", "ai-prompts"] as const;
 
 /** 读教师 AI 提示词槽位 */
 export function useTeacherAiPrompts() {
+  const { fetchTeacherAiPromptsApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherAiPromptsKey,
     queryFn: fetchTeacherAiPromptsApi,
@@ -37,6 +34,8 @@ export function useTeacherAiPrompts() {
 
 /** 保存教师 AI 提示词槽位（409 AI_SETTINGS_STALE 由组件按 ApiError 分支） */
 export function useSaveTeacherAiPrompts() {
+  const { saveTeacherAiPromptsApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (request: AiPromptSettingsPutRequest) =>
@@ -50,6 +49,8 @@ export function useSaveTeacherAiPrompts() {
 
 /** 读学生 AI 提示词槽位 */
 export function useStudentAiPrompts() {
+  const { fetchStudentAiPromptsApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentAiPromptsKey,
     queryFn: fetchStudentAiPromptsApi,
@@ -59,6 +60,8 @@ export function useStudentAiPrompts() {
 
 /** 保存学生 AI 提示词槽位 */
 export function useSaveStudentAiPrompts() {
+  const { saveStudentAiPromptsApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (request: AiPromptSettingsPutRequest) =>

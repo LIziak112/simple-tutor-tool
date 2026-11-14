@@ -16,15 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  QUESTION_TYPE_BADGE_CLASS,
+  QUESTION_TYPE_LABELS,
+} from "@/features/answering/answer-format";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import {
   ResultOptions,
   VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
-import {
-  QUESTION_TYPE_BADGE_CLASS,
-  QUESTION_TYPE_LABELS,
-} from "@/features/attempt/answer-format";
 import { ResultAnswerComparison } from "@/features/attempt/ResultAnswerComparison";
 import { SelfReviewSection } from "@/features/attempt/SelfReviewSection";
 import {
@@ -35,6 +35,7 @@ import { verdictBadgeDisplayOf } from "@/features/attempt/self-review-display";
 import { LearningHostContext } from "@/features/learning-context/learning-context-store";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { QuestionMemoAction } from "@/features/memos/QuestionMemoCapture";
+import { ReviewV2Panel } from "@/features/student-ai/ReviewV2Panel";
 import type {
   LessonQuestionHandlers,
   LessonSubmitOutcome,
@@ -290,6 +291,12 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         <ResultAnswerComparison question={released} released />
         {/* QM-11：对照后挂自评动作（reference_self 行；教师判定时整块不渲染） */}
         <SelfReviewSection attemptId={attemptId} question={released} />
+        <ReviewV2Panel
+          attemptId={attemptId}
+          released
+          scope={{ kind: "lesson_stage", throughQuestionNo: index + 1 }}
+          label="阶段复盘（至本题）"
+        />
         {released.solutionMd !== null && (
           <div className="flex flex-col gap-2">
             <p className="text-sm font-medium">解析</p>

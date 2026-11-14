@@ -12,11 +12,11 @@ import {
 import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { SolutionFold } from "@/features/attempt/AttemptResultView";
 import {
   formatReferenceAnswers,
   letterOf,
-} from "@/features/attempt/answer-format";
+} from "@/features/answering/answer-format";
+import { SolutionFold } from "@/features/attempt/AttemptResultView";
 import {
   MaterialPanel,
   materialVersionKey,
@@ -30,11 +30,16 @@ import {
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { NoteVersionView } from "@/features/notes/NoteVersionView";
 import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+import {
   StudentEmptyState,
   StudentErrorPanel,
   StudentPageHeader,
 } from "@/features/student/student-ui";
-import { ApiError, fetchStudentNotebookApi } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { formatCnTime } from "@/lib/time";
 
 /**
@@ -61,19 +66,28 @@ function safeCnTime(utcIso: string | null | undefined): string {
 }
 
 export default function StudentQuestionNotebookPage() {
+  const { fetchStudentNotebookApi } = usePortalClients();
+
+  const routes = usePortalRoutes();
+
   const { questionId = "" } = useParams();
   const [params] = useSearchParams();
   const source = params.get("returnTo");
   // 只接受结果页路径，拒绝外站、路径穿越和其他角色页面。
   const returnTo =
     source &&
-    /^\/s\/(?:attempts|assignments)\/[a-zA-Z0-9_-]+(?:[?#].*)?$/.test(source) &&
+    routes
+      .learningPattern(
+        "(?:attempts|assignments)\\/[a-zA-Z0-9_-]+(?:[?#].*)?$",
+        "",
+      )
+      .test(source) &&
     !source.includes("\\")
       ? source
       : null;
   const back = (
     <Link
-      to={returnTo ?? "/s/records"}
+      to={returnTo ?? routes.learning("records")}
       className="flex min-h-11 w-fit items-center gap-2 rounded-lg border border-border px-3 text-sm outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
     >
       <ArrowLeft aria-hidden className="size-4" />
@@ -143,7 +157,7 @@ export default function StudentQuestionNotebookPage() {
           description="交卷后的轮次会自动收进这里（作业、课程练习与错题重练都算）。"
           action={
             <Link
-              to="/s/home"
+              to={routes.learning("home")}
               className="flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               返回首页
@@ -305,6 +319,8 @@ function RoundCard({
   round: NotebookRound;
   questionId: string;
 }) {
+  const routes = usePortalRoutes();
+
   // 已封存段经共享谓词收窄（sealedAt: string，闸门修复 F12）；未封存行殿后
   const sealed = sealedCorrectionsOf(round.corrections);
   const openRows = round.corrections.filter((row) => row.sealedAt == null);
@@ -332,7 +348,7 @@ function RoundCard({
           </span>
         )}
         <Link
-          to={`/s/attempts/${round.attemptId}`}
+          to={routes.learning(`attempts/${round.attemptId}`)}
           className="ml-auto flex min-h-11 items-center rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           查看这一轮

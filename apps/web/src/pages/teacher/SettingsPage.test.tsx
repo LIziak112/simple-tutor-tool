@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { TeacherInfo } from "@tutor/contract";
 import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { logoutPersonalApi } from "@/features/auth/personal-api";
 import { teacherMeKey } from "@/features/auth/teacher-auth";
 import { fetchTeacherMe, logoutTeacher } from "@/lib/api";
+import { logoutPersonalApi } from "@/lib/personal-session-legacy-api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import SettingsPage from "./SettingsPage";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -26,7 +26,7 @@ vi.mock("@/lib/device-api", () => ({
   })),
 }));
 
-vi.mock("@/features/auth/personal-api", () => ({
+vi.mock("@/lib/personal-session-legacy-api", () => ({
   logoutPersonalApi: vi.fn(),
 }));
 
@@ -53,7 +53,7 @@ function LocationProbe() {
     <output data-testid="location">
       {location.pathname === "/t/settings"
         ? location.search
-        : location.pathname}
+        : location.pathname + location.search + location.hash}
     </output>
   );
 }
@@ -159,7 +159,9 @@ describe("设置分类", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
     await waitFor(() =>
-      expect(screen.getByTestId("location")).toHaveTextContent("/p/login"),
+      expect(screen.getByTestId("location")).toHaveTextContent(
+        "/p/login?returnTo=%2Ft%2Fsettings%3Fsection%3Daccount",
+      ),
     );
     expect(logoutPersonalApi).toHaveBeenCalledWith("teacher");
     expect(logoutTeacher).not.toHaveBeenCalled();

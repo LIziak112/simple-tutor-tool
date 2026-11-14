@@ -20,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import {
   emptyAtramentDoc,
@@ -33,32 +34,31 @@ import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { paperCssHeight } from "@/features/notes/paper-geometry";
-import {
-  processAnswerSurface,
-  readProcessSurfaces,
-  useQuestionProcessContext,
-} from "@/features/question-process/session";
-import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
-import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
-import { useObservedCssWidth } from "@/lib/use-observed-css-width";
-// UA-03：最终答案输入接入 final 呈现（answering/views/final，FinalAnswerInput
-// 的唯一消费出口收归呈现层；控制器所有权不变——本组件仍管辖纸面引擎）
-import { FinalAnswerField } from "../answering/views/final";
-import { useAttemptEditor } from "./AttemptEditorContext";
-import { digestOf, mergeInkDocs } from "./draft-merge";
+import { digestOf, mergeInkDocs } from "@/features/persistence/draft-merge";
 import {
   draftStore,
   getDraftPersistenceState,
   getDraftSessionEpoch,
   subscribeLocalDraftChoice,
-} from "./draft-store";
-import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
-import { useDraftSyncActions } from "./use-draft-sync";
+} from "@/features/persistence/draft-store";
+import { prepareDraftForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import { useDraftSyncActions } from "@/features/persistence/use-draft-sync";
 import {
   type InkUploadController,
   isInkDocEmpty,
   useInkUpload,
-} from "./use-ink-upload";
+} from "@/features/persistence/use-ink-upload";
+import {
+  processAnswerSurface,
+  readProcessSurfaces,
+  useQuestionProcessContext,
+} from "@/features/question-process/session";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
+import { useObservedCssWidth } from "@/lib/use-observed-css-width";
+// UA-03：最终答案输入接入 final 呈现（answering/views/final，FinalAnswerInput
+// 的唯一消费出口收归呈现层；控制器所有权不变——本组件仍管辖纸面引擎）
+import { FinalAnswerField } from "../answering/views/final";
 
 /**
  * 正式手写作答控制器：页内与全屏保持同一 Atrament 画布及撤销历史，
@@ -148,6 +148,8 @@ export function HandwrittenControls({
   scratchContext,
   contextLabel,
 }: HandwrittenControlsProps) {
+  const { fetchAttemptInkApi, studentInkPngUrl } = usePortalClients();
+
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
     undefined,
@@ -418,7 +420,14 @@ export function HandwrittenControls({
       alive = false;
     };
     // controller/draftSync 经 ref 取最新；只随题目标识与开关重跑（开关实际只随页面挂载而定）
-  }, [attemptId, questionId, inkEnabled, externallyControlled, restoreRetry]);
+  }, [
+    attemptId,
+    questionId,
+    inkEnabled,
+    externallyControlled,
+    restoreRetry,
+    fetchAttemptInkApi,
+  ]);
 
   // T4.0b ink_fullscreen：挂现成 fullscreen state 的翻转处（§5.0-C14）——
   // 初始 false 不报（挂载即进入答题页不是全屏动作），此后每次进出各报一次

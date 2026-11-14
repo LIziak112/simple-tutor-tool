@@ -34,8 +34,8 @@ import {
   subscribeNoteStore,
 } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
-import { ApiError } from "@/lib/api";
-import { fetchStudentNoteHeadCoalesced } from "@/lib/note-head-batch";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * 订阅当前草稿会话（bind/unbind 经 note-store 的全量通知重取快照）。
@@ -84,6 +84,7 @@ export function useNoteHead(
   questionId: string,
   opts: { enabled?: boolean } = {},
 ): UseQueryResult<NoteHeadData, Error> {
+  const { fetchStudentNoteHeadCoalesced } = usePortalClients();
   const session = useNoteSessionRef();
   return useQuery({
     queryKey: studentNoteHeadKey(

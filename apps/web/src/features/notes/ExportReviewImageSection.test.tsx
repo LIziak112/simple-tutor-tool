@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReviewPackPreviewData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { ExportReviewImageSection } from "./ExportReviewImageSection";
 
 /**

@@ -1,12 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  fetchLectureUsageApi,
-  fetchLibraryFolders,
-  fetchLibraryLectures,
-  fetchLibraryUnits,
-  fetchUnitUsageApi,
-  type LibraryListParams,
-} from "@/lib/api";
+import type { LibraryListParams } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 资源库页面的 TanStack Query 封装（T2A.2）：
@@ -20,6 +14,8 @@ export const libraryFoldersKey = ["teacher", "library", "folders"] as const;
 
 /** 文件夹列表（含计数） */
 export function useLibraryFolders() {
+  const { fetchLibraryFolders } = usePortalClients();
+
   return useQuery({
     queryKey: libraryFoldersKey,
     queryFn: fetchLibraryFolders,
@@ -44,6 +40,8 @@ export function libraryListKey(
 
 /** 讲义库 / 回收站讲义列表 */
 export function useLibraryLectures(params: LibraryListParams) {
+  const { fetchLibraryLectures } = usePortalClients();
+
   return useQuery({
     queryKey: libraryListKey("lectures", params),
     queryFn: () => fetchLibraryLectures(params),
@@ -52,6 +50,8 @@ export function useLibraryLectures(params: LibraryListParams) {
 
 /** 题库 / 回收站单元列表 */
 export function useLibraryUnits(params: LibraryListParams) {
+  const { fetchLibraryUnits } = usePortalClients();
+
   return useQuery({
     queryKey: libraryListKey("units", params),
     queryFn: () => fetchLibraryUnits(params),
@@ -60,6 +60,8 @@ export function useLibraryUnits(params: LibraryListParams) {
 
 /** 使用情况（删除确认弹层按需加载） */
 export function useResourceUsage(kind: "lecture" | "unit", id: string | null) {
+  const { fetchUnitUsageApi, fetchLectureUsageApi } = usePortalClients();
+
   return useQuery({
     queryKey: ["teacher", "library", "usage", kind, id],
     queryFn: () =>

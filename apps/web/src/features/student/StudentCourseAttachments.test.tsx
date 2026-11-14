@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listStudentCourseAttachmentsApi } from "@/lib/attachment-api";
+import { render, screen, waitFor } from "@/test/render-with-portal";
 import { StudentCourseAttachments } from "./StudentCourseAttachments";
 
 vi.mock("@/lib/attachment-api", () => ({

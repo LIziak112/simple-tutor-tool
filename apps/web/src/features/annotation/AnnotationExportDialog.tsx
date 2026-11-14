@@ -17,7 +17,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { OngoingExportPage } from "@/features/export/ongoing-question-export";
-import { saveBlobAs } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { copyPngBlobToClipboard } from "@/lib/copy";
 
 export function AnnotationExportDialog({
@@ -35,6 +36,8 @@ export function AnnotationExportDialog({
   title?: string;
   previewLabel?: string;
 }) {
+  const { saveBlobAs } = usePortalClients();
+
   const createRef = useRef(createImage);
   createRef.current = createImage;
   const [pages, setPages] = useState<Array<

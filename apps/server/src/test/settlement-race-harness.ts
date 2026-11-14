@@ -1,9 +1,4 @@
 import { type ChildProcess, fork } from "node:child_process";
-import type {
-  AttemptPartialRequest,
-  PracticeQuestionSubmitWithAnswer,
-} from "@tutor/contract";
-
 export type RaceOutcome = { ok: boolean; code?: string };
 interface WorkerState {
   child: ChildProcess;
@@ -23,7 +18,7 @@ export function startSettlementRace(
   filename: string,
   studentId: string,
   attemptId: string,
-  requests: (PracticeQuestionSubmitWithAnswer | AttemptPartialRequest | null)[],
+  requests: readonly unknown[],
   workerModule = new URL("./settlement-race-worker.ts", import.meta.url),
 ) {
   const workers = requests.map((request) =>

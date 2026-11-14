@@ -1,13 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PersonalSessionData, TeacherInfo } from "@tutor/contract";
-import {
-  fetchTeacherMe,
-  fetchTeacherStatus,
-  loginTeacher,
-  logoutTeacher,
-  registerTeacher,
-  setupTeacher,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { clearAccountQueries } from "./account-query-cache";
 import { useApplyStudentAuthed } from "./student-auth";
 
@@ -24,6 +18,8 @@ export const teacherMeKey = ["teacher", "me"] as const;
 
 /** 是否已设置教师（公开接口，无需登录） */
 export function useTeacherStatus() {
+  const { fetchTeacherStatus } = usePortalClients();
+
   return useQuery({
     queryKey: teacherStatusKey,
     queryFn: fetchTeacherStatus,
@@ -35,6 +31,8 @@ export function useTeacherStatus() {
 
 /** 当前登录教师（未登录时 isError 且错误码 UNAUTHORIZED，由守卫处理跳转） */
 export function useTeacherMe({ freshOnMount = false } = {}) {
+  const { fetchTeacherMe } = usePortalClients();
+
   return useQuery({
     queryKey: teacherMeKey,
     queryFn: fetchTeacherMe,
@@ -68,6 +66,8 @@ export function useApplyPersonalAuthed() {
 
 /** 首次设置密码（成功自动登录） */
 export function useSetupTeacher() {
+  const { setupTeacher } = usePortalClients();
+
   const applyAuthed = useApplyTeacherAuthed();
   return useMutation({
     mutationFn: setupTeacher,
@@ -77,6 +77,8 @@ export function useSetupTeacher() {
 
 /** 密码登录 */
 export function useLoginTeacher() {
+  const { loginTeacher } = usePortalClients();
+
   const applyAuthed = useApplyTeacherAuthed();
   const applyPersonal = useApplyPersonalAuthed();
   return useMutation({
@@ -90,6 +92,8 @@ export function useLoginTeacher() {
 
 /** 自助注册（T2B.6，D3：成功即自动登录，缓存同步与登录一致） */
 export function useRegisterTeacher() {
+  const { registerTeacher } = usePortalClients();
+
   const applyAuthed = useApplyTeacherAuthed();
   return useMutation({
     mutationFn: registerTeacher,
@@ -99,6 +103,8 @@ export function useRegisterTeacher() {
 
 /** 退出登录：清理教师及管理数据并重置身份，学生会话继续保留。 */
 export function useLogoutTeacher(onLoggedOut?: () => void) {
+  const { logoutTeacher } = usePortalClients();
+
   const clearSession = useClearTeacherSession();
   return useMutation({
     mutationFn: logoutTeacher,

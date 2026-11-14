@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type {
   ImportBatchFilePreview,
   ImportPreviewData,
@@ -26,6 +19,13 @@ import {
   previewImport,
   previewImportBatch,
 } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import ImportPage, { renamedPath } from "./ImportPage";
 
 /**
@@ -84,7 +84,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-vi.mock("./MarkdownEditor", () => ({
+vi.mock("@/features/content/MarkdownEditor", () => ({
   MarkdownEditor: ({
     value,
     onChange,

@@ -25,15 +25,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { questionBindings } from "@/features/answering/question-binding";
 import {
   AttemptEditorNotice,
   AttemptEditorProvider,
   useAttemptEditor,
-} from "@/features/attempt/AttemptEditorContext";
+} from "@/features/answering/AttemptEditorContext";
+import { questionBindings } from "@/features/answering/question-binding";
+import { AttemptElapsedTime } from "@/features/attempt/AttemptElapsedTime";
 import type { GroupContextSegment } from "@/features/attempt/attempt-context-view";
 import { LessonResultLinks } from "@/features/attempt/LessonResultLinks";
-import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -71,6 +71,8 @@ import {
   scrollToHeadingAt,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
+import { DraftSyncProvider } from "@/features/persistence/use-draft-sync";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   StudentErrorPanel,
@@ -106,6 +108,8 @@ const LessonMarkdown = memo(RichMarkdown);
 const EMPTY_HINTS: readonly HintOpenedEntry[] = [];
 
 export default function StudentLessonPage() {
+  const routes = usePortalRoutes();
+
   useStudentWorkspace();
   const { id = "" } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -120,7 +124,7 @@ export default function StudentLessonPage() {
       <section aria-label="讲练页打开失败" className="flex flex-col gap-4">
         <HeaderBar
           title="讲练页"
-          backTo={lessonHref(id, courseId)}
+          backTo={lessonHref(routes, id, courseId)}
           backLabel="返回讲练"
           actions={null}
           context={<span>讲练</span>}
@@ -550,6 +554,8 @@ function LessonAnswerInner({
   lectureId: string;
   session: ReturnType<typeof useLessonAttempt>;
 }) {
+  const routes = usePortalRoutes();
+
   const attemptId = session.attemptId;
   const capabilities = useMemo(
     () => toEnabledCapabilities(data.enabledCapabilities),
@@ -663,7 +669,7 @@ function LessonAnswerInner({
       <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
         <HeaderBar
           title={data.lecture.title}
-          backTo={lessonHref(lectureId, courseId)}
+          backTo={lessonHref(routes, lectureId, courseId)}
           backLabel="返回讲练"
           context={
             <>
@@ -674,6 +680,12 @@ function LessonAnswerInner({
                 讲练 · 第 {data.attempt.attemptNo} 次
               </span>
               <span aria-live="polite">{session.saveStatus}</span>
+              <AttemptElapsedTime
+                attemptId={attemptId}
+                time={data.time}
+                initialEstimate={data.timeEstimate}
+                timed={false}
+              />
             </>
           }
           toc={<LessonOutlineTrigger outline={outline} />}
@@ -731,6 +743,8 @@ function LessonCompletedView({
   courseId: string | undefined;
   lectureId: string;
 }) {
+  const routes = usePortalRoutes();
+
   const restart = useRestartLesson(lectureId);
   const [restartTarget, setRestartTarget] = useState<string | null>(null);
   const summary = data.summary;
@@ -826,7 +840,7 @@ function LessonCompletedView({
       <article aria-label="讲练回看" className="flex flex-col gap-4 pb-8">
         <HeaderBar
           title={data.lecture.title}
-          backTo={lessonHref(lectureId, courseId)}
+          backTo={lessonHref(routes, lectureId, courseId)}
           backLabel="返回讲练"
           context={
             <>

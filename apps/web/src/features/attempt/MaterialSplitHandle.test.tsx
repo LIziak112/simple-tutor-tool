@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { MaterialSplitHandle } from "./MaterialSplitHandle";
 
 describe("MaterialSplitHandle 中缝拖拽 Handle", () => {

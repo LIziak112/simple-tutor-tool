@@ -1,9 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  deleteReportApi,
-  fetchReportDetail,
-  fetchStudentReports,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 学情报告的查询封装（T4.7 画像页报告区，D24）：
@@ -23,6 +19,8 @@ export const reportDetailKey = (reportId: string) =>
 
 /** 学生报告列表（id 为空〔路由未就绪〕不查） */
 export function useStudentReports(studentId: string | undefined) {
+  const { fetchStudentReports } = usePortalClients();
+
   return useQuery({
     queryKey: studentReportsKey(studentId ?? "pending"),
     queryFn: () => fetchStudentReports(studentId ?? ""),
@@ -36,6 +34,8 @@ export function useReportDetail(
   reportId: string | null,
   options: { enabled: boolean },
 ) {
+  const { fetchReportDetail } = usePortalClients();
+
   return useQuery({
     queryKey: reportDetailKey(reportId ?? "pending"),
     queryFn: () => fetchReportDetail(reportId ?? ""),
@@ -47,6 +47,8 @@ export function useReportDetail(
 
 /** 删除报告（成功后失效该学生的报告列表） */
 export function useDeleteReport(studentId: string) {
+  const { deleteReportApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (reportId: string) => deleteReportApi(reportId),

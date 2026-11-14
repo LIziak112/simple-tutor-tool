@@ -1,21 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { LearningContext } from "@tutor/contract";
+import { type ReactNode, StrictMode } from "react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { resolveLearningContext } from "@/lib/learning-source-legacy-api";
 import {
   act,
   cleanup,
   fireEvent,
   renderHook,
   waitFor,
-} from "@testing-library/react";
-import type { LearningContext } from "@tutor/contract";
-import { type ReactNode, StrictMode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import { LearningContextEnvironment } from "./LearningContextEnvironment";
-import { resolveLearningContext } from "./learning-context-api";
 import { learningContextStore } from "./learning-context-store";
 import { LearningPrincipalContext } from "./learning-principal";
 import { useLearningContextPublisher } from "./use-learning-context-publisher";
 
-vi.mock("./learning-context-api", () => ({
+vi.mock("@/lib/learning-source-legacy-api", () => ({
   resolveLearningContext: vi.fn(() => new Promise(() => {})),
 }));
 beforeEach(() => {

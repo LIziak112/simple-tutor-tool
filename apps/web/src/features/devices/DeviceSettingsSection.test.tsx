@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { Device, DeviceListData } from "@tutor/contract";
 import { StrictMode } from "react";
 import { MemoryRouter, useLocation } from "react-router";
@@ -19,6 +12,13 @@ import {
   revokeDeviceSessionsApi,
   revokeUnassignedSessionsApi,
 } from "@/lib/device-api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { DeviceSettingsSection } from "./DeviceSettingsSection";
 
 const cleanup = vi.hoisted(() => ({ student: vi.fn(), teacher: vi.fn() }));

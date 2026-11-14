@@ -1,10 +1,10 @@
 import { CircleHelp, Flag } from "lucide-react";
 import type { Ref } from "react";
-import { PracticeSubmittedMark } from "./PracticeWorkspace";
 import {
   completionLabel,
   type QuestionCompletion,
-} from "./question-completion";
+} from "@/features/answering/question-completion";
+import { PracticeSubmittedMark } from "./PracticeWorkspace";
 
 export interface QuestionNavigationItem {
   id: string;

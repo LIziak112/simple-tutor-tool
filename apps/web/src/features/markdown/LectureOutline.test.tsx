@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { LectureOutline } from "./LectureOutline";
 import type { OutlineItem } from "./outline";
 

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { expect, it } from "vitest";
+import { act, renderHook, waitFor } from "@/test/render-with-portal";
 import { useAiDraftMap } from "./use-ai-draft-map";
 
 it("切到设置再回来恢复内存草稿，换卷和清账号缓存后隔离", async () => {

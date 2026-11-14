@@ -22,25 +22,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { isAnswered } from "@/features/answering/answer-format";
+import { inkStrokeCountOf } from "@/features/persistence/draft-merge";
+import { draftStore } from "@/features/persistence/draft-store";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ReviewV2Panel } from "@/features/student-ai/ReviewV2Panel";
 import { randomUuid } from "@/lib/uuid";
-import { isAnswered } from "./answer-format";
 import {
   pauseAttemptDetailPolling,
   resumeAttemptDetailPolling,
   studentAttemptKey,
 } from "./attempt-queries";
-import { inkStrokeCountOf } from "./draft-merge";
-import { draftStore } from "./draft-store";
+import { attemptTimeLabel } from "./attempt-time-label";
 import { prepareQuestionSubmission } from "./prepare-question-submission";
-import { readSettlement, settleAttempt } from "./settlement-api";
-import type { InkUploadController } from "./use-ink-upload";
 
 const ResultCard = lazy(async () => ({
   default: (await import("./ResultQuestionCard")).ResultQuestionCard,
 }));
 
 type SaveInput = Omit<
-  Parameters<typeof prepareQuestionSubmission>[0],
+  Parameters<typeof prepareQuestionSubmission>[1],
   "attemptId" | "questionIds" | "allowMissing"
 >;
 export function AttemptPartialControls({
@@ -64,6 +66,10 @@ export function AttemptPartialControls({
   beforeSubmit: () => Promise<boolean>;
   inkControllers: RefObject<Map<string, InkUploadController>>;
 }) {
+  const clients = usePortalClients();
+
+  const { settleAttempt, readSettlement } = usePortalClients();
+
   const attemptId = data.attempt.id;
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -123,7 +129,7 @@ export function AttemptPartialControls({
     setError(null);
     try {
       if (!pending.current) {
-        const prep = await prepareQuestionSubmission({
+        const prep = await prepareQuestionSubmission(clients, {
           ...saving,
           attemptId,
           questionIds: selected,
@@ -244,10 +250,14 @@ export function AttemptPartialControls({
             <Suspense fallback={<p>正在加载本批结果…</p>}>
               <p className="text-sm">
                 本批用时：
-                {result.settlement.activeSec === null
-                  ? "暂无可靠记录"
-                  : `${result.settlement.activeSec} 秒`}
+                {attemptTimeLabel(result.settlement.time)}
               </p>
+              <ReviewV2Panel
+                attemptId={attemptId}
+                released={result.answersReleased}
+                scope={{ kind: "settlement", seq: result.settlement.seq }}
+                label="本批复盘"
+              />
               {result.questions.map((question, index) => (
                 <ResultCard
                   key={question.questionId}

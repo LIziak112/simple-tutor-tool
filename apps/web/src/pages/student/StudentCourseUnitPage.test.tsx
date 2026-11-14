@@ -1,4 +1,3 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { StudentUnitLandingData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { consumeAttemptStartLayoutIntent } from "@/features/attempt/attempt-start-intent";
@@ -7,6 +6,7 @@ import {
   savePracticePreference,
 } from "@/features/attempt/practice-preference-store";
 import { fetchStudentUnitLandingApi, startCourseAttemptApi } from "@/lib/api";
+import { act, fireEvent, screen, waitFor } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentCourseUnitPage from "./StudentCourseUnitPage";
 

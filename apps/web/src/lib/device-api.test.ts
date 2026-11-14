@@ -56,7 +56,8 @@ describe("设备公共客户端", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     const [input, init] = called(0);
     expect(pathOf(input)).toBe("/api/teacher/devices");
-    expect(init?.signal).toBe(signal);
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.signal).not.toBe(signal);
     expect(new Headers(init?.headers).get("x-tutor-device-id")).toBeTruthy();
   });
   it("改名NULL、合并方向与两种撤销使用真实角色路径", async () => {
@@ -109,7 +110,8 @@ describe("设备公共客户端", () => {
       targetDeviceId,
       intent,
     });
-    expect(called(0)[1]?.signal).toBe(signal);
+    expect(called(0)[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(called(0)[1]?.signal).not.toBe(signal);
   });
   it("撤销后的角色验证仅401视为退出，500/网络错误不伪报下线", async () => {
     fetcher.mockResolvedValueOnce(shell({ id: "owner" }));
@@ -132,3 +134,24 @@ describe("设备公共客户端", () => {
     );
   });
 });
+it.each(["list", "merge"] as const)(
+  "主体租约组合后%s请求仍即时接收调用方取消",
+  async (kind) => {
+    const controller = new AbortController();
+    fetcher.mockImplementation(async (_input, init) => {
+      controller.abort();
+      expect(init?.signal?.aborted).toBe(true);
+      throw controller.signal.reason;
+    });
+    const request =
+      kind === "list"
+        ? listDevicesApi("teacher", controller.signal)
+        : mergeDevicesApi(
+            "student",
+            id,
+            "22222222-2222-4222-8222-222222222222",
+            controller.signal,
+          );
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  },
+);

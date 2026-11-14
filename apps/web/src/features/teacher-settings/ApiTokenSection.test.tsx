@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { fetchApiToken, resetApiToken } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 
 /**
  * 设置页「AI 连接（API Token）」区组件测试（T4.6 D22；T4.7 增 /t/connect

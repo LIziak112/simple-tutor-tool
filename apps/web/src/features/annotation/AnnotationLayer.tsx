@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { AnnotationView } from "./AnnotationView";
 import {
   AnnotationWorkspace,
@@ -62,6 +63,8 @@ export function AnnotationLayer({
   showTrigger = true,
   triggerLabel = "圈画题干",
 }: AnnotationLayerProps) {
+  const clients = usePortalClients();
+
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, questionId, phase);
   const { flow, ensureBase } = useAnnotationBase({
@@ -88,7 +91,7 @@ export function AnnotationLayer({
   // base prop 已收窄为工作台最小结构：契约 ready 引用经适配函数过渡（不伪造身份字段）。
   const workspaceBase =
     flow.kind === "ready"
-      ? annotationWorkspaceBaseOf(flow.base, attemptId)
+      ? annotationWorkspaceBaseOf(clients, flow.base, attemptId)
       : null;
 
   const onRetryDenied = useCallback(() => {

@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   CourseListData,
   LearningPackPreviewData,
@@ -30,6 +23,13 @@ import {
   previewLearningPackApi,
 } from "@/lib/api";
 import ExportPage from "@/pages/teacher/ExportPage";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { ExportWizard } from "./ExportWizard";
 
 /**

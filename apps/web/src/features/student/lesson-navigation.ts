@@ -1,3 +1,4 @@
+import type { PortalRoutes } from "@/features/runtime/portal-runtime";
 /**
  * 讲练路由工具（2026-10 讲练一体；10-13 教师演示口径拆双页）：
  * - lessonHref → 落地页 /s/lectures/:id/lesson（开始练习/继续作答/重开 +
@@ -10,20 +11,24 @@
 
 /** 讲练落地页地址（courseId 传 null/undefined 时不带课程上下文） */
 export function lessonHref(
+  routes: PortalRoutes,
   lectureId: string,
   courseId?: string | null,
 ): string {
-  return `/s/lectures/${lectureId}/lesson${
-    courseId ? `?courseId=${courseId}` : ""
-  }`;
+  return routes.learning(
+    `lectures/${lectureId}/lesson${courseId ? `?courseId=${courseId}` : ""}`,
+  );
 }
 
 /** 讲练作答页地址（幂等开卷；courseId 传 null/undefined 时不带课程上下文） */
 export function lessonRunHref(
+  routes: PortalRoutes,
   lectureId: string,
   courseId?: string | null,
 ): string {
-  return `/s/lectures/${lectureId}/lesson/run${
-    courseId ? `?courseId=${courseId}` : ""
-  }`;
+  return routes.learning(
+    `lectures/${lectureId}/lesson/run${
+      courseId ? `?courseId=${courseId}` : ""
+    }`,
+  );
 }

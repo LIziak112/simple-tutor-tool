@@ -1,17 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { PersonalSessionData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { registerPersonalApi } from "@/features/auth/personal-api";
 import { ApiError, fetchTeacherStatus } from "@/lib/api";
+import { registerPersonalApi } from "@/lib/personal-session-legacy-api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import PersonalRegisterPage from "./PersonalRegisterPage";
 
 /**
  * /p/register 个人学习注册页（模块 0）：
  * - status.personalRegistrationOpen=false → 关闭态提示 + 返回登录；
  * - 开放 → 四字段表单；前端先按契约校验（缺邀请码不发请求）；
- * - 成功 → 调 registerPersonalApi（trim 后的邀请码、可选昵称）并跳 /s/home；
+ * - 成功 → 调 registerPersonalApi（trim 后的邀请码、可选昵称）并跳 /p/learn/home；
  * - 服务端 403 INVITE_CODE_INVALID → 原文提示。
  */
 
@@ -19,7 +19,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { ...actual, fetchTeacherStatus: vi.fn() };
 });
-vi.mock("@/features/auth/personal-api", () => ({
+vi.mock("@/lib/personal-session-legacy-api", () => ({
   registerPersonalApi: vi.fn(),
   loginPersonalApi: vi.fn(),
 }));
@@ -55,7 +55,7 @@ function renderPage() {
         <Routes>
           <Route path="/p/register" element={<PersonalRegisterPage />} />
           <Route
-            path="/s/home"
+            path="/p/learn/home"
             element={<p data-testid="route-stub">学习视角首页</p>}
           />
           <Route
@@ -108,7 +108,7 @@ describe("PersonalRegisterPage（模块 0）", () => {
     expect(mockedRegister).not.toHaveBeenCalled();
   });
 
-  it("成功：按契约 trim 邀请码、昵称可选 → 调接口并跳 /s/home", async () => {
+  it("成功：按契约 trim 邀请码、昵称可选 → 调接口并跳 /p/learn/home", async () => {
     mockedRegister.mockResolvedValue(SESSION);
     renderPage();
     fireEvent.change(await screen.findByLabelText("登录名"), {

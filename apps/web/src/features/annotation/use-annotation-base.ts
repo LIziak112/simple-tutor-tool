@@ -9,13 +9,10 @@
  */
 import type { AnnotationBaseRef } from "@tutor/contract";
 import { useCallback, useRef, useState } from "react";
-import {
-  ApiError,
-  fetchAnnotationViewApi,
-  postAnnotationBaseApi,
-  postAnnotationBaseImageApi,
-  studentAnnotationBasePngUrl,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
+import { ApiError } from "@/lib/api-response";
+
 import {
   type AnnotationSessionRef,
   applyAnnotationView,
@@ -61,6 +58,13 @@ export function useAnnotationBase(input: {
   questionId: string;
   phase: "scratch" | "correction";
 }): UseAnnotationBaseResult {
+  const {
+    fetchAnnotationViewApi,
+    postAnnotationBaseApi,
+    postAnnotationBaseImageApi,
+    studentAnnotationBasePngUrl,
+  } = usePortalClients();
+
   const { session, attemptId, questionId, phase } = input;
   const [flow, setFlow] = useState<AnnotationBaseFlow>({ kind: "idle" });
   const running = useRef(false);
@@ -115,7 +119,9 @@ export function useAnnotationBase(input: {
         setFlow({ kind: "error", message: rendered.error.message });
         return;
       }
-      let receipt: Awaited<ReturnType<typeof postAnnotationBaseImageApi>>;
+      let receipt: Awaited<
+        ReturnType<ApiServices["postAnnotationBaseImageApi"]>
+      >;
       try {
         receipt = await postAnnotationBaseImageApi(
           attemptId,
@@ -187,7 +193,16 @@ export function useAnnotationBase(input: {
     } finally {
       running.current = false;
     }
-  }, [session, attemptId, questionId, phase]);
+  }, [
+    session,
+    attemptId,
+    questionId,
+    phase,
+    studentAnnotationBasePngUrl,
+    postAnnotationBaseImageApi,
+    postAnnotationBaseApi,
+    fetchAnnotationViewApi,
+  ]);
 
   return { flow, ensureBase };
 }

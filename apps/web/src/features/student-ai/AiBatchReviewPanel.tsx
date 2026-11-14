@@ -13,10 +13,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  createStudentAiBatchReviewApi,
-  createStudentAiShareTicketApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { randomUuid } from "@/lib/uuid";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useStudentAiConnections } from "./ai-connection-queries";
@@ -107,6 +105,9 @@ export function AiBatchReviewPanel(props: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const { createStudentAiBatchReviewApi, createStudentAiShareTicketApi } =
+    usePortalClients();
+
   const { attemptId, questions, released, open, onOpenChange } = props;
   const queryClient = useQueryClient();
   const groups = useMemo(() => batchReviewGroupsOf(questions), [questions]);

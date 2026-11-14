@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, useRef } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import {
   normalizeReviewLocation,
   useResultReviewLocation,

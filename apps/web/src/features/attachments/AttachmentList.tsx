@@ -16,7 +16,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { deleteAttachmentApi, updateAttachmentApi } from "@/lib/attachment-api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { formatCnTime } from "@/lib/time";
 
 /**
@@ -36,6 +37,8 @@ export function AttachmentList({
   attachments: readonly Attachment[];
   onChanged: () => void;
 }) {
+  const { updateAttachmentApi, deleteAttachmentApi } = usePortalClients();
+
   const [pendingDelete, setPendingDelete] = useState<Attachment | null>(null);
   const toggle = useMutation({
     mutationFn: (item: Attachment) =>

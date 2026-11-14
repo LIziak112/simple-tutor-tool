@@ -29,7 +29,7 @@ import {
   type NoteSessionRef,
   peekNoteRecord,
 } from "@/features/notes/note-store";
-import { fetchStudentNoteDocumentApi } from "@/lib/api";
+import { serviceLease } from "@/features/runtime/service-leases";
 
 /** 播种选项：recoverImages=true 时 head.images 含损坏行则触发补图（scratch 语境；订正行不在任何 head 图片投影里，不传） */
 export interface SeedRecordOptions {
@@ -55,6 +55,9 @@ export async function seedRecordFromServerHead(
   head: NoteHeadData,
   options?: SeedRecordOptions,
 ): Promise<void> {
+  const clients = serviceLease(session);
+  const { fetchStudentNoteDocumentApi } = clients;
+
   const note = head.note;
   const versionId = note?.currentVersionId ?? null;
   const before = peekNoteRecord(session, scope);
@@ -73,7 +76,7 @@ export async function seedRecordFromServerHead(
     versionId !== null &&
     hasBrokenRow(head.images)
   ) {
-    void recoverNoteImages({
+    void recoverNoteImages(clients, {
       role: "student",
       versionId,
     }).catch((err: unknown) => {

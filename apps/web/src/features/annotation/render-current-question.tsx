@@ -12,9 +12,9 @@ import {
 import { toBlob } from "html-to-image";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { formatStudentAnswer } from "@/features/answering/answer-format";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { QuestionRenderContext } from "@/features/answering/question-render-context";
-import { formatStudentAnswer } from "@/features/attempt/answer-format";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import {

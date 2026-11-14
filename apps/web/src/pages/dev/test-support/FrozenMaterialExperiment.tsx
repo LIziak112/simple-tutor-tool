@@ -17,8 +17,8 @@ import {
   awaitQuestionSurfaceReady,
   measureQuestionSurface,
 } from "@/features/annotation/question-base-image";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { MaterialPanel } from "@/features/attempt/MaterialPanel";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   collectFontEmbedCss,
   pngBlobHasMagic,

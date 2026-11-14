@@ -1,6 +1,6 @@
-import { act, renderHook } from "@testing-library/react";
 import type { AttemptTiming } from "@tutor/contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@/test/render-with-portal";
 import { useAttemptClock, useAttemptPhase } from "./attempt-clock";
 
 const serverNow = Date.parse("2026-11-10T09:00:00Z");

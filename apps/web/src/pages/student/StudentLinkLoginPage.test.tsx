@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, loginStudentByLinkApi } from "@/lib/api";
+import { fireEvent, screen, waitFor } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLinkLoginPage from "./StudentLinkLoginPage";
 

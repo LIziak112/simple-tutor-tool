@@ -6,13 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useLoginTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
 import { resolveTeacherLanding } from "@/features/students/teacher-landing";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /t/login 教师登录（T2B.2 起为「登录名 + 密码」双字段，D6）。
@@ -41,6 +45,10 @@ function readRememberedLoginName(): string {
 }
 
 export function LoginPage() {
+  const routes = usePortalRoutes();
+
+  const clients = usePortalClients();
+
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
@@ -112,7 +120,11 @@ export function LoginPage() {
           }
           // T-PR4 Web-4：登录后按学生数落点（恰 1 名未归档学生 → 该生学生主页）
           navigate(
-            safeReturnTo(returnTo, "teacher", await resolveTeacherLanding()),
+            safeReturnTo(
+              returnTo,
+              "teacher",
+              await resolveTeacherLanding(routes, clients),
+            ),
             { replace: true },
           );
         },

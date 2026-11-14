@@ -4,6 +4,11 @@ import { cn } from "cn";
 import { CheckCircle2, Lightbulb, PenLine } from "lucide-react";
 import { type ReactNode, useContext, useState } from "react";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
+import {
+  HANDWRITTEN_TYPES,
+  QUESTION_TYPE_BADGE_CLASS,
+  QUESTION_TYPE_LABELS,
+} from "@/features/answering/answer-format";
 import { optionCorrectOf } from "@/features/answering/views/choice";
 import { HintEntryList } from "@/features/attempt/HintPanel";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
@@ -13,13 +18,9 @@ import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { DraftRecoverySection } from "@/features/notes/DraftRecoverySection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
-import { studentInkPngUrl } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { ResultOptions, VerdictBadge } from "./AttemptResultParts";
-import {
-  HANDWRITTEN_TYPES,
-  QUESTION_TYPE_BADGE_CLASS,
-  QUESTION_TYPE_LABELS,
-} from "./answer-format";
+import { responseTimeLabel } from "./attempt-time-label";
 import { QuestionActivityBadge } from "./QuestionActivity";
 
 // 轻量呈现件拆至 AttemptResultParts（草稿视图的逐题反馈静态引用它们，不得
@@ -69,6 +70,8 @@ function HandwrittenInkPanel({
   questionId: string;
   ariaPrefix: string;
 }) {
+  const { studentInkPngUrl } = usePortalClients();
+
   const [available, setAvailable] = useState(true);
   return (
     <div className="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-border bg-card px-3 py-3">
@@ -303,7 +306,13 @@ export function ResultQuestionCard({
             {name}
           </span>
         ))}
-        {activity !== null && <QuestionActivityBadge activity={activity} />}
+        {question.time ? (
+          <span className="text-xs text-muted-foreground">
+            {responseTimeLabel(question.time)}
+          </span>
+        ) : (
+          activity !== null && <QuestionActivityBadge activity={activity} />
+        )}
         <div className="ml-auto">{aiTrigger}</div>
       </div>
 

@@ -14,9 +14,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AttemptEditorNotice,
+  useAttemptEditor,
+} from "@/features/answering/AttemptEditorContext";
 import { MemoQuickCaptureDialog } from "@/features/memos/MemoQuickCapture";
 import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
-import { AttemptEditorNotice, useAttemptEditor } from "./AttemptEditorContext";
 
 export function AttemptHeader({
   title,

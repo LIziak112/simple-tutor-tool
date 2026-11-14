@@ -1,14 +1,19 @@
 import type { Memo, MemoCreateMedia, MemoCreateText } from "@tutor/contract";
-import { resolveLearningContext } from "@/features/learning-context/learning-context-api";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
+
 import { ApiError } from "@/lib/api-response";
-import { createTextMemoApi, uploadMemoMediaApi } from "@/lib/memo-api";
+
 import type { MemoOutboxItem } from "./memo-outbox";
 /** 来源信封只从入队快照组装，不读取当前阅读焦点。 */
 export async function uploadMemoOutboxItem(
+  clients: ApiServices,
   item: MemoOutboxItem,
   account: string,
   isCurrent: () => boolean,
 ): Promise<Memo> {
+  const { resolveLearningContext, createTextMemoApi, uploadMemoMediaApi } =
+    clients;
+
   let context = item.context;
   if (context === undefined && item.reference !== undefined) {
     try {

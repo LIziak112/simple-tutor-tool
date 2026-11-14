@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { createRef, type MouseEvent } from "react";
 import { Link, MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { Button } from "./button";
 
 it("忙碌呈现保留固定名称，禁用仍由调用方控制", () => {

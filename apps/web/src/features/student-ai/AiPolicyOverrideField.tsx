@@ -3,7 +3,8 @@ import type { AiPolicyInheritableMode } from "@tutor/contract";
 import { TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { AiPolicySubjectRef } from "@/lib/api";
+import type { AiPolicySubjectRef } from "@/features/runtime/client-types";
+
 import {
   aiPolicyOverrideDraftKey,
   useAiPolicyOverride,

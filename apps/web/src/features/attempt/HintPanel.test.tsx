@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { HintOpenedEntry } from "@tutor/contract";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openAttemptHintApi } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { HintPanel } from "./HintPanel";
 
 /**

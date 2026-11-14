@@ -3,6 +3,7 @@ import { useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   type AssignmentListState,
   assignmentDateError,
@@ -25,6 +26,8 @@ const SELECT_CLASS =
 
 /** 完整作业索引：URL 保存筛选与分页，首页只承担待办摘要。 */
 export default function StudentAssignmentsPage() {
+  const routes = usePortalRoutes();
+
   const query = useStudentAssignments();
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => parseAssignmentListUrl(params), [params]);
@@ -51,7 +54,9 @@ export default function StudentAssignmentsPage() {
     ...state,
     page: page.page,
   }).toString();
-  const returnTo = `/s/assignments${sourceQuery ? `?${sourceQuery}` : ""}`;
+  const returnTo = routes.learning(
+    `assignments${sourceQuery ? `?${sourceQuery}` : ""}`,
+  );
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <StudentPageHeader

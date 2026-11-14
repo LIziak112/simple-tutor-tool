@@ -6,8 +6,12 @@ import type {
 } from "@tutor/contract";
 import type { ComponentProps } from "react";
 import { useNavigate } from "react-router";
-import { ApiError } from "@/lib/api";
-import { checkPersonalSessionApi } from "./personal-api";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { studentMeKey } from "./student-auth";
 import { teacherMeKey, useApplyPersonalAuthed } from "./teacher-auth";
 
@@ -17,6 +21,10 @@ type Props = Omit<ComponentProps<"button">, "onClick" | "disabled" | "type"> & {
 };
 
 export function PersonalViewButton({ from, to, ...props }: Props) {
+  const routes = usePortalRoutes();
+
+  const { checkPersonalSessionApi } = usePortalClients();
+
   const navigate = useNavigate();
   const client = useQueryClient();
   const applyAuthed = useApplyPersonalAuthed();
@@ -24,7 +32,7 @@ export function PersonalViewButton({ from, to, ...props }: Props) {
     mutationFn: () => checkPersonalSessionApi(from),
     onSuccess: async (session) => {
       if (session === null) {
-        navigate("/p/login");
+        navigate(routes.portal("personal").loginPath);
         return;
       }
       if (
@@ -39,7 +47,7 @@ export function PersonalViewButton({ from, to, ...props }: Props) {
     },
     onError: (error) => {
       if (error instanceof ApiError && error.code === "UNAUTHORIZED") {
-        navigate("/p/login");
+        navigate(routes.portal("personal").loginPath);
       }
     },
   });

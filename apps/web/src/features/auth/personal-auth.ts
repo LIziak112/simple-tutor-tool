@@ -2,10 +2,10 @@ import { useMutation } from "@tanstack/react-query";
 import type { AccountKind, PersonalSessionRole } from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import {
-  loginPersonalApi,
-  logoutPersonalApi,
-  registerPersonalApi,
-} from "./personal-api";
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+
 import { useClearStudentSession } from "./student-auth";
 import { useApplyPersonalAuthed, useClearTeacherSession } from "./teacher-auth";
 
@@ -18,6 +18,8 @@ import { useApplyPersonalAuthed, useClearTeacherSession } from "./teacher-auth";
 
 /** 邀请码自助注册（成功即双会话登录） */
 export function useRegisterPersonal() {
+  const { registerPersonalApi } = usePortalClients();
+
   const applyAuthed = useApplyPersonalAuthed();
   return useMutation({
     mutationFn: registerPersonalApi,
@@ -27,6 +29,8 @@ export function useRegisterPersonal() {
 
 /** 个人账号登录 */
 export function useLoginPersonal() {
+  const { loginPersonalApi } = usePortalClients();
+
   const applyAuthed = useApplyPersonalAuthed();
   return useMutation({
     mutationFn: loginPersonalApi,
@@ -39,6 +43,8 @@ export function useLogoutPersonal(
   role: PersonalSessionRole,
   onLoggedOut?: () => void,
 ) {
+  const { logoutPersonalApi } = usePortalClients();
+
   const clearStudent = useClearStudentSession();
   const clearTeacher = useClearTeacherSession();
   return useMutation({
@@ -61,9 +67,13 @@ export function useAccountLoginPath(
   kind: AccountKind | undefined,
   fallback: string,
 ) {
+  const routes = usePortalRoutes();
+
   const lastKind = useRef(kind);
   useEffect(() => {
     if (kind !== undefined) lastKind.current = kind;
   }, [kind]);
-  return (kind ?? lastKind.current) === "personal" ? "/p/login" : fallback;
+  return (kind ?? lastKind.current) === "personal"
+    ? routes.portal("personal").loginPath
+    : fallback;
 }

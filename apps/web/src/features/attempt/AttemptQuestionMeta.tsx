@@ -23,13 +23,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { QuestionMemoAction } from "@/features/memos/QuestionMemoCapture";
 import {
   HANDWRITTEN_TYPES,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-} from "./answer-format";
-import { completionLabel, getQuestionCompletion } from "./question-completion";
+} from "@/features/answering/answer-format";
+import {
+  completionLabel,
+  getQuestionCompletion,
+} from "@/features/answering/question-completion";
+import { QuestionMemoAction } from "@/features/memos/QuestionMemoCapture";
 /** 题头元信息：题号 + 题型徽章 + 难度星 + 考点 tag */
 export function QuestionMeta({
   learningSurface,

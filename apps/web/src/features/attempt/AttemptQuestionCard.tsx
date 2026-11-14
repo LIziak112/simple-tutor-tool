@@ -17,7 +17,10 @@ import {
 } from "@/features/annotation/QuestionAnnotationOverlay";
 import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
 import { ResponseAnswerField } from "@/features/answering";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
+import { HANDWRITTEN_TYPES } from "@/features/answering/answer-format";
 import { prepareQuestion } from "@/features/answering/prepare-question";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { questionBindings } from "@/features/answering/question-binding";
 import {
   getScratchContextLabel,
@@ -46,18 +49,15 @@ import {
 } from "@/features/notes/note-layout";
 import { currentNoteSession } from "@/features/notes/note-sync";
 import { useNoteRecord } from "@/features/notes/use-note-record";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
-import { fetchAttemptContextApi } from "@/lib/api";
-import { useAttemptEditor } from "./AttemptEditorContext";
 import { QuestionMeta } from "./AttemptQuestionMeta";
-import { HANDWRITTEN_TYPES } from "./answer-format";
-import { getDraftSessionEpoch } from "./draft-store";
 import {
   HandwrittenControls,
   type HandwrittenControlsProps,
 } from "./HandwrittenControls";
 import { HintPanel } from "./HintPanel";
-import { QuestionSurface } from "./QuestionSurface";
 import { usePaperPosition } from "./use-paper-position";
 
 /**
@@ -147,6 +147,8 @@ export function AttemptQuestionCard({
   inkSyncWhileReadOnly?: boolean;
   suspendInkUpload?: boolean;
 }) {
+  const { fetchAttemptContextApi } = usePortalClients();
+
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
   const learningLease = useContext(LearningHostContext);

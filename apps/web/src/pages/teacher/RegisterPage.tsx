@@ -6,13 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useRegisterTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
 import { resolveTeacherLanding } from "@/features/students/teacher-landing";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /t/register 教师自助注册页（T2B.6，D3 来源一）。
@@ -28,6 +32,10 @@ import { ApiError } from "@/lib/api";
  */
 
 export function RegisterPage() {
+  const routes = usePortalRoutes();
+
+  const clients = usePortalClients();
+
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
@@ -88,7 +96,11 @@ export function RegisterPage() {
       {
         onSuccess: async () =>
           navigate(
-            safeReturnTo(returnTo, "teacher", await resolveTeacherLanding()),
+            safeReturnTo(
+              returnTo,
+              "teacher",
+              await resolveTeacherLanding(routes, clients),
+            ),
             { replace: true },
           ),
       },

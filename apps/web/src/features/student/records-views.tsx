@@ -11,7 +11,9 @@ import { Link, useSearchParams } from "react-router";
 import { learningStatusClass } from "@/components/learning-status";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
+import { attemptTimeLabel } from "@/features/attempt/attempt-time-label";
 import { formatResultCounts } from "@/features/attempt/result-counts";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatCnTime } from "@/lib/time";
 import { recordReviewHref } from "./record-review-navigation";
 
@@ -91,6 +93,8 @@ export function RecordCard({
   row: StudentRecordRow;
   sort?: StudentRecordsSort;
 }) {
+  const routes = usePortalRoutes();
+
   const [search] = useSearchParams();
   const activityAt =
     sort === "activity_desc"
@@ -100,7 +104,7 @@ export function RecordCard({
   return (
     <li>
       <Link
-        to={recordReviewHref(row.attemptId, search)}
+        to={recordReviewHref(routes, row.attemptId, search)}
         data-record-attempt={row.attemptId}
         aria-label={`${isDraft ? "继续作答" : "查看结果"}：${recordTitleOf(row)}（${RECORD_STATUS_LABELS[row.status]}）`}
         className={cn(
@@ -111,6 +115,9 @@ export function RecordCard({
         <p className="flex flex-wrap items-center gap-2 sm:col-span-2">
           <SourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
+          <span className="text-xs text-muted-foreground">
+            {attemptTimeLabel(row.time)}
+          </span>
           <span className="ml-auto text-xs text-muted-foreground">
             {sort === "activity_desc" ? "最近作答 " : "开始于 "}
             {formatCnTime(activityAt)}

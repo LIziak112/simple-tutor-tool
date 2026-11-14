@@ -5,7 +5,6 @@ import {
   currentAnnotationSession,
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
-import { bindDraftSession } from "@/features/attempt/draft-store";
 import { bindGroupMaterialLayoutAccount } from "@/features/attempt/group-material-layout-store";
 import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
 import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
@@ -13,18 +12,13 @@ import {
   currentNoteSession,
   resetNoteSession,
 } from "@/features/notes/note-sync";
-import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
+import { bindDraftSession } from "@/features/persistence/draft-store";
 import {
-  fetchStudentAssignmentsApi,
-  fetchStudentCoursesApi,
-  fetchStudentLecturesApi,
-  fetchStudentMe,
-  loginStudentApi,
-  loginStudentByLinkApi,
-  logoutStudentApi,
-} from "@/lib/api";
+  usePortalClients,
+  usePortalRuntime,
+} from "@/features/runtime/portal-runtime";
+import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
 import { clearAccountQueries } from "./account-query-cache";
-import { portalCapabilitiesOf } from "./portals";
 
 /**
  * 学生登录状态（T2.3 学生端外壳）：与 teacher-auth 同构的模式——
@@ -38,6 +32,8 @@ export const studentMeKey = ["student", "me"] as const;
 
 /** 当前登录学生（未登录时 isError 且错误码 UNAUTHORIZED，由守卫处理跳转） */
 export function useStudentMe() {
+  const { fetchStudentMe } = usePortalClients();
+
   return useQuery({
     queryKey: studentMeKey,
     queryFn: fetchStudentMe,
@@ -53,6 +49,13 @@ export function useStudentMe() {
  * 导出供个人账号双会话登录复用（personal-auth.ts，模块 0）。
  */
 export function useApplyStudentAuthed() {
+  const { capabilitiesFor } = usePortalRuntime();
+  const {
+    fetchStudentAssignmentsApi,
+    fetchStudentCoursesApi,
+    fetchStudentLecturesApi,
+  } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useCallback(
     async (student: StudentMeData, isCurrent: () => boolean = () => true) => {
@@ -84,7 +87,7 @@ export function useApplyStudentAuthed() {
         studentId: student.id,
       });
       queryClient.setQueryData(studentMeKey, student);
-      if (portalCapabilitiesOf("student", student.accountKind).assignments) {
+      if (capabilitiesFor("student", student.accountKind).assignments) {
         void queryClient.prefetchQuery({
           queryKey: ["student", "assignments"],
           queryFn: fetchStudentAssignmentsApi,
@@ -99,12 +102,20 @@ export function useApplyStudentAuthed() {
         queryFn: fetchStudentLecturesApi,
       });
     },
-    [queryClient],
+    [
+      queryClient,
+      fetchStudentLecturesApi,
+      fetchStudentCoursesApi,
+      fetchStudentAssignmentsApi,
+      capabilitiesFor,
+    ],
   );
 }
 
 /** 专属链接登录（/s/:token 页面挂载即调用） */
 export function useStudentLinkLogin() {
+  const { loginStudentByLinkApi } = usePortalClients();
+
   const applyAuthed = useApplyStudentAuthed();
   return useMutation({
     mutationFn: (token: string) => loginStudentByLinkApi(token),
@@ -114,6 +125,8 @@ export function useStudentLinkLogin() {
 
 /** 登录名 + 密码登录（/s/login 页面表单提交） */
 export function useLoginStudent() {
+  const { loginStudentApi } = usePortalClients();
+
   const applyAuthed = useApplyStudentAuthed();
   return useMutation({
     mutationFn: (request: StudentLoginRequest) => loginStudentApi(request),
@@ -127,6 +140,8 @@ export function useLoginStudent() {
  * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
  */
 export function useLogoutStudent(onLoggedOut?: () => void) {
+  const { logoutStudentApi } = usePortalClients();
+
   const clearSession = useClearStudentSession();
   return useMutation({
     mutationFn: logoutStudentApi,

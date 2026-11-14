@@ -12,16 +12,11 @@ import {
   List,
   TriangleAlert,
 } from "lucide-react";
-import {
-  type MouseEvent,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type MouseEvent, useLayoutEffect, useMemo, useRef } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
+import { QUESTION_TYPE_LABELS } from "@/features/answering/answer-format";
+import { responseTimeLabel } from "@/features/attempt/attempt-time-label";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import { useTeacherCourses } from "@/features/courses/course-queries";
 import {
@@ -38,15 +33,18 @@ import {
 import { formatPercent } from "@/features/insights/insights-format";
 import { LectureReadingMapView } from "@/features/insights/LectureReadingMapView";
 import { QuestionReviewRowCard } from "@/features/insights/QuestionReviewRowCard";
-import { StudentReportsSection } from "@/features/insights/StudentReportsSection";
+import { ReportsDisclosure } from "@/features/insights/ReportsDisclosure";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { SharedMemosSection } from "@/features/memos/SharedMemosSection";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import {
   AttemptStatusBadge,
   sourceContextOf,
 } from "@/features/teacher-attempts/attempt-views";
 import { useTeacherAttempts } from "@/features/teacher-attempts/teacher-attempt-queries";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { formatDueTime, formatRelativeTime } from "@/lib/time";
 
 /**
@@ -87,6 +85,14 @@ const ANOMALY_REASON_LABELS: Record<"slow" | "hints", string> = {
 
 /** 一张异常题卡片（点击跳作答详情） */
 function AnomalyCard({ item }: { item: AnalyticsAnomalyQuestion }) {
+  const routes = usePortalRoutes();
+
+  const median =
+    item.timeMedianSec !== undefined
+      ? item.timeMedianSec
+      : item.time?.metric === "question_activity_sealed"
+        ? null
+        : item.medianSec;
   return (
     <li className="rounded-xl border border-border bg-card p-4">
       <p className="flex flex-wrap items-center gap-2">
@@ -116,10 +122,10 @@ function AnomalyCard({ item }: { item: AnalyticsAnomalyQuestion }) {
       </p>
       <RichMarkdown source={item.stemMd} className="mt-2 text-sm" />
       <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>用时 {formatActiveSec(item.activeSec)}</span>
-        {item.medianSec !== null && (
+        <span>{responseTimeLabel(item.time)}</span>
+        {median !== null && (
           <span>
-            全域中位数 {formatActiveSec(item.medianSec)}
+            全域中位数 {formatActiveSec(median)}
             {item.multipleOfMedian !== null &&
               `（约 ${item.multipleOfMedian} 倍）`}
           </span>
@@ -127,7 +133,7 @@ function AnomalyCard({ item }: { item: AnalyticsAnomalyQuestion }) {
         <span>提示 {item.hintsUsed} 次</span>
       </p>
       <Link
-        to={`/t/data/attempts/${item.attemptId}`}
+        to={routes.management(`data/attempts/${item.attemptId}`)}
         className="mt-2 inline-flex min-h-11 items-center rounded-lg border border-border bg-background px-4 text-sm font-medium outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         查看作答详情
@@ -224,6 +230,8 @@ function SectionNavigation() {
 }
 
 export function StudentHomePage() {
+  const routes = usePortalRoutes();
+
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const state = useMemo(() => parseAnalyticsUrl(searchParams), [searchParams]);
@@ -310,7 +318,7 @@ export function StudentHomePage() {
           学生不存在或已不属于你，无法查看主页。
         </p>
         <Button variant="outline" className="min-h-11" asChild>
-          <Link to="/t/students">返回学生列表</Link>
+          <Link to={routes.management("students")}>返回学生列表</Link>
         </Button>
       </section>
     );
@@ -350,7 +358,7 @@ export function StudentHomePage() {
           <Button variant="outline" className="min-h-11" asChild>
             <Link
               to={{
-                pathname: "/t/export",
+                pathname: routes.management("export"),
                 search:
                   id !== undefined
                     ? `?studentId=${encodeURIComponent(id)}`
@@ -364,7 +372,7 @@ export function StudentHomePage() {
           <Button variant="outline" className="min-h-11" asChild>
             <Link
               to={{
-                pathname: "/t/data",
+                pathname: routes.management("data"),
                 search:
                   id !== undefined
                     ? `?studentId=${encodeURIComponent(id)}`
@@ -719,14 +727,14 @@ export function StudentHomePage() {
             aria-label="离线作答"
             className={`${SECTION_TARGET_CLASS} flex flex-col gap-1 rounded-xl border border-border bg-card p-4`}
           >
-            <h2 className="text-sm font-semibold">离线作答占比</h2>
+            <h2 className="text-sm font-semibold">历史焦点离线占比</h2>
             <p className="text-2xl font-semibold">
               {formatPercent(data.offline.offlineShare)}
             </p>
             <p className="text-xs text-muted-foreground">
-              离线 {Math.round(data.offline.offlineSecTotal / 60)} 分钟 / 有效{" "}
-              {Math.round(data.offline.activeSecTotal / 60)} 分钟（按设备联网
-              状态标记，统计窗口内的已交卷作答）
+              离线 {Math.round(data.offline.offlineSecTotal / 60)} 分钟 /
+              历史焦点 {Math.round(data.offline.activeSecTotal / 60)}{" "}
+              分钟（按设备联网 状态标记，统计窗口内的已交卷作答）
             </p>
           </section>
 
@@ -758,7 +766,12 @@ export function StudentHomePage() {
 
           {/* T4.7：AI 报告实数据（T4.2 占位换实）；T-PR4 Web-2④ 起默认折叠、
           展开才取列表——主页首屏请求 ≤ 4（方案验收） */}
-          {id !== undefined && <ReportsDisclosure studentId={id} />}
+          {id !== undefined && (
+            <>
+              <ReportsDisclosure studentId={id} />
+              <SharedMemosSection studentId={id} />
+            </>
+          )}
         </>
       )}
     </section>
@@ -769,10 +782,12 @@ export function StudentHomePage() {
 
 /** 作答记录区的一行（Web-2①；进行中讲练卷显示「已提交 n / 共 m」） */
 function AttemptRow({ card }: { card: TeacherAttemptCard }) {
+  const routes = usePortalRoutes();
+
   return (
     <li>
       <Link
-        to={`/t/data/attempts/${card.attemptId}`}
+        to={routes.management(`data/attempts/${card.attemptId}`)}
         className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-card px-4 py-3 text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <span className="min-w-0 flex-1 truncate font-medium">
@@ -789,33 +804,6 @@ function AttemptRow({ card }: { card: TeacherAttemptCard }) {
         </span>
       </Link>
     </li>
-  );
-}
-
-/** 报告区（Web-2④）：默认折叠、展开才请求列表——主页首屏请求 ≤ 4（方案验收） */
-function ReportsDisclosure({ studentId }: { studentId: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section
-      id="student-reports"
-      tabIndex={-1}
-      aria-label="报告"
-      className={`${SECTION_TARGET_CLASS} flex flex-col gap-2`}
-    >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex min-h-11 w-fit items-center gap-1.5 rounded-lg text-sm font-semibold text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        AI 报告
-        <ChevronDown
-          aria-hidden
-          className={`size-4 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && <StudentReportsSection studentId={studentId} />}
-    </section>
   );
 }
 

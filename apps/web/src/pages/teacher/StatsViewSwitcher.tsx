@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 
 /**
  * 「作答记录 / 统计」次级切换（T-PR1：「学情分析」一级入口下沉后三页共用）。
@@ -11,6 +12,8 @@ export function StatsViewSwitcher({
 }: {
   active: "attempts" | "stats";
 }) {
+  const routes = usePortalRoutes();
+
   return (
     <fieldset className="flex flex-wrap gap-2">
       <legend className="mb-1 text-xs text-muted-foreground sm:sr-only">
@@ -27,7 +30,7 @@ export function StatsViewSwitcher({
           aria-pressed={false}
           asChild
         >
-          <Link to="/t/data">作答记录</Link>
+          <Link to={routes.management("data")}>作答记录</Link>
         </Button>
       )}
       {active === "stats" ? (
@@ -41,7 +44,7 @@ export function StatsViewSwitcher({
           aria-pressed={false}
           asChild
         >
-          <Link to="/t/insights">统计</Link>
+          <Link to={routes.management("insights")}>统计</Link>
         </Button>
       )}
     </fieldset>

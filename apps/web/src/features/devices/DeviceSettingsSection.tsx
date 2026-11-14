@@ -2,10 +2,11 @@ import type { AccountKind, Device } from "@tutor/contract";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
-import { PORTALS } from "@/features/auth/portals";
 import { useClearStudentSession } from "@/features/auth/student-auth";
 import { useClearTeacherSession } from "@/features/auth/teacher-auth";
-import type { DeviceOwner } from "@/lib/device-api";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
+import type { DeviceOwner } from "@/features/runtime/ports/devices-types";
+
 import { formatCnTime } from "@/lib/time";
 import { DeviceMergeDialog } from "./DeviceMergeDialog";
 import { DeviceRenameDialog } from "./DeviceRenameDialog";
@@ -23,6 +24,7 @@ export function DeviceSettingsSection({
   connectionSettingsHref?: string;
 }) {
   const query = useDevices(owner);
+  const routes = usePortalRoutes();
   const navigate = useNavigate();
   const clearStudent = useClearStudentSession();
   const clearTeacher = useClearTeacherSession();
@@ -36,7 +38,9 @@ export function DeviceSettingsSection({
   const action = useDeviceActions(owner, async () => {
     const portal = accountKind === "personal" ? "personal" : owner.type;
     const clear = owner.type === "student" ? clearStudent : clearTeacher;
-    await clear(() => navigate(PORTALS[portal].loginPath, { replace: true }));
+    await clear(() =>
+      navigate(routes.portal(portal).loginPath, { replace: true }),
+    );
   });
   async function perform(input: Parameters<typeof action.mutateAsync>[0]) {
     const result = await action.mutateAsync(input);

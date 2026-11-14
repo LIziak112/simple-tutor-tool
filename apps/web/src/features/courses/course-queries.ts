@@ -10,25 +10,11 @@ import type {
   CourseUpdateRequest,
 } from "@tutor/contract";
 import { contentTreeKey } from "@/features/content/content-queries";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import {
   studentCoursesKey,
   studentLecturesKey,
 } from "@/features/student/student-queries";
-import {
-  addCourseItemsApi,
-  addCourseMembersApi,
-  createCourseApi,
-  deleteCourseApi,
-  deleteCourseItemApi,
-  fetchCourseDetail,
-  fetchCourseStudentView,
-  fetchTeacherCourses,
-  manageCourseCatalogApi,
-  removeCourseMembersApi,
-  reorderCourseItemsApi,
-  updateCourseApi,
-  updateCourseItemApi,
-} from "@/lib/api";
 
 /**
  * 课程页面的 TanStack Query 封装（T2A.4）：
@@ -47,6 +33,8 @@ export const courseDetailKey = (id: string) =>
 
 /** 课程列表 */
 export function useTeacherCourses(archived: boolean) {
+  const { fetchTeacherCourses } = usePortalClients();
+
   return useQuery({
     queryKey: coursesKey(archived),
     queryFn: () => fetchTeacherCourses(archived),
@@ -57,6 +45,8 @@ export function useTeacherCourses(archived: boolean) {
 
 /** 课程详情（目录 + 成员 + hasAttempts） */
 export function useCourseDetail(id: string) {
+  const { fetchCourseDetail } = usePortalClients();
+
   return useQuery({
     queryKey: courseDetailKey(id),
     queryFn: () => fetchCourseDetail(id),
@@ -69,6 +59,8 @@ export function useCourseStudentView(
   courseId: string,
   studentId: string | null,
 ) {
+  const { fetchCourseStudentView } = usePortalClients();
+
   return useQuery({
     queryKey: ["teacher", "courses", "student-view", courseId, studentId],
     queryFn: () => fetchCourseStudentView(courseId, studentId as string),
@@ -95,6 +87,8 @@ function useInvalidateCourses(courseId?: string) {
 
 /** 新建课程 */
 export function useCreateCourse() {
+  const { createCourseApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses();
   return useMutation({
     mutationFn: (request: CourseCreateRequest) => createCourseApi(request),
@@ -104,6 +98,8 @@ export function useCreateCourse() {
 
 /** 更新课程（改名/简介/归档） */
 export function useUpdateCourse(courseId: string) {
+  const { updateCourseApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation({
     mutationFn: (request: CourseUpdateRequest) =>
@@ -114,6 +110,8 @@ export function useUpdateCourse(courseId: string) {
 
 /** 删除课程（有作答或作业 409 COURSE_HAS_ATTEMPTS，由调用方 catch 提示改用归档） */
 export function useDeleteCourse() {
+  const { deleteCourseApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses();
   return useMutation({
     mutationFn: (id: string) => deleteCourseApi(id),
@@ -123,6 +121,8 @@ export function useDeleteCourse() {
 
 /** 批量追加目录条目（返回新增与跳过清单，页面 toast 汇总展示） */
 export function useAddCourseItems(courseId: string) {
+  const { addCourseItemsApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation<CourseItemsAddData, Error, CourseItemsAddRequest>({
     mutationFn: (request) => addCourseItemsApi(courseId, request),
@@ -132,6 +132,8 @@ export function useAddCourseItems(courseId: string) {
 
 /** 更新目录条目（可见开关 / 定时发布 / 分节改名） */
 export function useUpdateCourseItem(courseId: string) {
+  const { updateCourseItemApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation<
     CourseDetailData["items"][number],
@@ -145,6 +147,8 @@ export function useUpdateCourseItem(courseId: string) {
 
 /** 移除目录条目 */
 export function useDeleteCourseItem(courseId: string) {
+  const { deleteCourseItemApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation({
     mutationFn: (id: string) => deleteCourseItemApi(id),
@@ -154,6 +158,8 @@ export function useDeleteCourseItem(courseId: string) {
 
 /** 目录排序（拖拽与上移/下移按钮共用） */
 export function useReorderCourseItems(courseId: string) {
+  const { reorderCourseItemsApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation({
     mutationFn: (request: CourseItemsReorderRequest) =>
@@ -164,6 +170,8 @@ export function useReorderCourseItems(courseId: string) {
 
 /** 添加成员 */
 export function useAddCourseMembers(courseId: string) {
+  const { addCourseMembersApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation({
     mutationFn: (studentIds: string[]) =>
@@ -174,6 +182,8 @@ export function useAddCourseMembers(courseId: string) {
 
 /** 移出成员（D7：不删数据） */
 export function useRemoveCourseMembers(courseId: string) {
+  const { removeCourseMembersApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation({
     mutationFn: (studentIds: string[]) =>
@@ -187,6 +197,8 @@ export function useRemoveCourseMembers(courseId: string) {
  * 顺序执行（量级小），任一失败整体抛错（调用方提示后可重试）。
  */
 export function useAddStudentToCourses() {
+  const { addCourseMembersApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses();
   return useMutation({
     mutationFn: async ({
@@ -209,6 +221,8 @@ export function useAddStudentToCourses() {
  * add/remove 都是显式清单——未列出的课程（如已归档课程）不动，避免误移出。
  */
 export function useSyncStudentCourses() {
+  const { addCourseMembersApi, removeCourseMembersApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses();
   return useMutation({
     mutationFn: async ({
@@ -232,6 +246,8 @@ export function useSyncStudentCourses() {
 }
 
 export function useManageCourseCatalog(courseId: string) {
+  const { manageCourseCatalogApi } = usePortalClients();
+
   const invalidate = useInvalidateCourses(courseId);
   return useMutation({
     mutationFn: (request: CourseCatalogCommand) =>

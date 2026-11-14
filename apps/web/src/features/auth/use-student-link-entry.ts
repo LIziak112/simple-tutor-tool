@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loginStudentByLinkApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { useApplyStudentAuthed } from "./student-auth";
 
 type EntryResult = {
@@ -12,6 +13,8 @@ type EntryResult = {
 
 /** 一次页面入口拥有兑换和身份应用；结果不跨卸载缓存，也不以设备id提供认证。 */
 export function useStudentLinkEntry(token: string) {
+  const { loginStudentByLinkApi } = usePortalClients();
+
   const applyAuthed = useApplyStudentAuthed();
   const generation = useRef(0);
   const [attempt, setAttempt] = useState(0);
@@ -46,7 +49,7 @@ export function useStudentLinkEntry(token: string) {
       generation.current++;
       controller.abort();
     };
-  }, [token, attempt, applyAuthed]);
+  }, [token, attempt, applyAuthed, loginStudentByLinkApi]);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
   const current = result.token === token && result.attempt === attempt;
   return {

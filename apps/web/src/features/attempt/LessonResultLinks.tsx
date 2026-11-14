@@ -1,6 +1,7 @@
 import { ClipboardList, FileText } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   attemptReviewEntryViewOf,
   attemptReviewHref,
@@ -20,17 +21,19 @@ export function LessonResultLinks({
 }: {
   readonly attemptId: string;
 }) {
+  const routes = usePortalRoutes();
+
   const state = useAttemptReviewEntry(attemptId, true);
   const view = attemptReviewEntryViewOf(state);
   const Icon = state.kind === "report" ? FileText : ClipboardList;
   return (
     <>
       <Button asChild variant="outline" className="min-h-11">
-        <Link to={`/s/attempts/${attemptId}`}>查看结果</Link>
+        <Link to={routes.learning(`attempts/${attemptId}`)}>查看结果</Link>
       </Button>
       {view !== null && (
         <Button asChild variant="outline" className="min-h-11 gap-1.5">
-          <Link to={attemptReviewHref(attemptId, view.target)}>
+          <Link to={attemptReviewHref(routes, attemptId, view.target)}>
             <Icon aria-hidden className="size-4" />
             {view.label}
             {view.unread && <span className="sr-only">（未读）</span>}

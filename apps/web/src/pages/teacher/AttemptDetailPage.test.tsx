@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   TeacherAttemptDetailData,
   TeacherAttemptDetailQuestion,
@@ -20,6 +13,13 @@ import {
   fetchTeacherAttemptDetailApi,
   markResponseApi,
 } from "@/lib/api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import AttemptDetailPage from "./AttemptDetailPage";
 
 /**

@@ -1,5 +1,10 @@
 /** 锁定 b50531b3:apps/web/src/features/answering/views/fill.tsx；仅调整测试夹具的 import，禁止生产代码引用。 */
 
+import {
+  formatReferenceAnswers,
+  mathifyAnswerText,
+  withBlankValue,
+} from "@/features/answering/answer-format";
 import { expectedSlotCountOf } from "@/features/answering/prepare-question";
 import type {
   AnswerKindView,
@@ -11,11 +16,6 @@ import {
   AnswerComparisonShell,
   referenceColumnOf,
 } from "@/features/answering/views/comparison";
-import {
-  formatReferenceAnswers,
-  mathifyAnswerText,
-  withBlankValue,
-} from "@/features/attempt/answer-format";
 import { BlankDirective } from "@/features/markdown/directives/Inline";
 import {
   DirectiveSessionProvider,

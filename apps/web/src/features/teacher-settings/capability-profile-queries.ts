@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CapabilityProfile } from "@tutor/contract";
-import { fetchCapabilityProfile, saveCapabilityProfile } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 教师能力启用集的查询封装（T7.7，纯消费接口；设置页「辅助能力」区数据源）：
@@ -14,6 +14,8 @@ export const capabilityProfileKey = ["teacher", "capability-profile"] as const;
 
 /** 查看当前启用集（未配置 → 全启用） */
 export function useCapabilityProfile() {
+  const { fetchCapabilityProfile } = usePortalClients();
+
   return useQuery({
     queryKey: capabilityProfileKey,
     queryFn: fetchCapabilityProfile,
@@ -23,6 +25,8 @@ export function useCapabilityProfile() {
 
 /** 保存启用集（整体覆盖；返回服务端确认值） */
 export function useSaveCapabilityProfile() {
+  const { saveCapabilityProfile } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (profile: CapabilityProfile) => saveCapabilityProfile(profile),

@@ -10,7 +10,8 @@ it("专属链接RPC保留可选AbortSignal与设备头，旧一参调用仍有�
   vi.stubGlobal("fetch", fetcher);
   const signal = new AbortController().signal;
   await loginStudentByLinkApi("link", signal);
-  expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(signal);
+  expect(fetcher.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  expect(fetcher.mock.calls[0]?.[1]?.signal).not.toBe(signal);
   expect(
     new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("x-tutor-device-id"),
   ).toBeTruthy();

@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import type { QuestionAnswers, StudentAnswer } from "@tutor/contract";
 import { formatQuestionAnswers, lettersOf } from "@tutor/contract";
 import { createContext, Fragment, type ReactNode, useContext } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { withBlankValue } from "../attempt/answer-format";
+import { withBlankValue } from "@/features/answering/answer-format";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import {
   type AnswerKindView,
   type AnswerKindViewTable,

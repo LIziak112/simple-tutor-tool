@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
 import type { Material } from "@tutor/contract";
 import {
   type Question,
@@ -13,13 +12,14 @@ import {
   studentStemMd,
 } from "@tutor/md-dsl";
 import { describe, expect, it, vi } from "vitest";
+import { HANDWRITTEN_TYPES } from "@/features/answering/answer-format";
+import { render, screen } from "@/test/render-with-portal";
 import {
   allSampleDocs,
   longestPlainTextOf,
   mathNodePresentOf,
 } from "../../../../../test-support/dsl-samples.ts";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
-import { HANDWRITTEN_TYPES } from "./answer-format";
 
 /**
  * T7.9 全部练习/混合/讲练样例题目的真实题卡渲染回归：

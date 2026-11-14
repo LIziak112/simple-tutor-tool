@@ -1,18 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import {
-  type DeviceOwner,
-  listDevicesApi,
-  mergeDevicesApi,
-  readDeviceSessionOwner,
-  renameDeviceApi,
-  revokeDeviceSessionsApi,
-  revokeUnassignedSessionsApi,
-} from "@/lib/device-api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import type { DeviceOwner } from "@/features/runtime/ports/devices-types";
 
 export const deviceListKey = (owner: DeviceOwner) =>
   [owner.type, "devices", owner.id] as const;
 export function useDevices(owner: DeviceOwner) {
+  const { listDevicesApi } = usePortalClients();
+
   return useQuery({
     queryKey: deviceListKey(owner),
     queryFn: ({ signal }) => listDevicesApi(owner.type, signal),
@@ -29,6 +24,14 @@ export function useDeviceActions(
   owner: DeviceOwner,
   onRevoked: () => Promise<void>,
 ) {
+  const {
+    renameDeviceApi,
+    mergeDevicesApi,
+    revokeUnassignedSessionsApi,
+    revokeDeviceSessionsApi,
+    readDeviceSessionOwner,
+  } = usePortalClients();
+
   const client = useQueryClient();
   const pending = useRef(new Set<AbortController>());
   const active = useRef<string | null>(null);

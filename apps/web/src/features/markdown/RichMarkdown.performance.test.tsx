@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { BlankAnswersProvider } from "./BlankAnswersContext";
 import { richMarkdownRemarkPlugins } from "./pipeline";
 import { RichMarkdown } from "./RichMarkdown";

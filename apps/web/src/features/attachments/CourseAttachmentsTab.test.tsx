@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { Attachment } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
@@ -15,6 +8,13 @@ import {
   updateAttachmentApi,
   uploadAttachmentApi,
 } from "@/lib/attachment-api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { resetAttachmentUploadStoreForTest } from "./attachment-upload-store";
 import { CourseAttachmentsTab } from "./CourseAttachmentsTab";
 

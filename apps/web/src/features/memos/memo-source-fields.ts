@@ -1,6 +1,6 @@
 import { MEMO_ANCHOR_NONE } from "@tutor/contract";
 import type { LearningSource } from "@/features/learning-context/learning-context-store";
-import { currentDevice } from "@/lib/device-registration";
+import { currentDevice } from "@/lib/device-identity";
 /** 记录来源只从本次打开的快照构造，不再查询全局焦点。 */
 export function memoSourceFields(source: LearningSource, dropped: boolean) {
   return {

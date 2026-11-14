@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AnnotationBaseRef,
   AnnotationDoc,
   AnnotationViewData,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testClientServices } from "@/test/portal-fixture";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 
 /**
  * T6R.20 标注 UI 层测试（合成图本体见 annotation-composite.test.ts）：
@@ -216,7 +217,7 @@ beforeEach(() => {
   installAnnotationBackend(memoryAnnotationBackend());
   resetAnnotationStoreForTest();
   resetAnnotationSession();
-  bindAnnotationSession(SESSION);
+  bindAnnotationSession(SESSION, testClientServices);
   viewMock.mockReset();
   baseMock.mockReset();
   baseImageMock.mockReset();

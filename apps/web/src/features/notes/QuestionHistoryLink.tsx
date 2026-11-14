@@ -1,5 +1,6 @@
 import { History } from "lucide-react";
 import { Link, useLocation } from "react-router";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 
 /** 来源保存在地址中，刷新历史页后仍能回到原结果及当前题目。 */
 export function QuestionHistoryLink({
@@ -9,6 +10,8 @@ export function QuestionHistoryLink({
   questionId: string;
   ariaPrefix?: string;
 }) {
+  const routes = usePortalRoutes();
+
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   params.set("reviewQuestion", questionId);
@@ -16,7 +19,9 @@ export function QuestionHistoryLink({
   const query = new URLSearchParams({ returnTo });
   return (
     <Link
-      to={`/s/notebook/${encodeURIComponent(questionId)}?${query}`}
+      to={routes.learning(
+        `notebook/${encodeURIComponent(questionId)}?${query}`,
+      )}
       aria-label={`${ariaPrefix}本题历史`}
       className="flex min-h-11 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-border px-3 text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
     >

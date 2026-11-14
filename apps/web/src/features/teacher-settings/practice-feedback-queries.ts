@@ -1,9 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TeacherPracticeFeedbackSettingsUpdateRequest } from "@tutor/contract";
-import {
-  fetchPracticeFeedbackSettings,
-  savePracticeFeedbackSettings,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 教师练习反馈默认策略的查询封装（M1b；设置页「教学」区数据源）：
@@ -20,6 +17,8 @@ export const practiceFeedbackSettingsKey = [
 
 /** 查看当前策略（null = 未配置） */
 export function usePracticeFeedbackSettings() {
+  const { fetchPracticeFeedbackSettings } = usePortalClients();
+
   return useQuery({
     queryKey: practiceFeedbackSettingsKey,
     queryFn: fetchPracticeFeedbackSettings,
@@ -29,6 +28,8 @@ export function usePracticeFeedbackSettings() {
 
 /** 保存教师作答设置（返回服务端确认值） */
 export function useSavePracticeFeedbackSettings() {
+  const { savePracticeFeedbackSettings } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (request: TeacherPracticeFeedbackSettingsUpdateRequest) =>

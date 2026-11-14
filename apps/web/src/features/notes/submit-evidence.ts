@@ -31,8 +31,9 @@ import type {
 import { NOTE_HEADS_MAX_QUESTIONS } from "@tutor/contract";
 import { snapshotAnnotationProblems } from "@/features/annotation/annotation-submit-materials";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
-import { getDraftSessionEpoch } from "@/features/attempt/draft-store";
-import { fetchStudentNoteHeadsApi } from "@/lib/api";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
+
 import {
   deriveServerState,
   loadScratchRecords,
@@ -77,11 +78,14 @@ export interface SubmitEvidencePrep {
 const NOTE_HEAD_TIMEOUT_MS = 30_000;
 
 async function readSubmitHeads(
+  clients: ApiServices,
   attemptId: string,
   ids: readonly string[],
   ensureSession: () => void,
   upstream?: AbortSignal,
 ) {
+  const { fetchStudentNoteHeadsApi } = clients;
+
   const timeout = AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS);
   const signal = upstream ? AbortSignal.any([upstream, timeout]) : timeout;
   const heads: NoteHeadData[] = [];
@@ -188,14 +192,17 @@ function classifyNote(
  * head 拉取失败（网络/权限）时抛错——状态未知不能声明，交卷流程据此
  * 提示重试并保持答题状态。
  */
-export async function prepareSubmitEvidence(input: {
-  attemptId: string;
-  questionIds: readonly string[];
-  /** 用户已明确选择缺稿交卷的题目（「草稿未保存完整」确认后重跑传入） */
-  allowMissing?: ReadonlySet<string>;
-  signal?: AbortSignal;
-  assertActive?: () => void;
-}): Promise<SubmitEvidencePrep> {
+export async function prepareSubmitEvidence(
+  clients: ApiServices,
+  input: {
+    attemptId: string;
+    questionIds: readonly string[];
+    /** 用户已明确选择缺稿交卷的题目（「草稿未保存完整」确认后重跑传入） */
+    allowMissing?: ReadonlySet<string>;
+    signal?: AbortSignal;
+    assertActive?: () => void;
+  },
+): Promise<SubmitEvidencePrep> {
   const epoch = getDraftSessionEpoch();
   const check = () => {
     input.signal?.throwIfAborted();
@@ -223,7 +230,13 @@ export async function prepareSubmitEvidence(input: {
     session === null
       ? Promise.resolve(new Map<string, NoteLocalRecord>())
       : loadScratchRecords(session, input.attemptId, { strictRead: true }),
-    readSubmitHeads(input.attemptId, input.questionIds, check, input.signal),
+    readSubmitHeads(
+      clients,
+      input.attemptId,
+      input.questionIds,
+      check,
+      input.signal,
+    ),
   ]);
   check();
 

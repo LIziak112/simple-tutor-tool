@@ -5,9 +5,9 @@ import type {
   StudentAnswer,
 } from "@tutor/contract";
 import type { ReactNode } from "react";
+import { formatReferenceAnswers } from "@/features/answering/answer-format";
+import type { QuestionCompletion } from "@/features/answering/question-completion";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { formatReferenceAnswers } from "../attempt/answer-format";
-import type { QuestionCompletion } from "../attempt/question-completion";
 import type { PreparedQuestion } from "./prepare-question";
 import type { AnswerKindViewTable, ReferenceMaterial } from "./types";
 import { assertNeverView } from "./types";

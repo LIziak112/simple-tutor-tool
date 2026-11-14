@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PORTALS, portalCapabilitiesOf, safeReturnTo } from "./portals";
+import {
+  PORTALS,
+  portalCapabilitiesOf,
+  safeReturnTo,
+} from "@/portals/registry";
 
 describe("门户注册表与安全回跳", () => {
   it("登记四个门户，管理员复用教师登录", () => {
@@ -47,7 +51,10 @@ describe("门户注册表与安全回跳", () => {
     expect(safeReturnTo("/s/notebook/q1", "student")).toBe("/s/notebook/q1");
     expect(safeReturnTo("/a/teachers", "teacher")).toBe("/a/teachers");
     expect(safeReturnTo("/t/courses", "student")).toBe("/s/home");
-    expect(safeReturnTo("/t/courses", "personal")).toBe("/t/courses");
+    expect(safeReturnTo("/t/courses", "personal")).toBe("/p/manage/courses");
+    expect(safeReturnTo("/s/attempts/a?returnTo=x#q2", "personal")).toBe(
+      "/p/learn/attempts/a?returnTo=x#q2",
+    );
   });
 
   it("能力表统一隐藏个人端作业、班级管理、内部登录名", () => {

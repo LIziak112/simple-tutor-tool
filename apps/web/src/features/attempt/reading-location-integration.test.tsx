@@ -1,14 +1,14 @@
+import type { AttemptDraftData } from "@tutor/contract";
+import { useRef, useState } from "react";
+import { MemoryRouter } from "react-router";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   cleanup,
   render,
   renderHook,
   screen,
   waitFor,
-} from "@testing-library/react";
-import type { AttemptDraftData } from "@tutor/contract";
-import { useRef, useState } from "react";
-import { MemoryRouter } from "react-router";
-import { afterEach, expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import { useAttemptQuestionLocation } from "./use-attempt-question-location.ts";
 import { useReadingPosition } from "./use-reading-position.ts";
 

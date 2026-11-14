@@ -4,6 +4,7 @@ import {
   isAttemptUnavailable,
   useAttemptDetail,
 } from "@/features/attempt/attempt-queries";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   aiQueueReturnTarget,
@@ -14,7 +15,7 @@ import {
   StudentListSkeleton,
   StudentRefreshWarning,
 } from "@/features/student/student-ui";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * /s/attempts/:attemptId 通用答题页（T2A.6，D9 两种来源共用）：
@@ -24,13 +25,18 @@ import { ApiError } from "@/lib/api";
  * 不做无限重试；交卷后的返回目标按来源分派（课程练习回单元落地页）。
  */
 export default function StudentAttemptPage() {
+  const routes = usePortalRoutes();
+
   const { attemptId = "" } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const recordsTarget = recordsReturnTarget(searchParams.get("returnTo"));
+  const recordsTarget = recordsReturnTarget(
+    routes,
+    searchParams.get("returnTo"),
+  );
   // SAI-23 队列跳转来源（aiFrom 白名单独立于回看 returnTo）：优先级在其后——
   // 队列入口只在无回看上下文时改写返回目标
-  const queueTarget = aiQueueReturnTarget(searchParams.get("aiFrom"));
+  const queueTarget = aiQueueReturnTarget(routes, searchParams.get("aiFrom"));
   const detailQuery = useAttemptDetail(attemptId || undefined);
   const denied = detailQuery.isError && isAttemptUnavailable(detailQuery.error);
   const abandoned =
@@ -65,7 +71,7 @@ export default function StudentAttemptPage() {
               : "这份练习可能已被老师收回，或你已不在对应课程中。有疑问请联系老师。"}
           </p>
           <Link
-            to="/s/home"
+            to={routes.learning("home")}
             className="flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             返回首页
@@ -94,14 +100,16 @@ export default function StudentAttemptPage() {
   // 恒有值，仅在两者齐备时才构造单元落地页地址，否则回首页兜底。
   const exitTarget =
     data.attempt.sourceType === "wrong"
-      ? "/s/wrong"
+      ? routes.learning("wrong")
       : data.attempt.sourceType === "lesson" && data.attempt.lectureId !== null
-        ? lessonHref(data.attempt.lectureId, data.attempt.courseId)
+        ? lessonHref(routes, data.attempt.lectureId, data.attempt.courseId)
         : data.attempt.sourceType === "course" &&
             data.attempt.courseId !== null &&
             data.attempt.unitId !== null
-          ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
-          : "/s/home";
+          ? routes.learning(
+              `courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`,
+            )
+          : routes.learning("home");
   return (
     <>
       {detailQuery.isError && (

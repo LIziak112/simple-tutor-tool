@@ -13,15 +13,15 @@ import {
   subscribeNoteStore,
 } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
-import type { AttemptRecoveryState } from "./attempt-material-recovery";
+import type { AttemptRecoveryState } from "@/features/persistence/attempt-material-recovery";
 import {
   type DraftPersistenceState,
   draftStore,
   getDraftPersistenceState,
   subscribeDraftPersistence,
-} from "./draft-store";
-import type { DraftSaveStatus } from "./use-draft-sync";
-import type { InkUploadController } from "./use-ink-upload";
+} from "@/features/persistence/draft-store";
+import type { DraftSaveStatus } from "@/features/persistence/use-draft-sync";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
 
 type SaveView = Pick<NoteRecordView | AnnotationRecordView, "local" | "server">;
 interface SaveSummaryInput {

@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { Button } from "@/components/ui/button";
-import { useAttemptEditor } from "./AttemptEditorContext";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 
 const pressFeedback =
   "duration-150 ease-out motion-safe:transition-transform motion-safe:enabled:active:scale-[0.96] motion-reduce:transition-opacity motion-reduce:enabled:active:opacity-75";

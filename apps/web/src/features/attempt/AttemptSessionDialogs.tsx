@@ -1,9 +1,9 @@
 import type { AttemptDraftData } from "@tutor/contract";
+import { completionLabel } from "@/features/answering/question-completion";
 import { LiveAttemptAnswerCard } from "./AttemptAnswerCard";
 import { AttemptNavigationDialog } from "./AttemptNavigationDialog";
 import { PracticeSubmitProblemDialog } from "./PracticeQuestionSubmit";
 import type { QuestionNavigationItem } from "./QuestionNavigator";
-import { completionLabel } from "./question-completion";
 import { SubmitConfirmDialog } from "./SubmitConfirmDialog";
 import type { useAttemptPracticeSubmission } from "./use-attempt-practice-submission";
 import type { useAttemptQuestionLocation } from "./use-attempt-question-location";

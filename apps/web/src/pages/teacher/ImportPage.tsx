@@ -1,9 +1,23 @@
-import { useQueryClient } from "@tanstack/react-query";
 import {
-  IMPORT_MAX_BATCH_BYTES,
-  IMPORT_MAX_FILE_BYTES,
-  IMPORT_MAX_FILES_PER_BATCH,
-} from "@tutor/contract";
+  precheckBatchLimits,
+  renamedPath,
+} from "@/pages/teacher/import-file-limits";
+
+export {
+  precheckBatchLimits,
+  renamedPath,
+} from "@/pages/teacher/import-file-limits";
+
+import {
+  DEFAULT_FILENAME,
+  formatSizeKb,
+  nextPasteFilename,
+} from "@/pages/teacher/import-file-labels";
+
+export { DEFAULT_FILENAME } from "@/pages/teacher/import-file-labels";
+
+import { useQueryClient } from "@tanstack/react-query";
+import { IMPORT_MAX_FILES_PER_BATCH } from "@tutor/contract";
 import {
   CheckCircle2,
   CircleAlert,
@@ -36,7 +50,12 @@ import {
 } from "@/features/courses/course-queries";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { extractImageRefs } from "@/features/markdown/image-refs";
-import { ApiError, createLibraryFolderApi } from "@/lib/api";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { randomUuid } from "@/lib/uuid";
 import { BatchImportPreview } from "./BatchImportPreview";
 import { rewriteImageSrcs } from "./companion-media";
@@ -70,7 +89,6 @@ import { useCompanionImages } from "./use-companion-images";
  */
 
 /** 文件名缺省值（契约要求非空；用户可改） */
-export const DEFAULT_FILENAME = "未命名.md";
 
 /** 前端选中的待导入文件（.md；内容已读入内存） */
 export interface PickedFile {
@@ -191,29 +209,8 @@ export async function readPickedFiles(
 
 /** 条目改名后的 path：文件夹选择的条目带子目录前缀（「按子目录自动建文件夹」
  * 的依据），改名只换 basename、保留目录；根级条目 path 即文件名。 */
-export function renamedPath(path: string, name: string): string {
-  const slash = path.lastIndexOf("/");
-  return slash >= 0 ? `${path.slice(0, slash + 1)}${name}` : name;
-}
 
 /** 规模预检（D20；与后端 IMPORT_TOO_LARGE 同口径），超限返回中文提示 */
-export function precheckBatchLimits(
-  files: readonly PickedFile[],
-): string | null {
-  if (files.length > IMPORT_MAX_FILES_PER_BATCH) {
-    return `单批最多导入 ${IMPORT_MAX_FILES_PER_BATCH} 个文件（当前 ${files.length} 个），请分批导入。`;
-  }
-  for (const file of files) {
-    if (file.bytes > IMPORT_MAX_FILE_BYTES) {
-      return `文件「${file.path}」超过单文件 1 MB 上限，请拆分后再导入。`;
-    }
-  }
-  const total = files.reduce((sum, file) => sum + file.bytes, 0);
-  if (total > IMPORT_MAX_BATCH_BYTES) {
-    return `单批 markdown 合计超过 10 MB 上限（当前约 ${Math.round(total / 1024 / 1024)} MB），请分批导入。`;
-  }
-  return null;
-}
 
 /** webkitdirectory 特性检测（D20：不支持的浏览器只显示多选文件入口） */
 export const SUPPORTS_DIRECTORY_PICKER =
@@ -233,19 +230,8 @@ function upsertByPath(
 
 /** 粘贴条目的默认文件名序列：未命名.md → 未命名-2.md → …（避开清单已有 path，
  * 连续多次粘贴互不覆盖；显式输入已有名仍走「同 path 替换」更新旧条目） */
-function nextPasteFilename(list: readonly PickedFile[]): string {
-  const taken = new Set(list.map((file) => file.path));
-  if (!taken.has(DEFAULT_FILENAME)) return DEFAULT_FILENAME;
-  for (let n = 2; ; n += 1) {
-    const candidate = `未命名-${n}.md`;
-    if (!taken.has(candidate)) return candidate;
-  }
-}
 
 /** 字节数 → 「x.x KB」短文案（四舍五入到 0.1 KB，下限 0.1） */
-function formatSizeKb(bytes: number): string {
-  return `${Math.max(0.1, Math.round(bytes / 102.4) / 10)} KB`;
-}
 
 type Stage = "select" | "single" | "batch";
 
@@ -258,6 +244,10 @@ interface SingleInput {
 }
 
 export function ImportPage() {
+  const { createLibraryFolderApi } = usePortalClients();
+
+  const routes = usePortalRoutes();
+
   const [initialParams] = useSearchParams();
   const [courseParentId, setCourseParentId] = useState(
     initialParams.get("parentId") ?? "",
@@ -574,7 +564,7 @@ export function ImportPage() {
       {/* 面包屑 + 标题 */}
       <nav aria-label="面包屑" className="flex items-center gap-1.5 text-sm">
         <Link
-          to="/t/library"
+          to={routes.management("library")}
           className="rounded px-1 py-0.5 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           资源库

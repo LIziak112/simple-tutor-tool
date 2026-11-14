@@ -16,10 +16,12 @@ import { CourseCatalogTab } from "@/features/courses/CourseCatalogTab";
 import { CourseHeader } from "@/features/courses/CourseHeader";
 import { CourseMembersTab } from "@/features/courses/CourseMembersTab";
 import { CourseProgressTab } from "@/features/courses/CourseProgressTab";
+import { CourseReviewSettings } from "@/features/courses/CourseReviewSettings";
 import {
   useCourseDetail,
   useUpdateCourse,
 } from "@/features/courses/course-queries";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 
 /**
  * /t/courses/:id 课程编辑页（T2A.4）：页签 = 目录 / 成员 / 进度（占位，T2A.6 填充）。
@@ -36,6 +38,8 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 export function CourseEditPage() {
+  const routes = usePortalRoutes();
+
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const detailQuery = useCourseDetail(id);
@@ -61,7 +65,7 @@ export function CourseEditPage() {
     return (
       <section className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 md:px-6">
         <Link
-          to="/t/courses"
+          to={routes.management("courses")}
           className="flex min-h-11 items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           <ChevronLeft aria-hidden className="size-4" />
@@ -102,10 +106,19 @@ export function CourseEditPage() {
         onEdit={() => setEditOpen(true)}
         onAssign={() =>
           void navigate(
-            `/t/assignments?courseId=${encodeURIComponent(detail.id)}&compose=1`,
+            routes.management(
+              `assignments?courseId=${encodeURIComponent(detail.id)}&compose=1`,
+            ),
           )
         }
-        onDeleted={() => void navigate("/t/courses")}
+        onDeleted={() => void navigate(routes.management("courses"))}
+      />
+
+      <CourseReviewSettings
+        key={detail.id}
+        courseId={detail.id}
+        examType={detail.examType}
+        reviewTemplateId={detail.reviewTemplateId}
       />
 
       <div role="tablist" aria-label="课程页签" className="flex gap-2">

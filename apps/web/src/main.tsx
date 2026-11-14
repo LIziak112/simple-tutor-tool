@@ -8,6 +8,7 @@ import { PwaUpdateNotice } from "./components/PwaUpdateNotice";
 import { fetchPublicConfig } from "./lib/api";
 import { setupEruda } from "./lib/debug";
 import { maybeRegisterServiceWorker, registerServiceWorker } from "./lib/pwa";
+import { PortalHost } from "./portals/PortalHost";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -39,7 +40,9 @@ createRoot(rootEl).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <App />
+        <PortalHost>
+          <App />
+        </PortalHost>
         <PwaDraftSafety />
         <PwaUpdateNotice />
       </BrowserRouter>

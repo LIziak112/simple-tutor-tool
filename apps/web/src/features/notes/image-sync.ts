@@ -26,8 +26,9 @@
 import type { NoteDoc, NoteImageMeta, NoteImageSpec } from "@tutor/contract";
 import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
-import { type NoteRole, postNoteImageApi } from "@/lib/api";
-import { fetchNoteDocumentApi } from "@/lib/note-endpoints";
+import type { NoteRole } from "@/features/runtime/client-types";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
+
 import {
   SerialTaskQueue,
   type SerialTaskQueueStats,
@@ -65,8 +66,11 @@ export interface NoteImageSyncParams {
  * 按实测再定。
  */
 export function syncNoteImages(
+  clients: ApiServices,
   params: NoteImageSyncParams & { doc: NoteDoc },
 ): Promise<NoteImageMeta[]> {
+  const { postNoteImageApi } = clients;
+
   const { role, versionId, doc } = params;
   return noteImageQueue.run(async () => {
     const metas: NoteImageMeta[] = [];
@@ -105,14 +109,17 @@ export function syncNoteImages(
  * 不静默跳过。
  */
 export async function recoverNoteImages(
+  clients: ApiServices,
   params: NoteImageSyncParams,
 ): Promise<NoteImageMeta[]> {
+  const { fetchNoteDocumentApi } = clients;
+
   // 角色分派单点（T6R.11）：与原稿查看/补图上传同一份 NoteRole 派发
   const raw = await fetchNoteDocumentApi(params.role, params.versionId);
   // noteDocSchema 收窄（缺省高度/背景物化——不物化会 NaN，见契约
   // NoteDocInput 注释；解析原语三处共用 note-fixtures.parseNoteDocOrThrow）
   const doc = parseNoteDocOrThrow(raw, "草稿正文", "，无法重建派生图");
-  return syncNoteImages({ ...params, doc });
+  return syncNoteImages(clients, { ...params, doc });
 }
 
 /** 队列状态快照（诊断/状态展示） */

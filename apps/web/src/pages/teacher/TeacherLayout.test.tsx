@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { TeacherInfo } from "@tutor/contract";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchTeacherMe } from "@/lib/api";
+import { fireEvent, render, screen, within } from "@/test/render-with-portal";
 import TeacherLayout from "./TeacherLayout";
 
 /**
@@ -35,6 +35,14 @@ const TEACHER: TeacherInfo = {
   createdAt: "2026-01-01T00:00:00.000Z",
 };
 
+function PersonalDestination() {
+  const location = useLocation();
+  return (
+    <p data-testid="personal-destination">
+      {location.pathname + location.search + location.hash}
+    </p>
+  );
+}
 function renderLayout(initialEntry: string): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -43,6 +51,7 @@ function renderLayout(initialEntry: string): void {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
+          <Route path="/p/manage/*" element={<PersonalDestination />} />
           <Route path="/t" element={<TeacherLayout />}>
             <Route
               path="*"
@@ -60,31 +69,19 @@ beforeEach(() => {
 });
 
 describe("TeacherLayout · 个人账号（模块 0）", () => {
-  it("导航无 学生 / 作业 / 连接 AI；账号标签「个人账号」；顶栏有学习视角按钮", async () => {
+  it("个人旧教师深链接进入独立管理门户并保留坐标", async () => {
     mockedMe.mockResolvedValue({
       ...TEACHER,
-      loginName: "kaosheng",
       isAdmin: false,
       accountKind: "personal",
     });
-    renderLayout("/t/library");
-
-    const nav = await screen.findByRole("navigation", { name: "教师端导航" });
-    expect(within(nav).getByRole("link", { name: "资源库" })).toHaveAttribute(
-      "href",
-      "/t/library",
+    renderLayout("/t/library?folder=f#row");
+    expect(await screen.findByTestId("personal-destination")).toHaveTextContent(
+      "/p/manage/library?folder=f#row",
     );
-    for (const name of ["学生", "作业", "连接 AI"]) {
-      expect(within(nav).queryByRole("link", { name })).not.toBeInTheDocument();
-    }
-    expect(within(nav).getByRole("link", { name: "设置" })).toHaveAttribute(
-      "href",
-      "/t/settings",
-    );
-    expect(screen.getByText("个人账号 · 管理视角")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "切换到学习视角" }),
-    ).toBeVisible();
+      screen.queryByRole("navigation", { name: "教师端导航" }),
+    ).not.toBeInTheDocument();
   });
 });
 

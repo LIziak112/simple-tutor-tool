@@ -7,15 +7,7 @@ import type {
   AiConnectionPatchRequest,
   AiConnectionProbeRequest,
 } from "@tutor/contract";
-import {
-  createStudentAiConnectionApi,
-  deleteStudentAiConnectionApi,
-  fetchStudentAiConnectionModelsApi,
-  fetchStudentAiConnectionsApi,
-  patchStudentAiConnectionApi,
-  probeStudentAiConnectionApi,
-  testStudentAiConnectionApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * SAI-18 学生 AI 连接查询封装(/s/settings/ai 页数据源,SAI-16 五端点)。
@@ -37,6 +29,8 @@ export const studentAiConnectionDraftKey = [
 
 /** 读本人 active 连接列表(未配置 → 空列表) */
 export function useStudentAiConnections() {
+  const { fetchStudentAiConnectionsApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentAiConnectionsKey,
     queryFn: fetchStudentAiConnectionsApi,
@@ -71,6 +65,8 @@ function useInvalidateConnections() {
 
 /** 创建连接(错误由组件按 ApiError code 分支展示,输入不自动清空) */
 export function useCreateStudentAiConnection() {
+  const { createStudentAiConnectionApi } = usePortalClients();
+
   const apply = useInvalidateConnections();
   return useMutation({
     mutationFn: (request: AiConnectionCreateRequest) =>
@@ -81,6 +77,8 @@ export function useCreateStudentAiConnection() {
 
 /** 更新连接(inapp 不传 apiKey = 保持原 Key;mcp resetToken 见组件确认) */
 export function usePatchStudentAiConnection() {
+  const { patchStudentAiConnectionApi } = usePortalClients();
+
   const apply = useInvalidateConnections();
   return useMutation({
     mutationFn: (input: { id: string; request: AiConnectionPatchRequest }) =>
@@ -91,6 +89,8 @@ export function usePatchStudentAiConnection() {
 
 /** 删除连接(软删;成功后失效重取,列表即刻回到服务器真值) */
 export function useDeleteStudentAiConnection() {
+  const { deleteStudentAiConnectionApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (connectionId: string) =>
@@ -109,6 +109,8 @@ export function useDeleteStudentAiConnection() {
  * verifyStatus 徽章——不在 mutation 里改写缓存,避免探针失败时本地覆盖)。
  */
 export function useTestStudentAiConnection() {
+  const { testStudentAiConnectionApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (connectionId: string) =>
@@ -121,6 +123,8 @@ export function useTestStudentAiConnection() {
 
 /** 诊断变量含短期凭据，组件卸载后立即回收，不保留诊断缓存。 */
 export function useStudentAiConnectionModels() {
+  const { fetchStudentAiConnectionModelsApi } = usePortalClients();
+
   return useMutation({
     mutationFn: (request: AiConnectionModelsRequest) =>
       fetchStudentAiConnectionModelsApi(request),
@@ -129,6 +133,8 @@ export function useStudentAiConnectionModels() {
 }
 
 export function useProbeStudentAiConnection() {
+  const { probeStudentAiConnectionApi } = usePortalClients();
+
   return useMutation({
     mutationFn: (request: AiConnectionProbeRequest) =>
       probeStudentAiConnectionApi(request),

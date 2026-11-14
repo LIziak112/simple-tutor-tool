@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { attemptTimeSchema } from "./attempt-time-ledger.ts";
 
 /** 结算只冻结成员与用时；判定仍从行内当前教师批改、自评及自动结果读取。 */
 const settlementFields = z
   .object({
+    time: attemptTimeSchema.optional(),
     seq: z.number().int().positive(),
     createdAt: z.iso.datetime(),
     // final 可为零题终结标记；partial 必须含至少一行。

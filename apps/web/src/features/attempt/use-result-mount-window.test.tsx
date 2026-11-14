@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { ResultQuestionRow } from "./ResultQuestionRow";
 import { useResultMountWindow } from "./use-result-mount-window";
 

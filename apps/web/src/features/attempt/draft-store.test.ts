@@ -1,6 +1,6 @@
 import type { InkDoc, StudentAnswer } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { digestOf } from "./draft-merge";
+import { digestOf } from "@/features/persistence/draft-merge";
 import {
   bindDraftSession,
   DRAFT_WRITE_DEBOUNCE_MS,
@@ -9,7 +9,7 @@ import {
   installDraftBackend,
   type KVBackend,
   memoryBackend,
-} from "./draft-store";
+} from "@/features/persistence/draft-store";
 
 it("同一题卷标识在不同学生会话中隔离，旧学生重登可恢复未同步稿", async () => {
   bindDraftSession({ origin: "https://tutor.test", studentId: "a" });
@@ -91,10 +91,9 @@ describe("多个页面共享本机草稿", () => {
   });
 
   async function openPeer() {
-    const path = `./draft-store.ts?tab=${peerIndex++}`;
-    const peer: typeof import("./draft-store") = await import(
-      /* @vite-ignore */ path
-    );
+    const path = `../persistence/draft-store.ts?tab=${peerIndex++}`;
+    const peer: typeof import("@/features/persistence/draft-store") =
+      await import(/* @vite-ignore */ path);
     peer.installDraftBackend(sharedBackend);
     return peer.draftStore;
   }

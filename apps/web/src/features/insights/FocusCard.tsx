@@ -1,8 +1,9 @@
 import type { AnalyticsFocusCard } from "@tutor/contract";
 import { Target } from "lucide-react";
 import { Link } from "react-router";
-import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
+import { QUESTION_TYPE_LABELS } from "@/features/answering/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatDueTime, formatRelativeTime } from "@/lib/time";
 import { formatPercent } from "./insights-format";
 
@@ -12,6 +13,8 @@ import { formatPercent } from "./insights-format";
  * 链接到作答详情页（/t/data/attempts/:id），便于备课时直击错因。
  */
 export function FocusCard({ focus }: { focus: AnalyticsFocusCard }) {
+  const routes = usePortalRoutes();
+
   return (
     <section
       aria-label="下节课重点"
@@ -65,7 +68,9 @@ export function FocusCard({ focus }: { focus: AnalyticsFocusCard }) {
                   </span>
                 </p>
                 <Link
-                  to={`/t/data/attempts/${point.representative.attemptId}`}
+                  to={routes.management(
+                    `data/attempts/${point.representative.attemptId}`,
+                  )}
                   className="mt-2 inline-flex min-h-11 items-center rounded-lg border border-border bg-card px-4 text-sm font-medium outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   查看作答详情

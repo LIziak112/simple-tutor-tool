@@ -5,8 +5,8 @@ import {
   mergeAnswers,
   mergeInkDocs,
   unsyncedAnswerIds,
-} from "./draft-merge";
-import type { AttemptDraftRecord } from "./draft-store";
+} from "@/features/persistence/draft-merge";
+import type { AttemptDraftRecord } from "@/features/persistence/draft-store";
 
 /** 草稿合并纯函数测试（T2.9）：答案并集/冲突本地胜出、笔迹 updatedAt 新者胜、摘要稳定性 */
 

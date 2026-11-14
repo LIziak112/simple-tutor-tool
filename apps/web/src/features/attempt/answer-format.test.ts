@@ -9,7 +9,7 @@ import {
   letterOf,
   mathifyAnswerText,
   withBlankValue,
-} from "./answer-format";
+} from "@/features/answering/answer-format";
 
 /** 作答展示纯函数测试（T2.6）：题型徽章口径见组件测试，这里锁文本化行为。 */
 

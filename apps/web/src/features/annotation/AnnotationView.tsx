@@ -33,12 +33,9 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
-import {
-  fetchAnnotationViewApi,
-  fetchTeacherAnnotationViewApi,
-  saveBlobAs,
-} from "@/lib/api";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { copyPngBlobToClipboard } from "@/lib/copy";
 import { AnnotationStaticCanvas } from "./AnnotationStaticCanvas";
 import {
@@ -209,6 +206,9 @@ function AnnotationViewContent({
   inline: inlineProp = false,
   scopeKey,
 }: AnnotationViewProps & { scopeKey: string }) {
+  const { fetchTeacherAnnotationViewApi, fetchAnnotationViewApi, saveBlobAs } =
+    usePortalClients();
+
   const inline = inlineProp || children !== undefined;
   const container = useRef<HTMLDivElement>(null);
   const loadGeneration = useRef(0);
@@ -261,7 +261,14 @@ function AnnotationViewContent({
       setError(err instanceof Error ? err.message : "加载失败");
       setPhaseState("error");
     }
-  }, [viewer, attemptId, questionId, phase]);
+  }, [
+    viewer,
+    attemptId,
+    questionId,
+    phase,
+    fetchAnnotationViewApi,
+    fetchTeacherAnnotationViewApi,
+  ]);
 
   useEffect(() => {
     if (open && phaseState === "idle") void load();
@@ -298,7 +305,7 @@ function AnnotationViewContent({
       setExportedBlob(null);
       setExportResult(result.error.message);
     }
-  }, [view, questionNo, phase]);
+  }, [view, questionNo, phase, saveBlobAs]);
 
   /** 复制合成图（审查修复 14：与 ExportReviewImageSection 同降级口径） */
   const handleCopyImage = useCallback(async (): Promise<void> => {

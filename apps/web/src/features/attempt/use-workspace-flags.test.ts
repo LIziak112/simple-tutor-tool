@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@/test/render-with-portal";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 let session: { origin: string; studentId: string } | null;

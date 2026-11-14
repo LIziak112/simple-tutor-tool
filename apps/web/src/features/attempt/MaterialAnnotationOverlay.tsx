@@ -9,6 +9,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { useCoordinatedAnnotation } from "@/features/annotation/coordinated-annotation-context";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { eraseHit } from "@/features/ink/engine/erase.ts";
 import { toLogicalPoint } from "@/features/ink/engine/normalize.ts";
 import {
@@ -29,15 +30,14 @@ import {
   type AtramentReplayCanvas,
   createAtramentReplayCanvas,
 } from "@/features/ink/replay/draw.ts";
-import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
-import { useAttemptEditor } from "./AttemptEditorContext";
 import {
   draftStore,
   getDraftSessionEpoch,
   type MaterialInkBaseMeta,
   subscribeLocalDraftChoice,
-} from "./draft-store";
-import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
+} from "@/features/persistence/draft-store";
+import { prepareDraftForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 
 /** 首笔前材料就绪等待上限（同题面 STEP_TIMEOUT_MS 口径） */
 const MATERIAL_READY_TIMEOUT_MS = 15_000;

@@ -1,4 +1,5 @@
 import {
+  MCP_LIVE_FOCUS_MAX_VIEWS,
   MCP_LIVE_FOCUS_TTL_MS,
   type StudentMcpLiveFocusRequest,
 } from "@tutor/contract";
@@ -15,7 +16,6 @@ const liveByConnection = new WeakMap<
   Map<string, StudentFocus>
 >();
 const MAX_STUDENTS = 2048;
-const MAX_VIEWS = 12;
 
 function activeStudents(db: Db): Map<string, StudentFocus> {
   const existing = liveByConnection.get(db.$client);
@@ -60,7 +60,7 @@ export function recordStudentMcpFocus(
   }
   const previous = focus.views.get(request.viewId);
   if (previous !== undefined && request.sequence <= previous.sequence) return;
-  if (previous === undefined && focus.views.size >= MAX_VIEWS) {
+  if (previous === undefined && focus.views.size >= MCP_LIVE_FOCUS_MAX_VIEWS) {
     focus.overflowUntil = now + MCP_LIVE_FOCUS_TTL_MS;
     return;
   }
@@ -72,29 +72,41 @@ export function recordStudentMcpFocus(
   });
 }
 
+export function studentMcpFocusCandidates(
+  db: Db,
+  studentId: string,
+  now = Date.now(),
+) {
+  const students = liveByConnection.get(db.$client);
+  const focus = students?.get(studentId);
+  if (focus === undefined) return { overflow: false, candidates: [] };
+  if (prune(focus, now)) {
+    students?.delete(studentId);
+    return { overflow: false, candidates: [] };
+  }
+  if (focus.overflowUntil > now) return { overflow: true, candidates: [] };
+  const candidates = new Map<
+    string,
+    { attemptId: string; questionId: string }
+  >();
+  for (const view of focus.views.values()) {
+    if (view.questionId === null || view.expiresAt <= now) continue;
+    candidates.set(JSON.stringify([view.attemptId, view.questionId]), {
+      attemptId: view.attemptId,
+      questionId: view.questionId,
+    });
+  }
+  return { overflow: false, candidates: [...candidates.values()] };
+}
+
+/** 旧工具仍只接受唯一焦点；多窗口歧义保持null旧语义。 */
 export function currentStudentMcpFocus(
   db: Db,
   studentId: string,
   now = Date.now(),
 ): { attemptId: string; questionId: string } | null {
-  const students = liveByConnection.get(db.$client);
-  const focus = students?.get(studentId);
-  if (focus === undefined) return null;
-  if (prune(focus, now)) {
-    students?.delete(studentId);
-    return null;
-  }
-  if (focus.overflowUntil > now) return null;
-  let current: { attemptId: string; questionId: string } | null = null;
-  for (const view of focus.views.values()) {
-    if (view.questionId === null || view.expiresAt <= now) continue;
-    if (
-      current !== null &&
-      (current.attemptId !== view.attemptId ||
-        current.questionId !== view.questionId)
-    )
-      return null;
-    current = { attemptId: view.attemptId, questionId: view.questionId };
-  }
-  return current;
+  const result = studentMcpFocusCandidates(db, studentId, now);
+  return !result.overflow && result.candidates.length === 1
+    ? (result.candidates[0] ?? null)
+    : null;
 }

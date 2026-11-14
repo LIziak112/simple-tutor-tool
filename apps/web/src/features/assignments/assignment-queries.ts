@@ -7,14 +7,8 @@ import type {
   AssignmentUpdateRequest,
   TeacherAssignment,
 } from "@tutor/contract";
-import {
-  checkAssignmentApi,
-  createAssignmentApi,
-  deleteAssignmentApi,
-  fetchAssignmentDetailApi,
-  fetchAssignmentsApi,
-  updateAssignmentApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { useReplayableCreate } from "@/lib/use-replayable-create";
 
 /**
@@ -34,6 +28,8 @@ export function useTeacherAssignments(
   courseId: string | undefined,
   includeDeleted: boolean,
 ) {
+  const { fetchAssignmentsApi } = usePortalClients();
+
   return useQuery({
     queryKey: assignmentsKey(courseId, includeDeleted),
     queryFn: () => fetchAssignmentsApi(courseId, includeDeleted),
@@ -48,6 +44,8 @@ export const assignmentDetailKey = (id: string) =>
 
 /** 作业详情（T2A.7） */
 export function useAssignmentDetail(id: string | undefined) {
+  const { fetchAssignmentDetailApi } = usePortalClients();
+
   return useQuery({
     queryKey: assignmentDetailKey(id ?? "pending"),
     queryFn: () => fetchAssignmentDetailApi(id ?? ""),
@@ -72,6 +70,8 @@ function useInvalidateAssignments() {
  * 每个 unitIds 顺序 N 份——向导提交后只做缓存失效，不逐份消费。
  */
 export function useCreateAssignment() {
+  const { createAssignmentApi } = usePortalClients();
+
   const invalidate = useInvalidateAssignments();
   const create = useReplayableCreate();
   return useMutation<AssignmentCreateData, Error, AssignmentCreateRequest>({
@@ -89,6 +89,8 @@ export function useCreateAssignment() {
  * 带 confirmStarted: true 重发）；409 ASSIGNMENT_CONTENT_LOCKED = 内容已锁定。
  */
 export function useUpdateAssignment() {
+  const { updateAssignmentApi } = usePortalClients();
+
   const invalidate = useInvalidateAssignments();
   return useMutation<
     TeacherAssignment,
@@ -102,6 +104,8 @@ export function useUpdateAssignment() {
 
 /** 删除作业（软删，作答保留；列表随后自动刷新） */
 export function useDeleteAssignment() {
+  const { deleteAssignmentApi } = usePortalClients();
+
   const invalidate = useInvalidateAssignments();
   return useMutation<null, Error, string>({
     mutationFn: deleteAssignmentApi,
@@ -111,6 +115,8 @@ export function useDeleteAssignment() {
 
 /** 布置前「已做过」检查（D15：仅提示不阻止；确认步骤逐条展示） */
 export function useCheckAssignment() {
+  const { checkAssignmentApi } = usePortalClients();
+
   return useMutation<AssignmentCheckData, Error, AssignmentCheckRequest>({
     mutationFn: checkAssignmentApi,
   });

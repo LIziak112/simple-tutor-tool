@@ -49,10 +49,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
-import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
-import { prepareNoteForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
-import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { PaperEditor } from "@/features/ink/PaperEditor";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import {
@@ -74,6 +71,10 @@ import {
 } from "@/features/notes/use-note-editor";
 import { useNoteHead, useNoteSessionRef } from "@/features/notes/use-note-head";
 import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
+import { attemptMaterialsEditable } from "@/features/persistence/attempt-material-recovery";
+import { prepareNoteForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import { useDraftSyncRecovery } from "@/features/persistence/use-draft-sync";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { getNoteRecord, settleNotePersistence } from "./note-store";
 
@@ -131,6 +132,8 @@ export function NoteLayer({
   scratchContext,
   contextLabel,
 }: NoteLayerProps) {
+  const clients = usePortalClients();
+
   const recovery = useDraftSyncRecovery();
   const session = useNoteSessionRef();
   const editor = useNoteEditor({
@@ -254,14 +257,14 @@ export function NoteLayer({
       .then((result) => {
         const versionId = result.data?.note?.currentVersionId ?? null;
         if (versionId === null) return undefined;
-        return recoverNoteImages({ role: "student", versionId }).catch(
+        return recoverNoteImages(clients, { role: "student", versionId }).catch(
           (err: unknown) => {
             console.warn("手动补图失败", err);
           },
         );
       })
       .finally(() => setImageRetrying(false));
-  }, [headQuery]);
+  }, [headQuery, clients]);
 
   const label = `${ariaPrefix}草稿纸`;
 

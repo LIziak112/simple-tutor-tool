@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { ContentEditLoader } from "./ContentEditLoader";
 
 const editor = vi.hoisted(() => ({

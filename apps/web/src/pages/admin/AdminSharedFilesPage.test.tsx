@@ -1,14 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { SharedFileList } from "@tutor/contract";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { deleteAdminSharedFileApi, fetchAdminSharedFiles } from "@/lib/api";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import type { SharedFileList } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteAdminSharedFileApi, fetchAdminSharedFiles } from "@/lib/api";
+} from "@/test/render-with-portal";
 import { AdminSharedFilesPage } from "./AdminSharedFilesPage";
 
 /**

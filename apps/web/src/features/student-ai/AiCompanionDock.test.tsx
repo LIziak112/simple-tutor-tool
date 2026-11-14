@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { AiTaskPublic, AttemptQuestionPublic } from "@tutor/contract";
 import { useState } from "react";
 import { MemoryRouter, useLocation } from "react-router";
@@ -20,6 +12,14 @@ import {
   listStudentAiTasksApi,
   openStudentAiReplyApi,
 } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { stubElementWidth } from "@/test/stub-element-width";
 import { useAiCompanionDock } from "./AiCompanionDock";
 import {

@@ -1,5 +1,6 @@
 import type { StudentAssignment } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
+import { testPortalRoutes } from "@/test/portal-fixture";
 import {
   assignmentDateError,
   assignmentListPage,
@@ -145,11 +146,14 @@ describe("作业列表筛选", () => {
     "/s/assignments/../home",
     "/t/assignments",
   ])("拒绝不可信返回路径 %s", (raw) => {
-    expect(assignmentsReturnTarget(raw)).toBeNull();
+    expect(assignmentsReturnTarget(testPortalRoutes, raw)).toBeNull();
   });
   it("返回列表只保留允许筛选字段", () => {
     expect(
-      assignmentsReturnTarget("/s/assignments?status=done&page=2&secret=x"),
+      assignmentsReturnTarget(
+        testPortalRoutes,
+        "/s/assignments?status=done&page=2&secret=x",
+      ),
     ).toBe("/s/assignments?status=done&page=2");
   });
 });

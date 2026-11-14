@@ -1,10 +1,5 @@
 import { noteDocSchema } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  draftStore,
-  installDraftBackend,
-  memoryBackend,
-} from "@/features/attempt/draft-store";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
   applyServerHead,
@@ -48,6 +43,11 @@ import {
   SESSION_B,
   waitForLocalSaved,
 } from "@/features/notes/note-test-utils";
+import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 
 /**
  * 草稿本地仓（T6R.8）测试：独立 IDB 库 tutor-notes、键含部署实例/学生/

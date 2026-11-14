@@ -1,13 +1,13 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { learningContextStore } from "@/features/learning-context/learning-context-store";
+import { LearningPrincipalContext } from "@/features/learning-context/learning-principal";
 import {
   act,
   cleanup,
   fireEvent,
   render,
   screen,
-} from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { learningContextStore } from "@/features/learning-context/learning-context-store";
-import { LearningPrincipalContext } from "@/features/learning-context/learning-principal";
+} from "@/test/render-with-portal";
 import {
   publishLearningFocus,
   resetLearningFocusForTest,

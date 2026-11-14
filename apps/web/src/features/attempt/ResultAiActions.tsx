@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HANDWRITTEN_TYPES } from "@/features/answering/answer-format";
 import {
   MemoQuickCaptureButton,
   MemoQuickCaptureDialog,
@@ -18,7 +19,6 @@ import {
   AiQueueSheet,
   AiQueueTrigger,
 } from "@/features/student-ai/AiQueueButton";
-import { HANDWRITTEN_TYPES } from "./answer-format";
 import { verdictBadgeDisplayOf } from "./self-review-display";
 
 /**
