@@ -25,6 +25,7 @@ import {
 import type { Db } from "../db/client";
 import type { ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { responseTimeOf } from "./attempt-time-projection";
 import { resultHintsOpenedOf } from "./hint-service";
 import { listAttemptContextSnapshots } from "./material-repository.ts";
 import { selfReviewRecordOf } from "./response-verdict.ts";
@@ -327,6 +328,7 @@ export function resultQuestionOf(
     readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
     /** 模块 3：给了 db 才投影量表三份记录与在途判卷任务（题无量表不注入键） */
     readonly db?: Db;
+    readonly time?: import("@tutor/contract").ResponseTime | undefined;
   } = {},
 ): AttemptResultQuestion {
   // 审查 P2-1：旧格式冻结快照（三结构键全缺）从快照自身 sourceMd 兜底重抽
@@ -336,6 +338,11 @@ export function resultQuestionOf(
     questionId: row.questionId,
     // 题目版本引用（responses 行 id）：订正工作台原位圈画建底图布局的身份
     // 三要素之一（与作答视图同源；对学生不透明，旧客户端忽略）
+    ...(options.time
+      ? { time: options.time }
+      : options.db
+        ? { time: responseTimeOf(options.db, row.attemptId, row.id) }
+        : {}),
     questionRevisionId: row.id,
     publicQuestion: publicOfSnapshot(snapshot, row.id, {
       ...(options.materialSlots

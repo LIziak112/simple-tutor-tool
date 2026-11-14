@@ -57,6 +57,7 @@ import {
   materialSlotOrderOf,
   unitGroupedRows,
 } from "./attempt-service";
+import { attemptTimeOf, timeProjectionsOf } from "./attempt-time-projection";
 import {
   pendingMarkCount,
   pendingMarkCountsByStudent,
@@ -380,6 +381,10 @@ export function listTeacherAttempts(
     db,
     rows.map((row) => row.attempt),
   );
+  const cardTimes = timeProjectionsOf(
+    db,
+    rows.map(({ attempt }) => attempt.id),
+  );
   const cards: TeacherAttemptCard[] = rows.map(({ attempt, studentName }) => ({
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -414,6 +419,7 @@ export function listTeacherAttempts(
     submittedCount: submittedCounts.get(attempt.id)?.submitted ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
+    time: cardTimes.aggregate(attempt.id),
     activeSec: attempt.activeSec,
   }));
   return { attempts: cards, total: totalRow?.n ?? 0 };
@@ -751,9 +757,13 @@ export function getTeacherAttemptDetail(
     teacherId,
     items.map((item) => item.unitId),
   );
+  const times = timeProjectionsOf(db, [attempt.id]);
   const questionsOut: TeacherAttemptDetailQuestion[] = items.map(
     (item, index) => ({
       ...item,
+      time: times.responseTime.get(
+        times.members.find((r) => r.questionId === item.questionId)?.id ?? "",
+      ),
       // 域内查到单元标题则覆盖占位；查不到（兜底组）保留占位文案（「未分组
       // 题目」/wrong 的 questionId 占位），不再回退裸 id
       unitTitle: unitTitles.get(item.unitId) ?? item.unitTitle,
@@ -830,6 +840,7 @@ export function getTeacherAttemptDetail(
       pendingSelfReviewCounts(db, [attempt]).get(attempt.id) ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
+    time: attemptTimeOf(db, attempt.id),
     activeSec: attempt.activeSec,
     questions: questionsOut,
   };

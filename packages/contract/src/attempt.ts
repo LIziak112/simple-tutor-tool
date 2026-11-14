@@ -1,9 +1,14 @@
-import { attemptSettlementProgressSchema } from "./attempt-settlement-progress.ts";
 import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
 import { attemptScoreSummarySchema } from "./attempt-score-summary.ts";
+import { attemptSettlementProgressSchema } from "./attempt-settlement-progress.ts";
 import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import { attemptSummarySchema } from "./attempt-summary.ts";
+import {
+  attemptTimeEstimateSchema,
+  attemptTimeSchema,
+  responseTimeSchema,
+} from "./attempt-time-ledger.ts";
 import {
   attemptTimeLimitMinutesSchema,
   attemptTimingSchema,
@@ -332,6 +337,8 @@ export const attemptDraftUnitSchema = z.object({
 
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
 export const attemptDraftDataSchema = z.object({
+  timeEstimate: attemptTimeEstimateSchema.optional(),
+  time: attemptTimeSchema.optional(),
   settlementProgress: attemptSettlementProgressSchema.optional(),
   attempt: attemptSummarySchema,
   /** 标题（答题页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
@@ -415,6 +422,7 @@ export const attemptDraftDataSchema = z.object({
  *   T2.11）。快照里的其余提示内容仍不随本视图下发（hintCount 是唯一计数形态）。
  */
 export const attemptResultQuestionSchema = z.object({
+  time: responseTimeSchema.optional(),
   questionId: z.string().min(1),
   /**
    * 题目版本引用（与作答视图 AttemptQuestionPublic 同源——该题 responses 行
@@ -531,6 +539,7 @@ export const attemptResultUnitSchema = z.object({
 
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
 export const attemptResultDataSchema = z.object({
+  time: attemptTimeSchema.optional(),
   attempt: attemptSummarySchema,
   /** 标题（结果页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
   title: z.string().min(1),
@@ -652,6 +661,8 @@ export const lessonBlockSchema = z.discriminatedUnion("type", [
  */
 export const lessonStartDataSchema = z
   .object({
+    time: attemptTimeSchema.optional(),
+    timeEstimate: attemptTimeEstimateSchema.optional(),
     /** 讲练页上下文（顶部标题与来源行） */
     lecture: z.object({
       id: z.uuid(),

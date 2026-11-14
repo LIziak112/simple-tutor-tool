@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { EventDelivery, LearningEventBatchData } from "@tutor/contract";
+import { eq } from "drizzle-orm";
+import {
+  attemptEventReceipts,
+  attemptTimeProfiles,
+} from "../db/attempt-time-schema";
 import type { Db } from "../db/client";
 import { events, type NewEventRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
@@ -12,25 +17,51 @@ export function insertEvents(
   delivery?: EventDelivery,
   scope?: string,
 ): LearningEventBatchData {
-  const now = new Date().toISOString();
-  const result = db
-    .insert(events)
-    .values(
-      rows.map((row, index) => ({
-        ...row,
-        id:
-          delivery && scope
-            ? eventRowId(delivery.ownerId, scope, delivery.eventIds[index])
-            : randomUUID(),
-        serverTs: now,
-      })),
-    )
-    .onConflictDoNothing({ target: events.id })
-    .run();
-  return {
-    accepted: result.changes,
-    ...(delivery && { acknowledgedIds: delivery.eventIds }),
-  };
+  return db.transaction(() => {
+    const now = new Date().toISOString();
+    const normalized = rows.map((row, index) => ({
+      ...row,
+      id:
+        delivery && scope
+          ? eventRowId(delivery.ownerId, scope, delivery.eventIds[index])
+          : randomUUID(),
+      serverTs: now,
+    }));
+    const result = db
+      .insert(events)
+      .values(normalized)
+      .onConflictDoNothing({ target: events.id })
+      .returning({ id: events.id, attemptId: events.attemptId })
+      .all();
+    const inserted = new Set(result.map((r) => r.id));
+    const profiles = new Map<string, boolean>();
+    for (const row of normalized.filter((r) => inserted.has(r.id))) {
+      if (row.attemptId && !profiles.has(row.attemptId))
+        profiles.set(
+          row.attemptId,
+          !!db
+            .select()
+            .from(attemptTimeProfiles)
+            .where(eq(attemptTimeProfiles.attemptId, row.attemptId))
+            .get(),
+        );
+      if (row.attemptId && profiles.get(row.attemptId)) {
+        db.insert(attemptEventReceipts)
+          .values({
+            attemptId: row.attemptId,
+            eventId: row.id,
+            origin: scope?.startsWith("attempt:") ? "client" : "server",
+            kind: "event",
+            receivedAt: now,
+          })
+          .run();
+      }
+    }
+    return {
+      accepted: result.length,
+      ...(delivery && { acknowledgedIds: delivery.eventIds }),
+    };
+  });
 }
 
 /** 新客户端的事件重放使用同一个主键，服务端内部事件继续使用随机主键。 */

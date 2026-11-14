@@ -203,6 +203,7 @@ export type ApiErr = z.infer<typeof apiErrSchema>;
 
 export * from "./attempt-partial.ts";
 export * from "./attempt-settlement-progress.ts";
+export * from "./attempt-time-ledger.ts";
 export * from "./learning-context-api.ts";
 export * from "./lesson-question-order.ts";
 export * from "./question-process.ts";

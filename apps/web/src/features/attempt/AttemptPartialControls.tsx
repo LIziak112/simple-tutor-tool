@@ -29,6 +29,7 @@ import {
   resumeAttemptDetailPolling,
   studentAttemptKey,
 } from "./attempt-queries";
+import { attemptTimeLabel } from "./attempt-time-label";
 import { inkStrokeCountOf } from "./draft-merge";
 import { draftStore } from "./draft-store";
 import { prepareQuestionSubmission } from "./prepare-question-submission";
@@ -244,9 +245,7 @@ export function AttemptPartialControls({
             <Suspense fallback={<p>正在加载本批结果…</p>}>
               <p className="text-sm">
                 本批用时：
-                {result.settlement.activeSec === null
-                  ? "暂无可靠记录"
-                  : `${result.settlement.activeSec} 秒`}
+                {attemptTimeLabel(result.settlement.time)}
               </p>
               {result.questions.map((question, index) => (
                 <ResultCard

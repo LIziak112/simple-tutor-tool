@@ -146,6 +146,114 @@
             {
               "type": "object",
               "properties": {
+                "time": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "metric": {
+                          "type": "string",
+                          "const": "question_activity_sealed"
+                        },
+                        "version": {
+                          "type": "number",
+                          "const": 1
+                        },
+                        "memberCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "knownCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "unknownCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "knownActiveSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "knownObservedSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "activeSec": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "observedSec": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "metric",
+                        "version",
+                        "memberCount",
+                        "knownCount",
+                        "unknownCount",
+                        "knownActiveSec",
+                        "knownObservedSec",
+                        "activeSec",
+                        "observedSec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "metric": {
+                          "type": "string",
+                          "const": "legacy_focus"
+                        },
+                        "version": {
+                          "type": "null"
+                        },
+                        "activeSec": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "metric",
+                        "version",
+                        "activeSec"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
                 "seq": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
@@ -190,6 +298,114 @@
             {
               "type": "object",
               "properties": {
+                "time": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "metric": {
+                          "type": "string",
+                          "const": "question_activity_sealed"
+                        },
+                        "version": {
+                          "type": "number",
+                          "const": 1
+                        },
+                        "memberCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "knownCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "unknownCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "knownActiveSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "knownObservedSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "activeSec": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "observedSec": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "metric",
+                        "version",
+                        "memberCount",
+                        "knownCount",
+                        "unknownCount",
+                        "knownActiveSec",
+                        "knownObservedSec",
+                        "activeSec",
+                        "observedSec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "metric": {
+                          "type": "string",
+                          "const": "legacy_focus"
+                        },
+                        "version": {
+                          "type": "null"
+                        },
+                        "activeSec": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "metric",
+                        "version",
+                        "activeSec"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
                 "seq": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
@@ -238,6 +454,128 @@
           "items": {
             "type": "object",
             "properties": {
+              "time": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "metric": {
+                        "type": "string",
+                        "const": "question_activity_sealed"
+                      },
+                      "version": {
+                        "type": "number",
+                        "const": 1
+                      },
+                      "value": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "const": "available"
+                              },
+                              "activeSec": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "observedSec": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "actions": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "viewed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "activeSec",
+                              "observedSec",
+                              "actions",
+                              "viewed"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "const": "unknown"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "no_client_evidence",
+                                  "clock_invalid",
+                                  "ledger_missing"
+                                ]
+                              },
+                              "activeSec": {
+                                "type": "null"
+                              },
+                              "observedSec": {
+                                "type": "null"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "reason",
+                              "activeSec",
+                              "observedSec"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "metric",
+                      "version",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "metric": {
+                        "type": "string",
+                        "const": "legacy_focus"
+                      },
+                      "version": {
+                        "type": "null"
+                      },
+                      "activeSec": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "metric",
+                      "version",
+                      "activeSec"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
               "questionId": {
                 "type": "string",
                 "minLength": 1
@@ -1506,6 +1844,114 @@
               {
                 "type": "object",
                 "properties": {
+                  "time": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "metric": {
+                            "type": "string",
+                            "const": "question_activity_sealed"
+                          },
+                          "version": {
+                            "type": "number",
+                            "const": 1
+                          },
+                          "memberCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "knownCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "unknownCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "knownActiveSec": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "knownObservedSec": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "activeSec": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "observedSec": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "metric",
+                          "version",
+                          "memberCount",
+                          "knownCount",
+                          "unknownCount",
+                          "knownActiveSec",
+                          "knownObservedSec",
+                          "activeSec",
+                          "observedSec"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "metric": {
+                            "type": "string",
+                            "const": "legacy_focus"
+                          },
+                          "version": {
+                            "type": "null"
+                          },
+                          "activeSec": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "metric",
+                          "version",
+                          "activeSec"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
                   "seq": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -1550,6 +1996,114 @@
               {
                 "type": "object",
                 "properties": {
+                  "time": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "metric": {
+                            "type": "string",
+                            "const": "question_activity_sealed"
+                          },
+                          "version": {
+                            "type": "number",
+                            "const": 1
+                          },
+                          "memberCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "knownCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "unknownCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "knownActiveSec": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "knownObservedSec": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "activeSec": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "observedSec": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "metric",
+                          "version",
+                          "memberCount",
+                          "knownCount",
+                          "unknownCount",
+                          "knownActiveSec",
+                          "knownObservedSec",
+                          "activeSec",
+                          "observedSec"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "metric": {
+                            "type": "string",
+                            "const": "legacy_focus"
+                          },
+                          "version": {
+                            "type": "null"
+                          },
+                          "activeSec": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "metric",
+                          "version",
+                          "activeSec"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
                   "seq": {
                     "type": "integer",
                     "exclusiveMinimum": 0,

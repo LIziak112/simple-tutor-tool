@@ -32,6 +32,7 @@ import {
   materialSlotOrderOf,
   structuresOfSnapshot,
 } from "./attempt-service";
+import { responseTimeOf } from "./attempt-time-projection";
 import { pendingMarkCount, submittedTeacherPendingSql } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -351,6 +352,7 @@ export function listPendingMarks(
           answerOf(response.answerJson),
         ),
         ink: inkInfoOf(inkByQuestion.get(response.questionId)),
+        time: responseTimeOf(db, response.attemptId, response.id),
         activeSec: response.activeSec,
         hintsUsed: response.hintsUsed,
         changeCount: response.changeCount,

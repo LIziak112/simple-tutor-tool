@@ -484,6 +484,20 @@
       "when": 1794597406289,
       "tag": "0068_attempt_settlement_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "6",
+      "when": 1794656514645,
+      "tag": "0069_slimy_pandemic",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "6",
+      "when": 1794656515269,
+      "tag": "0070_attempt_time_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
+import { responseTimeLabel } from "@/features/attempt/attempt-time-label";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
@@ -431,7 +432,7 @@ export function AttemptDetailQuestionCard({
 
       {/* 学习行为统计（activeSec/hintsUsed/changeCount） */}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-        <span>用时 {formatActiveSec(question.activeSec)}</span>
+        <span>{responseTimeLabel(question.time)}</span>
         <span className="flex items-center gap-1">
           <Lightbulb aria-hidden className="size-3.5" />
           提示 {question.hintsUsed} 次

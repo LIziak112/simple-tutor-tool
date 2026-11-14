@@ -19,6 +19,8 @@ import {
 } from "./attempt-question-projection.ts";
 import { restrictedResultQuestionOf } from "./attempt-result-release.ts";
 import { attemptSourceMeta, frozenRowsInDisplayOrder } from "./attempt-rows.ts";
+import { timeProjectionsOf } from "./attempt-time-projection";
+import { sealResponseTimeWithin } from "./attempt-time-seal";
 import { submissionActivityOf } from "./event-service.ts";
 import {
   assertDraftCourseVisible,
@@ -74,6 +76,7 @@ export function getStudentSettlement(
   const members = entries.filter(({ row }) => row.settlementSeq === seq);
   if (members.length !== settlement.questionCount)
     conflict("本批成员数据不完整，请联系老师检查");
+  const time = timeProjectionsOf(db, [attemptId]);
   return attemptSettlementResultSchema.parse({
     settlement: {
       seq: settlement.seq,
@@ -81,14 +84,22 @@ export function getStudentSettlement(
       createdAt: settlement.createdAt,
       questionCount: settlement.questionCount,
       activeSec: settlement.activeSec,
+      time: time.aggregate(attemptId, seq),
     },
     questions: members.map(({ row }) => {
       const snapshot = snapshotOfRow(row);
       if (!snapshot) conflict("本批题目数据不完整，请联系老师检查");
       const projected = studentFacingResultOf(
-        resultQuestionOf(row, snapshot, { materialSlots: slots, db }),
+        resultQuestionOf(row, snapshot, {
+          materialSlots: slots,
+          db,
+          time: time.responseTime.get(row.id),
+        }),
       );
-      return released ? projected : restrictedResultQuestionOf(projected);
+      const result = released
+        ? projected
+        : restrictedResultQuestionOf(projected);
+      return { ...result, time: time.responseTime.get(row.id) };
     }),
     answersReleased: released,
     questionNos: Object.fromEntries(
@@ -171,9 +182,27 @@ export function settleStudentAttempt(
             submissionMutationId: req.mutationId,
           },
           now,
-          { settlement: true, activeSecByQuestion: activity },
+          {
+            settlement: true,
+            activeSecByQuestion: activity,
+            deferTimeSeal: true,
+          },
         );
       }
+      sealResponseTimeWithin(
+        db,
+        attemptId,
+        db
+          .select({ id: responses.id, questionId: responses.questionId })
+          .from(responses)
+          .where(eq(responses.attemptId, attemptId))
+          .all()
+          .filter((r) =>
+            req.questions.some((q) => q.questionId === r.questionId),
+          )
+          .map((r) => r.id),
+        now.toISOString(),
+      );
       const unassigned = db
         .select()
         .from(responses)

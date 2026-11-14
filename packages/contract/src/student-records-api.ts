@@ -4,6 +4,7 @@ import {
   attemptStatusSchema,
   studentFlagSchema,
 } from "./attempt.ts";
+import { attemptTimeSchema } from "./attempt-time-ledger.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import {
   attemptAnswerProgressSchema,
@@ -99,6 +100,7 @@ export const studentRecordsQuerySchema = z.object({
  *   进行中草稿不出现在索引中（可见性口径见服务端 student-records）。
  */
 export const studentRecordRowSchema = teacherAttemptSourceSchema.extend({
+  time: attemptTimeSchema.optional(),
   /** 最近有效作答确认时间；旧客户端兼容缺省时回退交卷/开始时间。 */
   lastActivityAt: z.iso.datetime().optional(),
   pendingSelfReviewCount: z.number().int().min(0).nullable().optional(),

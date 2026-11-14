@@ -74,7 +74,7 @@ export function ModuleResultTable({
         </summary>
         <div className="flex min-w-0 flex-col gap-3 px-4 pb-4 sm:px-5 sm:pb-5">
           <p className="text-xs text-muted-foreground">
-            用时为题内活动用时（口径 v1）；参考配额来自单元推荐时长，不是时钟
+            用时来自提交时封存的活动账；旧卷明确标历史焦点，缺证不当零。参考配额来自单元推荐时长
           </p>
           <div className="relative hidden w-0 min-w-full overflow-x-auto sm:block">
             <table className="w-full min-w-[560px] text-sm tabular-nums">
@@ -134,12 +134,12 @@ function countsText(row: ModuleResultStats, released: boolean): string {
 function activityText(row: ModuleResultStats): string {
   return row.activeSec === null
     ? "无可用记录"
-    : formatActivitySec(row.activeSec);
+    : `${row.legacyTime ? "历史焦点 " : ""}${formatActivitySec(row.activeSec)}`;
 }
 function activityTitle(row: ModuleResultStats): string {
   // null 两种来源同一句：整卷无事件，或整卷有事件但本模块没有任何题的记录
   return row.activeSec === null
-    ? "本模块没有作答事件记录"
+    ? "本模块用时未完整记录"
     : `只看过 ${formatActivitySec(row.observedSec)}（无作答动作）`;
 }
 function quotaText(row: ModuleResultStats): string {

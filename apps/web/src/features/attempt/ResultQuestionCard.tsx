@@ -20,6 +20,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { responseTimeLabel } from "./attempt-time-label";
 import { QuestionActivityBadge } from "./QuestionActivity";
 
 // 轻量呈现件拆至 AttemptResultParts（草稿视图的逐题反馈静态引用它们，不得
@@ -303,7 +304,13 @@ export function ResultQuestionCard({
             {name}
           </span>
         ))}
-        {activity !== null && <QuestionActivityBadge activity={activity} />}
+        {question.time ? (
+          <span className="text-xs text-muted-foreground">
+            {responseTimeLabel(question.time)}
+          </span>
+        ) : (
+          activity !== null && <QuestionActivityBadge activity={activity} />
+        )}
         <div className="ml-auto">{aiTrigger}</div>
       </div>
 

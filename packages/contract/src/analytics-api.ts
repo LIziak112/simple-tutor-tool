@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { responseTimeSchema } from "./attempt-time-ledger.ts";
 import { questionTypeSchema } from "./content.ts";
 import { attemptResultCountsSchema } from "./result-counts.ts";
 
@@ -364,6 +365,8 @@ export const analyticsKnowledgeRowSchema = z.object({
  * （无中位数为 null）。
  */
 export const analyticsAnomalyQuestionSchema = z.object({
+  time: responseTimeSchema.optional(),
+  timeMedianSec: z.number().min(0).nullable().optional(),
   /** 异常作答所属 attempt（点击跳作答详情） */
   attemptId: z.uuid(),
   questionId: z.string().min(1),
@@ -599,6 +602,18 @@ export const analyticsWrongAnswerSchema = z.object({
  * - 题干取最近一次提交的 questionSnapshotJson 快照原文。
  */
 export const analyticsQuestionRowSchema = z.object({
+  timeCohorts: z
+    .array(
+      z.object({
+        metric: z.enum(["legacy_focus", "question_activity_sealed"]),
+        version: z.literal(1).nullable(),
+        knownCount: z.number().int().nonnegative(),
+        unknownCount: z.number().int().nonnegative(),
+        avgSec: z.number().nullable(),
+        medianSec: z.number().nullable(),
+      }),
+    )
+    .optional(),
   questionId: z.string().min(1),
   /** 所属单元 id（当前库值；题目已软删/移出时按快照兜底） */
   unitId: z.string().min(1).nullable(),

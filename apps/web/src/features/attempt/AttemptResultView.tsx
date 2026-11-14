@@ -1,3 +1,4 @@
+import { attemptTimeLabel } from "./attempt-time-label";
 import { ResultQuestionCard } from "./ResultQuestionCard";
 
 export { TeacherMarkBlock } from "./ResultQuestionCard";
@@ -292,7 +293,13 @@ export function AttemptResultView({
                 </p>
               )}
               <ResultTimeLimitLine attempt={attempt} />
-              <ResultActivityLine activity={data.activity} />
+              {data.time ? (
+                <p className="text-sm text-muted-foreground">
+                  {attemptTimeLabel(data.time)}
+                </p>
+              ) : (
+                <ResultActivityLine activity={data.activity} />
+              )}
             </div>
             {/* M4-D3 §13.8 反馈节奏摘要：v1 新协议卷按 feedbackMode 呈现；
             legacy/lesson 卷缺省不渲染（数据侧同样缺省）。纯呈现——反馈可见性
