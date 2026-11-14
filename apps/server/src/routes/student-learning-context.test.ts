@@ -650,3 +650,35 @@ it("带真实device头允许已有auth/session/device簿记，不改学习业务
     responses: e.db.select().from(responses).all(),
   }).toEqual(before);
 });
+
+it("opaque冻结行引用可作为expected；错版仍409，跨账号仍404", async () => {
+  const e = setup();
+  const rowId = "legacy-row-opaque";
+  e.db
+    .update(responses)
+    .set({ id: rowId })
+    .where(eq(responses.id, e.rowIds[1] ?? ""))
+    .run();
+  const target = { ...e.target, expectedQuestionRevisionId: rowId };
+  const r = await e.resolve(target);
+  expect(r.status).toBe(200);
+  expect(
+    learningContextOkSchema.parse(await r.json()).data.session
+      ?.questionRevisionId,
+  ).toBe(rowId);
+  const wrong = await e.resolve({
+    ...target,
+    expectedQuestionRevisionId: "legacy-other-row",
+  });
+  expect(wrong.status).toBe(409);
+  assertNoLeak(await wrong.json());
+  const other = makeStudent(e.db);
+  const denied = await e.resolve(target, {
+    cookie: `tutor_student_session=${createStudentSession(e.db, other).token}`,
+  });
+  expect(denied.status).toBe(404);
+  assertNoLeak(await denied.json());
+  expect(
+    (await e.resolve({ ...target, attemptId: "opaque-attempt" })).status,
+  ).toBe(400);
+});

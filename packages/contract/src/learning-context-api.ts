@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import {
   learningContentIdSchema,
   learningContextSchema,
@@ -12,7 +13,7 @@ export const learningContextRequestSchema = z.discriminatedUnion("kind", [
     attemptId: z.uuid(),
     questionId: learningContentIdSchema,
     surface: z.enum(["attempt", "result", "lesson"]),
-    expectedQuestionRevisionId: z.uuid().optional(),
+    expectedQuestionRevisionId: questionRevisionIdSchema.optional(),
   }),
   z.strictObject({
     kind: z.literal("lecture"),
