@@ -235,3 +235,23 @@ it("图形预览用的临时层：要的时候才创建，盖在画布上、坐�
   canvas.destroy();
   expect(host.querySelector(INK_LIVE_LAYER_SELECTOR)).toBeNull();
 });
+
+it("橡皮圈也画在这一层（材料圈画用）：擦掉笔画引起的重画不把它收起", () => {
+  const { host, canvas } = mountReplay();
+  const layer = canvas.previewLayer?.();
+  layer?.showRing(100, 120, 14);
+  const ring = host.querySelector<SVGElement>(
+    `${INK_LIVE_LAYER_SELECTOR} circle[data-slot="ink-eraser-ring"]`,
+  );
+  expect(ring?.getAttribute("cx")).toBe("100");
+  expect(ring?.getAttribute("cy")).toBe("120");
+  expect(ring?.getAttribute("r")).toBe("14");
+  expect(ring?.style.display).toBe("");
+  // 擦掉一笔之后按剩下的笔画重画（顺序重画、整帧重画两条路径）
+  canvas.drawOrdered([pen()], 1, null, 0);
+  canvas.drawFrame([pen()], [1]);
+  expect(ring?.style.display).toBe("");
+  layer?.hideRing();
+  expect(ring?.style.display).toBe("none");
+  canvas.destroy();
+});

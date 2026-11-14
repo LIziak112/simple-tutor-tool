@@ -42,75 +42,12 @@ import {
   type MaterialInkBaseMeta,
   subscribeLocalDraftChoice,
 } from "./draft-store";
+import { useMaterialEraserRing } from "./material-eraser-ring";
+import { awaitMaterialSurfaceReady } from "./material-surface-ready";
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
-
-/** 首笔前材料就绪等待上限（同题面 STEP_TIMEOUT_MS 口径） */
-const MATERIAL_READY_TIMEOUT_MS = 15_000;
 
 /** 无共享工具箱（单测、独立挂载）时用圈画缺省：红色细笔 */
 const FALLBACK_TOOLBOX = createAnnotationToolbox();
-
-/**
- * 材料表面就绪等待（题面 awaitQuestionSurfaceReady 的材料版，不栅格化）：
- * 字体就绪 + 图片解码/收尾 + 连续 3 帧宽高测量不变，任一阶段超时返回 false。
- */
-async function awaitMaterialSurfaceReady(
-  surface: HTMLElement,
-  isCancelled: () => boolean,
-): Promise<boolean> {
-  const deadline = performance.now() + MATERIAL_READY_TIMEOUT_MS;
-  const frames = async () => {
-    let previous = "";
-    let unchanged = 0;
-    while (performance.now() < deadline) {
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => resolve()),
-      );
-      if (isCancelled()) return false;
-      const rect = surface.getBoundingClientRect();
-      const signature = `${rect.width}x${rect.height}`;
-      if (signature === previous) {
-        unchanged += 1;
-        if (unchanged >= 3) return true;
-      } else {
-        unchanged = 0;
-        previous = signature;
-      }
-    }
-    return false;
-  };
-  const body = async () => {
-    if (document.fonts) await document.fonts.ready;
-    if (isCancelled()) return false;
-    const images = [...surface.querySelectorAll("img")];
-    await Promise.all(
-      images.map(
-        (image) =>
-          new Promise<void>((resolve) => {
-            if (image.complete) {
-              if (typeof image.decode === "function") {
-                image.decode().then(
-                  () => resolve(),
-                  () => resolve(),
-                );
-              } else {
-                resolve();
-              }
-              return;
-            }
-            image.addEventListener("load", () => resolve(), { once: true });
-            image.addEventListener("error", () => resolve(), { once: true });
-          }),
-      ),
-    );
-    if (isCancelled()) return false;
-    return frames();
-  };
-  const timeout = new Promise<false>((resolve) => {
-    setTimeout(() => resolve(false), MATERIAL_READY_TIMEOUT_MS);
-  });
-  return Promise.race([body(), timeout]);
-}
 
 export interface MaterialAnnotationOverlayProps {
   attemptId: string;
@@ -137,7 +74,7 @@ export interface MaterialAnnotationOverlayProps {
  *   atrament 绘制原语、DPR 上限 2、尺寸变化自重画）；
  * - 笔色/笔粗/橡皮大小与擦除方式：跟随协同工具箱，经 resolveGesture 换成
  *   落笔规格；橡皮走 erase-session（整笔或局部，命中半径内含半笔宽，与题面
- *   圈画同手感）；
+ *   圈画同手感），悬停和擦除时有橡皮圈跟着指针；
  * - 矢量坐标一律按 INK_LOGICAL_WIDTH(1000) 归一化存储（normalize.ts）。
  * 笔迹按 attemptId + inkKey 合并存入 draftStore（本机稿；交卷不清除，
  * 结果页只读回看——见 clearDraft 的保稿分支）。
@@ -259,6 +196,11 @@ export function MaterialAnnotationOverlay({
     createShapeGesture({
       layer: () => replayRef.current?.previewLayer?.() ?? null,
     }),
+  );
+  /** 橡皮圈：橡皮悬停和擦除时跟着指针的圆圈（material-eraser-ring.ts） */
+  const ring = useMaterialEraserRing(
+    () => replayRef.current?.previewLayer?.() ?? null,
+    isAnnotationActive && gesture.kind === "erase" ? gesture.radius : null,
   );
   /** 本笔落笔矩形：首笔冻结基准的捕获源（一笔不混用两个排版基准） */
   const strokeBaseRef = useRef<{ width: number; height: number } | null>(null);
@@ -501,6 +443,7 @@ export function MaterialAnnotationOverlay({
       point: { x: number; y: number },
       eraser: Extract<InkGesture, { kind: "erase" }>,
     ) => {
+      ring.show(point.x, point.y, eraser.radius);
       const session = createEraseSession(strokesRef.current, eraser.mode);
       const changed = session.sweep(
         point.x,
@@ -514,7 +457,7 @@ export function MaterialAnnotationOverlay({
       setStrokesBoth(remaining);
       saveToDraftStore(remaining);
     },
-    [saveToDraftStore, setStrokesBoth],
+    [saveToDraftStore, setStrokesBoth, ring],
   );
 
   const beginInteraction = useCallback(
@@ -612,6 +555,7 @@ export function MaterialAnnotationOverlay({
   /** 按已收到的真实采样收笔（状态机语义：不补造终点） */
   const finishInteraction = useCallback(() => {
     releaseCapture();
+    ring.hide();
     rectRef.current = null;
     lastEraseRef.current = null;
     // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
@@ -648,7 +592,14 @@ export function MaterialAnnotationOverlay({
     saveToDraftStore(next);
     // 图形书写中不在画布上：预览已收起，这里立即把整笔画上去，中间不空一帧
     if (shapePoints !== null) drawCurrent();
-  }, [releaseCapture, saveToDraftStore, setStrokesBoth, shaper, drawCurrent]);
+  }, [
+    releaseCapture,
+    saveToDraftStore,
+    setStrokesBoth,
+    shaper,
+    drawCurrent,
+    ring,
+  ]);
 
   usePwaUpdateGuard(
     () =>
@@ -671,6 +622,7 @@ export function MaterialAnnotationOverlay({
           finishInteraction();
         } else if (decision.action === "discard") {
           releaseCapture();
+          ring.hide();
           currentStrokeRef.current = null;
           shaper.end();
           scheduleRedraw();
@@ -683,6 +635,7 @@ export function MaterialAnnotationOverlay({
       releaseCapture,
       scheduleRedraw,
       shaper,
+      ring,
     ],
   );
 
@@ -704,6 +657,8 @@ export function MaterialAnnotationOverlay({
 
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      // 没在写：当前是橡皮就让橡皮圈跟着指针走
+      if (activePointerIdRef.current === null) ring.hover(e);
       if (!isSampleMove(machineRef.current, e.pointerId)) return;
       const live = liveGestureRef.current;
       if (live.kind === "erase") {
@@ -721,7 +676,7 @@ export function MaterialAnnotationOverlay({
       stroke.points.push(pointOf(e));
       scheduleRedraw();
     },
-    [pointOf, eraseAt, scheduleRedraw, shaper],
+    [pointOf, eraseAt, scheduleRedraw, shaper, ring],
   );
 
   const handlePointerEnd = useCallback(
@@ -850,6 +805,10 @@ export function MaterialAnnotationOverlay({
       onPointerUp={(e) => handlePointerEnd(e, "pointerup")}
       onPointerCancel={(e) => handlePointerEnd(e, "pointercancel")}
       onLostPointerCapture={(e) => handlePointerEnd(e, "lostpointercapture")}
+      // 悬停留下的橡皮圈：指针离开材料就收起（按着擦的由收笔收起）
+      onPointerLeave={() => {
+        if (activePointerIdRef.current === null) ring.hide();
+      }}
       style={{
         // 输入门控：非标注态不拦截；标注态下未就绪（首笔/挂框门控）或
         // 挂框宽高漂移期间不拦截（与「不匹配禁墨」同口径）

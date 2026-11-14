@@ -51,9 +51,13 @@ export interface AtramentReplayCanvas {
   ): void;
   /**
    * 盖在画布上的临时层（与笔画同一坐标域），供拿这块画布书写的一方画
-   * 拖动中的图形预览。可选方法——既有 mock/消费方不实现时就没有预览。
+   * 拖动中的图形预览和橡皮圈。可选方法——既有 mock/消费方不实现时就没有
+   * 预览。
    */
-  previewLayer?(): Pick<InkLiveLayer, "showOutline" | "clear">;
+  previewLayer?(): Pick<
+    InkLiveLayer,
+    "showOutline" | "clear" | "showRing" | "hideRing"
+  >;
   destroy(): void;
 }
 

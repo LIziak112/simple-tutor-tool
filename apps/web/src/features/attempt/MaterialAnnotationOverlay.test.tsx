@@ -34,8 +34,13 @@ import { MaterialAnnotationOverlay } from "./MaterialAnnotationOverlay";
 // 绘制层复用 ink/replay/draw（jsdom 无 2d 上下文）——按仓内惯例 mock 本模块，
 // 按实际可见笔画统一记录全量与顺序绘制的入参。
 const drawFrameMock = vi.fn();
-/** 图形预览所在的临时层（真实实现盖在回放画布上） */
-const previewMock = { showOutline: vi.fn(), clear: vi.fn() };
+/** 图形预览与橡皮圈所在的临时层（真实实现盖在回放画布上） */
+const previewMock = {
+  showOutline: vi.fn(),
+  clear: vi.fn(),
+  showRing: vi.fn(),
+  hideRing: vi.fn(),
+};
 vi.mock("@/features/ink/replay/draw", () => ({
   createAtramentReplayCanvas: () => ({
     previewLayer: () => previewMock,
@@ -1130,6 +1135,140 @@ describe("材料圈画：图形与直线荧光笔", () => {
       { x: 100, y: 100, p: 0.51 },
       { x: 500, y: 100, p: 0.51 },
     ]);
+  });
+});
+
+describe("材料圈画：橡皮圈", () => {
+  beforeEach(() => {
+    installDraftBackend(memoryBackend());
+    previewMock.showRing.mockClear();
+    previewMock.hideRing.mockClear();
+  });
+
+  /** 挂一份圈画态的材料，输入层 500×400（1 CSS px = 2 逻辑单位） */
+  async function mountWith(
+    initialToolbox: NonNullable<
+      Parameters<typeof CoordinatedAnnotationProvider>[0]["initialToolbox"]
+    >,
+  ) {
+    const { container } = render(
+      <AttemptEditorProvider>
+        <CoordinatedAnnotationProvider initialToolbox={initialToolbox}>
+          <AnnotationToggle questionId="q1" />
+          <AnnotationRelease />
+          <PenToolToggle />
+          <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+            <div>要擦的材料</div>
+          </MaterialAnnotationOverlay>
+        </CoordinatedAnnotationProvider>
+      </AttemptEditorProvider>,
+    );
+    fireEvent.click(screen.getByTestId("toggle-annotation"));
+    await waitInkReady(overlayRootOf(container));
+    const layer = inputLayerOf(container);
+    mockLayerRect(layer);
+    return layer;
+  }
+  const hover = (pointerType: string, clientX: number, clientY: number) => ({
+    pointerId: 1,
+    pointerType,
+    buttons: 0,
+    clientX,
+    clientY,
+  });
+
+  it("橡皮悬停时橡皮圈跟着走（笔和鼠标），半径就是橡皮的命中半径；手指不显示", async () => {
+    const layer = await mountWith({
+      active: "eraser",
+      eraser: { size: "large" },
+    });
+    fireEvent.pointerMove(layer, hover("touch", 50, 50));
+    expect(previewMock.showRing).not.toHaveBeenCalled();
+    // (50,50) 即逻辑 (100,100)；大号橡皮半径 24
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    expect(previewMock.showRing).toHaveBeenLastCalledWith(100, 100, 24);
+    fireEvent.pointerMove(layer, hover("mouse", 60, 80));
+    expect(previewMock.showRing).toHaveBeenLastCalledWith(120, 160, 24);
+    // 悬停不擦东西、不存稿
+    expect(draftStore.getMaterialInk("att-1", "mat-1")).toBeNull();
+  });
+
+  it("页面滚动后悬停：按当时的位置算，不用上一次量的矩形", async () => {
+    const layer = await mountWith({ active: "eraser" });
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    expect(previewMock.showRing).toHaveBeenLastCalledWith(100, 100, 14);
+    // 输入层整体上移 20 px（页面往下滚了）
+    vi.spyOn(layer, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: -20,
+      right: 500,
+      bottom: 380,
+      width: 500,
+      height: 400,
+      x: 0,
+      y: -20,
+      toJSON: () => {},
+    });
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    expect(previewMock.showRing).toHaveBeenLastCalledWith(100, 140, 14);
+  });
+
+  it("笔、形状等别的工具悬停不显示橡皮圈", async () => {
+    const layer = await mountWith({ active: "pen" });
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    expect(previewMock.showRing).not.toHaveBeenCalled();
+  });
+
+  it("按着擦的时候橡皮圈跟到每个落点，抬起收起", async () => {
+    const layer = await mountWith({ active: "eraser" });
+    const pen = (clientX: number, clientY: number) => ({
+      pointerId: 1,
+      button: 0,
+      buttons: 1,
+      pointerType: "pen",
+      clientX,
+      clientY,
+      pressure: 0.5,
+    });
+    await act(async () => {
+      fireEvent.pointerDown(layer, pen(50, 50));
+    });
+    expect(previewMock.showRing).toHaveBeenLastCalledWith(100, 100, 14);
+    await act(async () => {
+      fireEvent.pointerMove(layer, pen(80, 60));
+    });
+    expect(previewMock.showRing).toHaveBeenLastCalledWith(160, 120, 14);
+    expect(previewMock.hideRing).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    expect(previewMock.hideRing).toHaveBeenCalled();
+  });
+
+  it("指针移出材料、切到别的工具、退出圈画：橡皮圈都收起", async () => {
+    const layer = await mountWith({ active: "eraser" });
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    expect(previewMock.hideRing).not.toHaveBeenCalled();
+    fireEvent.pointerLeave(layer, hover("pen", 600, 50));
+    expect(previewMock.hideRing).toHaveBeenCalledTimes(1);
+
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    fireEvent.click(screen.getByTestId("toggle-pen"));
+    expect(previewMock.hideRing).toHaveBeenCalledTimes(2);
+    // 已经是笔：再悬停不出圈
+    previewMock.showRing.mockClear();
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    expect(previewMock.showRing).not.toHaveBeenCalled();
+  });
+
+  it("退出圈画时收起橡皮圈", async () => {
+    const layer = await mountWith({ active: "eraser" });
+    fireEvent.pointerMove(layer, hover("pen", 50, 50));
+    previewMock.hideRing.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("release-annotation"));
+    });
+    expect(previewMock.hideRing).toHaveBeenCalled();
   });
 });
 
