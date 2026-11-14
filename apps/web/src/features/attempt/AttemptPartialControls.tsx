@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ReviewV2Panel } from "@/features/student-ai/ReviewV2Panel";
 import { randomUuid } from "@/lib/uuid";
 import { isAnswered } from "./answer-format";
 import {
@@ -29,6 +30,7 @@ import {
   resumeAttemptDetailPolling,
   studentAttemptKey,
 } from "./attempt-queries";
+import { attemptTimeLabel } from "./attempt-time-label";
 import { inkStrokeCountOf } from "./draft-merge";
 import { draftStore } from "./draft-store";
 import { prepareQuestionSubmission } from "./prepare-question-submission";
@@ -244,10 +246,14 @@ export function AttemptPartialControls({
             <Suspense fallback={<p>正在加载本批结果…</p>}>
               <p className="text-sm">
                 本批用时：
-                {result.settlement.activeSec === null
-                  ? "暂无可靠记录"
-                  : `${result.settlement.activeSec} 秒`}
+                {attemptTimeLabel(result.settlement.time)}
               </p>
+              <ReviewV2Panel
+                attemptId={attemptId}
+                released={result.answersReleased}
+                scope={{ kind: "settlement", seq: result.settlement.seq }}
+                label="本批复盘"
+              />
               {result.questions.map((question, index) => (
                 <ResultCard
                   key={question.questionId}

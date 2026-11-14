@@ -33,6 +33,7 @@ import {
   units,
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
+import { analyticsTimesOf } from "./analytics-time";
 import { attemptResultCounts } from "./result-counts";
 
 export const DAY_MS = 86_400_000;
@@ -68,6 +69,7 @@ export interface AnalyticsContext {
   /** D3 筛选后的全部作答（含 draft 与重做；矩阵/待批/重点/重做用，不受 days 限制） */
   readonly allAttempts: readonly Attempt[];
   /** D6 中位数：questionId → 该题域内全部已交作答 activeSec 的中位数 */
+  readonly times: ReturnType<typeof analyticsTimesOf>;
   readonly domainMedianByQuestion: ReadonlyMap<string, number>;
   /** 当前库题目元信息（题目视角排序与快照兜底；软删题保留——统计不消失） */
   readonly questionMeta: Map<
@@ -316,6 +318,7 @@ export function buildContext(
     qualifying,
     responsesByAttempt,
     allAttempts,
+    times: analyticsTimesOf(db, teacherId),
     domainMedianByQuestion,
     questionMeta,
     knowledgeFallback,

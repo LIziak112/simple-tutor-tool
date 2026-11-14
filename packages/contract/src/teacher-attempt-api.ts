@@ -8,6 +8,10 @@ import {
   wrongScopeSchema,
 } from "./attempt.ts";
 import {
+  attemptTimeSchema,
+  responseTimeSchema,
+} from "./attempt-time-ledger.ts";
+import {
   questionAnswersSchema,
   questionSchema,
   questionTypeSchema,
@@ -15,6 +19,8 @@ import {
 import { studentAnswerSchema } from "./grading.ts";
 import { notePhaseSchema } from "./note.ts";
 import { attemptResultCountsSchema } from "./result-counts.ts";
+import { reviewEvidenceMetadataSchema } from "./review-facts.ts";
+import { rubricReviewSchema } from "./rubric.ts";
 import { gradingPolicySchema, selfReviewRecordSchema } from "./self-review.ts";
 
 /**
@@ -187,6 +193,7 @@ export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
   /** 交卷时间：UTC ISO；未交为 null（D5：draft 也出现在列表，前端标「进行中」） */
   submittedAt: z.string().nullable(),
   /** 有效作答用时（秒；服务端按事件计算，未计算为 null） */
+  time: attemptTimeSchema.optional(),
   activeSec: z.number().int().min(0).nullable(),
 });
 
@@ -222,71 +229,75 @@ export const teacherAttemptInkSchema = z.object({
  * - answers / solutionMd：**仅已交卷 attempt 下发**（draft 详情整卷缺省不发，
  *   optional + nullable：题目本身无标准答案 / 未提供详解时为 null）。
  */
-export const teacherAttemptDetailQuestionSchema = z.object({
-  settlementSeq: z.number().int().positive().nullable().optional(),
-  /** 题目 id（来自 DSL） */
-  questionId: z.string().min(1),
-  /**
-   * responses.id（POST /responses/:id/mark 的定位 id，D3 详情页内联批改用）：
-   * 仅已交卷 attempt 的逐题行携带（冻结 responses 行的 id）；draft 逐题来自
-   * 当前库题目、可能尚无 responses 行，恒 null（draft 本就不可批注）。
-   */
-  responseId: z.uuid().nullable(),
-  /** 只读题面始终用公开冻结投影，与批注 responseId 的可空语义独立。 */
-  publicQuestion: attemptQuestionPublicSchema.optional(),
-  /** 全卷连续题号（1 起 = attempt 单元顺序 × 单元内题序） */
-  no: z.number().int().min(1),
-  /** 所在单元 id */
-  unitId: z.string().min(1),
-  /** 所在单元节标题（当前值；含软删单元——attempt 数据不随单元软删消失，D16） */
-  unitTitle: z.string().min(1),
-  /** 题型（快照或当前库值） */
-  type: questionTypeSchema,
-  /** 难度 1–5 */
-  difficulty: z.number().int().min(1).max(5),
-  /** 考点名列表（快照或当前关联值） */
-  knowledge: z.array(z.string().min(1)),
-  /** 题干 Markdown（口径见本 schema 头注释） */
-  stemMd: z.string(),
-  /** 选项纯文本（仅 choice/multi 携带） */
-  options: z.array(z.string()).optional(),
-  /** 学生答案（未作为 null） */
-  answer: studentAnswerSchema.nullable(),
-  /** 自动判定（true/false）；不能自动判定为 null；draft 为 null */
-  autoCorrect: z.boolean().nullable(),
-  /** 最终判定（teacherMark ?? autoCorrect 持久化口径，T3.2 启用）；draft 为 null。
-   *  QM-12：展示口径的有效判定 = 教师判 > 自评 > 自动（effectiveVerdictOf 同序，
-   *  自评行 finalCorrect 恒 null——不据此判断「待批」，见 selfReview/gradingPolicy） */
-  finalCorrect: z.boolean().nullable(),
-  /** 是否有实际作答内容（#6980-3）：false 的判错行在教师作答详情灰显「未做」 */
-  answered: z.boolean(),
-  /** 做题时学生自标「不会」（#6980-4）：unsure / null，详情卡片灰显提示 */
-  studentFlag: studentFlagSchema.nullable(),
-  /** 教师批改标记（D3；本阶段恒 null） */
-  teacherMark: teacherMarkSchema.nullable(),
-  /** 教师评语（T3.2；未评为 null） */
-  teacherComment: z.string().nullable(),
-  /**
-   * 学生自评记录（QM-12，TT-09c）：reference_self 行的自评事实（未评/已撤回/
-   * 非自评行为 null）。教师优先——teacherMark 非空时本记录保留但展示以教师
-   * 判定为准（清除后自评恢复生效）。draft 缺省不发（未交卷无自评）。
-   */
-  selfReview: selfReviewRecordSchema.nullable().optional(),
-  /** 行判分策略（QM-12：待自评/待批的行级判别依据）；draft 缺省不发 */
-  gradingPolicy: gradingPolicySchema.nullable().optional(),
-  /** 每题有效用时（秒；未计算为 null） */
-  activeSec: z.number().int().min(0).nullable(),
-  /** 已解锁提示数 */
-  hintsUsed: z.number().int().min(0),
-  /** 答案保存（改答案）次数 */
-  changeCount: z.number().int().min(0),
-  /** 手写信息（口径见 teacherAttemptInkSchema 注释）；无笔迹为 null */
-  ink: teacherAttemptInkSchema.nullable(),
-  /** 参考答案（快照 QuestionAnswers；仅已交卷下发——draft 缺省不发；无标准答案为 null） */
-  answers: questionAnswersSchema.nullable().optional(),
-  /** 详解（仅已交卷下发——draft 缺省不发；未提供为 null） */
-  solutionMd: z.string().nullable().optional(),
-});
+export const teacherAttemptDetailQuestionSchema = reviewEvidenceMetadataSchema
+  .pick({ hasScratch: true, materialIds: true, memoSequences: true })
+  .extend({
+    rubricReview: rubricReviewSchema.nullable().optional(),
+    settlementSeq: z.number().int().positive().nullable().optional(),
+    /** 题目 id（来自 DSL） */
+    questionId: z.string().min(1),
+    /**
+     * responses.id（POST /responses/:id/mark 的定位 id，D3 详情页内联批改用）：
+     * 仅已交卷 attempt 的逐题行携带（冻结 responses 行的 id）；draft 逐题来自
+     * 当前库题目、可能尚无 responses 行，恒 null（draft 本就不可批注）。
+     */
+    responseId: z.uuid().nullable(),
+    /** 只读题面始终用公开冻结投影，与批注 responseId 的可空语义独立。 */
+    publicQuestion: attemptQuestionPublicSchema.optional(),
+    /** 全卷连续题号（1 起 = attempt 单元顺序 × 单元内题序） */
+    no: z.number().int().min(1),
+    /** 所在单元 id */
+    unitId: z.string().min(1),
+    /** 所在单元节标题（当前值；含软删单元——attempt 数据不随单元软删消失，D16） */
+    unitTitle: z.string().min(1),
+    /** 题型（快照或当前库值） */
+    type: questionTypeSchema,
+    /** 难度 1–5 */
+    difficulty: z.number().int().min(1).max(5),
+    /** 考点名列表（快照或当前关联值） */
+    knowledge: z.array(z.string().min(1)),
+    /** 题干 Markdown（口径见本 schema 头注释） */
+    stemMd: z.string(),
+    /** 选项纯文本（仅 choice/multi 携带） */
+    options: z.array(z.string()).optional(),
+    /** 学生答案（未作为 null） */
+    answer: studentAnswerSchema.nullable(),
+    /** 自动判定（true/false）；不能自动判定为 null；draft 为 null */
+    autoCorrect: z.boolean().nullable(),
+    /** 最终判定（teacherMark ?? autoCorrect 持久化口径，T3.2 启用）；draft 为 null。
+     *  QM-12：展示口径的有效判定 = 教师判 > 自评 > 自动（effectiveVerdictOf 同序，
+     *  自评行 finalCorrect 恒 null——不据此判断「待批」，见 selfReview/gradingPolicy） */
+    finalCorrect: z.boolean().nullable(),
+    /** 是否有实际作答内容（#6980-3）：false 的判错行在教师作答详情灰显「未做」 */
+    answered: z.boolean(),
+    /** 做题时学生自标「不会」（#6980-4）：unsure / null，详情卡片灰显提示 */
+    studentFlag: studentFlagSchema.nullable(),
+    /** 教师批改标记（D3；本阶段恒 null） */
+    teacherMark: teacherMarkSchema.nullable(),
+    /** 教师评语（T3.2；未评为 null） */
+    teacherComment: z.string().nullable(),
+    /**
+     * 学生自评记录（QM-12，TT-09c）：reference_self 行的自评事实（未评/已撤回/
+     * 非自评行为 null）。教师优先——teacherMark 非空时本记录保留但展示以教师
+     * 判定为准（清除后自评恢复生效）。draft 缺省不发（未交卷无自评）。
+     */
+    selfReview: selfReviewRecordSchema.nullable().optional(),
+    /** 行判分策略（QM-12：待自评/待批的行级判别依据）；draft 缺省不发 */
+    gradingPolicy: gradingPolicySchema.nullable().optional(),
+    /** 每题有效用时（秒；未计算为 null） */
+    activeSec: z.number().int().min(0).nullable(),
+    time: responseTimeSchema.optional(),
+    /** 已解锁提示数 */
+    hintsUsed: z.number().int().min(0),
+    /** 答案保存（改答案）次数 */
+    changeCount: z.number().int().min(0),
+    /** 手写信息（口径见 teacherAttemptInkSchema 注释）；无笔迹为 null */
+    ink: teacherAttemptInkSchema.nullable(),
+    /** 参考答案（快照 QuestionAnswers；仅已交卷下发——draft 缺省不发；无标准答案为 null） */
+    answers: questionAnswersSchema.nullable().optional(),
+    /** 详解（仅已交卷下发——draft 缺省不发；未提供为 null） */
+    solutionMd: z.string().nullable().optional(),
+  });
 
 /**
  * GET /api/teacher/attempts/:id 响应 data（D7；draft 亦可用，D5）。
@@ -317,6 +328,7 @@ export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
     selfReviewPendingCount: z.number().int().min(0).optional(),
     startedAt: z.string().min(1),
     submittedAt: z.string().nullable(),
+    time: attemptTimeSchema.optional(),
     activeSec: z.number().int().min(0).nullable(),
     /** 逐题列表（全卷连续题号编排；draft 与已交卷的来源差异见逐题 schema 注释） */
     questions: z.array(teacherAttemptDetailQuestionSchema),
@@ -438,6 +450,7 @@ export const pendingMarkCardSchema = teacherAttemptSourceSchema.extend({
   answerText: z.string().nullable(),
   /** 手写信息（ink 表 (attemptId, questionId) 关联，D7 同口径）；无笔迹为 null */
   ink: teacherAttemptInkSchema.nullable(),
+  time: responseTimeSchema.optional(),
   /** 每题有效用时（秒；未计算为 null） */
   activeSec: z.number().int().min(0).nullable(),
   /** 已解锁提示数 */

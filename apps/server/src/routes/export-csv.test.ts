@@ -652,12 +652,12 @@ describe("T3.4 CSV 导出（D13）：文件形态与行数", () => {
     const rows = parseCsv(new TextDecoder().decode(bytes.slice(3)));
     // 表头：19 列，列名与 D13 列清单一致（顺序即列序）
     expect(rows[0]).toEqual([...CSV_COLUMNS]);
-    expect(rows[0]).toHaveLength(19);
+    expect(rows[0]).toHaveLength(24);
     // 数据行：两份已交 attempt × 7 题 = 14（草稿不含）
     expect(rows).toHaveLength(15);
     // 每行 19 列（含带换行/逗号的字段，经 parseCsv 后仍完整）
     for (const row of rows.slice(1)) {
-      expect(row).toHaveLength(19);
+      expect(row).toHaveLength(24);
     }
   });
 
@@ -704,6 +704,11 @@ describe("T3.4 CSV 导出（D13）：列内容", () => {
       "1",
       "",
       "",
+      "question_activity_sealed",
+      "1",
+      "",
+      "",
+      "no_client_evidence",
     ]);
 
     // 单选题（题号 2）：选项字母序列化；解锁 1 条提示；存两次 → 改答案次数 2

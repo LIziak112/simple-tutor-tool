@@ -64,12 +64,21 @@ function preparedParameters(data: unknown) {
 describe.each(["class", "personal"] as const)(
   "A1 %s 真实SDK公开读出口",
   (kind) => {
-    it("20项学生工具真实注册；三个出口白名单，无学习业务写入", async () => {
+    it("25项学生工具真实注册；三个出口白名单，无学习业务写入", async () => {
       const env = await environment(kind);
       const names = (await env.client.listTools()).tools.map(
         (tool) => tool.name,
       );
-      expect(STUDENT_MCP_TOOL_NAMES).toHaveLength(20);
+      expect(STUDENT_MCP_TOOL_NAMES).toHaveLength(25);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "create_review_run_v2",
+          "list_review_runs_v2",
+          "claim_review_part_v2",
+          "renew_review_part_lease_v2",
+          "submit_review_part_v2",
+        ]),
+      );
       expect(names).toEqual(
         expect.arrayContaining([...STUDENT_MCP_TOOL_NAMES]),
       );
