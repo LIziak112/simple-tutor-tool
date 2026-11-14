@@ -50,8 +50,10 @@ import { InkToolbar, inkToolButtonClass } from "./toolbar/InkToolbar.tsx";
  * - 输入模式：缺省 "auto" 自动探测；"pen" 固定笔写、手指滚动；
  *   "session" 订阅会话偏好并提供「手指书写」切换。
  * - 内置工具栏就是共用的 InkToolbar（toolbar/InkToolbar.tsx）。页内引擎提供
- *   笔、荧光笔、橡皮、滚动；历史 Excalidraw 画布只认笔、橡皮、选择，不认
- *   颜色和粗细，所以不带选项面板。
+ *   笔、荧光笔、橡皮、形状、滚动；历史 Excalidraw 画布只认笔、橡皮、选择，
+ *   不认颜色和粗细，所以不带选项面板。线上的页内纸面（草稿纸、正式手写、
+ *   随笔）都由 PaperEditor 在外层出工具栏（showToolbar=false），内置工具栏
+ *   目前只有历史 Excalidraw 画布在用；外层出工具栏时工具也只由外层下发。
  */
 export interface InkPadProps {
   /** 底层引擎：atrament（页内答题区，默认）/ excalidraw（全屏作答） */
@@ -352,11 +354,13 @@ export function InkPad({
   }, [inputMode, sessionPref, retryKey]);
 
   // 工具箱变化 → 下发引擎；引擎重建（retryKey）后新实例回到缺省工具，同样重发。
-  // excalidraw 未就绪时适配器内部排队，无需依赖 ready
+  // excalidraw 未就绪时适配器内部排队，无需依赖 ready。工具栏在外层时
+  // （showToolbar=false）工具只由外层下发，这里不写第二份。
   // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键变化=引擎重建，需重发当前工具，effect 体内不读取
   useEffect(() => {
+    if (!showToolbar) return;
     localEngineRef.current?.setTool(toolConfigOf(toolbox));
-  }, [toolbox, retryKey]);
+  }, [toolbox, retryKey, showToolbar]);
 
   const handleUndo = useCallback(() => localEngineRef.current?.undo(), []);
   const handleRedo = useCallback(() => localEngineRef.current?.redo(), []);

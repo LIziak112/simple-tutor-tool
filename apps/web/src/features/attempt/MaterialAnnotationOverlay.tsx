@@ -462,6 +462,8 @@ export function MaterialAnnotationOverlay({
 
   const beginInteraction = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      // 下面任何一处不接这一笔，随后的移动都不能按上一次的手势（比如橡皮）走
+      liveGestureRef.current = { kind: "none" };
       // 就绪门控：旧稿缺基准保稿；新材料等资源稳定，已有基准核验布局。
       if (missingBaseRef.current) return;
       if (frozenRef.current === null && !surfaceReadyRef.current) return;

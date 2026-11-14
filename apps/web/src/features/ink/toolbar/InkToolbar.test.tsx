@@ -410,6 +410,65 @@ describe("InkToolbar 工具切换与选项面板", () => {
     },
   );
 
+  it("面板开着用鼠标点外面的输入框：面板收起，焦点留在输入框，不被拉回工具按钮", async () => {
+    render(
+      <div>
+        <Harness />
+        <input aria-label="作答" />
+      </div>,
+    );
+    const pen = button("笔");
+    pen.focus();
+    fireEvent.click(pen);
+    const panel = screen.getByRole("dialog", { name: "笔设置" });
+    await waitFor(() =>
+      expect(panel.contains(document.activeElement)).toBe(true),
+    );
+    const answer = screen.getByRole("textbox", { name: "作答" });
+    // 鼠标按下：先 pointerdown，随后浏览器把焦点交给被点的输入框
+    fireEvent.pointerDown(answer, { pointerType: "mouse" });
+    answer.focus();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // 面板卸载后的焦点归还是异步的：等它跑完再看焦点在哪
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(answer).toHaveFocus();
+    expect(pen).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("面板开着直接在纸上落笔：焦点不回到工具按钮；之后再开面板按 Escape 照旧还给按钮", async () => {
+    render(
+      <div>
+        <Harness />
+        <canvas data-testid="paper" />
+      </div>,
+    );
+    const pen = button("笔");
+    pen.focus();
+    fireEvent.click(pen);
+    const panel = screen.getByRole("dialog", { name: "笔设置" });
+    await waitFor(() =>
+      expect(panel.contains(document.activeElement)).toBe(true),
+    );
+    fireEvent.pointerDown(screen.getByTestId("paper"), { pointerType: "pen" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(pen).not.toHaveFocus();
+
+    // 「按下收起」只管那一次：下一次用键盘收起，焦点仍然还给工具按钮
+    fireEvent.click(pen);
+    const reopened = screen.getByRole("dialog", { name: "笔设置" });
+    await waitFor(() =>
+      expect(reopened.contains(document.activeElement)).toBe(true),
+    );
+    fireEvent.keyDown(document.activeElement ?? reopened, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(pen).toHaveFocus());
+  });
+
   it("宿主把当前工具换走：面板收起，换回来也不会自己弹开", () => {
     const props = {
       label: "测试纸",

@@ -488,7 +488,7 @@ export function createFeelSurface(
   const visibility = () => {
     if (document.visibilityState === "hidden") blur();
   };
-  /** 悬停留下的橡皮圈：指针离开画布、换了工具就收起（拖动中的由收笔收起） */
+  /** 悬停留下的橡皮圈：指针离开画布、换了工具、纸面不可写就收起（拖动中的由收笔收起） */
   const leave = () => {
     if (!eraser.active) ringLayer?.hideRing();
   };
@@ -602,7 +602,10 @@ export function createFeelSurface(
     },
     finish: () => finish(),
     setInputEnabled(next) {
-      if (!next) finish();
+      if (!next) {
+        finish();
+        leave();
+      }
       enabled = next;
       if (wet) wet.style.pointerEvents = next ? "auto" : "none";
     },

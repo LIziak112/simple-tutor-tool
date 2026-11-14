@@ -64,21 +64,26 @@ export function PaperEditor({
   );
   const [history, setHistory] = useState({ undo: false, redo: false });
   const [generation, setGeneration] = useState(0);
-  // 引擎重建或纸面重新启用后重新下发当前工具。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 重建与启用是必要的触发器
+  // 引擎重建、纸面重新启用、笔感设置变化后重新下发当前工具：书写面按新的
+  // 笔感设置重建时会把笔换回设置里的颜色粗细（InkPad 先做这一步），而工具栏
+  // 上记住的那支笔只要设置里的颜色粗细没变就还算数，这里把它补发回去。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 重建、启用与笔感设置是必要的触发器
   useEffect(() => {
     engineRef.current?.setTool(toolConfigOf(toolbox));
     setHistory({
       undo: engineRef.current?.canUndo() ?? false,
       redo: engineRef.current?.canRedo() ?? false,
     });
-  }, [toolbox, engineRef, generation, inputEnabled]);
+  }, [toolbox, engineRef, generation, inputEnabled, profile.config]);
   return (
     <div data-slot="paper-editor" className="flex min-w-0 flex-col gap-2">
       {showToolbar && (
+        // inert 管住整条工具栏（含「手指书写」开关）；disabled 另把选项面板
+        // 收起——面板挂在 body 上，不在 inert 的范围里。
         <div inert={!inputEnabled}>
           <InkToolbar
             label={label}
+            disabled={!inputEnabled}
             toolbox={toolbox}
             onToolboxChange={setToolbox}
             canUndo={history.undo}

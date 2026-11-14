@@ -204,6 +204,18 @@ it("局部橡皮被第二指针打断：按已擦的提交；橡皮缺省仍是�
   expect(points()).toHaveLength(1);
 });
 
+it("橡皮圈：悬停着纸面变成不可写（收起、交卷）就收起，不留在纸上", () => {
+  surface.setTool({ type: "eraser" });
+  send("pointermove", 120, 1, 1, {
+    clientY: 60,
+    buttons: 0,
+    pointerType: "mouse",
+  });
+  expect(ring().shown).toBe(true);
+  surface.setInputEnabled?.(false);
+  expect(ring().shown).toBe(false);
+});
+
 it("橡皮圈：按下显示在落点、拖动跟着走、抬起收起；悬停显示，移出画布或换工具收起", () => {
   const layer = canvas.parentElement?.querySelector(INK_LIVE_LAYER_SELECTOR);
   expect(layer?.getAttribute("viewBox")).toBe("0 0 1000 800");

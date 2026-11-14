@@ -123,16 +123,23 @@ export function InkToolbar({
   }
   const panelOpen = openTool !== null;
 
+  /** 这一次收起是因为在外面按下：焦点跟着那一下走，不还给工具按钮 */
+  const closedByPressRef = useRef(false);
+
   // 在面板外按下，Popover 要等随后的 click 才收起。书写是拖动：抬笔才有
   // click，手指拖动则根本没有，面板会一直盖在纸上。所以在面板和工具栏之外
   // 按下时这里当即收起；工具栏里的按钮照旧由 Popover 和按钮自己处理。
   useEffect(() => {
     if (!panelOpen) return;
+    closedByPressRef.current = false;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (panelRef.current?.contains(target)) return;
       if (rootRef.current?.contains(target)) return;
+      // 这里抢在 Popover 之前收起，它来不及记下「是在外面按的」，会照键盘
+      // 收起那样把焦点还给工具按钮——用鼠标点外面的输入框就会被抢走焦点。
+      closedByPressRef.current = true;
       setOpenTool(null);
     };
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -204,7 +211,16 @@ export function InkToolbar({
         >
           {button}
         </PopoverTrigger>
-        <PopoverContent ref={panelRef} align="start" aria-label={`${name}设置`}>
+        <PopoverContent
+          ref={panelRef}
+          align="start"
+          aria-label={`${name}设置`}
+          onCloseAutoFocus={(event) => {
+            if (!closedByPressRef.current) return;
+            closedByPressRef.current = false;
+            event.preventDefault();
+          }}
+        >
           <InkToolOptions
             tool={tool}
             toolbox={toolbox}

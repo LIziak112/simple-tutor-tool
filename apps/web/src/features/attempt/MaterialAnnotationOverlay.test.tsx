@@ -1261,6 +1261,40 @@ describe("材料圈画：橡皮圈", () => {
     expect(previewMock.showRing).not.toHaveBeenCalled();
   });
 
+  it("这一次落笔被丢弃（同一份材料在别处已按另一列宽定了基准）：随后的移动不按上一次的橡皮手势去擦", async () => {
+    const layer = await mountWith({ active: "eraser" });
+    const pen = (clientX: number, clientY: number) => ({
+      pointerId: 1,
+      button: 0,
+      buttons: 1,
+      pointerType: "pen",
+      clientX,
+      clientY,
+      pressure: 0.5,
+    });
+    // 上一次手势是橡皮（什么也没擦到），随后换回笔
+    await act(async () => {
+      fireEvent.pointerDown(layer, pen(50, 50));
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    fireEvent.click(screen.getByTestId("toggle-pen"));
+    // 别处的同一份材料写了一笔（逻辑 (200,200)→(220,200)）并定了基准
+    const elsewhere = inkDocOf([strokeAt(200, 200)]);
+    draftStore.saveMaterialInk("att-1", "mat-1", elsewhere);
+    draftStore.saveMaterialInkBase("att-1", "mat-1", {
+      cssWidth: 480,
+      cssHeight: 400,
+    });
+    // 这边落笔：采用那份基准并丢弃这一笔；接着划过别处写的那一笔
+    await act(async () => {
+      fireEvent.pointerDown(layer, pen(90, 100));
+      fireEvent.pointerMove(layer, pen(105, 100));
+      fireEvent.pointerMove(layer, pen(120, 100));
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    expect(draftStore.getMaterialInk("att-1", "mat-1")).toEqual(elsewhere);
+  });
+
   it("退出圈画时收起橡皮圈", async () => {
     const layer = await mountWith({ active: "eraser" });
     fireEvent.pointerMove(layer, hover("pen", 50, 50));
