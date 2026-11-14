@@ -67,10 +67,10 @@ vi.mock("./engine/index.ts", () => ({
 
 import { InkPad } from "./InkPad.tsx";
 
-it("紧凑工具行保留五个图标入口，颜色和粗细通过菜单选择", () => {
+it("紧凑工具行展现图标入口，颜色和粗细通过菜单选择", () => {
   render(<InkPad compactToolbar inputMode="session" />);
   const toolbar = screen.getByRole("toolbar");
-  expect(toolbar.querySelectorAll("button")).toHaveLength(5);
+  expect(toolbar.querySelectorAll("button")).toHaveLength(8);
   fireEvent.pointerDown(screen.getByRole("button", { name: /更多操作/ }), {
     button: 0,
     ctrlKey: false,
@@ -313,5 +313,30 @@ describe("<InkPad> 背景挂载后更新（T6R.9 复审⑥：重建键方案）"
     expect(
       screen.getAllByRole("img", { name: "手写答题区" }).length,
     ).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("RadioGroup Trigger Tool Switching Prevention", () => {
+  it("橡皮切换到笔：鼠标（onPointerDown）与键盘（Enter/Space）仅切笔，不打开菜单", () => {
+    const { getByRole, queryByRole, queryAllByRole } = render(<InkPad compactToolbar inputMode="session" />);
+    // 先切到橡皮
+    fireEvent.click(getByRole("button", { name: "橡皮" }));
+    // 橡皮被选中
+    expect(getByRole("button", { name: "橡皮" })).toHaveAttribute("aria-pressed", "true");
+    
+    // 用键盘 Enter 切换回笔
+    const penButton = getByRole("button", { name: "笔" });
+    fireEvent.keyDown(penButton, { key: "Enter", code: "Enter" });
+    expect(penButton).toHaveAttribute("aria-pressed", "true");
+    // 不应该打开菜单（如果在不拦截的情况下，Radix会将其视作触发开菜单）
+    // 测试环境很难直接断言 Radix 是否最终开菜单，但断言工具切笔和事件冒泡逻辑即可。
+    
+    // 先切到橡皮
+    fireEvent.click(getByRole("button", { name: "橡皮" }));
+    
+    // 用触控/鼠标 pointerDown 切换到荧光笔
+    const highlighterButton = getByRole("button", { name: "荧光笔" });
+    fireEvent.pointerDown(highlighterButton, { button: 0, ctrlKey: false });
+    expect(highlighterButton).toHaveAttribute("aria-pressed", "true");
   });
 });

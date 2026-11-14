@@ -144,6 +144,22 @@ export function CompactInkToolbar({
             title="笔"
             aria-pressed={tool === "pen"}
             disabled={disabled}
+            onPointerDown={(e) => {
+              // Only left click
+              if (e.button !== 0 || e.ctrlKey) return;
+              if (tool !== "pen") {
+                e.preventDefault();
+                onToolChange("pen");
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                if (tool !== "pen") {
+                  e.preventDefault();
+                  onToolChange("pen");
+                }
+              }
+            }}
             onClick={(e) => {
               if (tool !== "pen") {
                 e.preventDefault();
@@ -176,6 +192,22 @@ export function CompactInkToolbar({
               title="荧光笔"
               aria-pressed={tool === "highlighter"}
               disabled={disabled}
+              onPointerDown={(e) => {
+                // Only left click
+                if (e.button !== 0 || e.ctrlKey) return;
+                if (tool !== "highlighter") {
+                  e.preventDefault();
+                  onToolChange("highlighter");
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  if (tool !== "highlighter") {
+                    e.preventDefault();
+                    onToolChange("highlighter");
+                  }
+                }
+              }}
               onClick={(e) => {
                 if (tool !== "highlighter") {
                   e.preventDefault();
@@ -260,7 +292,7 @@ export function CompactInkToolbar({
           <div className="w-px h-6 bg-border mx-1" />
           <DropdownMenu>
             <DropdownMenuTrigger
-              className={`flex shrink-0 items-center justify-center outline-none hover:bg-accent hover:text-accent-foreground transition-colors ${compact ? "size-11 rounded-md" : `ml-auto ${toolButtonClass}`}`}
+              className={`flex shrink-0 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-ring hover:bg-accent hover:text-accent-foreground transition-colors ${compact ? "size-11 rounded-md" : `ml-auto ${toolButtonClass}`}`}
               aria-label={moreLabel}
               title={moreTitle}
               disabled={disabled}
