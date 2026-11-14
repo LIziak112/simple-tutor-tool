@@ -85,7 +85,7 @@ export function PersonalLoginPage() {
     loginMutation.mutate(
       { loginName: parsedName.data, password },
       {
-        onSuccess: (_session, request) => {
+        onSuccess: (_session, request, confirmation) => {
           try {
             window.localStorage.setItem(
               LOGIN_NAME_STORAGE_KEY,
@@ -94,7 +94,9 @@ export function PersonalLoginPage() {
           } catch {
             // 存不进就算了，不影响登录
           }
-          navigate(safeReturnTo(returnTo, "personal"), { replace: true });
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+          );
         },
       },
     );

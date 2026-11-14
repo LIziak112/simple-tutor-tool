@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PersonalSessionData } from "@tutor/contract";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { expect, it, vi } from "vitest";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
@@ -47,10 +47,15 @@ const pair: PersonalSessionData = {
 };
 function DirtySettingsSample() {
   const navigation = useSettingsNavigation();
+  const [registered, setRegistered] = useState(false);
+  const setDraft = navigation?.setDraft;
   useEffect(() => {
-    navigation?.setDraft("test", { dirty: true, discard: () => {} });
-  }, [navigation?.setDraft]);
-  return <p>未保存设置样本</p>;
+    if (!setDraft) throw new Error("管理设置样本缺少离开保护");
+    setDraft("test", { dirty: true, discard: () => {} });
+    setRegistered(true);
+  }, [setDraft]);
+  // 标签随注册状态提交，避免把首次挂载的正文当作已登记的未保存草稿。
+  return <p>{registered ? "未保存设置样本" : "正在登记设置样本"}</p>;
 }
 function WorkspaceSample() {
   useStudentWorkspace();

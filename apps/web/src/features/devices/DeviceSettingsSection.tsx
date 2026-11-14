@@ -37,17 +37,20 @@ export function DeviceSettingsSection({
     | null
   >(null);
   const titleId = useId();
-  const action = useDeviceActions(owner, async () => {
+  const action = useDeviceActions(owner, async (before) => {
     const portal = accountKind === "personal" ? "personal" : owner.type;
     const clear = owner.type === "student" ? clearStudent : clearTeacher;
-    await clear(() =>
-      navigate(
-        loginPathWithReturnTo(
-          routes.portal(portal).loginPath,
-          location.pathname + location.search + location.hash,
+    await clear(
+      () =>
+        navigate(
+          loginPathWithReturnTo(
+            routes.portal(portal).loginPath,
+            location.pathname + location.search + location.hash,
+          ),
+          { replace: true },
         ),
-        { replace: true },
-      ),
+      owner.id,
+      before,
     );
   });
   async function perform(input: Parameters<typeof action.mutateAsync>[0]) {

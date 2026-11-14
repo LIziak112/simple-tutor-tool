@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { captureAccountIdentity } from "@/features/auth/account-identity";
+import { AuthCancelledError } from "@/features/auth/auth-operation";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 import type { DeviceOwner } from "@/features/runtime/ports/devices-types";
 
@@ -22,7 +24,7 @@ export type DeviceAction =
 
 export function useDeviceActions(
   owner: DeviceOwner,
-  onRevoked: () => Promise<void>,
+  onRevoked: (isCurrent: () => boolean) => Promise<void>,
 ) {
   const {
     renameDeviceApi,
@@ -33,6 +35,14 @@ export function useDeviceActions(
   } = usePortalClients();
 
   const client = useQueryClient();
+  type Identity = ReturnType<typeof captureAccountIdentity>;
+  type Result = { message: string; revoked: boolean; scope: string };
+  const identities = useRef(new WeakMap<Result, Identity>());
+  const pendingIdentities = useRef(new Set<Identity>());
+  const finishIdentity = (identity: Identity) => {
+    identity.finish();
+    pendingIdentities.current.delete(identity);
+  };
   const pending = useRef(new Set<AbortController>());
   const active = useRef<string | null>(null);
   const { type, id } = owner;
@@ -42,6 +52,8 @@ export function useDeviceActions(
       active.current = null;
       for (const controller of pending.current) controller.abort();
       pending.current.clear();
+      for (const identity of pendingIdentities.current) identity.finish();
+      pendingIdentities.current.clear();
     };
   }, [type, id]);
   return useMutation({
@@ -52,6 +64,12 @@ export function useDeviceActions(
       pending.current.add(controller);
       const { signal } = controller;
       const scope = `${type}:${id}`;
+      const identity = captureAccountIdentity(client, type);
+      pendingIdentities.current.add(identity);
+      const withIdentity = (value: Result) => {
+        identities.current.set(value, identity);
+        return value;
+      };
       try {
         signal.throwIfAborted();
         let message: string;
@@ -89,11 +107,11 @@ export function useDeviceActions(
               if (error instanceof Error && error.name === "AbortError")
                 throw error;
               // 删除已经成功，核对失败不能抹掉实际回执或冒称登录已失效。
-              return {
+              return withIdentity({
                 message: `${message}；暂时无法确认当前登录状态，请刷新页面`,
                 revoked: false,
                 scope,
-              };
+              });
             }
             signal.throwIfAborted();
             if (actual === null) revoked = true;
@@ -102,19 +120,31 @@ export function useDeviceActions(
           }
         }
         signal.throwIfAborted();
-        return { message, revoked, scope };
+        return withIdentity({ message, revoked, scope });
+      } catch (error) {
+        finishIdentity(identity);
+        throw error;
       } finally {
         pending.current.delete(controller);
       }
     },
-    onSuccess: async ({ revoked, scope }) => {
-      if (active.current !== scope) return;
-      if (revoked) await onRevoked();
-      else
-        await client.invalidateQueries({
-          queryKey: deviceListKey(owner),
-          exact: true,
-        });
+    onSuccess: async (result) => {
+      const identity = identities.current.get(result);
+      try {
+        if (active.current !== result.scope) return;
+        if (result.revoked) {
+          if (!identity?.isCurrent()) throw new AuthCancelledError();
+          await onRevoked(
+            () => active.current === result.scope && identity.isCurrent(),
+          );
+        } else
+          await client.invalidateQueries({
+            queryKey: deviceListKey(owner),
+            exact: true,
+          });
+      } finally {
+        if (identity) finishIdentity(identity);
+      }
     },
     onError: async (_error, action) => {
       if (active.current === `${type}:${id}` && action.kind === "merge") {

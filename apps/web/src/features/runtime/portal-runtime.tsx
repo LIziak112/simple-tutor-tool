@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { AccountKind, StudentMeData } from "@tutor/contract";
+import type { AccountKind, StudentMeData, TeacherInfo } from "@tutor/contract";
 import { createContext, type ReactNode, useContext } from "react";
 import type { ApiServices } from "./ports/api-services";
 export type PortalId = "student" | "teacher" | "personal" | "admin";
@@ -46,6 +46,11 @@ export interface PortalRuntime {
   ): PortalCapabilities;
   readonly signal: AbortSignal;
   prefetchStudentAfterAuth(student: StudentMeData, cache: QueryClient): void;
+  teacherLandingAfterAuth(
+    teacher: TeacherInfo,
+    cache: QueryClient,
+    confirmation: { isCurrent(): boolean; readonly signal: AbortSignal },
+  ): Promise<string>;
 }
 const RuntimeContext = createContext<PortalRuntime | null>(null);
 export function PortalRuntimeProvider({

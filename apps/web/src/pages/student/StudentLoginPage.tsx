@@ -25,7 +25,7 @@ export default function StudentLoginPage() {
   const [password, setPassword] = useState("");
 
   // 已登录（会话仍有效）：直接进首页
-  if (meQuery.isSuccess && !loginMutation.isPending) {
+  if (meQuery.isSuccess && (loginMutation.isIdle || loginMutation.isSuccess)) {
     return (
       <Navigate
         to={
@@ -44,8 +44,10 @@ export default function StudentLoginPage() {
       { loginName: loginName.trim(), password },
       // 成功后 me 缓存已写入；replace 避免回退键回到登录页
       {
-        onSuccess: () =>
-          navigate(safeReturnTo(returnTo, "student"), { replace: true }),
+        onSuccess: (_data, _request, confirmation) =>
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "student"), { replace: true }),
+          ),
       },
     );
   }

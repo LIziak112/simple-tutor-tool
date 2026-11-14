@@ -6,13 +6,15 @@ import {
 } from "@/features/runtime/portal-runtime";
 import { captureAccountIdentity } from "./account-identity";
 
+import type { AuthOperation } from "./auth-operation";
 import { useApplyStudentAuthed } from "./student-auth";
 
 type EntryResult = {
   readonly token: string;
   readonly attempt: number;
 } & (
-  | { readonly status: "pending" | "success" }
+  | { readonly status: "pending" }
+  | { readonly status: "success"; readonly operation: AuthOperation }
   | { readonly status: "error"; readonly error: unknown }
 );
 
@@ -58,14 +60,8 @@ export function useStudentLinkEntry(token: string) {
         // 身份已由本入口成功提交后，自己的Host换租约不应重新兑换；
         // 提交前外部换主体仍由捕获的旧signal阻止clear和写缓存。
         if (!ownsEntry()) return;
-        if (applied) setResult({ token, attempt, status: "success" });
-        else
-          setResult({
-            token,
-            attempt,
-            status: "error",
-            error: signal.reason ?? new Error("账号状态已更新，请重试"),
-          });
+        applied.assertCurrent();
+        setResult({ token, attempt, status: "success", operation: applied });
       } catch (error) {
         if (ownsEntry()) setResult({ token, attempt, status: "error", error });
       }
@@ -82,10 +78,16 @@ export function useStudentLinkEntry(token: string) {
   }, [token, attempt, queryClient]);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
   const current = result.token === token && result.attempt === attempt;
+  const stale = result.status === "success" && !result.operation.isCurrent();
   return {
     isPending: !current || result.status === "pending",
-    isError: current && result.status === "error",
-    error: result.status === "error" ? result.error : null,
+    isError: current && (result.status === "error" || stale),
+    error:
+      result.status === "error"
+        ? result.error
+        : stale
+          ? new Error("账号状态已变化，请重试")
+          : null,
     retry,
   };
 }

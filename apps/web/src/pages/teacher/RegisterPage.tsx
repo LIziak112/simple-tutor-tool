@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, TriangleAlert, UserRoundPlus } from "lucide-react";
 import { type FormEvent, useState } from "react";
@@ -10,11 +11,7 @@ import {
   useRegisterTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
-import {
-  usePortalClients,
-  usePortalRoutes,
-} from "@/features/runtime/portal-runtime";
-import { resolveTeacherLanding } from "@/features/students/teacher-landing";
+import { usePortalRuntime } from "@/features/runtime/portal-runtime";
 import { ApiError } from "@/lib/api-response";
 import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
@@ -32,9 +29,8 @@ import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
  */
 
 export function RegisterPage() {
-  const routes = usePortalRoutes();
-
-  const clients = usePortalClients();
+  const { teacherLandingAfterAuth } = usePortalRuntime();
+  const cache = useQueryClient();
 
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
@@ -94,15 +90,18 @@ export function RegisterPage() {
     registerMutation.mutate(
       { loginName: parsedName.data, password },
       {
-        onSuccess: async () =>
-          navigate(
-            safeReturnTo(
-              returnTo,
-              "teacher",
-              await resolveTeacherLanding(routes, clients),
-            ),
-            { replace: true },
-          ),
+        onSuccess: async (teacher, _request, confirmation) => {
+          const landing = await teacherLandingAfterAuth(
+            teacher,
+            cache,
+            confirmation,
+          );
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "teacher", landing), {
+              replace: true,
+            }),
+          );
+        },
       },
     );
   }

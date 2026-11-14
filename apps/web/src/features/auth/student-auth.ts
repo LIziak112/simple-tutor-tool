@@ -1,25 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { StudentLoginRequest, StudentMeData } from "@tutor/contract";
 import { useCallback } from "react";
-import {
-  currentAnnotationSession,
-  resetAnnotationSession,
-} from "@/features/annotation/annotation-sync";
-import { bindGroupMaterialLayoutAccount } from "@/features/attempt/group-material-layout-store";
-import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
-import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
-import {
-  currentNoteSession,
-  resetNoteSession,
-} from "@/features/notes/note-sync";
-import { bindDraftSession } from "@/features/persistence/draft-store";
-import {
-  usePortalClients,
-  usePortalRuntime,
-} from "@/features/runtime/portal-runtime";
-import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
-import { captureAccountIdentity } from "./account-identity";
-import { clearAccountQueries } from "./account-query-cache";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { useApplyIdentity } from "./auth-apply";
+import { useClearIdentitySessions } from "./auth-clear";
+import { useAccountMutation } from "./auth-mutation";
+import type { AuthOperation } from "./auth-operation";
 
 /**
  * 学生登录状态（T2.3 学生端外壳）：与 teacher-auth 同构的模式——
@@ -45,119 +31,56 @@ export function useStudentMe() {
   });
 }
 
-/**
- * 登录成功后写入 me 缓存，按门户能力预取作业，并预取课程/讲义。
- * 导出供个人账号双会话登录复用（personal-auth.ts，模块 0）。
- * 仅本次调用通过入口校验并提交me后返回true；外部缓存更新不算本次成功。
- */
+/** 返回本次可持续验证的身份凭据，取消以AuthCancelledError传播。 */
 export function useApplyStudentAuthed() {
-  const { prefetchStudentAfterAuth } = usePortalRuntime();
-  const queryClient = useQueryClient();
+  const apply = useApplyIdentity();
   return useCallback(
-    async (student: StudentMeData, ownsEntry: () => boolean = () => true) => {
-      const identity = captureAccountIdentity(queryClient, "student");
-      const isCurrent = () => ownsEntry() && identity.isCurrent();
-      try {
-        if (!isCurrent()) return false;
-        // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
-        // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
-        // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
-        // （专属链接重进）不 reset，队列照常；本地未同步内容保留（方案 §6.1）
-        const bound = currentNoteSession();
-        if (bound !== null && bound.studentId !== student.id) {
-          resetNoteSession();
-        }
-        // T6R.20：标注会话同口径（换账号停旧标注同步队列，防误 403 终态）
-        const boundAnnotation = currentAnnotationSession();
-        if (
-          boundAnnotation !== null &&
-          boundAnnotation.studentId !== student.id
-        ) {
-          resetAnnotationSession();
-        }
-        await clearAccountQueries(queryClient, "student", isCurrent);
-        if (!isCurrent()) return false;
-        bindAiDisplayAccount(student.id);
-        if (!isCurrent()) return false;
-        bindPracticePreferenceAccount(student.id);
-        if (!isCurrent()) return false;
-        bindKeyboardBindingsAccount(student.id);
-        if (!isCurrent()) return false;
-        bindGroupMaterialLayoutAccount(student.id);
-        if (!isCurrent()) return false;
-        bindDraftSession({
-          origin: window.location.origin,
-          studentId: student.id,
-        });
-        if (!isCurrent()) return false;
-        const committed = identity.commit(() =>
-          queryClient.setQueryData(studentMeKey, student),
-        );
-        if (!committed) return false;
-        prefetchStudentAfterAuth(student, queryClient);
-        return true;
-      } finally {
-        identity.finish();
-      }
-    },
-    [queryClient, prefetchStudentAfterAuth],
+    (
+      student: StudentMeData,
+      ownsEntry: () => boolean = () => true,
+      operation?: AuthOperation,
+    ) => apply({ student }, ownsEntry, operation),
+    [apply],
   );
 }
-
-/** 专属链接登录（/s/:token 页面挂载即调用） */
 export function useStudentLinkLogin() {
   const { loginStudentByLinkApi } = usePortalClients();
-
-  const applyAuthed = useApplyStudentAuthed();
-  return useMutation({
-    mutationFn: (token: string) => loginStudentByLinkApi(token),
-    onSuccess: (student) => applyAuthed(student),
-  });
+  const apply = useApplyIdentity();
+  return useAccountMutation(
+    (token: string) => loginStudentByLinkApi(token),
+    (student, operation) => apply({ student }, undefined, operation),
+    ["student"],
+  );
 }
-
-/** 登录名 + 密码登录（/s/login 页面表单提交） */
 export function useLoginStudent() {
   const { loginStudentApi } = usePortalClients();
-
-  const applyAuthed = useApplyStudentAuthed();
-  return useMutation({
-    mutationFn: (request: StudentLoginRequest) => loginStudentApi(request),
-    onSuccess: (student) => applyAuthed(student),
-  });
+  const apply = useApplyIdentity();
+  return useAccountMutation(
+    (request: StudentLoginRequest) => loginStudentApi(request),
+    (student, operation) => apply({ student }, undefined, operation),
+    ["student"],
+  );
 }
-
-/**
- * 退出登录：成功后清空全部学生端查询缓存（me 失效后守卫导回登录页），并
- * resetNoteSession（T6R.9）——停旧草稿同步队列、中止在途上传、隔离回执；
- * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
- */
 export function useLogoutStudent(onLoggedOut?: () => void) {
   const { logoutStudentApi } = usePortalClients();
-
-  const clearSession = useClearStudentSession();
-  return useMutation({
-    mutationFn: logoutStudentApi,
-    onSuccess: () => clearSession(onLoggedOut),
-  });
+  const clear = useClearIdentitySessions();
+  return useAccountMutation(
+    () => logoutStudentApi(),
+    (_data, operation) => clear(["student"], onLoggedOut, operation),
+    ["student"],
+  );
 }
-
 export function useClearStudentSession() {
-  const queryClient = useQueryClient();
-  return async (onCleared?: () => void) => {
-    bindDraftSession(null);
-    bindAiDisplayAccount(null);
-    bindPracticePreferenceAccount(null);
-    bindKeyboardBindingsAccount(null);
-    bindGroupMaterialLayoutAccount(null);
-    resetNoteSession();
-    resetAnnotationSession();
-    await clearAccountQueries(queryClient, "student");
-    const reset = queryClient.resetQueries({
-      queryKey: studentMeKey,
-      exact: true,
-    });
-    // 身份已清空、页面尚未卸载时完成主动退出导航，再等待身份重取。
-    onCleared?.();
-    await reset;
-  };
+  const clear = useClearIdentitySessions();
+  return useCallback(
+    (onCleared?: () => void, expectedId?: string, before?: () => boolean) =>
+      clear(
+        ["student"],
+        onCleared,
+        undefined,
+        expectedId ? { role: "student", id: expectedId } : undefined,
+        before,
+      ),
+    [clear],
+  );
 }

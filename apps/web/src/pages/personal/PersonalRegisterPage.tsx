@@ -95,8 +95,10 @@ export function PersonalRegisterPage() {
           : {}),
       },
       {
-        onSuccess: () =>
-          navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+        onSuccess: (_data, _request, confirmation) =>
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+          ),
       },
     );
   }

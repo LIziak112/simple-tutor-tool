@@ -15,6 +15,7 @@ import { createPortalRoutes } from "./routes";
 import { prefetchAuthenticatedStudent } from "./student-auth-prefetch";
 import { watchSubjectIdentity } from "./subject-identity";
 import { createSubjectScope } from "./subject-scope";
+import { teacherLandingAfterAuth } from "./teacher-auth-landing";
 
 function roleSessionQuery(role: "student" | "teacher") {
   return {
@@ -100,6 +101,8 @@ export function PortalHost({ children }: { children: ReactNode }) {
       ),
       capabilitiesFor: portalCapabilitiesOf,
       signal: scope.signal,
+      teacherLandingAfterAuth: (teacher, client, confirmation) =>
+        teacherLandingAfterAuth(portal, teacher, client, confirmation),
       prefetchStudentAfterAuth: (student, client) =>
         prefetchAuthenticatedStudent(portal, student, client),
     }),

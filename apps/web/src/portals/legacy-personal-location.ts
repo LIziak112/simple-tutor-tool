@@ -51,7 +51,7 @@ function translate(value: string, depth: number, nested: boolean): string {
   if (changed) url.search = search.toString();
   return `${url.pathname}${url.search}${url.hash}`;
 }
-/** 旧门户入口适配集中在L3；最多8层/每层32KiB，之后仍由领域白名单校验。 */
+/** 旧门户入口适配集中在L3；最多8层/每层32768个UTF-16码元，之后仍由领域白名单校验。 */
 export function legacyPersonalLocation(value: string): string {
   return translate(value, 0, false);
 }

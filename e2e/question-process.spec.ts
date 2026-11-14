@@ -9,6 +9,7 @@ import {
   questionProcessReadSchema,
   questionTypeSchema,
 } from "../packages/contract/src";
+import { attachMaterialSyncFailure } from "./diagnostics/material-sync";
 import { questionProcessFixture } from "./fixtures/question-process";
 import {
   addCourseMemberViaApi,
@@ -296,10 +297,15 @@ test(
           await expect(
             card.locator("[data-paper-trigger]"),
           ).not.toHaveAttribute("aria-label", /已有/);
-          await expect(page.getByTestId("draft-status")).toHaveText(
-            "全部已保存",
-            { timeout: 20_000 },
-          );
+          try {
+            await expect(page.getByTestId("draft-status")).toHaveText(
+              "全部已保存",
+              { timeout: 20_000 },
+            );
+          } catch (error) {
+            await attachMaterialSyncFailure(page, info);
+            throw error;
+          }
           const questionId = await card.getAttribute("data-question-id");
           if (!questionId) throw new Error("题卡缺少冻结题目身份");
           await expect

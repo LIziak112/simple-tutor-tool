@@ -99,12 +99,14 @@ function PersonalLayoutContent() {
   const verification = usePersonalPair(
     role,
     subject?.id ?? null,
-    async (pair) => {
+    async (pair, operation) => {
       if (
         student.data?.id !== pair.student.id ||
         teacher.data?.id !== pair.teacher.id
-      )
-        await apply(pair);
+      ) {
+        const committed = await apply(pair, operation);
+        committed.assertCurrent();
+      }
     },
   );
   const logout = useLogoutPersonal(role, () =>

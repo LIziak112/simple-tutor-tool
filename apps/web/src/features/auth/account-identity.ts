@@ -12,6 +12,7 @@ export function captureAccountIdentity(
   const count = query?.state.dataUpdateCount;
   let writes = 0;
   let removed = false;
+  let resets = 0;
   const finish = cache.subscribe((event) => {
     if (
       event.query.queryKey.length !== 2 ||
@@ -21,10 +22,17 @@ export function captureAccountIdentity(
       return;
     if (event.type === "removed") removed = true;
     if (event.type === "updated" && event.action.type === "success") writes++;
+    if (
+      event.type === "updated" &&
+      event.action.type === "setState" &&
+      (query?.state.data !== data || query?.state.dataUpdateCount !== count)
+    )
+      resets++;
   });
   const isCurrent = () =>
     !removed &&
     writes === 0 &&
+    resets === 0 &&
     find() === query &&
     query?.state.data === data &&
     query?.state.dataUpdateCount === count;
@@ -35,6 +43,11 @@ export function captureAccountIdentity(
       if (!isCurrent()) return false;
       write();
       return !removed && writes === 1;
+    },
+    commitReset(write: () => void) {
+      if (!isCurrent()) return false;
+      write();
+      return !removed && writes === 0 && resets <= 1;
     },
     finish,
   };

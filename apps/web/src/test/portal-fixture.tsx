@@ -5,6 +5,7 @@ import {
   PortalRuntimeProvider,
 } from "@/features/runtime/portal-runtime";
 import type { ApiServices } from "@/features/runtime/ports/api-services";
+import { resolveTeacherLanding } from "@/features/students/teacher-landing";
 import * as api from "@/lib/api";
 import * as attachments from "@/lib/attachment-api";
 import * as device from "@/lib/device-api";
@@ -55,6 +56,16 @@ export function createTestRuntime(
     capabilities: portalCapabilitiesOf("student", "class"),
     capabilitiesFor: portalCapabilitiesOf,
     signal: new AbortController().signal,
+    teacherLandingAfterAuth: async (teacher, _cache, confirmation) => {
+      const routes = overrides.routes ?? createPortalRoutes("student");
+      if (!confirmation.isCurrent()) return routes.management("students");
+      if (teacher.accountKind === "personal") return routes.learning("home");
+      const landing = await resolveTeacherLanding(
+        routes,
+        overrides.clients ?? testClientServices,
+      );
+      return confirmation.isCurrent() ? landing : routes.management("students");
+    },
     prefetchStudentAfterAuth: (student, cache) => {
       void prefetchStudentQueries(
         cache,

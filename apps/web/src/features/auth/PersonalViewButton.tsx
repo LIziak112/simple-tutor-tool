@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import type {
   PersonalSessionRole,
   StudentMeData,
@@ -12,6 +12,7 @@ import {
 } from "@/features/runtime/portal-runtime";
 import { ApiError } from "@/lib/api-response";
 
+import { useAccountMutation } from "./auth-mutation";
 import { studentMeKey } from "./student-auth";
 import { teacherMeKey, useApplyPersonalAuthed } from "./teacher-auth";
 
@@ -34,29 +35,34 @@ export function PersonalViewButton({
   const navigate = useNavigate();
   const client = useQueryClient();
   const applyAuthed = useApplyPersonalAuthed();
-  const check = useMutation({
-    mutationFn: () => checkPersonalSessionApi(from),
-    onSuccess: async (session) => {
-      if (session === null) {
-        navigate(routes.portal("personal").loginPath);
-        return;
-      }
+  const check = useAccountMutation(
+    () => checkPersonalSessionApi(from),
+    async (session, operation) => {
+      operation.select(["student", "teacher"]);
       if (
-        client.getQueryData<TeacherInfo>(teacherMeKey)?.id !==
+        session &&
+        (client.getQueryData<TeacherInfo>(teacherMeKey)?.id !==
           session.teacher.id ||
-        client.getQueryData<StudentMeData>(studentMeKey)?.id !==
-          session.student.id
-      ) {
-        await applyAuthed(session);
-      }
-      navigate(to);
+          client.getQueryData<StudentMeData>(studentMeKey)?.id !==
+            session.student.id)
+      )
+        await applyAuthed(session, operation);
+      operation.assertCurrent();
+      return operation;
     },
-    onError: (error) => {
-      if (error instanceof ApiError && error.code === "UNAUTHORIZED") {
-        navigate(routes.portal("personal").loginPath);
-      }
-    },
-  });
+  );
+  const switchView = () =>
+    check.mutate(undefined, {
+      onSuccess: (session, _request, confirmation) => {
+        confirmation.confirm(() =>
+          navigate(session === null ? routes.portal("personal").loginPath : to),
+        );
+      },
+      onError: (error) => {
+        if (error instanceof ApiError && error.code === "UNAUTHORIZED")
+          navigate(routes.portal("personal").loginPath);
+      },
+    });
   return (
     <>
       <button
@@ -64,9 +70,7 @@ export function PersonalViewButton({
         type="button"
         disabled={check.isPending}
         aria-busy={check.isPending}
-        onClick={() =>
-          beforeAction ? beforeAction(() => check.mutate()) : check.mutate()
-        }
+        onClick={() => (beforeAction ? beforeAction(switchView) : switchView())}
       />
       {check.isError && (
         <span role="alert" className="text-sm text-destructive">

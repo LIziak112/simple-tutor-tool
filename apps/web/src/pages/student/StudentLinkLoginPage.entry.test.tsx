@@ -370,3 +370,69 @@ for (const change of ["B", "ABA", "same-id"] as const)
     });
     expect(links).toHaveLength(1);
   });
+
+for (const change of ["A", "same-id", "ABA", "remove-readd"] as const)
+  it(`本次提交后微任务${change}外部写不得导航或重兑`, async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(["student", "me"], A);
+    let changed = false;
+    const stop = client.getQueryCache().subscribe((event) => {
+      if (
+        event.type === "updated" &&
+        event.action.type === "success" &&
+        event.query.queryKey[0] === "student" &&
+        event.query.queryKey[1] === "me" &&
+        (event.query.state.data as StudentMeData)?.id === B.id &&
+        !changed
+      ) {
+        changed = true;
+        queueMicrotask(() => {
+          if (change === "remove-readd")
+            client.removeQueries({ queryKey: ["student", "me"], exact: true });
+          if (change === "A" || change === "ABA")
+            client.setQueryData(["student", "me"], A);
+          if (change !== "A") client.setQueryData(["student", "me"], B);
+        });
+      }
+    });
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <PortalHost>
+              <Outlet />
+            </PortalHost>
+          ),
+          children: [
+            { path: "/s/:token", element: <StudentLinkLoginPage /> },
+            { path: "/s/home", element: <p>学生首页</p> },
+          ],
+        },
+      ],
+      { initialEntries: ["/s/postcommit"] },
+    );
+    const view = render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    await ready("postcommit");
+    await answer("postcommit", B);
+    await waitFor(() => expect(changed).toBe(true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(router.state.location.pathname).toBe("/s/postcommit");
+    expect(links).toHaveLength(1);
+    expect(client.getQueryData(["student", "me"])).toEqual(
+      change === "A" ? A : B,
+    );
+    stop();
+    view.unmount();
+    client.clear();
+  });
