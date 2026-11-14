@@ -6,6 +6,8 @@ import type {
 import { type LucideIcon, MessageSquareReply } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import type { PortalRoutes } from "@/features/runtime/portal-runtime";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { aiTaskStatusLabelOf } from "./ai-queue-groups";
 import type { AiQueueAction } from "./ai-queue-queries";
 
@@ -50,6 +52,7 @@ export function attemptOriginLineOf(origin: AiAttemptOriginSummary): string {
  * （create-or-return 绝不开新卷）。缺导航键（如卷已删）→ null 呈现说明。
  */
 export function aiQueueTargetOf(
+  routes: PortalRoutes,
   task: AiTaskPublic,
   origin: AiTaskOriginSummary | undefined,
 ): string | null {
@@ -57,14 +60,14 @@ export function aiQueueTargetOf(
   switch (origin.sourceType) {
     case "assignment":
       return task.attemptId !== ""
-        ? `/s/attempts/${encodeURIComponent(task.attemptId)}`
+        ? routes.learning(`attempts/${encodeURIComponent(task.attemptId)}`)
         : null;
     case "course":
     case "wrong":
-      return `/s/attempts/${encodeURIComponent(task.attemptId)}`;
+      return routes.learning(`attempts/${encodeURIComponent(task.attemptId)}`);
     case "lesson":
       return task.attemptId !== ""
-        ? `/s/attempts/${encodeURIComponent(task.attemptId)}`
+        ? routes.learning(`attempts/${encodeURIComponent(task.attemptId)}`)
         : null;
   }
 }
@@ -116,13 +119,15 @@ export function AiQueueItem({
   onAction: (taskId: string, action: AiQueueAction) => void;
   actionPending: boolean;
 }) {
+  const routes = usePortalRoutes();
+
   const metaParts: string[] = [
     origin?.questionNo !== null && origin?.questionNo !== undefined
       ? `第 ${origin.questionNo} 题`
       : "题目已不在卷内",
   ];
   if (origin !== undefined) metaParts.push(attemptOriginLineOf(origin));
-  const target = aiQueueTargetOf(task, origin);
+  const target = aiQueueTargetOf(routes, task, origin);
   const actions: { action: AiQueueAction; label: string }[] = [];
   if (task.allowedActions.includes("cancel"))
     actions.push({ action: "cancel", label: "取消" });

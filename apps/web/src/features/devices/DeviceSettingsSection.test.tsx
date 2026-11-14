@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { Device, DeviceListData } from "@tutor/contract";
 import { StrictMode } from "react";
 import { MemoryRouter, useLocation } from "react-router";
@@ -19,6 +12,13 @@ import {
   revokeDeviceSessionsApi,
   revokeUnassignedSessionsApi,
 } from "@/lib/device-api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { DeviceSettingsSection } from "./DeviceSettingsSection";
 
 const cleanup = vi.hoisted(() => ({ student: vi.fn(), teacher: vi.fn() }));
@@ -55,7 +55,12 @@ function device(deviceId = first, patch: Partial<Device> = {}): Device {
   };
 }
 function Location() {
-  return <output aria-label="当前地址">{useLocation().pathname}</output>;
+  const location = useLocation();
+  return (
+    <output aria-label="当前地址">
+      {location.pathname + location.search + location.hash}
+    </output>
+  );
 }
 function section(
   role: "student" | "teacher" = "student",
@@ -386,7 +391,9 @@ describe("我的设备", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认移除" }));
     await waitFor(() => expect(cleanup.student).toHaveBeenCalledTimes(1));
     expect(cleanup.teacher).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("当前地址")).toHaveTextContent("/p/login");
+    expect(screen.getByLabelText("当前地址")).toHaveTextContent(
+      "/p/login?returnTo=%2Fs%2Fsettings",
+    );
     expect(client.getQueryData(["teacher", "private", "owner"])).toEqual({
       preserved: true,
     });

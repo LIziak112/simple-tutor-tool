@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import type { StudentMeData, TeacherInfo } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -10,6 +9,7 @@ import {
   loginStudentByLinkApi,
   loginTeacher,
 } from "@/lib/api";
+import { act, renderHook, waitFor } from "@/test/render-with-portal";
 import {
   studentMeKey,
   useLoginStudent,

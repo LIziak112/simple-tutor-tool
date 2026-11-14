@@ -5,12 +5,12 @@ import {
   useRef,
   useState,
 } from "react";
+import type { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { specOf } from "@/features/keyboard/key-spec";
 import type { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
 import { isKeyboardDevice } from "@/features/keyboard/keyboard-device";
+import { draftStore } from "@/features/persistence/draft-store";
 import type { AnswerCardFilter } from "./AttemptAnswerCard";
-import type { useAttemptEditor } from "./AttemptEditorContext";
-import { draftStore } from "./draft-store";
 import { focusWhenReachable } from "./focus-when-reachable";
 import {
   isActivatingTarget,

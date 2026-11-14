@@ -15,14 +15,8 @@ import {
   type AiMaterialSelection,
   captureAiQuestionMaterials,
 } from "@/features/export/ai-material-capture";
-import {
-  createStudentAiShareTicketApi,
-  createStudentAiTaskApi,
-  fetchStudentAiStatusApi,
-  listStudentAiTasksApi,
-  revokeStudentAiShareTicketsApi,
-  uploadStudentAiTaskMaterialsApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { randomUuid } from "@/lib/uuid";
 import { buildAiLinkPrompt } from "./ai-link-prompt";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
@@ -206,6 +200,15 @@ const IDLE_STATE: AiSendState = {
 };
 
 export function useAiSendController(config: UseAiSendControllerConfig) {
+  const {
+    fetchStudentAiStatusApi,
+    listStudentAiTasksApi,
+    createStudentAiTaskApi,
+    uploadStudentAiTaskMaterialsApi,
+    createStudentAiShareTicketApi,
+    revokeStudentAiShareTicketsApi,
+  } = usePortalClients();
+
   const { attemptId, questions, active } = config;
   const queryClient = useQueryClient();
   const [boundQuestionId, setBoundQuestionId] = useState<string | null>(null);
@@ -669,6 +672,9 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
       refreshStatus,
       status,
       statusQuery.isError,
+      createStudentAiShareTicketApi,
+      uploadStudentAiTaskMaterialsApi,
+      createStudentAiTaskApi,
     ],
   );
 
@@ -742,7 +748,13 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     } finally {
       sendingRef.current = false;
     }
-  }, [linkShare, boundQuestionId, attemptId, queryClient]);
+  }, [
+    linkShare,
+    boundQuestionId,
+    attemptId,
+    queryClient,
+    createStudentAiShareTicketApi,
+  ]);
 
   /** 撤销当前链接（服务端整批撤销该任务仍有效票据，幂等） */
   const revokeLink = useCallback(async () => {
@@ -774,7 +786,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     } finally {
       sendingRef.current = false;
     }
-  }, [linkShare, attemptId, queryClient]);
+  }, [linkShare, attemptId, queryClient, revokeStudentAiShareTicketsApi]);
 
   return {
     /** 作答定位（会话面板在同 key 上挂轮询观察者时构造缓存键用） */

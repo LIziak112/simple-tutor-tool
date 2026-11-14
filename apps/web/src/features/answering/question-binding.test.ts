@@ -5,7 +5,7 @@ import {
   questionTypeSchema,
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { HANDWRITTEN_TYPES } from "../attempt/answer-format";
+import { HANDWRITTEN_TYPES } from "@/features/answering/answer-format";
 import { questionBindings } from "./question-binding";
 
 /**

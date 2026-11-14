@@ -18,7 +18,7 @@ import {
   publicContentSignatureOf,
   renderQuestionBaseImage,
 } from "@/features/annotation/question-base-image";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { stableContentHash64 } from "@/lib/content-hash";
 import {
   captureQuestionSlots,

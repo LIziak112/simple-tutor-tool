@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render as renderReact,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -14,6 +7,13 @@ import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub"
 import { correctionStubDatasets } from "@/features/notes/correction-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import { fetchAttemptContextApi } from "@/lib/api";
+import {
+  fireEvent,
+  render as renderReact,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { AttemptResultView } from "./AttemptResultView";
 
 // SAI-22 起结果视图接 AI 复盘装配（查询客户端必需）；每次渲染独立 client，

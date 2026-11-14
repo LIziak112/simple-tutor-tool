@@ -1,7 +1,8 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { MEMO_KIND_LABEL } from "@tutor/contract";
 import { Button } from "@/components/ui/button";
-import { listMemosApi } from "@/lib/memo-api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 /** 单独读取本人随笔，不重新读取题面；不提供修改原始随笔的入口。 */
 export function ReviewMemoExcerpt({
   attemptId,
@@ -10,6 +11,8 @@ export function ReviewMemoExcerpt({
   attemptId: string;
   active: boolean;
 }) {
+  const { listMemosApi } = usePortalClients();
+
   const query = useInfiniteQuery({
     queryKey: ["student", "memos", "review", attemptId],
     enabled: active,

@@ -1,7 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import { LoginPage } from "./LoginPage";
 
 /**
@@ -44,13 +50,18 @@ vi.mock("@/lib/api", () => ({
   fetchStudentsApi: apiMocks.fetchStudentsApi,
 }));
 
-function renderLoginPage() {
-  const queryClient = new QueryClient({
+function CurrentPath() {
+  return <output aria-label="当前路径">{useLocation().pathname}</output>;
+}
+function renderLoginPage(
+  queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
-  });
+  }),
+) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/t/login"]}>
+        <CurrentPath />
         <Routes>
           <Route path="/t/login" element={<LoginPage />} />
           <Route path="/t" element={<p data-testid="teacher-home">教师端</p>} />
@@ -329,4 +340,108 @@ describe("LoginPage 注册入口（T2B.6：按 status.registrationOpen 显示）
       screen.queryByRole("link", { name: "注册" }),
     ).not.toBeInTheDocument();
   });
+});
+
+it("异步落点等待时外部B替换，不消费旧A成功结果导航", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  apiMocks.loginTeacher.mockResolvedValue({
+    id: "teacher-a",
+    loginName: "teacher-a",
+    isAdmin: false,
+    accountKind: "class",
+    createdAt: "2026-01-01",
+  });
+  let release: (data: { students: { id: string }[] }) => void = () => {};
+  apiMocks.fetchStudentsApi.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  renderLoginPage(cache);
+  fireEvent.change(await screen.findByLabelText("登录名"), {
+    target: { value: "teacher-a" },
+  });
+  fireEvent.change(screen.getByLabelText("密码"), {
+    target: { value: "1234abcd" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录" }));
+  await waitFor(() => expect(apiMocks.fetchStudentsApi).toHaveBeenCalled());
+  await act(async () => {
+    cache.setQueryData(["teacher", "me"], { id: "teacher-b" });
+    cache.setQueryData(["teacher", "private-b"], "B");
+    release({ students: [{ id: "student-of-a" }] });
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("账号状态已变化");
+  expect(screen.queryByTestId("student-home")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("students-list")).not.toBeInTheDocument();
+  expect(cache.getQueryData(["teacher", "me"])).toEqual({ id: "teacher-b" });
+  expect(cache.getQueryData(["teacher", "private-b"])).toBe("B");
+});
+
+it("同页第二次登录B后旧A异步落点不能借B凭据导航", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  apiMocks.loginTeacher
+    .mockResolvedValueOnce({
+      id: "teacher-a",
+      loginName: "teacher-a",
+      accountKind: "class",
+      isAdmin: false,
+      createdAt: "2026-01-01",
+    })
+    .mockResolvedValueOnce({
+      id: "teacher-b",
+      loginName: "teacher-b",
+      accountKind: "class",
+      isAdmin: false,
+      createdAt: "2026-01-01",
+    });
+  let releaseA: (value: { students: { id: string }[] }) => void = () => {},
+    releaseB: (value: { students: { id: string }[] }) => void = () => {};
+  apiMocks.fetchStudentsApi
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseA = resolve;
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseB = resolve;
+        }),
+    );
+  renderLoginPage(cache);
+  fireEvent.change(await screen.findByLabelText("登录名"), {
+    target: { value: "teacher-a" },
+  });
+  fireEvent.change(screen.getByLabelText("密码"), {
+    target: { value: "1234abcd" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录" }));
+  await waitFor(() =>
+    expect(apiMocks.fetchStudentsApi).toHaveBeenCalledTimes(1),
+  );
+  fireEvent.change(await screen.findByLabelText("登录名"), {
+    target: { value: "teacher-b" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录" }));
+  await waitFor(() =>
+    expect(apiMocks.fetchStudentsApi).toHaveBeenCalledTimes(2),
+  );
+  await act(async () => releaseA({ students: [{ id: "a-student" }] }));
+  expect(screen.getByLabelText("当前路径")).toHaveTextContent("/t/login");
+  expect(cache.getQueryData<{ id: string }>(["teacher", "me"])?.id).toBe(
+    "teacher-b",
+  );
+  await act(async () => releaseB({ students: [{ id: "b-student" }] }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("当前路径")).toHaveTextContent(
+      "/t/students/b-student",
+    ),
+  );
 });

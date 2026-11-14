@@ -1,4 +1,5 @@
-import type { MemoAnchor, MemoDevice } from "@tutor/contract";
+import type { MemoAnchor, MemoDevice, MemoKind } from "@tutor/contract";
+import type { PortalRoutes } from "@/features/runtime/portal-runtime";
 
 /** 随笔界面文案与小工具（模块 5 第一步）；纯函数，便于测试。 */
 
@@ -31,12 +32,17 @@ export function memoAnchorLabel(anchor: MemoAnchor): string | null {
 }
 
 /** 锚对应的学生端页面地址（回到当时的题 / 讲义）；无锚 null */
-export function memoAnchorHref(anchor: MemoAnchor): string | null {
+export function memoAnchorHref(
+  routes: PortalRoutes,
+  anchor: MemoAnchor,
+): string | null {
   if (anchor.kind === "question") {
-    return `/s/attempts/${encodeURIComponent(anchor.attemptId)}?q=${encodeURIComponent(anchor.questionId)}`;
+    return routes.learning(
+      `attempts/${encodeURIComponent(anchor.attemptId)}?q=${encodeURIComponent(anchor.questionId)}`,
+    );
   }
   if (anchor.kind === "lecture") {
-    return `/s/lectures/${encodeURIComponent(anchor.lectureId)}`;
+    return routes.learning(`lectures/${encodeURIComponent(anchor.lectureId)}`);
   }
   return null;
 }
@@ -52,3 +58,10 @@ export function splitMemoTagInput(raw: string): string[] {
     ),
   );
 }
+
+/** 入队失败提示里指代媒体内容的词（text 走输入框恢复，不在此列） */
+export const MEDIA_KIND_LABEL: Record<Exclude<MemoKind, "text">, string> = {
+  voice: "这段录音",
+  image: "这张图片",
+  ink: "这页手写",
+};

@@ -15,16 +15,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useStudentMe } from "@/features/auth/student-auth";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { requestErrorMessage } from "@/lib/api-response";
 import { randomUuid } from "@/lib/uuid";
 import { ReviewV2Reports } from "./ReviewV2Reports";
-import {
-  cancelReviewRun,
-  createReviewRun,
-  listReviewRuns,
-  previewReviewRun,
-  readReviewRun,
-} from "./review-v2-api";
 
 const LABELS = {
   blocked: "等待分片完成",
@@ -80,6 +74,14 @@ function ReviewV2Session({
   units: readonly { id: string; title: string }[];
   accountId: string | null;
 }) {
+  const {
+    listReviewRuns,
+    previewReviewRun,
+    createReviewRun,
+    readReviewRun,
+    cancelReviewRun,
+  } = usePortalClients();
+
   const [open, setOpen] = useState(false),
     [busy, setBusy] = useState(false);
   const [scope, setScope] = useState(initialScope),
@@ -121,7 +123,7 @@ function ReviewV2Session({
       current.abort();
       window.clearInterval(timer);
     };
-  }, [attemptId, open, accountId]);
+  }, [attemptId, open, accountId, listReviewRuns]);
   async function create() {
     const signal = controller.current?.signal;
     if (

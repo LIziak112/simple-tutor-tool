@@ -1,11 +1,11 @@
+import { expect, it, vi } from "vitest";
 import {
   act,
   render,
   renderHook,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 
 const { scope, backend } = vi.hoisted(() => ({
   scope: {

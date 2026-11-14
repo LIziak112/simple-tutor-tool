@@ -24,7 +24,19 @@ import {
   fetchTeacherNoteDocumentApi,
   fetchTeacherNoteEvidenceApi,
 } from "@/lib/api";
-import { fetchNoteDocumentApi, fetchNoteEvidenceApi } from "./note-endpoints";
+import { createHttpRuntime } from "@/portals/clients/http-runtime";
+import { createPlatformClient } from "@/portals/clients/platform-client";
+import { createSubjectScope } from "@/portals/subject-scope";
+import { testClientServices } from "@/test/portal-fixture";
+
+const { fetchNoteDocumentApi, fetchNoteEvidenceApi } = createPlatformClient(
+  createHttpRuntime(
+    createSubjectScope({ type: "student", id: "test" }, (...args) =>
+      globalThis.fetch(...args),
+    ),
+  ),
+  () => testClientServices,
+);
 
 const studentEvidence = vi.mocked(fetchStudentNoteEvidenceApi);
 const teacherEvidence = vi.mocked(fetchTeacherNoteEvidenceApi);

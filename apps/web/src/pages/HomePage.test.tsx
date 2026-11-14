@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData, TeacherInfo } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +8,7 @@ import {
   fetchStudentMe,
   fetchTeacherMe,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { HomePage } from "./HomePage";
 
 /**
@@ -93,7 +93,7 @@ describe("HomePage 登录入口面板", () => {
     );
   });
 
-  it("个人账号已登录（两侧会话同在）→ 个人学习直达 /s/home，其他登录端口保持可达", async () => {
+  it("个人账号已登录（两侧会话同在）→ 个人学习直达 /p/learn/home，其他登录端口保持可达", async () => {
     mockedStudentMe.mockResolvedValue({
       ...STUDENT,
       displayName: "小考",
@@ -111,7 +111,7 @@ describe("HomePage 登录入口面板", () => {
     await waitFor(() => {
       expect(screen.getByRole("link", { name: /个人学习/ })).toHaveAttribute(
         "href",
-        "/s/home",
+        "/p/learn/home",
       );
     });
     const link = screen.getByRole("link", { name: /个人学习/ });

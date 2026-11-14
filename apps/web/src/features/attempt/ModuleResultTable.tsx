@@ -10,7 +10,7 @@ import { cn } from "cn";
 import { ChevronDown, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { QUESTION_TYPE_LABELS } from "./answer-format";
+import { QUESTION_TYPE_LABELS } from "@/features/answering/answer-format";
 import { formatTimeLimit } from "./attempt-clock";
 import type { ModuleResultStats } from "./module-result-model";
 import { formatActivitySec } from "./QuestionActivity";

@@ -1,4 +1,3 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { memo } from "react";
 import { expect, it, vi } from "vitest";
 import {
@@ -8,7 +7,8 @@ import {
   useDraftSyncActions,
   useDraftSyncContext,
   useDraftSyncRecovery,
-} from "./use-draft-sync";
+} from "@/features/persistence/use-draft-sync";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 
 function api(): DraftSyncApi {
   return {

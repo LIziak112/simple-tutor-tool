@@ -47,6 +47,10 @@ jobs:
         run: node --test scripts/governance-invariants.spec.mjs
       - name: 治理不变量闸门
         run: node scripts/governance-invariants.mjs
+      - name: 门户架构闸门回归
+        run: node --test scripts/portal-boundaries.spec.mjs
+      - name: 门户架构闸门（全量，说明改动也不可跳过）
+        run: node scripts/portal-boundaries.mjs
       - name: 文件规模闸门回归
         run: node --test scripts/file-size-guard.spec.mjs
       # AGENTS.md §五：全仓 1000 行硬线 + 历史基线只降不升（scripts/file-size-baseline.json）；

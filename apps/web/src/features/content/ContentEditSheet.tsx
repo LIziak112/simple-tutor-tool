@@ -22,16 +22,11 @@ import { parseApiIssues } from "@/features/content/api-issues";
 import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
+import { MarkdownEditor } from "@/features/content/MarkdownEditor";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { PublishConfirmDialog } from "@/features/shared/PublishConfirmDialog";
-import {
-  ApiError,
-  fetchLectureDetail,
-  fetchQuestionDetail,
-  updateLecture,
-  updateQuestion,
-} from "@/lib/api";
-import { MarkdownEditor } from "@/pages/teacher/MarkdownEditor";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * 题目/讲义编辑抽屉（T1.12）：
@@ -69,6 +64,8 @@ export function QuestionEditSheet({
   questionId,
   onClose,
 }: QuestionEditSheetProps) {
+  const { fetchQuestionDetail, updateQuestion } = usePortalClients();
+
   const queryClient = useQueryClient();
   const detailQuery = useQuery({
     queryKey: ["teacher", "question", questionId] as const,
@@ -326,6 +323,8 @@ export function LectureEditSheet({
   lectureId,
   onClose,
 }: LectureEditSheetProps) {
+  const { fetchLectureDetail, updateLecture } = usePortalClients();
+
   const queryClient = useQueryClient();
   const detailQuery = useQuery({
     queryKey: ["teacher", "lecture", lectureId] as const,

@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, TriangleAlert, UserRoundPlus } from "lucide-react";
 import { type FormEvent, useState } from "react";
@@ -6,13 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useRegisterTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
-import { resolveTeacherLanding } from "@/features/students/teacher-landing";
-import { ApiError } from "@/lib/api";
+import { usePortalRuntime } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /t/register 教师自助注册页（T2B.6，D3 来源一）。
@@ -28,6 +29,9 @@ import { ApiError } from "@/lib/api";
  */
 
 export function RegisterPage() {
+  const { teacherLandingAfterAuth } = usePortalRuntime();
+  const cache = useQueryClient();
+
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
@@ -86,11 +90,18 @@ export function RegisterPage() {
     registerMutation.mutate(
       { loginName: parsedName.data, password },
       {
-        onSuccess: async () =>
-          navigate(
-            safeReturnTo(returnTo, "teacher", await resolveTeacherLanding()),
-            { replace: true },
-          ),
+        onSuccess: async (teacher, _request, confirmation) => {
+          const landing = await teacherLandingAfterAuth(
+            teacher,
+            cache,
+            confirmation,
+          );
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "teacher", landing), {
+              replace: true,
+            }),
+          );
+        },
       },
     );
   }

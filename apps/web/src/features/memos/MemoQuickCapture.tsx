@@ -14,6 +14,7 @@ import {
   type LearningSource,
 } from "@/features/learning-context/learning-context-store";
 import { LearningPrincipalContext } from "@/features/learning-context/learning-principal";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { MemoComposer } from "./MemoComposer";
 import { useMemoOutbox } from "./memo-outbox";
 
@@ -143,10 +144,12 @@ export function MemoQuickCaptureButton({
 
 /** 普通页面右下角的浮动按钮；随笔页本身有常驻记录端，不再叠加。 */
 export function MemoQuickCapture() {
+  const routes = usePortalRoutes();
+
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const pending = useMemoOutbox().length;
-  if (location.pathname.startsWith("/s/memos")) return null;
+  if (location.pathname.startsWith(routes.learning("memos"))) return null;
   return (
     <>
       <button

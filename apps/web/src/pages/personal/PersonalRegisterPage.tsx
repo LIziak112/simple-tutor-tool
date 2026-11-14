@@ -11,8 +11,8 @@ import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
 import { useRegisterPersonal } from "@/features/auth/personal-auth";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import { useTeacherStatus } from "@/features/auth/teacher-auth";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /p/register 个人学习账号自助注册（模块 0，Q7 定案 b：邀请码）。
@@ -95,8 +95,10 @@ export function PersonalRegisterPage() {
           : {}),
       },
       {
-        onSuccess: () =>
-          navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+        onSuccess: (_data, _request, confirmation) =>
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+          ),
       },
     );
   }

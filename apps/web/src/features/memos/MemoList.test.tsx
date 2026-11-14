@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type { Memo, MemoListData } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +9,15 @@ import {
   listMemosApi,
   MemoNetworkError,
 } from "@/lib/memo-api";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import { MemoList } from "./MemoList";
 import {
   bindMemoOutboxAccount,
@@ -92,7 +93,7 @@ beforeEach(async () => {
   mockedList.mockReset();
   mockedCreate.mockReset();
   installMemoOutboxBackendForTest(memoryKVBackend());
-  await bindMemoOutboxAccount("stu-test");
+  await bindMemoOutboxAccount("stu-test", testClientServices);
 });
 
 afterEach(() => {

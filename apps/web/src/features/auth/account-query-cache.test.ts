@@ -7,7 +7,9 @@ describe("入口身份门与角色缓存清理", () => {
     const client = new QueryClient();
     client.setQueryData(["student", "new"], "B");
     const cancel = vi.spyOn(client, "cancelQueries");
-    await clearAccountQueries(client, "student", () => false);
+    await expect(
+      clearAccountQueries(client, "student", () => false),
+    ).rejects.toMatchObject({ name: "AuthCancelledError" });
     expect(cancel).not.toHaveBeenCalled();
     expect(client.getQueryData(["student", "new"])).toBe("B");
   });
@@ -25,7 +27,7 @@ describe("入口身份门与角色缓存清理", () => {
     current = false;
     client.setQueryData(["student", "new-b"], "B");
     finish();
-    await old;
+    await expect(old).rejects.toMatchObject({ name: "AuthCancelledError" });
     expect(client.getQueryData(["student", "new-b"])).toBe("B");
   });
   it("旧调用不传门时仍清本角色数据，保留me与其他角色", async () => {
@@ -38,4 +40,22 @@ describe("入口身份门与角色缓存清理", () => {
     expect(client.getQueryData(["student", "me"])).toBe("me");
     expect(client.getQueryData(["teacher", "private"])).toBe("teacher");
   });
+});
+
+it("first实际删除通知切B后，预选second的新B缓存不得删除", async () => {
+  const client = new QueryClient();
+  client.setQueryData(["student", "me"], { id: "a" });
+  client.setQueryData(["student", "first"], "a");
+  client.setQueryData(["student", "second"], "a");
+  const stop = client.getQueryCache().subscribe((event) => {
+    if (event.type === "removed" && event.query.queryKey[1] === "first") {
+      client.setQueryData(["student", "me"], { id: "b" });
+      client.setQueryData(["student", "second"], "B");
+    }
+  });
+  await clearAccountQueries(client, "student").catch(() => {});
+  expect(client.getQueryData(["student", "me"])).toEqual({ id: "b" });
+  expect(client.getQueryData(["student", "second"])).toBe("B");
+  stop();
+  client.clear();
 });

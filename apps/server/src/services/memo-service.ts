@@ -18,7 +18,7 @@ import {
   MEMO_VOICE_MAX_BYTES,
   normalizeMemoTags,
 } from "@tutor/contract";
-import { and, eq, max } from "drizzle-orm";
+import { and, eq, isNull, max } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { memos } from "../db/schema";
 import { writeFileAtomic } from "../lib/blob-io";
@@ -28,6 +28,7 @@ import { resolveAgentMemoAnchor } from "./memo-anchor";
 import { assertMemoMetadataBudget } from "./memo-budget";
 import { memoAnchorFromContext, resolveMemoContext } from "./memo-context";
 import { detectMemoMediaFormat } from "./memo-format";
+import { assertMemoOperation, memoOperationDigest } from "./memo-operation";
 import { MEMO_BLOB_DIR, type MemoRow, toMemo } from "./memo-read";
 
 /**
@@ -39,7 +40,7 @@ import { MEMO_BLOB_DIR, type MemoRow, toMemo } from "./memo-read";
  *   （created=false），离线补传 / 重试不产生重复；
  * - 媒体：格式只认内容（memo-format），语音 ≤ 20 MB、图片 / 手写 ≤ 10 MB，内容
  *   寻址落盘 blobs/memos/<sha256>.<ext>，同内容幂等跳过写入、软删不删 blob；
- * - 默认仅本人：所有写入以 studentId 为域；教师侧没有任何入口；
+ * - 默认仅本人：所有写入以 studentId 为域；教师侧只读显式分享；
  * - Agent 转记（source=agent）：锚经 memo-anchor 核对本人可见后生成 label。
  */
 
@@ -79,6 +80,8 @@ interface InsertInput {
   readonly recordedAt: string | undefined;
   readonly context?: LearningContext;
   readonly deviceId?: string;
+  readonly parentMemoSeq?: number;
+  readonly agentRequestDigest?: string;
 }
 
 /** 创建结果：created=false 表示命中幂等键、返回的是已有那条 */
@@ -107,6 +110,7 @@ function insertMemoRow(
   assertMemoMetadataBudget(input);
   const existing = existingByClientId(db, input.studentId, input.clientId);
   if (existing !== undefined) {
+    assertMemoOperation(existing, input.agentRequestDigest);
     return { memo: toMemo(existing), created: false };
   }
   const context = resolveMemoContext(
@@ -156,6 +160,8 @@ function insertMemoRow(
   const row: MemoRow = {
     id: crypto.randomUUID(),
     seq,
+    parentMemoSeq: input.parentMemoSeq ?? null,
+    agentRequestDigest: input.agentRequestDigest ?? null,
     contextJson:
       context === null ? null : JSON.stringify({ ...context, deviceId }),
     deviceId,
@@ -184,7 +190,10 @@ function insertMemoRow(
   } catch (err) {
     // 并发补传撞唯一键：按幂等语义返回先落的那条
     const raced = existingByClientId(db, input.studentId, input.clientId);
-    if (raced !== undefined) return { memo: toMemo(raced), created: false };
+    if (raced !== undefined) {
+      assertMemoOperation(raced, input.agentRequestDigest);
+      return { memo: toMemo(raced), created: false };
+    }
     throw err;
   }
   return { memo: toMemo(row), created: true };
@@ -302,7 +311,7 @@ export function createMediaMemo(
 
 // ---------- Agent 转记（MCP） ----------
 
-/** Agent 经 MCP 代为转记：source=agent、device=agent；每次调用是新的一条（clientId 服务端生成） */
+/** Agent 经 MCP 代为转记：source=agent、device=agent；有 operationId 时按操作幂等，省略保留旧行为 */
 export function createAgentMemo(
   db: Db,
   studentId: string,
@@ -310,6 +319,31 @@ export function createAgentMemo(
   now: Date = new Date(),
 ): Memo {
   assertMemoMetadataBudget(input);
+  const digest = memoOperationDigest(input);
+  // 重试即使父条目已软删仍取回原回执，但所有命中路径都必须核验原请求。
+  if (input.operationId !== undefined) {
+    const existing = existingByClientId(db, studentId, input.operationId);
+    if (existing !== undefined) {
+      assertMemoOperation(existing, digest);
+      return toMemo(existing);
+    }
+  }
+  if (
+    input.parentMemoSeq !== undefined &&
+    !db
+      .select({ id: memos.id })
+      .from(memos)
+      .where(
+        and(
+          eq(memos.studentId, studentId),
+          eq(memos.seq, input.parentMemoSeq),
+          isNull(memos.deletedAt),
+        ),
+      )
+      .get()
+  ) {
+    throw new HttpError(404, "MEMO_NOT_FOUND", "关联随笔不存在");
+  }
   const anchor =
     input.anchor === undefined
       ? MEMO_ANCHOR_NONE
@@ -318,7 +352,11 @@ export function createAgentMemo(
     db,
     {
       studentId,
-      clientId: crypto.randomUUID(),
+      clientId: input.operationId ?? crypto.randomUUID(),
+      agentRequestDigest: digest,
+      ...(input.parentMemoSeq === undefined
+        ? {}
+        : { parentMemoSeq: input.parentMemoSeq }),
       kind: "text",
       text: input.text,
       media: null,

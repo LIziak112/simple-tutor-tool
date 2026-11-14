@@ -7,17 +7,17 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
-  OptionComparisonList,
-  optionCorrectOf,
-  optionPickedOf,
-} from "@/features/answering/views/choice";
-import {
   formatReferenceAnswers,
   formatStudentAnswer,
   HANDWRITTEN_TYPES,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-} from "@/features/attempt/answer-format";
+} from "@/features/answering/answer-format";
+import {
+  OptionComparisonList,
+  optionCorrectOf,
+  optionPickedOf,
+} from "@/features/answering/views/choice";
 import { responseTimeLabel } from "@/features/attempt/attempt-time-label";
 import { ReviewFactDetails } from "@/features/attempt/ReviewFactDetails";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";

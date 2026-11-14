@@ -18,7 +18,7 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
  *   是以后（模块 5 第二步）的派生版本，不改原文；
  * - 每条自动带**上下文锚**（记录时在哪道题 / 哪篇讲义，或无锚）与可选标签
  *   （易错 / 疑问 / 待办 …，≤ 5 个）；锚只是回链，不参与权限；
- * - **默认仅本人**：教师接口不存在随笔的任何投影；Agent 经本人 token
+ * - **默认仅本人**：未逐条授权时教师不可见；Agent 经本人 token
  *   （学生 / 个人 MCP）可读本人随笔、可代为转记（source=agent）；
  * - 媒体（语音 / 图片 / 手写 PNG）按内容寻址存 blobs/memos/<sha256>.<ext>，
  *   格式只认文件内容；语音原格式落盘不转码（线上无 ffmpeg），转写在 Agent 侧；
@@ -46,6 +46,14 @@ export const MEMO_METADATA_LIMIT_MESSAGE =
 /** 单个标签长度上限（字符）与每条标签个数上限 */
 export const MEMO_TAG_MAX = 20;
 export const MEMO_TAGS_MAX = 5;
+/** 快捷标签只在契约定义，所有输入仍受相同数量与长度限制。 */
+export const MEMO_PRESET_TAGS = [
+  "易错",
+  "疑问",
+  "待办",
+  "灵感",
+  "复习",
+] as const;
 /** 语音：单条 ≤ 20 MB、≤ 10 分钟（Q16 默认取法） */
 export const MEMO_VOICE_MAX_BYTES = 20 * 1024 * 1024;
 export const MEMO_VOICE_MAX_SECONDS = 600;
@@ -162,6 +170,7 @@ export const memoSchema = z.object({
   id: z.uuid(),
   /** 本人递增序号；可选以兼容旧服务端与离线缓存。新写入始终有值。 */
   seq: z.number().int().positive().optional(),
+  parentMemoSeq: z.number().int().positive().nullable().optional(),
   context: learningContextSchema.nullable().optional(),
   deviceId: z.uuid().nullable().optional(),
   kind: memoKindSchema,
@@ -219,6 +228,9 @@ export type MemoCreateMedia = z.infer<typeof memoCreateMediaSchema>;
 
 /** GET /api/student/memos 查询：时间倒序、游标分页、可按形态 / 标签 / 锚过滤 */
 export const memoListQuerySchema = z.object({
+  seq: z.coerce.number().int().positive().optional(),
+  questionId: learningContentIdSchema.optional(),
+  parentMemoSeq: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   /** 上一页返回的 nextCursor */
   cursor: z.string().min(1).max(200).optional(),
@@ -245,6 +257,9 @@ export type MemoListData = z.infer<typeof memoListDataSchema>;
  * 标题生成。
  */
 export const memoAgentCreateSchema = z.object({
+  /** 同一操作重试复用此 UUID；省略时保留旧客户端每次新增行为。 */
+  operationId: z.uuid().optional(),
+  parentMemoSeq: z.number().int().positive().optional(),
   text: z.string().trim().min(1).max(MEMO_TEXT_MAX),
   tags: memoTagsSchema.optional(),
   anchor: z

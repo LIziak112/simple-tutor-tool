@@ -62,6 +62,7 @@ describe("fetchTeacherInkStrokesApi（T3.3）", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/teacher/ink/${INK_ID}.json.gz`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 

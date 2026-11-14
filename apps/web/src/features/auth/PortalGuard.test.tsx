@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { PortalGuard } from "./PortalGuard";
 
 function Location() {

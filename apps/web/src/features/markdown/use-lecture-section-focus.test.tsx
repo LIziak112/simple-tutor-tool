@@ -1,5 +1,5 @@
-import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render } from "@/test/render-with-portal";
 import { useLectureSectionFocus } from "./use-lecture-section-focus";
 
 /**

@@ -1,23 +1,23 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ImportPreviewData } from "@tutor/contract";
+import { Suspense } from "react";
+import { MemoryRouter } from "react-router";
+import { afterEach, expect, it, vi } from "vitest";
+import { commitImport, previewImport } from "@/lib/api";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import type { ImportPreviewData } from "@tutor/contract";
-import { Suspense } from "react";
-import { MemoryRouter } from "react-router";
-import { afterEach, expect, it, vi } from "vitest";
-import { commitImport, previewImport } from "@/lib/api";
+} from "@/test/render-with-portal";
 import { SingleImportPreview } from "./SingleImportPreview";
 
 const previewState = vi.hoisted(() => ({
   blockedSource: null as string | null,
   pending: null as Promise<void> | null,
 }));
-vi.mock("./MarkdownEditor", () => ({
+vi.mock("@/features/content/MarkdownEditor", () => ({
   MarkdownEditor: ({
     value,
     onChange,

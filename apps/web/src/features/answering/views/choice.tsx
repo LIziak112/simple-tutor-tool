@@ -6,9 +6,12 @@ import type {
 import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
+import {
+  formatReferenceAnswers,
+  letterOf,
+} from "@/features/answering/answer-format";
+import type { QuestionCompletion } from "@/features/answering/question-completion";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { formatReferenceAnswers, letterOf } from "../../attempt/answer-format";
-import type { QuestionCompletion } from "../../attempt/question-completion";
 import type {
   AnswerKindView,
   PreparedOf,

@@ -1,7 +1,9 @@
 import type { AiShareAccessStatusData } from "@tutor/contract";
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ApiError, fetchStudentAiShareAccessStatusApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { formatSnapshotTime } from "./AiConversationPanel";
 import { buildAiLinkPrompt } from "./ai-link-prompt";
 import {
@@ -83,6 +85,8 @@ export function AiLinkShareBox({
   onRevoke: () => void;
   onRetryCopy: () => void;
 }) {
+  const { fetchStudentAiShareAccessStatusApi } = usePortalClients();
+
   const [degrade, setDegrade] = useState<DegradeState>(DEGRADE_IDLE);
   const prompt = useMemo(() => buildAiLinkPrompt(link.url), [link.url]);
   const [accessStatus, setAccessStatus] =

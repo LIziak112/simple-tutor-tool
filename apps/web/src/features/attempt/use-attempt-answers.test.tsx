@@ -1,13 +1,14 @@
-import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { saveDraftAnswer } from "./attempt-queries";
 import {
   draftStore,
   getDraftPersistenceState,
   installDraftBackend,
   type KVBackend,
   memoryBackend,
-} from "./draft-store";
+} from "@/features/persistence/draft-store";
+import { testClientServices } from "@/test/portal-fixture";
+import { act, renderHook } from "@/test/render-with-portal";
+import { saveDraftAnswer } from "./attempt-queries";
 import { useAttemptAnswers } from "./use-attempt-answers";
 
 vi.mock("./attempt-queries", () => ({
@@ -31,10 +32,15 @@ it("交卷flush立即提交600ms防抖窗内最新答案，之后不再迟到PUT
   );
   expect(save).not.toHaveBeenCalled();
   await act(async () => result.current.flush());
-  expect(save).toHaveBeenCalledExactlyOnceWith("fast-submit", "q", {
-    kind: "fill",
-    values: ["6"],
-  });
+  expect(save).toHaveBeenCalledExactlyOnceWith(
+    testClientServices,
+    "fast-submit",
+    "q",
+    {
+      kind: "fill",
+      values: ["6"],
+    },
+  );
   await act(async () => vi.advanceTimersByTimeAsync(1000));
   expect(save).toHaveBeenCalledOnce();
 });
@@ -83,10 +89,15 @@ it("flush等待旧在途请求后再提交新答案，旧回执不覆写本机�
     done?.();
     await flushing;
   });
-  expect(save).toHaveBeenLastCalledWith("inflight-submit", "q", {
-    kind: "fill",
-    values: ["7"],
-  });
+  expect(save).toHaveBeenLastCalledWith(
+    testClientServices,
+    "inflight-submit",
+    "q",
+    {
+      kind: "fill",
+      values: ["7"],
+    },
+  );
   expect((await draftStore.loadDraft("inflight-submit"))?.answers.q).toEqual({
     kind: "fill",
     values: ["7"],
@@ -110,10 +121,15 @@ it("flushQuestionLocal取消该题防抖立即保存并等待本机落盘，不�
   });
   expect(ok).toBe(true);
   // 只立即保存 q8；q19 仍在防抖窗内不受影响
-  expect(save).toHaveBeenCalledExactlyOnceWith("q-local", "q8", {
-    kind: "fill",
-    values: ["8"],
-  });
+  expect(save).toHaveBeenCalledExactlyOnceWith(
+    testClientServices,
+    "q-local",
+    "q8",
+    {
+      kind: "fill",
+      values: ["8"],
+    },
+  );
   // 本机已写后端（IndexedDB 写完成，非仅内存）
   expect(getDraftPersistenceState("q-local")).toBe("saved");
   expect((await draftStore.loadDraft("q-local"))?.answers.q8).toEqual({
@@ -122,7 +138,7 @@ it("flushQuestionLocal取消该题防抖立即保存并等待本机落盘，不�
   });
   await act(async () => vi.advanceTimersByTimeAsync(1000));
   expect(save).toHaveBeenCalledTimes(2); // q19 防抖到期照常保存
-  expect(save).toHaveBeenLastCalledWith("q-local", "q19", {
+  expect(save).toHaveBeenLastCalledWith(testClientServices, "q-local", "q19", {
     kind: "fill",
     values: ["19"],
   });
@@ -166,16 +182,18 @@ it("flushQuestionLocal本机写失败返回false（IndexedDB 异常不放行切�
 
 it("flushQuestion等待该题在途请求并确认服务端同步，不等其他题在途", async () => {
   let releaseQ19: (() => void) | undefined;
-  save.mockImplementation(async (_attemptId: string, questionId: string) => {
-    if (questionId === "q19") {
-      return new Promise<Awaited<ReturnType<typeof saveDraftAnswer>>>(
-        (resolve) => {
-          releaseQ19 = () => resolve({ questionId, changeCount: 1 });
-        },
-      );
-    }
-    return { questionId, changeCount: 1 };
-  });
+  save.mockImplementation(
+    async (_clients, _attemptId: string, questionId: string) => {
+      if (questionId === "q19") {
+        return new Promise<Awaited<ReturnType<typeof saveDraftAnswer>>>(
+          (resolve) => {
+            releaseQ19 = () => resolve({ questionId, changeCount: 1 });
+          },
+        );
+      }
+      return { questionId, changeCount: 1 };
+    },
+  );
   const { result } = renderHook(() => useAttemptAnswers("per-q", drafts));
   act(() => result.current.setAnswer("q19", { kind: "fill", values: ["19"] }));
   act(() =>
@@ -187,7 +205,7 @@ it("flushQuestion等待该题在途请求并确认服务端同步，不等其他
   });
   // q8 已确认同步（防抖取消+该题在途追平）；q19 在途请求未被等待
   expect(ok).toBe(true);
-  expect(save).toHaveBeenLastCalledWith("per-q", "q8", {
+  expect(save).toHaveBeenLastCalledWith(testClientServices, "per-q", "q8", {
     kind: "fill",
     values: ["8"],
   });

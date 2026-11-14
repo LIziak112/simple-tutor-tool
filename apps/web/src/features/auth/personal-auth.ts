@@ -1,13 +1,13 @@
-import { useMutation } from "@tanstack/react-query";
 import type { AccountKind, PersonalSessionRole } from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import {
-  loginPersonalApi,
-  logoutPersonalApi,
-  registerPersonalApi,
-} from "./personal-api";
-import { useClearStudentSession } from "./student-auth";
-import { useApplyPersonalAuthed, useClearTeacherSession } from "./teacher-auth";
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+
+import { useApplyIdentity } from "./auth-apply";
+import { useClearIdentitySessions } from "./auth-clear";
+import { useAccountMutation } from "./auth-mutation";
 
 /**
  * 个人账号登录状态（模块 0）：个人账号 = 一条教师行 + 一条绑定学习者行、两枚会话
@@ -18,20 +18,22 @@ import { useApplyPersonalAuthed, useClearTeacherSession } from "./teacher-auth";
 
 /** 邀请码自助注册（成功即双会话登录） */
 export function useRegisterPersonal() {
-  const applyAuthed = useApplyPersonalAuthed();
-  return useMutation({
-    mutationFn: registerPersonalApi,
-    onSuccess: applyAuthed,
-  });
+  const { registerPersonalApi } = usePortalClients();
+
+  const apply = useApplyIdentity();
+  return useAccountMutation(registerPersonalApi, (session, operation) =>
+    apply(session, undefined, operation),
+  );
 }
 
 /** 个人账号登录 */
 export function useLoginPersonal() {
-  const applyAuthed = useApplyPersonalAuthed();
-  return useMutation({
-    mutationFn: loginPersonalApi,
-    onSuccess: applyAuthed,
-  });
+  const { loginPersonalApi } = usePortalClients();
+
+  const apply = useApplyIdentity();
+  return useAccountMutation(loginPersonalApi, (session, operation) =>
+    apply(session, undefined, operation),
+  );
 }
 
 /** 服务端只结束属于本人的会话，按实际结束的角色清理缓存。 */
@@ -39,21 +41,15 @@ export function useLogoutPersonal(
   role: PersonalSessionRole,
   onLoggedOut?: () => void,
 ) {
-  const clearStudent = useClearStudentSession();
-  const clearTeacher = useClearTeacherSession();
-  return useMutation({
-    mutationFn: () => logoutPersonalApi(role),
-    onSuccess: async ({ paired }) => {
-      await Promise.all([
-        role === "student" || paired
-          ? clearStudent(role === "student" ? onLoggedOut : undefined)
-          : undefined,
-        role === "teacher" || paired
-          ? clearTeacher(role === "teacher" ? onLoggedOut : undefined)
-          : undefined,
-      ]);
-    },
-  });
+  const { logoutPersonalApi } = usePortalClients();
+
+  const clear = useClearIdentitySessions();
+  return useAccountMutation(
+    () => logoutPersonalApi(role),
+    ({ paired }, operation) =>
+      clear(paired ? ["student", "teacher"] : [role], onLoggedOut, operation),
+    [role],
+  );
 }
 
 /** 身份查询在退出时先清空，外层守卫保留最近一次确认的账号类型。 */
@@ -61,9 +57,13 @@ export function useAccountLoginPath(
   kind: AccountKind | undefined,
   fallback: string,
 ) {
+  const routes = usePortalRoutes();
+
   const lastKind = useRef(kind);
   useEffect(() => {
     if (kind !== undefined) lastKind.current = kind;
   }, [kind]);
-  return (kind ?? lastKind.current) === "personal" ? "/p/login" : fallback;
+  return (kind ?? lastKind.current) === "personal"
+    ? routes.portal("personal").loginPath
+    : fallback;
 }

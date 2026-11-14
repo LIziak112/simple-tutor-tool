@@ -3,7 +3,7 @@ import type {
   PracticeQuestionProgress,
   StudentAnswer,
 } from "@tutor/contract";
-import { getQuestionCompletion } from "./question-completion";
+import { getQuestionCompletion } from "@/features/answering/question-completion";
 /** 答题卡与提交遗漏统计共用同一完成度派生。 */
 export function attemptNavigationItemsOf({
   flatQuestions,

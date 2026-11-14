@@ -38,9 +38,9 @@ const HANDWRITTEN_USE =
 
 describe("I16 守护：迁移后宿主无答案 kind/题型字面量分支", () => {
   it.each([
-    "src/features/attempt/QuestionSurface.tsx",
+    "src/features/answering/QuestionSurface.tsx",
     "src/features/attempt/ResultAnswerComparison.tsx",
-    "src/features/attempt/question-completion.ts",
+    "src/features/answering/question-completion.ts",
     "src/features/attempt/AttemptResultParts.tsx",
     "src/features/student/wrong-questions-ui.tsx",
     "src/features/teacher-attempts/AttemptDetailQuestionCard.tsx",
@@ -77,7 +77,7 @@ describe("I16 守护：迁移后宿主无答案 kind/题型字面量分支", () 
   );
 
   it("answer-format 兼容代理无 kind 分支（UA-01 起单行委托）", () => {
-    const source = sourceOf("src/features/attempt/answer-format.ts");
+    const source = sourceOf("src/features/answering/answer-format.ts");
     expect(ANSWER_KIND_BRANCH.test(source)).toBe(false);
   });
 });

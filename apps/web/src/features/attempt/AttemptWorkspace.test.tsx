@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 
 vi.mock("@/features/student/student-workspace-layout", () => ({

@@ -1,16 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { StudentMeData } from "@tutor/contract";
+import { StrictMode } from "react";
+import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { currentDraftSession } from "@/features/persistence/draft-store";
+import { PortalHost } from "@/portals/PortalHost";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import type { StudentMeData } from "@tutor/contract";
-import { StrictMode } from "react";
-import { createMemoryRouter, RouterProvider } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { currentDraftSession } from "@/features/attempt/draft-store";
+} from "@/test/render-with-portal";
 import StudentLinkLoginPage from "./StudentLinkLoginPage";
 
 function deferred<T>() {
@@ -238,3 +239,200 @@ describe("专属链接真实页面入口生命周期（StrictMode，真实RPC/fe
     expect(second.client.getQueryData(["student", "me"])).toEqual(B);
   });
 });
+
+it("真实宿主主体切换后完成链接登录，不因新端口再次兑换同token", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  client.setQueryData(["student", "me"], A);
+  const router = createMemoryRouter(
+    [
+      {
+        element: (
+          <PortalHost>
+            <Outlet />
+          </PortalHost>
+        ),
+        children: [
+          { path: "/s/:token", element: <StudentLinkLoginPage /> },
+          { path: "/s/home", element: <p>学生首页</p> },
+        ],
+      },
+    ],
+    { initialEntries: ["/s/link-real-host"] },
+  );
+  render(
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+  await ready("link-real-host");
+  await answer("link-real-host", B);
+  await home();
+  expect(client.getQueryData(["student", "me"])).toEqual(B);
+  expect(links).toHaveLength(1);
+});
+it("入口等待清理时外部主体已切换，不把旧兑换应用到新主体", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  client.setQueryData(["student", "me"], A);
+  const gate = deferred<void>();
+  const cancel = vi
+    .spyOn(client, "cancelQueries")
+    .mockImplementationOnce(() => gate.promise);
+  const router = createMemoryRouter(
+    [
+      {
+        element: (
+          <PortalHost>
+            <Outlet />
+          </PortalHost>
+        ),
+        children: [
+          { path: "/s/:token", element: <StudentLinkLoginPage /> },
+          { path: "/s/home", element: <p>学生首页</p> },
+        ],
+      },
+    ],
+    { initialEntries: ["/s/link-external"] },
+  );
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  await ready("link-external");
+  await answer("link-external", A);
+  await waitFor(() => expect(cancel).toHaveBeenCalled());
+  await act(async () => {
+    client.setQueryData(["student", "me"], B);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    gate.resolve();
+  });
+  expect(client.getQueryData(["student", "me"])).toEqual(B);
+  expect(links).toHaveLength(1);
+});
+
+for (const change of ["B", "ABA", "same-id"] as const)
+  it(`同事件${change}身份更新不被旧入口清理或覆盖`, async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(["student", "me"], A);
+    const gate = deferred<void>();
+    const cancel = vi
+      .spyOn(client, "cancelQueries")
+      .mockImplementationOnce(() => gate.promise);
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <PortalHost>
+              <Outlet />
+            </PortalHost>
+          ),
+          children: [
+            { path: "/s/:token", element: <StudentLinkLoginPage /> },
+            { path: "/s/home", element: <p>学生首页</p> },
+          ],
+        },
+      ],
+      { initialEntries: ["/s/link-external"] },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    await ready("link-external");
+    await answer("link-external", A);
+    await waitFor(() => expect(cancel).toHaveBeenCalled());
+    await act(async () => {
+      client.setQueryData(["student", "me"], change === "same-id" ? A : B);
+      if (change === "ABA") client.setQueryData(["student", "me"], A);
+      client.setQueryData(["student", "current-private"], { preserved: true });
+      gate.resolve();
+    });
+
+    expect(client.getQueryData(["student", "me"])).toEqual(
+      change === "B" ? B : A,
+    );
+    expect(client.getQueryData(["student", "current-private"])).toEqual({
+      preserved: true,
+    });
+    expect(links).toHaveLength(1);
+  });
+
+for (const change of ["A", "same-id", "ABA", "remove-readd"] as const)
+  it(`本次提交后微任务${change}外部写不得导航或重兑`, async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(["student", "me"], A);
+    let changed = false;
+    const stop = client.getQueryCache().subscribe((event) => {
+      if (
+        event.type === "updated" &&
+        event.action.type === "success" &&
+        event.query.queryKey[0] === "student" &&
+        event.query.queryKey[1] === "me" &&
+        (event.query.state.data as StudentMeData)?.id === B.id &&
+        !changed
+      ) {
+        changed = true;
+        queueMicrotask(() => {
+          if (change === "remove-readd")
+            client.removeQueries({ queryKey: ["student", "me"], exact: true });
+          if (change === "A" || change === "ABA")
+            client.setQueryData(["student", "me"], A);
+          if (change !== "A") client.setQueryData(["student", "me"], B);
+        });
+      }
+    });
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <PortalHost>
+              <Outlet />
+            </PortalHost>
+          ),
+          children: [
+            { path: "/s/:token", element: <StudentLinkLoginPage /> },
+            { path: "/s/home", element: <p>学生首页</p> },
+          ],
+        },
+      ],
+      { initialEntries: ["/s/postcommit"] },
+    );
+    const view = render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    await ready("postcommit");
+    await answer("postcommit", B);
+    await waitFor(() => expect(changed).toBe(true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(router.state.location.pathname).toBe("/s/postcommit");
+    expect(links).toHaveLength(1);
+    expect(client.getQueryData(["student", "me"])).toEqual(
+      change === "A" ? A : B,
+    );
+    stop();
+    view.unmount();
+    client.clear();
+  });

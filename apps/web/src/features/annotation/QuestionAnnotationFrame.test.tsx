@@ -1,12 +1,12 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
 import type {
   AnnotationSurfaceLayout,
   AttemptQuestionPublic,
 } from "@tutor/contract";
 import { memo, useContext } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { QuestionRenderContext } from "@/features/answering/question-render-context";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import { act, render, screen, waitFor } from "@/test/render-with-portal";
 import { QuestionAnnotationFrame } from "./QuestionAnnotationFrame";
 import { questionSurfaceMatchesLayout } from "./question-base-image";
 

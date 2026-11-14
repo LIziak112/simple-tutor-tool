@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { render } from "@/test/render-with-portal";
 import { OutlineInlineMath, splitInlineMath } from "./outline-inline-math";
 import { RichMarkdown } from "./RichMarkdown";
 

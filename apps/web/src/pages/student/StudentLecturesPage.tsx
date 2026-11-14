@@ -1,6 +1,7 @@
 import { ArrowLeft, BookOpen, ChevronRight, School } from "lucide-react";
 import { Link } from "react-router";
 import { LessonBadge } from "@/components/source-badge";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentLectures } from "@/features/student/student-queries";
 import {
@@ -21,13 +22,15 @@ import { formatRelativeTime } from "@/lib/time";
  */
 
 export default function StudentLecturesPage() {
+  const routes = usePortalRoutes();
+
   const lecturesQuery = useStudentLectures();
 
   return (
     <section aria-label="讲义列表" className="flex flex-col gap-4">
       <header className="flex items-center gap-2">
         <Link
-          to="/s/home"
+          to={routes.learning("home")}
           aria-label="返回首页"
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
@@ -77,8 +80,10 @@ export default function StudentLecturesPage() {
                     <Link
                       to={
                         lecture.kind === "lesson"
-                          ? lessonHref(lecture.id, group.courseId)
-                          : `/s/lectures/${lecture.id}?courseId=${group.courseId}`
+                          ? lessonHref(routes, lecture.id, group.courseId)
+                          : routes.learning(
+                              `lectures/${lecture.id}?courseId=${group.courseId}`,
+                            )
                       }
                       aria-label={`${lecture.kind === "lesson" ? "打开讲练" : "阅读讲义"} ${lecture.title}`}
                       className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-2 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"

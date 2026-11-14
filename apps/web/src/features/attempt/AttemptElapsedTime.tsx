@@ -1,7 +1,8 @@
 import type { AttemptTime } from "@tutor/contract";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { fetchAttemptApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { formatActivitySec } from "./QuestionActivity";
 
 const KEY = "attempt:show-activity-time";
@@ -17,6 +18,8 @@ export function AttemptElapsedTime({
   timed: boolean;
   initialEstimate?: { activeSecTotal: number } | undefined;
 }) {
+  const { fetchAttemptApi } = usePortalClients();
+
   const [shown, setShown] = useState(() => localStorage.getItem(KEY) !== "off");
   const [estimate, setEstimate] = useState<number | null>(
     initialEstimate?.activeSecTotal ?? null,
@@ -54,7 +57,13 @@ export function AttemptElapsedTime({
       clearInterval(timer);
       controller?.abort();
     };
-  }, [shown, timed, attemptId, initialEstimate?.activeSecTotal]);
+  }, [
+    shown,
+    timed,
+    attemptId,
+    initialEstimate?.activeSecTotal,
+    fetchAttemptApi,
+  ]);
   if (timed) return null;
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

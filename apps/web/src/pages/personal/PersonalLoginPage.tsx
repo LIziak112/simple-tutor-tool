@@ -7,9 +7,9 @@ import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
 import { useLoginPersonal } from "@/features/auth/personal-auth";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import { useTeacherStatus } from "@/features/auth/teacher-auth";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /p/login 个人学习账号登录（模块 0）。
@@ -85,7 +85,7 @@ export function PersonalLoginPage() {
     loginMutation.mutate(
       { loginName: parsedName.data, password },
       {
-        onSuccess: (_session, request) => {
+        onSuccess: (_session, request, confirmation) => {
           try {
             window.localStorage.setItem(
               LOGIN_NAME_STORAGE_KEY,
@@ -94,7 +94,9 @@ export function PersonalLoginPage() {
           } catch {
             // 存不进就算了，不影响登录
           }
-          navigate(safeReturnTo(returnTo, "personal"), { replace: true });
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+          );
         },
       },
     );

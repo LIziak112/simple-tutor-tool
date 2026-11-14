@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   detectKeyboardDeviceForTest,
   resetKeyboardDeviceForTest,
 } from "@/features/keyboard/keyboard-device";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import {
   bindPracticePreferenceAccount,
   getPracticePreference,

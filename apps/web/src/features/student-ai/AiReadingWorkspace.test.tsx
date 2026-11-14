@@ -1,3 +1,4 @@
+import { expect, it } from "vitest";
 import {
   act,
   fireEvent,
@@ -5,8 +6,7 @@ import {
   screen,
   waitFor,
   within,
-} from "@testing-library/react";
-import { expect, it } from "vitest";
+} from "@/test/render-with-portal";
 import {
   AiReadingMemoryContext,
   AiReadingWorkspace,

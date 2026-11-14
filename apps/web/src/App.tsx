@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { HomePage } from "./pages/HomePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { personalRoutes } from "./portals/personal/routes";
 
 /**
  * 开发环境专属路由（T1.8 渲染开发页）。
@@ -612,35 +613,6 @@ const studentRoutes = (() => {
 })();
 
 /** 个人学习账号公开页（模块 0）：登录 / 邀请码注册；登录后走学生端与教师端既有布局 */
-const personalRoutes = (() => {
-  const PersonalLoginPage = lazy(
-    () => import("./pages/personal/PersonalLoginPage"),
-  );
-  const PersonalRegisterPage = lazy(
-    () => import("./pages/personal/PersonalRegisterPage"),
-  );
-  return (
-    <>
-      <Route
-        path="/p/login"
-        element={
-          <Suspense fallback={<StudentRouteFallback />}>
-            <PersonalLoginPage />
-          </Suspense>
-        }
-      />
-      <Route
-        path="/p/register"
-        element={
-          <Suspense fallback={<StudentRouteFallback />}>
-            <PersonalRegisterPage />
-          </Suspense>
-        }
-      />
-    </>
-  );
-})();
-
 /** 学生端整页加载兜底（懒加载期间） */
 function StudentRouteFallback() {
   return (

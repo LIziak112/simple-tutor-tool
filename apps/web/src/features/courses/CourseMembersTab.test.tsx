@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
 import type {
   AccountKind,
   CourseDetailData,
@@ -9,6 +8,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { teacherMeKey } from "@/features/auth/teacher-auth";
 import { studentsKey } from "@/features/students/student-queries";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { CourseMembersTab } from "./CourseMembersTab";
 
 const detail: CourseDetailData = {

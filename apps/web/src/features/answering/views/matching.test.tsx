@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@/test/render-with-portal";
 import type { PreparedOf } from "../types";
 import { matchingView } from "./matching";
 

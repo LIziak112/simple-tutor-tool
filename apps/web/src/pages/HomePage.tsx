@@ -12,12 +12,12 @@ import {
 } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
-import { PORTALS } from "@/features/auth/portals";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
-import { fetchHealth } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
+import { PORTALS } from "@/portals/registry";
 
 /**
  * 身份入口卡（首页登录面板）：整卡为一个 Link（触控目标远超 44px），
@@ -73,6 +73,8 @@ function RoleEntryCard({
  *   错误（含重试）/ 成功 三态齐全（UI 约定硬性要求）。
  */
 export function HomePage() {
+  const { fetchHealth } = usePortalClients();
+
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,

@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AnalyticsStudentData,
   QuestionReviewRow,
@@ -22,6 +14,14 @@ import {
   fetchTeacherAttemptsApi,
   fetchTeacherCourses,
 } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import StudentHomePage from "./StudentHomePage";
 
 /**

@@ -1,11 +1,11 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import { ReviewV2Panel } from "./ReviewV2Panel";
 
 const state = vi.hoisted(() => ({ studentId: "student-a" }));
@@ -19,7 +19,7 @@ const api = vi.hoisted(() => ({
 vi.mock("@/features/auth/student-auth", () => ({
   useStudentMe: () => ({ data: { id: state.studentId } }),
 }));
-vi.mock("./review-v2-api", () => api);
+vi.mock("@/lib/review-v2-legacy-api", () => api);
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();

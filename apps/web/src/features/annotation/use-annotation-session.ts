@@ -7,13 +7,18 @@
 import type { StudentMeData } from "@tutor/contract";
 import { useEffect } from "react";
 import { bindAnnotationSession } from "@/features/annotation/annotation-sync";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 export function useBindAnnotationSession(me: StudentMeData | undefined): void {
+  const clients = usePortalClients();
   useEffect(() => {
     if (me === undefined) return;
-    bindAnnotationSession({
-      origin: window.location.origin,
-      studentId: me.id,
-    });
-  }, [me]);
+    bindAnnotationSession(
+      {
+        origin: window.location.origin,
+        studentId: me.id,
+      },
+      clients,
+    );
+  }, [me, clients]);
 }

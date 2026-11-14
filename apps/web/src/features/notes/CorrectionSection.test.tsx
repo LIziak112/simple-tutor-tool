@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
 import type {
   AttemptResultQuestion,
   NoteHeadData,
@@ -39,6 +32,14 @@ import {
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import { DOC_A } from "@/features/notes/note-test-utils";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@/test/render-with-portal";
 import { correctionHeadKey } from "./correction-record";
 
 /**
@@ -375,7 +376,7 @@ beforeEach(() => {
   sealMock.mockReset();
   annotationSealMock.mockReset();
   annotationSealMock.mockResolvedValue(0);
-  bindNoteSession(SESSION_A);
+  bindNoteSession(SESSION_A, testClientServices);
 });
 
 afterEach(() => {

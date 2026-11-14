@@ -1,6 +1,8 @@
 import type { AttemptQuestionPublic, NoteDoc } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
+import { bindServiceLease } from "@/features/runtime/service-leases";
+import { testClientServices } from "@/test/portal-fixture";
 import {
   AiCaptureError,
   type AiCaptureInput,
@@ -49,7 +51,11 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/features/notes/note-store", () => ({ getNoteRecord: mocks.local }));
 vi.mock("@/features/notes/note-sync", () => ({
-  currentNoteSession: () => state.noteSession,
+  currentNoteSession: () => {
+    if (state.noteSession)
+      bindServiceLease(state.noteSession, testClientServices);
+    return state.noteSession;
+  },
 }));
 vi.mock("@/features/annotation/annotation-store", () => ({
   getAnnotationRecord: mocks.annotation,
@@ -63,12 +69,12 @@ vi.mock("@/features/annotation/export-question-annotation", () => ({
 vi.mock("@/features/annotation/question-base-image", () => ({
   renderQuestionBaseImage: mocks.renderBase,
 }));
-vi.mock("@/features/attempt/attempt-material-recovery", () => ({
+vi.mock("@/features/persistence/attempt-material-recovery", () => ({
   getAttemptRecoveryState: mocks.recovery,
   attemptMaterialsEditable: (s: { state: string; verified?: boolean }) =>
     s.state === "ready" || (s.state === "failed" && s.verified === true),
 }));
-vi.mock("@/features/attempt/draft-store", () => ({
+vi.mock("@/features/persistence/draft-store", () => ({
   draftStore: { loadDraft: mocks.draft, peekAnswerConflicts: mocks.conflicts },
   getDraftPersistenceState: mocks.persistence,
   getDraftSessionEpoch: () => state.epoch,

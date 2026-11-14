@@ -1,7 +1,7 @@
 import type { AttemptDraftData } from "@tutor/contract";
+import { attemptSourceLabel } from "@/features/answering/answer-format";
 import { formatDueTime } from "@/lib/time";
 import { AttemptElapsedTime } from "./AttemptElapsedTime";
-import { attemptSourceLabel } from "./answer-format";
 export function AttemptSourceSummary({
   data,
   total,

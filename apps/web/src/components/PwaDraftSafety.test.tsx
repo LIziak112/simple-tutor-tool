@@ -1,14 +1,8 @@
-import { act, render } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
   installAnnotationBackend,
   memoryAnnotationBackend,
 } from "@/features/annotation/annotation-store";
-import {
-  installDraftBackend,
-  memoryBackend,
-} from "@/features/attempt/draft-store";
-import { prepareStudentDraftsForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import {
   getNoteRecord,
   installNoteBackend,
@@ -17,7 +11,13 @@ import {
   writeNoteDoc,
 } from "@/features/notes/note-store";
 import { DOC_A, SCOPE, SESSION_A } from "@/features/notes/note-test-utils";
+import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
+import { prepareStudentDraftsForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
 import { preparePwaUpdate, usePwaUpdateGuard } from "@/lib/pwa-update-safety";
+import { act, render } from "@/test/render-with-portal";
 import { PwaDraftSafety } from "./PwaDraftSafety";
 
 const sessions = vi.hoisted(() => ({
@@ -136,7 +136,7 @@ it("旧账号已落盘的待传稿保留原样，不要求以新账号上传才�
 });
 
 it("会话都已解绑但本机作答缓存仍未确认归属时，不能默许更新", async () => {
-  const { draftStore } = await import("@/features/attempt/draft-store");
+  const { draftStore } = await import("@/features/persistence/draft-store");
   draftStore.saveAnswer("unknown-attempt", "q", { kind: "judge", value: true });
   sessions.notes = null;
   sessions.annotations = null;

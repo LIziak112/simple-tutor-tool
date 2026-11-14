@@ -1,3 +1,5 @@
+import type { NoteRole } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 /**
  * 草稿原稿只读视图（T6R.11，方案 §6.5/§8）：学生结果页与教师作答详情/
  * 待批队列共用的「查看本次草稿原稿」入口。依据：docs/Phase6任务清单.md
@@ -42,8 +44,7 @@ import {
   resolveAbsentReason,
   resolveReadyMeta,
 } from "@/features/notes/note-original-phase";
-import type { NoteRole } from "@/lib/api";
-import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
+
 import { formatCnTime } from "@/lib/time";
 import { useNoteVersionBody } from "./use-note-version-view";
 
@@ -83,6 +84,10 @@ export function NoteOriginalView({
    */
   defaultOpen?: boolean;
 }) {
+  const { fetchNoteEvidenceApi } = usePortalClients();
+
+  const clients = usePortalClients();
+
   const [phase, setPhase] = useState<OriginalPhase>(
     defaultOpen ? { kind: "loading" } : { kind: "closed" },
   );
@@ -163,7 +168,7 @@ export function NoteOriginalView({
         message: err instanceof Error ? err.message : "网络异常",
       });
     }
-  }, [attemptId, questionId, viewer, openBody]);
+  }, [attemptId, questionId, viewer, openBody, fetchNoteEvidenceApi]);
 
   const close = useCallback(() => {
     epochRef.current += 1; // 在途加载作废（缓存保留供重展开）
@@ -201,7 +206,7 @@ export function NoteOriginalView({
     setRebuilding(true);
     setRebuildError(null);
     try {
-      await recoverNoteImages({ role: viewer, versionId });
+      await recoverNoteImages(clients, { role: viewer, versionId });
       const head = await fetchNoteEvidenceApi(viewer, attemptId, questionId);
       setPhase((prev) => {
         if (prev.kind !== "ready" || prev.versionId !== versionId) return prev;
@@ -214,7 +219,7 @@ export function NoteOriginalView({
     } finally {
       setRebuilding(false);
     }
-  }, [attemptId, phase, questionId, viewer]);
+  }, [attemptId, phase, questionId, viewer, fetchNoteEvidenceApi, clients]);
 
   const label = `${ariaPrefix}草稿原稿`;
 

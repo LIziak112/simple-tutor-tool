@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { LazyMountWindow } from "./lazy-mount-window";
 import { ResultQuestionRow } from "./ResultQuestionRow";
 

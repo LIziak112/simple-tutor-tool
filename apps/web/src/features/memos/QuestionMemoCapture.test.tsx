@@ -1,3 +1,9 @@
+import type { LearningContext } from "@tutor/contract";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  LearningHostContext,
+  learningContextStore,
+} from "@/features/learning-context/learning-context-store";
 import {
   act,
   cleanup,
@@ -5,13 +11,7 @@ import {
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import type { LearningContext } from "@tutor/contract";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import {
-  LearningHostContext,
-  learningContextStore,
-} from "@/features/learning-context/learning-context-store";
+} from "@/test/render-with-portal";
 import { enqueueMemo } from "./memo-outbox";
 import {
   QuestionMemoAction,

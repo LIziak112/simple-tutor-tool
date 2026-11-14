@@ -1,7 +1,8 @@
 import type { QuestionReviewRow } from "@tutor/contract";
 import { Link } from "react-router";
-import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
+import { QUESTION_TYPE_LABELS } from "@/features/answering/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatRelativeTime } from "@/lib/time";
 
 /** 聚合行判定列文案（finalCorrect 三态） */
@@ -13,6 +14,8 @@ function reviewVerdictLabel(finalCorrect: boolean | null): string {
 
 /** 「错题与存疑」聚合行卡片（Web-2②；整行点击跳代表作答详情） */
 export function QuestionReviewRowCard({ row }: { row: QuestionReviewRow }) {
+  const routes = usePortalRoutes();
+
   const verdict =
     row.effectiveVerdict === undefined
       ? row.finalCorrect
@@ -20,7 +23,7 @@ export function QuestionReviewRowCard({ row }: { row: QuestionReviewRow }) {
   return (
     <li>
       <Link
-        to={`/t/data/attempts/${row.attemptId}`}
+        to={routes.management(`data/attempts/${row.attemptId}`)}
         aria-label="查看该题最近一次作答详情"
         className="flex flex-col gap-1.5 rounded-xl border border-border bg-card px-4 py-3 outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
       >

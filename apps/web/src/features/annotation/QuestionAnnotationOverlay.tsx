@@ -10,14 +10,14 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
-import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
-import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
-import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import { attemptMaterialsEditable } from "@/features/persistence/attempt-material-recovery";
+import { prepareAnnotationForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import { useDraftSyncRecovery } from "@/features/persistence/use-draft-sync";
 import {
   processStrokes,
   readProcessSurfaces,

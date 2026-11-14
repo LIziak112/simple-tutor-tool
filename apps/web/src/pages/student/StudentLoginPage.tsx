@@ -4,10 +4,10 @@ import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LoginShell } from "@/features/auth/LoginShell";
-import { safeReturnTo } from "@/features/auth/portals";
 import { useLoginStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useStudentTheme } from "@/features/student/use-student-theme";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+import { safeReturnTo } from "@/portals/registry";
 
 /**
  * /s/login 学生密码登录页（T2.3，§5.7 登录名+密码）。
@@ -25,7 +25,7 @@ export default function StudentLoginPage() {
   const [password, setPassword] = useState("");
 
   // 已登录（会话仍有效）：直接进首页
-  if (meQuery.isSuccess && !loginMutation.isPending) {
+  if (meQuery.isSuccess && (loginMutation.isIdle || loginMutation.isSuccess)) {
     return (
       <Navigate
         to={
@@ -44,8 +44,10 @@ export default function StudentLoginPage() {
       { loginName: loginName.trim(), password },
       // 成功后 me 缓存已写入；replace 避免回退键回到登录页
       {
-        onSuccess: () =>
-          navigate(safeReturnTo(returnTo, "student"), { replace: true }),
+        onSuccess: (_data, _request, confirmation) =>
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "student"), { replace: true }),
+          ),
       },
     );
   }

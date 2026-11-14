@@ -828,7 +828,7 @@ test.describe("QM 全链路：九语料 → 四来源作答 → 对照/自评 �
         await expect
           .poll(() =>
             page.evaluate(async (id) => {
-              const moduleUrl = "/src/features/attempt/draft-store.ts";
+              const moduleUrl = "/src/features/persistence/draft-store.ts";
               const store = (await import(moduleUrl)) as {
                 getDraftPersistenceState(attemptId: string): string;
               };

@@ -10,29 +10,31 @@ import {
   School,
   Settings2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router";
-import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
-import { bindPracticePreferenceAccount } from "@/features/attempt/practice-preference-store";
+import { useState } from "react";
+import {
+  Link,
+  Navigate,
+  NavLink,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { PersonalViewButton } from "@/features/auth/PersonalViewButton";
 import { PortalGuard } from "@/features/auth/PortalGuard";
 import {
   useAccountLoginPath,
   useLogoutPersonal,
 } from "@/features/auth/personal-auth";
-import { portalCapabilitiesOf } from "@/features/auth/portals";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
-import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
-import { bindKeyboardBindingsAccount } from "@/features/keyboard/keyboard-binding-store";
 import { LearningContextEnvironment } from "@/features/learning-context/LearningContextEnvironment";
 import { MemoQuickCapture } from "@/features/memos/MemoQuickCapture";
-import { bindMemoOutboxAccount } from "@/features/memos/memo-outbox";
 import { QuestionMemoCaptureProvider } from "@/features/memos/QuestionMemoCapture";
-import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
+import { useLearnerBindings } from "@/features/student/use-learner-bindings";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
-import { bindAiDisplayAccount } from "@/features/student-ai/ai-display-preference-store";
+import { legacyPersonalLocation } from "@/portals/legacy-personal-location";
+import { portalCapabilitiesOf } from "@/portals/registry";
 
 /**
  * /s 学生端布局 + 路由守卫（T2.3；2026-10 IA 调整：导航定稿为
@@ -67,42 +69,26 @@ const NAV_ITEMS = [
 ] as const;
 
 export function StudentLayout() {
+  const legacyLocation = useLocation();
   const [workspace, setWorkspace] = useState(false);
   useStudentTheme();
   const meQuery = useStudentMe();
-  useEffect(() => {
-    bindAiDisplayAccount(meQuery.data?.id ?? null);
-    return () => bindAiDisplayAccount(null);
-  }, [meQuery.data?.id]);
-  // M3-D1：做题方式偏好与 AI 显示偏好同一绑定时机（布局/快捷键按账号读取）
-  useEffect(() => {
-    bindPracticePreferenceAccount(meQuery.data?.id ?? null);
-    return () => bindPracticePreferenceAccount(null);
-  }, [meQuery.data?.id]);
-  // 键位绑定偏好同口径（2026-10-28 快捷键体系：本设备键位按账号隔离读取）
-  useEffect(() => {
-    bindKeyboardBindingsAccount(meQuery.data?.id ?? null);
-    return () => bindKeyboardBindingsAccount(null);
-  }, [meQuery.data?.id]);
-  useBindInkProfiles("student", meQuery.data?.id);
-  // 随笔待补传队列按账号隔离（模块 5 第一步）
-  useEffect(() => {
-    void bindMemoOutboxAccount(meQuery.data?.id ?? null);
-    return () => void bindMemoOutboxAccount(null);
-  }, [meQuery.data?.id]);
+  useLearnerBindings(meQuery.data);
   const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/s/login");
   const navigate = useNavigate();
   const onLoggedOut = () => navigate(loginPath, { replace: true });
   const logoutStudentMutation = useLogoutStudent(onLoggedOut);
   const logoutPersonalMutation = useLogoutPersonal("student", onLoggedOut);
-  // T6R.11 复审（会话接线层级）：草稿会话绑定上提到布局层——所有 /s/* 学生
-  // 页面（答题/结果/历史回看）自动获得当前身份接线（bind/reset 对称：reset
-  // 在 student-auth 登出处）。结果页读链路全走 Cookie 与 image-sync 队列不
-  // 消费 note-session；绑定在布局层即模块级会话服务的身份职责归位
-  useBindNoteSession(meQuery.data);
-  // T6R.20：标注会话与草稿会话并行绑定（标注同步队列的身份接线）
-  useBindAnnotationSession(meQuery.data);
 
+  if (meQuery.data?.accountKind === "personal")
+    return (
+      <Navigate
+        to={legacyPersonalLocation(
+          `${legacyLocation.pathname}${legacyLocation.search}${legacyLocation.hash}`,
+        )}
+        replace
+      />
+    );
   return (
     <PortalGuard portal="student" loginPath={loginPath} query={meQuery}>
       {(me) => {

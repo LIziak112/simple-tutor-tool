@@ -1,10 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import type {
   AttemptContextData,
   AttemptResultData,
   AttemptResultQuestion,
 } from "@tutor/contract";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { ReviewBuiltInSection } from "./ReviewBuiltInSections";
 
 vi.mock("./SelfReviewSection", () => ({

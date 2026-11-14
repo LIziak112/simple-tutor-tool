@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { QuestionPublic } from "@tutor/contract";
 import type { ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import { AttemptQuestionRow } from "./AttemptQuestionRow";
 

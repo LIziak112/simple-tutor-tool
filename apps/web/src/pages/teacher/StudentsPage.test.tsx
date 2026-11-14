@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   CourseListData,
   StudentCreateData,
@@ -19,6 +18,7 @@ import {
   updateStudentApi,
 } from "@/lib/api";
 import { copyText } from "@/lib/copy";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import StudentsPage from "./StudentsPage";
 
 /**

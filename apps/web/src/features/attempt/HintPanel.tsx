@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { useQuestionProcessContext } from "@/features/question-process/session";
-import { openAttemptHintApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { randomUuid } from "@/lib/uuid";
 
 /**
@@ -90,6 +91,8 @@ export function HintPanel({
   /** 解锁成功回调（上抛页面状态追加；面板内不持有列表） */
   onUnlocked: (entry: HintOpenedEntry) => void;
 }) {
+  const { openAttemptHintApi } = usePortalClients();
+
   const process = useQuestionProcessContext();
   const onVisible = useCallback(
     (index: number) => process?.showHint(questionId, index),

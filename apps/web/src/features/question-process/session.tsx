@@ -21,7 +21,6 @@ import {
 } from "react";
 import { peekAnnotationRecord } from "@/features/annotation/annotation-store";
 import { currentAnnotationSession } from "@/features/annotation/annotation-sync";
-import { draftStore } from "@/features/attempt/draft-store";
 import { peekNoteRecord } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
 import {
@@ -29,7 +28,9 @@ import {
   strokesBottomLogical,
 } from "@/features/notes/paper-geometry";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
-import { questionProcessStatusApi, uploadQuestionProcessApi } from "@/lib/api";
+import { draftStore } from "@/features/persistence/draft-store";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { idbKVBackend } from "@/lib/kv-backend";
 import { type ProcessSurface, QuestionProcessRecorder } from "./recorder";
 import { ProcessShownHints } from "./shown-hints";
@@ -133,6 +134,9 @@ interface Inputs {
 }
 
 export function useQuestionProcess(inputs: Inputs) {
+  const { questionProcessStatusApi, uploadQuestionProcessApi } =
+    usePortalClients();
+
   const { attemptId, enabled, ready } = inputs;
   const scope = useNoteSessionRef();
   const prefix = scope
@@ -241,7 +245,14 @@ export function useQuestionProcess(inputs: Inputs) {
       controller.abort();
       window.removeEventListener("online", online);
     };
-  }, [attemptId, enabled, prefix, scope, restoreShown]);
+  }, [
+    attemptId,
+    enabled,
+    prefix,
+    scope,
+    restoreShown,
+    questionProcessStatusApi,
+  ]);
 
   useEffect(() => {
     if (!prefix || !scope || !recordingId || !expiresAt) return;
@@ -298,7 +309,15 @@ export function useQuestionProcess(inputs: Inputs) {
       window.removeEventListener("pagehide", pagehide);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [attemptId, expiresAt, prefix, recordingId, scope, restoredShown]);
+  }, [
+    attemptId,
+    expiresAt,
+    prefix,
+    recordingId,
+    scope,
+    restoredShown,
+    uploadQuestionProcessApi,
+  ]);
 
   useEffect(() => {
     if (!ready && recorder && status?.state === "active" && status.canCapture)

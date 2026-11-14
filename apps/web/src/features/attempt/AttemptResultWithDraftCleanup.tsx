@@ -6,12 +6,15 @@ import {
 } from "@tutor/contract";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
-import { startAttemptApi, startWrongPracticeApi } from "@/lib/api";
-import { createEventQueue } from "@/lib/event-queue";
+import { draftStore } from "@/features/persistence/draft-store";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+import type { EventQueueApi } from "@/lib/event-queue-core";
 import { useReplayableCreate } from "@/lib/use-replayable-create";
 import { AttemptResultView } from "./AttemptResultView";
 import { workflowStartOptions } from "./attempt-queries";
-import { draftStore } from "./draft-store";
 import { LocalDraftConflicts } from "./LocalDraftConflicts";
 
 /**
@@ -39,6 +42,11 @@ export default function AttemptResultWithDraftCleanup({
   /** 到期自动刷新回调 */
   onRefresh?: (() => void) | undefined;
 }) {
+  const routes = usePortalRoutes();
+
+  const { createEventQueue, startWrongPracticeApi, startAttemptApi } =
+    usePortalClients();
+
   const attemptId = data.attempt.id;
   const { deadlineAt, submittedAt } = data.attempt;
   const preserveDraft =
@@ -56,7 +64,7 @@ export default function AttemptResultWithDraftCleanup({
       void draftStore.refreshShared(attemptId).catch(() => {});
     } else void draftStore.clearDraft(attemptId);
   }, [attemptId, preserveDraft]);
-  const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
+  const queueRef = useRef<EventQueueApi | null>(null);
   useEffect(() => {
     const queue = createEventQueue({ scope: { kind: "attempt", attemptId } });
     queueRef.current = queue;
@@ -64,7 +72,7 @@ export default function AttemptResultWithDraftCleanup({
       queue.dispose();
       queueRef.current = null;
     };
-  }, [attemptId]);
+  }, [attemptId, createEventQueue]);
   /** 详解折叠开合 → directive_interact{host=result}；index=该题全卷 0 起序号 */
   const onSolutionToggle = useRef(
     (questionId: string, index: number, action: "open" | "close") => {
@@ -136,7 +144,7 @@ export default function AttemptResultWithDraftCleanup({
       );
     },
     onSuccess: (attempt) => {
-      void navigate(`/s/attempts/${attempt.id}`);
+      void navigate(routes.learning(`attempts/${attempt.id}`));
     },
   });
   // 作业重做（hall-15313）：显式 redo:true 开新卷（attemptNo+1、从空白开始）
@@ -150,7 +158,7 @@ export default function AttemptResultWithDraftCleanup({
         ...timing,
       }),
     onSuccess: (attempt) => {
-      void navigate(`/s/attempts/${attempt.id}`);
+      void navigate(routes.learning(`attempts/${attempt.id}`));
     },
   });
   const redoErrorText = redo.isError

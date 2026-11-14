@@ -1,12 +1,12 @@
+import { MemoryRouter, useSearchParams } from "react-router";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { MemoryRouter, useSearchParams } from "react-router";
-import { afterEach, expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import {
   AnalyticsFilterBar,
   analyticsUrlQuery,

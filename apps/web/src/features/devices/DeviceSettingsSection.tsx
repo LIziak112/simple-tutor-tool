@@ -1,11 +1,13 @@
 import type { AccountKind, Device } from "@tutor/contract";
 import { useId, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
-import { PORTALS } from "@/features/auth/portals";
+import { loginPathWithReturnTo } from "@/features/auth/return-navigation";
 import { useClearStudentSession } from "@/features/auth/student-auth";
 import { useClearTeacherSession } from "@/features/auth/teacher-auth";
-import type { DeviceOwner } from "@/lib/device-api";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
+import type { DeviceOwner } from "@/features/runtime/ports/devices-types";
+
 import { formatCnTime } from "@/lib/time";
 import { DeviceMergeDialog } from "./DeviceMergeDialog";
 import { DeviceRenameDialog } from "./DeviceRenameDialog";
@@ -23,7 +25,9 @@ export function DeviceSettingsSection({
   connectionSettingsHref?: string;
 }) {
   const query = useDevices(owner);
+  const routes = usePortalRoutes();
   const navigate = useNavigate();
+  const location = useLocation();
   const clearStudent = useClearStudentSession();
   const clearTeacher = useClearTeacherSession();
   const [notice, setNotice] = useState<string | null>(null);
@@ -33,10 +37,21 @@ export function DeviceSettingsSection({
     | null
   >(null);
   const titleId = useId();
-  const action = useDeviceActions(owner, async () => {
+  const action = useDeviceActions(owner, async (before) => {
     const portal = accountKind === "personal" ? "personal" : owner.type;
     const clear = owner.type === "student" ? clearStudent : clearTeacher;
-    await clear(() => navigate(PORTALS[portal].loginPath, { replace: true }));
+    await clear(
+      () =>
+        navigate(
+          loginPathWithReturnTo(
+            routes.portal(portal).loginPath,
+            location.pathname + location.search + location.hash,
+          ),
+          { replace: true },
+        ),
+      owner.id,
+      before,
+    );
   });
   async function perform(input: Parameters<typeof action.mutateAsync>[0]) {
     const result = await action.mutateAsync(input);

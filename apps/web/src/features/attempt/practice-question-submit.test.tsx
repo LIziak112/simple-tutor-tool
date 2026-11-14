@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AttemptDraftData,
   AttemptResultData,
@@ -28,6 +20,11 @@ import {
   memoryNoteBackend,
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
+import { getAttemptRecoveryState } from "@/features/persistence/attempt-material-recovery";
+import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import {
   ApiError,
   fetchAttemptApi,
@@ -38,8 +35,15 @@ import {
   submitPracticeQuestionApi,
 } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
-import { getAttemptRecoveryState } from "./attempt-material-recovery";
-import { installDraftBackend, memoryBackend } from "./draft-store";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import {
   bindPracticePreferenceAccount,
   savePracticePreference,
@@ -330,8 +334,8 @@ it.each(["list", "single"] as const)(
     installNoteBackend(memoryNoteBackend());
     installAnnotationBackend(memoryAnnotationBackend());
     const session = { origin: "https://page.test", studentId: "submit-test" };
-    bindNoteSession(session);
-    bindAnnotationSession(session);
+    bindNoteSession(session, testClientServices);
+    bindAnnotationSession(session, testClientServices);
     savePracticePreference({ layout, keyboardShortcuts: true, feedback: null });
     mockedFetch.mockResolvedValue(baseDraft());
     renderPage();
@@ -447,8 +451,8 @@ it.each(["list", "single"] as const)(
     installNoteBackend(memoryNoteBackend());
     installAnnotationBackend(memoryAnnotationBackend());
     const session = { origin: "https://page.test", studentId: "submit-test" };
-    bindNoteSession(session);
-    bindAnnotationSession(session);
+    bindNoteSession(session, testClientServices);
+    bindAnnotationSession(session, testClientServices);
     const draft = baseDraft();
     const first = draft.units[0]?.questions[0];
     if (!first || !draft.units[0]) throw new Error("缺少测试题");

@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -7,6 +6,8 @@ import {
   currentNoteSession,
   resetNoteSession,
 } from "@/features/notes/note-sync";
+import { testClientServices } from "@/test/portal-fixture";
+import { act, renderHook, waitFor } from "@/test/render-with-portal";
 import {
   useApplyStudentAuthed,
   useLogoutStudent,
@@ -76,7 +77,10 @@ afterEach(() => {
 
 describe("登录成功路径的草稿会话接线（T6R.9 复审①）", () => {
   it("登录另一学生：旧绑定立即失效（currentNoteSession → null）", async () => {
-    bindNoteSession({ origin: "https://tutor.example", studentId: ME_A.id });
+    bindNoteSession(
+      { origin: "https://tutor.example", studentId: ME_A.id },
+      testClientServices,
+    );
     linkMock.mockResolvedValue(ME_B);
     const hooks = renderAuthHooks();
     await act(async () => {
@@ -87,7 +91,10 @@ describe("登录成功路径的草稿会话接线（T6R.9 复审①）", () => {
   });
 
   it("同账号重登（专属链接重进）：不重置，队列照常", async () => {
-    bindNoteSession({ origin: "https://tutor.example", studentId: ME_A.id });
+    bindNoteSession(
+      { origin: "https://tutor.example", studentId: ME_A.id },
+      testClientServices,
+    );
     linkMock.mockResolvedValue(ME_A);
     const hooks = renderAuthHooks();
     await act(async () => {
@@ -101,7 +108,10 @@ describe("登录成功路径的草稿会话接线（T6R.9 复审①）", () => {
   });
 
   it("登出成功 → resetNoteSession（会话解绑）", async () => {
-    bindNoteSession({ origin: "https://tutor.example", studentId: ME_A.id });
+    bindNoteSession(
+      { origin: "https://tutor.example", studentId: ME_A.id },
+      testClientServices,
+    );
     const hooks = renderAuthHooks();
     await act(async () => {
       await hooks.logout.current.mutateAsync();

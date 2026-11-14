@@ -3,6 +3,7 @@ import type {
   AttemptQuestionPublic,
 } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { testClientServices } from "@/test/portal-fixture";
 import {
   getAnnotationRecord,
   installAnnotationBackend,
@@ -61,7 +62,7 @@ beforeEach(() => {
   clearPrewarmedQuestionBases();
   resetAnnotationSession();
   installAnnotationBackend(memoryAnnotationBackend());
-  bindAnnotationSession(session);
+  bindAnnotationSession(session, testClientServices);
   vi.mocked(renderQuestionBaseImage).mockReset().mockResolvedValue(rendered);
   vi.mocked(questionSurfaceMatchesLayout).mockReset().mockResolvedValue(true);
 });

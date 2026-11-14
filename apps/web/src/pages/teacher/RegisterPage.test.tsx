@@ -1,7 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import { RegisterPage } from "./RegisterPage";
 
 /**
@@ -46,10 +52,11 @@ vi.mock("@/lib/api", () => ({
   fetchStudentsApi: apiMocks.fetchStudentsApi,
 }));
 
-function renderRegisterPage() {
-  const queryClient = new QueryClient({
+function renderRegisterPage(
+  queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
-  });
+  }),
+) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/t/register"]}>
@@ -241,4 +248,43 @@ describe("RegisterPage 分流（开关与首启状态）", () => {
       expect(screen.getByTestId("setup")).toBeInTheDocument();
     });
   });
+});
+
+it("异步落点等待时外部B替换，不消费旧A成功结果导航", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  apiMocks.registerTeacher.mockResolvedValue({
+    id: "teacher-a",
+    loginName: "teacher-a",
+    isAdmin: false,
+    accountKind: "class",
+    createdAt: "2026-01-01",
+  });
+  let release: (data: { students: { id: string }[] }) => void = () => {};
+  apiMocks.fetchStudentsApi.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  renderRegisterPage(cache);
+  fireEvent.change(await screen.findByLabelText("登录名"), {
+    target: { value: "teacher-a" },
+  });
+  fireEvent.change(screen.getByLabelText("密码"), {
+    target: { value: "1234abcd" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "注册并进入" }));
+  await waitFor(() => expect(apiMocks.fetchStudentsApi).toHaveBeenCalled());
+  await act(async () => {
+    cache.setQueryData(["teacher", "me"], { id: "teacher-b" });
+    cache.setQueryData(["teacher", "private-b"], "B");
+    release({ students: [{ id: "student-of-a" }] });
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("账号状态已变化");
+  expect(screen.queryByTestId("student-home")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("students-list")).not.toBeInTheDocument();
+  expect(cache.getQueryData(["teacher", "me"])).toEqual({ id: "teacher-b" });
+  expect(cache.getQueryData(["teacher", "private-b"])).toBe("B");
 });

@@ -3,6 +3,7 @@ import type {
   AttemptQuestionPublic,
 } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { testClientServices } from "@/test/portal-fixture";
 
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
@@ -71,7 +72,7 @@ beforeEach(() => {
   resetAnnotationStoreForTest();
   installAnnotationBackend(memoryAnnotationBackend());
   vi.clearAllMocks();
-  bindAnnotationSession(session);
+  bindAnnotationSession(session, testClientServices);
   vi.mocked(renderQuestionBaseImage).mockResolvedValue({
     blob: png,
     layout,

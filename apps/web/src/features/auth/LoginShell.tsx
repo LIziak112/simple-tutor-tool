@@ -1,7 +1,11 @@
 import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
+import {
+  type PortalId,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
-import { loginPathWithReturnTo, PORTALS, type PortalId } from "./portals";
+import { loginPathWithReturnTo } from "./return-navigation";
 
 /** 七个认证页面共用导航壳，等待、失败和关闭注册时也保留出口。 */
 export function LoginShell({
@@ -11,6 +15,7 @@ export function LoginShell({
   portal: PortalId;
   children: ReactNode;
 }) {
+  const PORTALS = usePortalRoutes().all;
   const [params] = useSearchParams();
   const otherPortals = (Object.keys(PORTALS) as PortalId[]).filter(
     (id) => id !== portal,

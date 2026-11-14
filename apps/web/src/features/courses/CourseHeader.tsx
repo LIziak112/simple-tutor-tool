@@ -17,9 +17,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { portalCapabilitiesOf } from "@/features/auth/portals";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
-import { ApiError } from "@/lib/api";
+import {
+  usePortalRoutes,
+  usePortalRuntime,
+} from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import {
   useCourseDetail,
   useDeleteCourse,
@@ -46,8 +50,11 @@ export function CourseHeader({
   onAssign: () => void;
   onDeleted: () => void;
 }) {
+  const routes = usePortalRoutes();
+
   const me = useTeacherMe();
-  const capabilities = portalCapabilitiesOf(
+  const { capabilitiesFor } = usePortalRuntime();
+  const capabilities = capabilitiesFor(
     "teacher",
     me.data?.accountKind ?? "personal",
   );
@@ -60,7 +67,7 @@ export function CourseHeader({
     <header className="grid grid-cols-1 items-start gap-3 rounded-xl border border-border bg-card p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Link
-          to="/t/courses"
+          to={routes.management("courses")}
           className="flex min-h-11 items-center gap-1 rounded-md text-sm text-muted-foreground hover:text-foreground"
         >
           <ChevronLeft aria-hidden className="size-4" />

@@ -16,15 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  QUESTION_TYPE_BADGE_CLASS,
+  QUESTION_TYPE_LABELS,
+} from "@/features/answering/answer-format";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import {
   ResultOptions,
   VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
-import {
-  QUESTION_TYPE_BADGE_CLASS,
-  QUESTION_TYPE_LABELS,
-} from "@/features/attempt/answer-format";
 import { ResultAnswerComparison } from "@/features/attempt/ResultAnswerComparison";
 import { SelfReviewSection } from "@/features/attempt/SelfReviewSection";
 import {

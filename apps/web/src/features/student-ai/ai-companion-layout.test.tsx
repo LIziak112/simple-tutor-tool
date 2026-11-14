@@ -1,4 +1,3 @@
-import { act, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import {
   afterEach,
@@ -9,6 +8,7 @@ import {
   type Mock,
   vi,
 } from "vitest";
+import { act, render, screen } from "@/test/render-with-portal";
 import { stubElementWidth } from "@/test/stub-element-width";
 import {
   AI_COMPANION_DOCK_MIN_WIDTH,

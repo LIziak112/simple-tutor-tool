@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@/test/render-with-portal";
 import { useDynamicOverscroll } from "./use-dynamic-overscroll";
 
 /** jsdom 无布局：手工定义元素读数来模拟溢出状态 */

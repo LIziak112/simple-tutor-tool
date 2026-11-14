@@ -5,7 +5,7 @@ export function PwaDraftSafety() {
   usePwaUpdateGuard(
     async () => {
       const { prepareRetainedStudentDraftsForPwaUpdate } = await import(
-        "@/features/attempt/pwa-draft-safety"
+        "@/features/persistence/pwa-draft-safety"
       );
       await prepareRetainedStudentDraftsForPwaUpdate();
     },

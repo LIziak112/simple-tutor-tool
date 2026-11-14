@@ -1,12 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import {
   type AiTeacherSettingsData,
   DEFAULT_AI_PROMPT_TEMPLATES,
 } from "@tutor/contract";
@@ -17,6 +10,13 @@ import {
   fetchTeacherAiSettingsApi,
   saveTeacherAiSettingsApi,
 } from "@/lib/api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { TeacherAiSettingsSection } from "./TeacherAiSettingsSection";
 
 /**

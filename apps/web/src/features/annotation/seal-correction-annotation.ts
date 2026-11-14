@@ -1,3 +1,5 @@
+import { serviceLease } from "@/features/runtime/service-leases";
+
 /**
  * 订正检查点的标注封存例程（2026-10 订正重构）：原 AnnotationLayer 内嵌的
  * 「保存订正标注」按钮随独立入口一并移除——订正工作台（CorrectionWorkspace）
@@ -22,7 +24,6 @@
  *   笔迹会滞留本机、后续以 ANNOTATION_SEALED 被拒——极窄窗口，接受。
  */
 
-import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { getAnnotationRecord } from "./annotation-store";
 import {
   catchUpAnnotations,
@@ -38,6 +39,7 @@ export async function sealCorrectionAnnotation(options: {
   if (session === null) {
     throw new Error("标注会话未绑定，请刷新后重试");
   }
+  const { sealAttemptAnnotationsApi } = serviceLease(session);
   const scope = {
     attemptId: options.attemptId,
     questionId: options.questionId,

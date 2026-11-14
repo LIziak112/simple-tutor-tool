@@ -10,6 +10,10 @@ import { cn } from "cn";
 import { RotateCcw, RotateCw, TriangleAlert } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  attemptRoundLabel,
+  attemptSourceLabel,
+} from "@/features/answering/answer-format";
 import { useAttemptContext } from "@/features/attempt/attempt-queries";
 import { useLearningContextPublisher } from "@/features/learning-context/use-learning-context-publisher";
 import {
@@ -23,7 +27,6 @@ import { useAttemptReviewOverlay } from "@/features/student-ai/attempt-review-ov
 import { formatCnTime } from "@/lib/time";
 import { AssignmentRedoDialog } from "./AssignmentRedoDialog";
 import { ResultTimeLimitLine } from "./AttemptTimer";
-import { attemptRoundLabel, attemptSourceLabel } from "./answer-format";
 import { isRetrainable } from "./module-result-model";
 import { ResultActivityLine } from "./QuestionActivity";
 import { ReviewTemplateFrame } from "./ReviewTemplateFrame";

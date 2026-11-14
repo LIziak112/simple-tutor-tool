@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AttemptDraftData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { AttemptPartialControls } from "./AttemptPartialControls";
 import { workflowOf } from "./practice-test-fixtures";
 
@@ -14,11 +14,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./prepare-question-submission", () => ({
   prepareQuestionSubmission: mocks.prepare,
 }));
-vi.mock("./settlement-api", () => ({
+vi.mock("@/lib/settlements-legacy-api", () => ({
   settleAttempt: mocks.settle,
   readSettlement: mocks.read,
 }));
-vi.mock("./draft-store", () => ({
+vi.mock("@/features/persistence/draft-store", () => ({
   draftStore: { loadDraft: mocks.load, peekInk: () => null },
 }));
 vi.mock("./attempt-queries", () => ({

@@ -1,7 +1,9 @@
+import { isResultDetail } from "@/features/attempt/attempt-result-detail";
+
+export { isResultDetail } from "@/features/attempt/attempt-result-detail";
+
 import type {
-  AttemptDetailData,
   AttemptDraftData,
-  AttemptResultData,
   HintOpenedEntry,
   MaterialRef,
   StudentAnswer,
@@ -16,6 +18,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { CoordinatedAnnotationProvider } from "@/features/annotation/coordinated-annotation-context";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "@/features/answering/AttemptEditorContext";
 import { questionBindings } from "@/features/answering/question-binding";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
@@ -25,20 +31,9 @@ import {
   groupSegmentsOfUnit,
   questionMaterialsOf,
 } from "@/features/attempt/attempt-context-view";
-import {
-  attemptMaterialsEditable,
-  recoverAttemptMaterials,
-  useAttemptMaterialRecovery,
-} from "@/features/attempt/attempt-material-recovery";
-import { getDraftSessionEpoch } from "@/features/attempt/draft-store";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptForcedMounts } from "@/features/attempt/use-attempt-forced-mounts";
-import {
-  DraftSyncProvider,
-  useDraftSync,
-} from "@/features/attempt/use-draft-sync";
-import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -47,21 +42,29 @@ import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store"
 import { useKeyboardDevice } from "@/features/keyboard/keyboard-device";
 import { useLearningContextPublisher } from "@/features/learning-context/use-learning-context-publisher";
 import { catchUpNotes } from "@/features/notes/note-sync";
+import {
+  attemptMaterialsEditable,
+  recoverAttemptMaterials,
+  useAttemptMaterialRecovery,
+} from "@/features/persistence/attempt-material-recovery";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
+import { prepareDraftForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import {
+  DraftSyncProvider,
+  useDraftSync,
+} from "@/features/persistence/use-draft-sync";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import {
   QuestionProcessSyncNotice,
   useQuestionProcess,
 } from "@/features/question-process/session";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
-import { setStudentFlagApi } from "@/lib/api";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useOnlineStatus } from "@/lib/use-online-status";
-import {
-  AttemptEditorProvider,
-  useAttemptEditor,
-} from "./AttemptEditorContext";
 import { AttemptPartialControls } from "./AttemptPartialControls";
 import { AttemptProcessDialog } from "./AttemptProcessDialog";
 import { AttemptResultLoader } from "./AttemptResultLoader";
@@ -89,7 +92,6 @@ import {
   PracticeModeDialog,
 } from "./PracticeWorkspace";
 import { countSubmittedQuestions } from "./practice-protocol";
-import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
 import { useAttemptPracticeSubmission } from "./use-attempt-practice-submission";
@@ -121,11 +123,6 @@ import { Button } from "@/components/ui/button";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 是否结果视图（submitted/graded） */
-export function isResultDetail(
-  data: AttemptDetailData,
-): data is AttemptResultData {
-  return data.attempt.status !== "draft";
-}
 
 /**
  * 答题会话（T2A.6 通用化，D9 两种来源共用）：
@@ -203,6 +200,8 @@ function AnswerView({
   /** 交卷成功后的标注 seal 失败回调（非阻断警示——AttemptSession 顶态） */
   onAnnotationSealFailed: () => void;
 }) {
+  const { setStudentFlagApi } = usePortalClients();
+
   const editor = useAttemptEditor(null);
   // 模块 2 限时测试：服务端时钟；到时（grace/locked）锁编辑、停自动提交，只留交卷
   const phase = useAttemptPhase(data.timing, data.clockAnchor);
@@ -467,7 +466,7 @@ function AnswerView({
         });
       });
     },
-    [attemptId, studentFlags],
+    [attemptId, studentFlags, setStudentFlagApi],
   );
   const [formalInkPresence, setFormalInkPresence] = useState<
     ReadonlyMap<string, boolean>

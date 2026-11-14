@@ -11,6 +11,7 @@ import { learningStatusClass } from "@/components/learning-status";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { formatResultCounts } from "@/features/attempt/result-counts";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatRelativeTime } from "@/lib/time";
 import type { AttemptViewMode } from "./attempt-filters";
 
@@ -145,11 +146,13 @@ function groupOf(
 
 /** 单张作答卡片（整卡可点，触控目标 ≥44px） */
 function AttemptCard({ card }: { card: TeacherAttemptCard }) {
+  const routes = usePortalRoutes();
+
   const activityAt = card.submittedAt ?? card.startedAt;
   return (
     <li>
       <Link
-        to={`/t/data/attempts/${card.attemptId}`}
+        to={routes.management(`data/attempts/${card.attemptId}`)}
         aria-label={`查看 ${card.studentName} 的作答详情（${ATTEMPT_STATUS_LABELS[card.status]}）`}
         className="flex min-h-11 flex-col gap-1.5 rounded-xl border border-border bg-card px-4 py-3 text-card-foreground outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
       >

@@ -88,3 +88,10 @@ v2快照带所选范围的材料正文、量表、自评、统一用时事实和
 学生或个人MCP在向本人确认范围与诉求后调用`create_review_run_v2`（固定mutationId重试）；`list_review_runs_v2`只列元数据，`claim_review_part_v2`指定领取分片，`renew_review_part_lease_v2`续租，`submit_review_part_v2`回写。领取回执中的generation、snapshotVersion、leaseToken必须原样回传，证据题号保留原卷显示序。相同代次和相同内容重放幂等；异内容、过期/取消或旧代次不能覆盖已有报告，迟到回信只追加审计事实。
 
 新任务图与创建幂等身份在同一IMMEDIATE事务落库，配额与既有AI任务统一计数，任一步失败全图回滚。每次预览/创建/领取/报告读取重验本人来源与当前权限；公布收紧后不返回旧报告正文，本人仍可取消排队。普通学生HTTP出口只给任务状态和经授权报告，不返回内部快照、租约或私有题库字段。真实样卷、物理设备与外部人工客户端验收仍单列，不用SDK自动化替代。
+### 当前上下文 v2（PR #172）
+
+`get_current_context({responseVersion:2})` 在旧求助队列状态外返回规范 LearningContext。唯一有效题位为 `current`；多个不同题位为 `candidates`，Agent 须请学生选择，不能替学生猜测。同题多视图去重；溢出返回 `overflow`，任一候选失权返回 `unavailable`。当前连接未启用实时定位时不读取页面焦点；无有效页面只返回明确标记的 `recent_practice` 或 `none`，不把最近练习说成当前题。
+
+每个候选重新检查本人、当前课程和 AI 策略，元数据按完整 JSON 执行 64KiB 上限；不含题面、参考答案、判定或作答正文，不自动创建或领取求助任务。无参数调用的旧四态协议保持兼容，未知版本和扩展输入拒绝。班级学生和个人端共用实现。
+
+Agent 用法：先读当前上下文；候选冲突先确认题位；用 `get_practice_question` 读冻结题面与提交参数，向学生展示题号和拟提交答案并取得确认，再调用 `submit_practice_question`，最后按回执的下一题继续。

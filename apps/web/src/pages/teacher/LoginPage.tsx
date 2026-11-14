@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { teacherLoginNameSchema } from "@tutor/contract";
 import { GraduationCap, Loader2, LogIn, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
@@ -6,13 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useLoginTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
-import { resolveTeacherLanding } from "@/features/students/teacher-landing";
-import { ApiError } from "@/lib/api";
+import { usePortalRuntime } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /t/login 教师登录（T2B.2 起为「登录名 + 密码」双字段，D6）。
@@ -41,6 +42,9 @@ function readRememberedLoginName(): string {
 }
 
 export function LoginPage() {
+  const { teacherLandingAfterAuth } = usePortalRuntime();
+  const cache = useQueryClient();
+
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
@@ -95,7 +99,7 @@ export function LoginPage() {
     loginMutation.mutate(
       { loginName: parsedName.data, password },
       {
-        onSuccess: async (teacher, request) => {
+        onSuccess: async (teacher, request, confirmation) => {
           // 记住登录名供下次预填（仅成功时记，避免把敲错的存下来）
           try {
             window.localStorage.setItem(
@@ -107,13 +111,21 @@ export function LoginPage() {
           }
           // 个人账号（模块 0）从教师入口登录：服务端同样补发学生会话，落点学习视角
           if (teacher.accountKind === "personal") {
-            navigate(safeReturnTo(returnTo, "personal"), { replace: true });
+            confirmation.confirm(() =>
+              navigate(safeReturnTo(returnTo, "personal"), { replace: true }),
+            );
             return;
           }
           // T-PR4 Web-4：登录后按学生数落点（恰 1 名未归档学生 → 该生学生主页）
-          navigate(
-            safeReturnTo(returnTo, "teacher", await resolveTeacherLanding()),
-            { replace: true },
+          const landing = await teacherLandingAfterAuth(
+            teacher,
+            cache,
+            confirmation,
+          );
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "teacher", landing), {
+              replace: true,
+            }),
           );
         },
       },

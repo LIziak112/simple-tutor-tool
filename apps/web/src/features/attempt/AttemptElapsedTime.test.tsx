@@ -1,11 +1,11 @@
+import { afterEach, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import { AttemptElapsedTime } from "./AttemptElapsedTime";
 
 const fetchAttempt = vi.hoisted(() => vi.fn());

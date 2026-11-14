@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { useReadingToolbar } from "./use-reading-toolbar";
 
 function Toolbar({ blocked = false }: { blocked?: boolean }) {

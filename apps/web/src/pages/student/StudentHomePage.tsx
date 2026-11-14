@@ -2,8 +2,8 @@ import { BookOpen, BookX, ClipboardList, School, Sparkles } from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
-import { portalCapabilitiesOf } from "@/features/auth/portals";
 import { useStudentMe } from "@/features/auth/student-auth";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   filterAssignmentList,
   parseAssignmentListUrl,
@@ -26,6 +26,7 @@ import {
   isConquered,
   loadWrongMasteryStandard,
 } from "@/features/student/wrong-mastery";
+import { portalCapabilitiesOf } from "@/portals/registry";
 
 /**
  * /s/home 学生首页（T2A.5 改版 + 2026-10 IA 调整 + 2026-10 UI 打磨）：
@@ -116,6 +117,8 @@ function WrongQuestionsOverview({
   wrongQuery,
   counts,
 }: ReturnType<typeof useWrongCounts>) {
+  const routes = usePortalRoutes();
+
   if (wrongQuery.isPending) {
     return (
       <div
@@ -180,13 +183,17 @@ function WrongQuestionsOverview({
         variant={pending > 0 ? "default" : "outline"}
         className="min-h-11"
       >
-        <Link to="/s/wrong">{pending > 0 ? "去复习" : "查看错题本"}</Link>
+        <Link to={routes.learning("wrong")}>
+          {pending > 0 ? "去复习" : "查看错题本"}
+        </Link>
       </Button>
     </div>
   );
 }
 
 export default function StudentHomePage() {
+  const routes = usePortalRoutes();
+
   const me = useStudentMe();
   const capabilities = portalCapabilitiesOf(
     "student",
@@ -229,7 +236,7 @@ export default function StudentHomePage() {
               icon={<ClipboardList aria-hidden />}
               title="我的作业"
               action={
-                <StudentSectionLink to="/s/assignments">
+                <StudentSectionLink to={routes.learning("assignments")}>
                   查看全部
                 </StudentSectionLink>
               }
@@ -264,7 +271,7 @@ export default function StudentHomePage() {
                       : "老师布置作业后会出现在这里，也可以先去课程里看看讲义。"
                   }
                   action={
-                    <StudentSectionLink to="/s/courses">
+                    <StudentSectionLink to={routes.learning("courses")}>
                       去课程看看
                     </StudentSectionLink>
                   }
@@ -308,7 +315,7 @@ export default function StudentHomePage() {
               title="我的课程"
               action={
                 <Link
-                  to="/s/lectures"
+                  to={routes.learning("lectures")}
                   className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-medium text-primary outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   <BookOpen aria-hidden className="size-4 shrink-0" />

@@ -3,13 +3,6 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type {
   AiAttemptReviewDetailData,
   AiAttemptReviewTaskPublic,
@@ -17,8 +10,15 @@ import type {
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, postStudentAiAttemptReviewActionApi } from "@/lib/api";
+import { fetchStudentAiAttemptReviewDetailApi } from "@/lib/review-queue-legacy-api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import { AttemptReviewReportReader } from "./AttemptReviewReportReader";
-import { fetchStudentAiAttemptReviewDetailApi } from "./attempt-review-api";
 import { attemptReviewDetailKey } from "./attempt-review-entry";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -28,7 +28,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     postStudentAiAttemptReviewActionApi: vi.fn(),
   };
 });
-vi.mock("./attempt-review-api", () => ({
+vi.mock("@/lib/review-queue-legacy-api", () => ({
   fetchStudentAiAttemptReviewDetailApi: vi.fn(),
 }));
 

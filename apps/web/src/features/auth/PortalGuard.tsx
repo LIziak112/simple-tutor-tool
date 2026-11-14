@@ -1,12 +1,16 @@
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router";
-import { ApiError } from "@/lib/api";
+import {
+  type PortalId,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
 import { AuthScreenError, AuthScreenLoading } from "./AuthScreen";
-import { loginPathWithReturnTo, PORTALS, type PortalId } from "./portals";
+import { loginPathWithReturnTo } from "./return-navigation";
 
 export function PortalGuard<T>({
   portal,
-  loginPath = PORTALS[portal].loginPath,
+  loginPath,
   query,
   children,
 }: {
@@ -21,6 +25,8 @@ export function PortalGuard<T>({
   };
   children: (data: T) => ReactNode;
 }) {
+  const routes = usePortalRoutes();
+  const destination = loginPath ?? routes.portal(portal).loginPath;
   const location = useLocation();
   if (query.isError) {
     if (
@@ -29,7 +35,7 @@ export function PortalGuard<T>({
     ) {
       const returnTo = `${location.pathname}${location.search}${location.hash}`;
       return (
-        <Navigate to={loginPathWithReturnTo(loginPath, returnTo)} replace />
+        <Navigate to={loginPathWithReturnTo(destination, returnTo)} replace />
       );
     }
     return (

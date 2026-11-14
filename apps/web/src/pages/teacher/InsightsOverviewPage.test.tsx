@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AnalyticsOverviewData, CourseListData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchAnalyticsOverviewApi, fetchTeacherCourses } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import InsightsOverviewPage from "./InsightsOverviewPage";
 
 /**

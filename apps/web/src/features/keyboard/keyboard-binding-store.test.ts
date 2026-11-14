@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import { act, renderHook } from "@/test/render-with-portal";
 import {
   bindKeyboardBindingsAccount,
   getResolvedKeyboardBindings,

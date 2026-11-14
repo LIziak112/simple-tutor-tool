@@ -5,9 +5,13 @@ import { CopyBlock } from "@/components/CopyBlock";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { PersonalViewButton } from "@/features/auth/PersonalViewButton";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
 import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { useApiToken } from "@/features/teacher-settings/api-token-queries";
-import { fetchPublicConfig } from "@/lib/api";
+
 import { buildMcpServersConfig } from "@/lib/mcp-config";
 
 const TOKEN_PLACEHOLDER = "<你的API_TOKEN>";
@@ -27,6 +31,8 @@ export function ConnectPage() {
 
 /** 个人账号的指路卡：一枚 token 在学习视角管理 */
 function PersonalConnectNotice() {
+  const routes = usePortalRoutes();
+
   return (
     <section className="teacher-config-page">
       <header className="mb-7">
@@ -39,7 +45,7 @@ function PersonalConnectNotice() {
       </header>
       <PersonalViewButton
         from="teacher"
-        to="/s/settings/ai"
+        to={routes.learning("settings/ai")}
         className={buttonVariants({ className: "min-h-11" })}
       >
         <BookOpenCheck aria-hidden />
@@ -50,6 +56,8 @@ function PersonalConnectNotice() {
 }
 
 function ClassConnectPage() {
+  const { fetchPublicConfig } = usePortalClients();
+
   const configQuery = useQuery({
     queryKey: ["public-config"],
     queryFn: fetchPublicConfig,

@@ -16,12 +16,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { portalCapabilitiesOf } from "@/features/auth/portals";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
 import {
   useAddCourseMembers,
   useRemoveCourseMembers,
 } from "@/features/courses/course-queries";
+import { usePortalRuntime } from "@/features/runtime/portal-runtime";
 import { useStudents } from "@/features/students/student-queries";
 import { formatRelativeTime } from "@/lib/time";
 
@@ -215,7 +215,8 @@ function AddMembersDialog({
   onClose: () => void;
 }) {
   const me = useTeacherMe();
-  const capabilities = portalCapabilitiesOf(
+  const { capabilitiesFor } = usePortalRuntime();
+  const capabilities = capabilitiesFor(
     "teacher",
     me.data?.accountKind ?? "personal",
   );

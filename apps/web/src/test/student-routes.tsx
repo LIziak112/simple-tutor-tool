@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
+import { render } from "@/test/render-with-portal";
 
 /**
  * 学生端页面测试的通用渲染工具（T2.3）：页面依赖 Router（Link/useParams/

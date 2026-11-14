@@ -18,7 +18,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import {
   teacherAiSettingsDraftKey,
   teacherAiSettingsKey,

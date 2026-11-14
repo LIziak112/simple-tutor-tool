@@ -1,12 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import {
   DEFAULT_QUICK_BUTTONS,
   type StudentQuickButtonsData,
 } from "@tutor/contract";
@@ -17,6 +10,13 @@ import {
   fetchStudentQuickButtonsApi,
   saveStudentQuickButtonsApi,
 } from "@/lib/api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { StudentQuickButtonsSection } from "./StudentQuickButtonsSection";
 
 /**

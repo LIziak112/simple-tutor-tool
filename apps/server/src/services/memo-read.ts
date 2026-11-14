@@ -44,6 +44,7 @@ export function toMemo(row: MemoRow): Memo {
         ? null
         : learningContextSchema.parse(JSON.parse(row.contextJson)),
     deviceId: row.deviceId,
+    parentMemoSeq: row.parentMemoSeq,
     kind: row.kind,
     text: row.text,
     media:
@@ -98,6 +99,13 @@ export function listMemos(
       and(
         eq(memos.studentId, studentId),
         isNull(memos.deletedAt),
+        query.seq === undefined ? undefined : eq(memos.seq, query.seq),
+        query.parentMemoSeq === undefined
+          ? undefined
+          : eq(memos.parentMemoSeq, query.parentMemoSeq),
+        query.questionId === undefined
+          ? undefined
+          : sql`json_extract(${memos.anchorJson}, '$.questionId') = ${query.questionId}`,
         query.kind === undefined ? undefined : eq(memos.kind, query.kind),
         query.tag === undefined
           ? undefined

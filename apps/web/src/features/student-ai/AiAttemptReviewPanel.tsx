@@ -12,12 +12,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  ApiError,
-  createStudentAiAttemptReviewApi,
-  fetchStudentAiAttemptReviewPreviewApi,
-  postStudentAiAttemptReviewActionApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { formatCnTime } from "@/lib/time";
 import { randomUuid } from "@/lib/uuid";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
@@ -54,6 +51,12 @@ export function AiAttemptReviewPanel(props: {
   /** 打开某份报告（由结果页的承载组件切到报告阅读器） */
   readonly onOpenReport: (taskId: string) => void;
 }) {
+  const {
+    fetchStudentAiAttemptReviewPreviewApi,
+    createStudentAiAttemptReviewApi,
+    postStudentAiAttemptReviewActionApi,
+  } = usePortalClients();
+
   const { attemptId, released, open, onOpenChange, onOpenReport } = props;
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState<AiAttemptReviewPreviewData | null>(

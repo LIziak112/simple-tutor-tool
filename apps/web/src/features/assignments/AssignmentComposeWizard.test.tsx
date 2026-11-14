@@ -1,13 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AssignmentCheckData,
   CourseDetailData,
@@ -30,6 +21,15 @@ import {
   fetchTeacherCourses,
 } from "@/lib/api";
 import { localInputToUtcIso } from "@/lib/time";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { AssignmentComposeWizard } from "./AssignmentComposeWizard";
 
 /**

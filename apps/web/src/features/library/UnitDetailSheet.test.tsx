@@ -3,7 +3,6 @@ import {
   QueryClientProvider,
   QueryObserver,
 } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { LibraryUnitSummary, LibraryUsage } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UnitDetailSheet } from "@/features/library/UnitDetailSheet";
@@ -13,6 +12,7 @@ import {
   publishUnitToSharedApi,
   updateUnitMetaApi,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 
 /**
  * 单元详情面板测试：T2B.7「发布到共享」（确认弹层说明快照语义）与

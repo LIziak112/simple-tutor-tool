@@ -1,17 +1,17 @@
 import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useSearchParams } from "react-router";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
-import { loginPathWithReturnTo, safeReturnTo } from "@/features/auth/portals";
 import {
   useSetupTeacher,
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+import { loginPathWithReturnTo, safeReturnTo } from "@/portals/registry";
 
 /**
  * /t/setup 首次启动创建教师账号（T2B.2 起表单 = 登录名 + 密码，D4；
@@ -28,15 +28,13 @@ export function SetupPage() {
   const returnTo = searchParams.get("returnTo");
   const statusQuery = useTeacherStatus();
   const setupMutation = useSetupTeacher();
+  const navigate = useNavigate();
 
   const [loginName, setLoginName] = useState("teacher");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
-  if (setupMutation.isSuccess) {
-    return <Navigate to={safeReturnTo(returnTo, "teacher")} replace />;
-  }
   if (statusQuery.isPending) {
     return (
       <LoginShell portal="teacher">
@@ -83,7 +81,15 @@ export function SetupPage() {
       return;
     }
     setFormError(null);
-    setupMutation.mutate({ loginName: parsedName.data, password });
+    setupMutation.mutate(
+      { loginName: parsedName.data, password },
+      {
+        onSuccess: (_data, _request, confirmation) =>
+          confirmation.confirm(() =>
+            navigate(safeReturnTo(returnTo, "teacher"), { replace: true }),
+          ),
+      },
+    );
   }
 
   const serverError =

@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AssignmentDetailData,
   StudentListData,
@@ -23,6 +16,13 @@ import {
   updateAssignmentApi,
 } from "@/lib/api";
 import { localInputToUtcIso } from "@/lib/time";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { AssignmentEditDialog } from "./AssignmentEditDialog";
 
 /**

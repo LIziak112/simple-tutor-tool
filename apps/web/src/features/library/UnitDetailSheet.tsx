@@ -20,13 +20,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { UsageSection } from "@/features/library/UsageSection";
+import type { UnitMetaUpdate } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { PublishConfirmDialog } from "@/features/shared/PublishConfirmDialog";
-import {
-  downloadExportMd,
-  downloadTeachingPack,
-  type UnitMetaUpdate,
-  updateUnitMetaApi,
-} from "@/lib/api";
 
 /**
  * 单元详情面板（T2A.2）：改标题 / 主题 / 文件夹 / 配套讲义（D8）、使用情况、
@@ -59,6 +55,9 @@ export function UnitDetailSheet({
   onDelete: (unit: LibraryUnitSummary) => void;
   onClose: () => void;
 }) {
+  const { updateUnitMetaApi, downloadExportMd, downloadTeachingPack } =
+    usePortalClients();
+
   const queryClient = useQueryClient();
   const [title, setTitle] = useState(unit.title);
   const [topic, setTopic] = useState(unit.topic ?? "");

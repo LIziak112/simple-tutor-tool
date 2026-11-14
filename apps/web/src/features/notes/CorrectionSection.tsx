@@ -1,3 +1,6 @@
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 /**
  * 结果页订正入口（2026-10 订正重构，替代旧「展开订正区 → 添加订正弹窗
  * 二选一 → 编辑面板」的三步流程）：
@@ -27,8 +30,6 @@ import {
 } from "@/features/notes/correction-record";
 import { clearCorrectionRecord } from "@/features/notes/note-store";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
-import { ApiError, createCorrectionApi } from "@/lib/api";
-import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 
 /**
  * 证据头缓存的可用窗口（与 staleTime 同源）：点击「订正」时缓存头超窗即
@@ -58,6 +59,10 @@ export function CorrectionSection({
   roundLabel = null,
   question,
 }: CorrectionSectionProps) {
+  const { fetchNoteEvidenceApi } = usePortalClients();
+
+  const { createCorrectionApi } = usePortalClients();
+
   const session = useNoteSessionRef();
   const queryClient = useQueryClient();
   const [workspace, setWorkspace] = useState<{

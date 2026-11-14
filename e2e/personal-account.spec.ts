@@ -62,8 +62,8 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await page.getByRole("button", { name: "注册并开始学习" }).click();
 
     // 学习视角：落点 /s/home，导航无「我的作业」，有「管理视角」切换
-    await expect(page).toHaveURL(/\/s\/home/);
-    const studentNav = page.getByRole("navigation", { name: "学生端导航" });
+    await expect(page).toHaveURL(/\/p\/learn\/home/);
+    const studentNav = page.getByRole("navigation", { name: "个人学习导航" });
     await expect(studentNav.getByRole("link", { name: "课程" })).toBeVisible();
     await expect(
       studentNav.getByRole("link", { name: "我的作业" }),
@@ -75,8 +75,8 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     // 管理视角：教师端布局（桌面宽度侧栏常驻），导航无班级入口，顶栏可切回学习视角
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.getByRole("button", { name: "切换到管理视角" }).first().click();
-    await expect(page).toHaveURL(/\/t\/library/);
-    const teacherNav = page.getByRole("navigation", { name: "教师端导航" });
+    await expect(page).toHaveURL(/\/p\/manage\/library/);
+    const teacherNav = page.getByRole("navigation", { name: "个人管理导航" });
     await expect(
       teacherNav.getByRole("link", { name: "资源库" }),
     ).toBeVisible();
@@ -111,15 +111,26 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
       }
     ).data.members;
     expect(members).toHaveLength(1);
-    await expect(page).toHaveURL(new RegExp(`/t/courses/${courseId}$`));
+    await expect(page).toHaveURL(new RegExp(`/p/manage/courses/${courseId}$`));
     await expect(page.getByRole("button", { name: "布置作业" })).toHaveCount(0);
     await page.getByRole("tab", { name: /成员/ }).click();
     await expect(
       page.getByText(members[0]?.displayName ?? "").first(),
     ).toBeVisible();
     await expect(page.getByText(/personal:/)).toHaveCount(0);
+    // 独立个人管理中的手写配置必须使用管理主体，不能按旧前缀落到学习配置。
+    const profiles = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/teacher/ink-profiles") &&
+        response.request().method() === "GET",
+    );
+    await page.goto("/p/manage/settings/ink-feel");
+    expect((await profiles).ok()).toBe(true);
+    await expect(
+      page.getByRole("link", { name: "← 返回管理设置" }),
+    ).toHaveAttribute("href", "/p/manage/settings");
     await page.getByRole("button", { name: "切换到学习视角" }).click();
-    await expect(page).toHaveURL(/\/s\/home/);
+    await expect(page).toHaveURL(/\/p\/learn\/home/);
     await expect(page.getByText("我的作业", { exact: true })).toHaveCount(0);
     await expect(page.getByText(courseName, { exact: true })).toBeVisible();
 
@@ -182,44 +193,51 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await page.getByLabel("登录名", { exact: true }).fill(loginName);
     await page.getByLabel("密码", { exact: true }).fill(PERSONAL_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await expect(page).toHaveURL(/\/t\/courses$/);
+    await expect(page).toHaveURL(/\/p\/manage\/courses$/);
   });
 
-  test("从管理视角退出回个人登录并结束双会话", async ({
-    page,
-    request,
-    baseURL,
-  }) => {
-    if (!baseURL) throw new Error("退出回跳验收需要同源 baseURL");
-    const returnTo = "/t/settings?section=account";
-    const expectedLogin = new URL("/p/login", baseURL);
-    expectedLogin.searchParams.set("returnTo", returnTo);
-    await openPersonalRegistration(request);
-    const registered = await page.request.post(
-      "/api/public/personal/register",
-      {
-        headers: { "x-forwarded-for": "10.91.1.1" },
-        data: {
-          loginName: `个人${uniqueSuffix()}`,
-          password: PERSONAL_PASSWORD,
-          inviteCode: INVITE_CODE,
+  for (const surface of ["portal", "settings"] as const)
+    test(`从管理视角退出回个人登录并结束双会话（${surface}）`, async ({
+      page,
+      request,
+      baseURL,
+    }) => {
+      if (!baseURL) throw new Error("退出回跳验收需要同源 baseURL");
+      const legacyReturnTo = "/t/settings?section=account";
+      const returnTo = "/p/manage/settings?section=account";
+      const expectedLogin = new URL("/p/login", baseURL);
+      expectedLogin.searchParams.set("returnTo", returnTo);
+      await openPersonalRegistration(request);
+      const registered = await page.request.post(
+        "/api/public/personal/register",
+        {
+          headers: { "x-forwarded-for": "10.91.1.1" },
+          data: {
+            loginName: `个人${uniqueSuffix()}`,
+            password: PERSONAL_PASSWORD,
+            inviteCode: INVITE_CODE,
+          },
         },
-      },
-    );
-    expect(registered.ok()).toBe(true);
-    await page.goto(returnTo);
-    await page.getByRole("button", { name: "退出登录" }).click();
-    await expect(page).toHaveURL(expectedLogin.href);
-    const actualLogin = new URL(page.url());
-    expect(actualLogin.origin).toBe(new URL(baseURL).origin);
-    expect(actualLogin.pathname).toBe("/p/login");
-    expect(actualLogin.hash).toBe("");
-    expect([...actualLogin.searchParams.entries()]).toEqual([
-      ["returnTo", returnTo],
-    ]);
-    expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
-    expect((await page.request.get("/api/student/me")).status()).toBe(401);
-  });
+      );
+      expect(registered.ok()).toBe(true);
+      await page.goto(legacyReturnTo);
+      await (surface === "portal"
+        ? page.getByRole("banner")
+        : page.locator("#personal-main")
+      )
+        .getByRole("button", { name: "退出登录" })
+        .click();
+      await expect(page).toHaveURL(expectedLogin.href);
+      const actualLogin = new URL(page.url());
+      expect(actualLogin.origin).toBe(new URL(baseURL).origin);
+      expect(actualLogin.pathname).toBe("/p/login");
+      expect(actualLogin.hash).toBe("");
+      expect([...actualLogin.searchParams.entries()]).toEqual([
+        ["returnTo", returnTo],
+      ]);
+      expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
+      expect((await page.request.get("/api/student/me")).status()).toBe(401);
+    });
 
   test("教师入口登录个人账号时替换同页已有的学生身份", async ({
     page,
@@ -253,7 +271,7 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await page.getByLabel("登录名", { exact: true }).fill(loginName);
     await page.getByLabel("密码", { exact: true }).fill(PERSONAL_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await expect(page).toHaveURL(/\/s\/home$/);
+    await expect(page).toHaveURL(/\/p\/learn\/home$/);
     await expect(
       page.getByRole("link", { name: `${displayName}，学生设置` }).first(),
     ).toBeVisible();

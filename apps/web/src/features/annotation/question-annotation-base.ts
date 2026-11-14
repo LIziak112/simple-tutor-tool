@@ -1,10 +1,8 @@
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { withTimeout } from "@/features/notes/rasterize-utils";
-import {
-  ApiError,
-  fetchAnnotationViewApi,
-  studentAnnotationBasePngUrl,
-} from "@/lib/api";
+import { serviceLease } from "@/features/runtime/service-leases";
+import { ApiError } from "@/lib/api-response";
+
 import { measureStage } from "@/lib/performance-stages";
 import {
   type AnnotationLocalRecord,
@@ -79,6 +77,9 @@ export async function prepareQuestionAnnotationBase(
   surface: HTMLElement | null,
   signal?: AbortSignal,
 ): Promise<QuestionAnnotationBaseResult> {
+  const { fetchAnnotationViewApi, studentAnnotationBasePngUrl } =
+    serviceLease(session);
+
   const guard = () => {
     if (signal?.aborted) throw new DOMException("标画打开已取消", "AbortError");
     if (currentAnnotationSession() !== session)

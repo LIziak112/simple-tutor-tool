@@ -14,7 +14,7 @@ import {
 } from "./mcp-live-focus-registry.ts";
 import { resolveAttemptQuestionAiPolicy } from "./teaching-policy-service.ts";
 
-function canLocateQuestion(
+export function canLocateStudentMcpQuestion(
   db: Db,
   studentId: string,
   attemptId: string,
@@ -54,7 +54,7 @@ export function updateStudentMcpLiveFocus(
     studentId,
     attemptId,
     questionId === null ||
-      canLocateQuestion(db, studentId, attemptId, questionId)
+      canLocateStudentMcpQuestion(db, studentId, attemptId, questionId)
       ? request
       : { ...request, questionId: null },
   );
@@ -75,7 +75,12 @@ export function getStudentMcpCurrentContext(
   const focus = currentStudentMcpFocus(db, studentId);
   if (
     focus === null ||
-    !canLocateQuestion(db, studentId, focus.attemptId, focus.questionId)
+    !canLocateStudentMcpQuestion(
+      db,
+      studentId,
+      focus.attemptId,
+      focus.questionId,
+    )
   )
     return noCurrent;
   const task = db

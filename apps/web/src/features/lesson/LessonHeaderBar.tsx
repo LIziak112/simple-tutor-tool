@@ -1,7 +1,7 @@
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 import { Link } from "react-router";
-import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
 import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";

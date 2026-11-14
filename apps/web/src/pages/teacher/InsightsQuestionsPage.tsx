@@ -3,7 +3,7 @@ import { ChevronDown, Clock3, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
+import { QUESTION_TYPE_LABELS } from "@/features/answering/answer-format";
 import { useTeacherCourses } from "@/features/courses/course-queries";
 import {
   AnalyticsFilterBar,

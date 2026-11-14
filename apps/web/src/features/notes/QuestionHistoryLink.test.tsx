@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { QuestionHistoryLink } from "./QuestionHistoryLink";
 
 it("历史入口保留记录来源与回看范围，并将返回位置固定到点击的题目", () => {

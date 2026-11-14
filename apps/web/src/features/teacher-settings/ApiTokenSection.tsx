@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   useApiToken,
   useResetApiToken,
@@ -42,6 +43,8 @@ export function ApiTokenSection({
   title?: string;
   showConnectionLink?: boolean;
 }) {
+  const routes = usePortalRoutes();
+
   const tokenQuery = useApiToken();
   const resetMutation = useResetApiToken();
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
@@ -125,7 +128,7 @@ export function ApiTokenSection({
       {/* T4.7：连接说明页入口（MCP 地址与配置示例在 /t/connect） */}
       {showConnectionLink && (
         <Button variant="outline" className="min-h-11 self-start px-4" asChild>
-          <Link to="/t/connect">连接说明与配置示例 →</Link>
+          <Link to={routes.management("connect")}>连接说明与配置示例 →</Link>
         </Button>
       )}
 

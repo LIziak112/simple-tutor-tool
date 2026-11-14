@@ -1,7 +1,7 @@
-import { act, render, screen } from "@testing-library/react";
 import type React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
+import { act, render, screen } from "@/test/render-with-portal";
 import {
   effectiveNoteLayout,
   getNoteLayoutPreference,

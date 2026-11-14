@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
@@ -17,6 +9,14 @@ import {
   setNoteLayoutPreference,
 } from "@/features/notes/note-layout";
 import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { stubElementWidth } from "@/test/stub-element-width";
 import { useAiCompanionDock } from "./AiCompanionDock";
 

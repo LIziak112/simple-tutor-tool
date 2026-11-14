@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { expect, it } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 
 function Draft() {

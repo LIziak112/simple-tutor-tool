@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
 import type { AttemptContextMaterial } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { noteMaterialReadingOffset } from "./material-reading-position";
 import { QuestionMaterialsAnchor } from "./QuestionMaterialsAnchor";
 

@@ -1,6 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import { render, screen, within } from "@/test/render-with-portal";
 import { AuthScreenError, AuthScreenLoading } from "./AuthScreen";
 import { LoginShell } from "./LoginShell";
 

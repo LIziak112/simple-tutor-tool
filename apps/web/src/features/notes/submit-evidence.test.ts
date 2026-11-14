@@ -12,8 +12,9 @@
 import type { NoteHeadData } from "@tutor/contract";
 import { NOTE_HEADS_MAX_QUESTIONS } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bindDraftSession } from "@/features/attempt/draft-store";
 import { docOf } from "@/features/notes/note-fixtures";
+import { bindDraftSession } from "@/features/persistence/draft-store";
+import { testClientServices } from "@/test/portal-fixture";
 
 const annotationProblems = vi.hoisted(() =>
   vi.fn(
@@ -86,7 +87,7 @@ const QUESTIONS = [Q1, Q2, Q3];
 beforeEach(() => {
   annotationProblems.mockResolvedValue([]);
   installNoteBackend(memoryNoteBackend());
-  bindNoteSession(SESSION_A);
+  bindNoteSession(SESSION_A, testClientServices);
   putMock.mockReset();
   headsMock.mockReset();
 });
@@ -142,7 +143,10 @@ describe("prepareSubmitEvidence：正常固定", () => {
       { length: NOTE_HEADS_MAX_QUESTIONS + 1 },
       (_, index) => `历史题-${index}`,
     );
-    const prep = prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds });
+    const prep = prepareSubmitEvidence(testClientServices, {
+      attemptId: ATTEMPT,
+      questionIds,
+    });
     const rejection = expect(prep).rejects.toThrow("作答会话已切换");
     await received.promise;
     bindDraftSession({ origin: "https://tutor.test", studentId: "next" });
@@ -161,7 +165,7 @@ describe("prepareSubmitEvidence：正常固定", () => {
       { length: NOTE_HEADS_MAX_QUESTIONS + 1 },
       (_, index) => `历史题-${index}`,
     );
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds,
     });
@@ -179,13 +183,13 @@ describe("prepareSubmitEvidence：正常固定", () => {
     annotationProblems.mockResolvedValue([
       { questionId: Q1, reason: "标画尚未上传完整", domain: "annotation" },
     ]);
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
     expect(prep.declarations).toBeNull();
     expect(prep.problems[0]?.domain).toBe("annotation");
-    const confirmed = await prepareSubmitEvidence({
+    const confirmed = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
       allowMissing: new Set([Q1]),
@@ -206,7 +210,7 @@ describe("prepareSubmitEvidence：正常固定", () => {
       }),
     });
 
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
@@ -226,7 +230,7 @@ describe("prepareSubmitEvidence：正常固定", () => {
 
   it("本地无记录但服务端有稿（跨设备/他标签页）→ frozen，不误报 none", async () => {
     mockHeads({ [Q2]: headAt(Q2) });
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
@@ -253,7 +257,7 @@ describe("prepareSubmitEvidence：正常固定", () => {
     putMock.mockResolvedValue(receiptOf(1));
     mockHeads({ [Q3]: headAt(Q3) });
 
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
@@ -277,7 +281,7 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
     putMock.mockRejectedValue(new Error("网络不可用"));
     mockHeads({});
 
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
@@ -286,7 +290,7 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
     expect(prep.problems[0]?.reason).toContain("尚未保存完整");
 
     // 用户明确选择「提交答案，草稿未保存完整」→ 重跑组装
-    const confirmed = await prepareSubmitEvidence({
+    const confirmed = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
       allowMissing: new Set([Q1]),
@@ -314,13 +318,13 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
       return receiptOf(1);
     });
     mockHeads({ [Q1]: headAt(Q1) });
-    const first = await prepareSubmitEvidence({
+    const first = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
     expect(first.problems.map((p) => p.questionId)).toEqual([Q1]);
 
-    const confirmed = await prepareSubmitEvidence({
+    const confirmed = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
       allowMissing: new Set([Q1]),
@@ -349,7 +353,7 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
     );
     mockHeads({});
 
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
@@ -367,7 +371,7 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
     putMock.mockResolvedValue(receiptOf(1));
     mockHeads({});
 
-    const prep = await prepareSubmitEvidence({
+    const prep = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
@@ -380,7 +384,10 @@ describe("prepareSubmitEvidence：阻止性失败", () => {
   it("head 拉取失败（网络/权限）→ 抛错阻止交卷（不能在状态未知下声明）", async () => {
     headsMock.mockRejectedValue(new ApiError("INTERNAL", "服务异常", 500, {}));
     await expect(
-      prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: QUESTIONS }),
+      prepareSubmitEvidence(testClientServices, {
+        attemptId: ATTEMPT,
+        questionIds: QUESTIONS,
+      }),
     ).rejects.toBeInstanceOf(Error);
   });
 
@@ -398,7 +405,10 @@ describe("prepareSubmitEvidence：阻止性失败", () => {
     installNoteBackend(failingScan);
     mockHeads({});
     await expect(
-      prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: QUESTIONS }),
+      prepareSubmitEvidence(testClientServices, {
+        attemptId: ATTEMPT,
+        questionIds: QUESTIONS,
+      }),
     ).rejects.toThrow("IDB 读取失败");
     // 展示性快览保持宽松：读失败≈无记录（全 none，不抛）
     const statuses = await snapshotNoteOverview({
@@ -415,7 +425,7 @@ describe("prepareSubmitEvidence：两批 problem 先后确认（并集语义，P
     await writeLocal(Q1, DOC_A);
     putMock.mockRejectedValue(new Error("网络不可用"));
     mockHeads({});
-    const first = await prepareSubmitEvidence({
+    const first = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
     });
@@ -431,7 +441,7 @@ describe("prepareSubmitEvidence：两批 problem 先后确认（并集语义，P
       null,
       "同一上传标识已对应不同正文",
     );
-    const second = await prepareSubmitEvidence({
+    const second = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
       allowMissing: confirmed,
@@ -443,7 +453,7 @@ describe("prepareSubmitEvidence：两批 problem 先后确认（并集语义，P
 
     // 用户确认第二批（并集 {A,B}）→ 第三轮完整交卷
     for (const problem of second.problems) confirmed.add(problem.questionId);
-    const third = await prepareSubmitEvidence({
+    const third = await prepareSubmitEvidence(testClientServices, {
       attemptId: ATTEMPT,
       questionIds: QUESTIONS,
       allowMissing: confirmed,
@@ -505,7 +515,7 @@ describe("prepareSubmitEvidence：T6R.20 标注追平（审查修复 2：只 flu
       settleAnnotationPersistence,
     } = await import("@/features/annotation/annotation-store");
     installAnnotationBackend(memoryAnnotationBackend());
-    bindAnnotationSession(SESSION_A);
+    bindAnnotationSession(SESSION_A, testClientServices);
     try {
       writeAnnotationDoc(
         SESSION_A,
@@ -540,7 +550,7 @@ describe("prepareSubmitEvidence：T6R.20 标注追平（审查修复 2：只 flu
         return { phase: "scratch", sealedCount: 1 };
       });
       mockHeads({});
-      const prep = await prepareSubmitEvidence({
+      const prep = await prepareSubmitEvidence(testClientServices, {
         attemptId: ATTEMPT,
         questionIds: [Q1],
       });
@@ -554,7 +564,7 @@ describe("prepareSubmitEvidence：T6R.20 标注追平（审查修复 2：只 flu
 
       // seal 失败也不再影响交卷准备（失败非阻断，服务端懒补封兜底）
       sealMock.mockRejectedValueOnce(new Error("连不上服务器"));
-      const second = await prepareSubmitEvidence({
+      const second = await prepareSubmitEvidence(testClientServices, {
         attemptId: ATTEMPT,
         questionIds: [Q1],
       });

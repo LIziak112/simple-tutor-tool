@@ -1,9 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { forwardRef, type ReactNode, useEffect, useRef, useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "@/features/answering/AttemptEditorContext";
 import {
   AiCompanionRail,
   AiCompanionTrigger,
@@ -12,11 +15,8 @@ import {
   type AiCompanionLayoutController,
   useAiCompanionLayout,
 } from "@/features/student-ai/ai-companion-layout";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { stubElementWidth } from "@/test/stub-element-width";
-import {
-  AttemptEditorProvider,
-  useAttemptEditor,
-} from "./AttemptEditorContext";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 
 /**

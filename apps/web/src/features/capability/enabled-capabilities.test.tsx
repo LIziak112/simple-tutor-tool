@@ -1,10 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  installDraftBackend,
-  memoryBackend,
-} from "@/features/attempt/draft-store";
 import {
   HandwrittenControls,
   type HandwrittenControlsProps,
@@ -15,6 +10,11 @@ import {
 } from "@/features/capability/enabled-capabilities";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { renderMd } from "@/features/markdown/test-support/render-md";
+import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 
 /**
  * T7.7 辅助能力启用集前端测试（方案 §4.5）：

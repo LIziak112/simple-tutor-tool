@@ -9,21 +9,17 @@ import type {
 import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import type { SubmitEvidenceProblem } from "@/features/notes/submit-evidence";
-import {
-  ApiError,
-  fetchPracticeQuestionFeedbackApi,
-  submitPracticeQuestionApi,
-} from "@/lib/api";
-import { requestErrorMessage } from "@/lib/api-response";
+import { draftStore } from "@/features/persistence/draft-store";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError, requestErrorMessage } from "@/lib/api-response";
 import { randomUuid } from "@/lib/uuid";
 import {
   pauseAttemptDetailPolling,
   resumeAttemptDetailPolling,
   studentAttemptKey,
 } from "./attempt-queries";
-import { draftStore } from "./draft-store";
 import { firstUnsubmittedQuestionId } from "./practice-protocol";
 import { prepareQuestionSubmission } from "./prepare-question-submission";
 
@@ -117,6 +113,11 @@ export function usePracticeQuestionSubmit(input: {
   /** 提交前收笔（编辑器让位）；返回 false = 用户选择继续书写，中止提交 */
   beforeSubmit: () => Promise<boolean>;
 }) {
+  const clients = usePortalClients();
+
+  const { submitPracticeQuestionApi, fetchPracticeQuestionFeedbackApi } =
+    usePortalClients();
+
   const { attemptId, questionIds, singleMode } = input;
   const queryClient = useQueryClient();
   const isV1 = input.data.practiceWorkflow !== undefined;
@@ -221,7 +222,7 @@ export function usePracticeQuestionSubmit(input: {
       let keepPaused = false;
       try {
         if (!(await beforeSubmitRef.current())) return { kind: "aborted" };
-        const prep = await prepareQuestionSubmission({
+        const prep = await prepareQuestionSubmission(clients, {
           attemptId,
           questionIds: [questionId],
           flushQuestionLocal: flushQuestionLocalRef.current,
@@ -353,7 +354,14 @@ export function usePracticeQuestionSubmit(input: {
         setSubmittingId(null);
       }
     },
-    [attemptId, input.inkControllers, queryClient, refetchDetail],
+    [
+      attemptId,
+      input.inkControllers,
+      queryClient,
+      refetchDetail,
+      clients,
+      submitPracticeQuestionApi,
+    ],
   );
 
   // ---- 已提交可读题的题级反馈按需 GET（缓存一次，失败可重试） ----
@@ -395,7 +403,7 @@ export function usePracticeQuestionSubmit(input: {
         feedbackFetchingRef.current.delete(questionId);
       }
     },
-    [attemptId],
+    [attemptId, fetchPracticeQuestionFeedbackApi],
   );
 
   // 单题模式：当前题为已提交可读时读取（切题即取，§10.1 no-store 每次权威；

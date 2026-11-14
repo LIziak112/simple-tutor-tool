@@ -1,10 +1,3 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type {
   AnnotationSurfaceLayout,
   AnnotationViewData,
@@ -12,6 +5,13 @@ import type {
 } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { fetchAnnotationViewApi } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import { AnnotationView } from "./AnnotationView";
 import { questionSurfaceMatchesLayout } from "./question-base-image";
 

@@ -1,15 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { PersonalSessionData, TeacherInfo } from "@tutor/contract";
-import {
-  fetchTeacherMe,
-  fetchTeacherStatus,
-  loginTeacher,
-  logoutTeacher,
-  registerTeacher,
-  setupTeacher,
-} from "@/lib/api";
-import { clearAccountQueries } from "./account-query-cache";
-import { useApplyStudentAuthed } from "./student-auth";
+import { useCallback } from "react";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { teacherStatusKey, useApplyIdentity } from "./auth-apply";
+import { useClearIdentitySessions } from "./auth-clear";
+import { useAccountMutation } from "./auth-mutation";
+import type { AuthOperation } from "./auth-operation";
+
+export { teacherStatusKey } from "./auth-apply";
 
 /**
  * 教师登录状态（T1.9）：TanStack Query 管服务端状态的既有模式——
@@ -19,11 +17,12 @@ import { useApplyStudentAuthed } from "./student-auth";
  *   写操作，成功后同步 me 缓存，避免登录后守卫再闪一次 loading。
  */
 
-export const teacherStatusKey = ["teacher", "status"] as const;
 export const teacherMeKey = ["teacher", "me"] as const;
 
 /** 是否已设置教师（公开接口，无需登录） */
 export function useTeacherStatus() {
+  const { fetchTeacherStatus } = usePortalClients();
+
   return useQuery({
     queryKey: teacherStatusKey,
     queryFn: fetchTeacherStatus,
@@ -35,6 +34,8 @@ export function useTeacherStatus() {
 
 /** 当前登录教师（未登录时 isError 且错误码 UNAUTHORIZED，由守卫处理跳转） */
 export function useTeacherMe({ freshOnMount = false } = {}) {
+  const { fetchTeacherMe } = usePortalClients();
+
   return useQuery({
     queryKey: teacherMeKey,
     queryFn: fetchTeacherMe,
@@ -45,77 +46,67 @@ export function useTeacherMe({ freshOnMount = false } = {}) {
   });
 }
 
-/**
- * 登录/设置成功后写入 me 缓存并刷新 status（首启 → 已设置）。
- * 导出供个人账号双会话登录复用（personal-auth.ts，模块 0）。
- */
+/** 教师和个人管理半边使用同一同步事务，绝不忽略clear取消。 */
 export function useApplyTeacherAuthed() {
-  const queryClient = useQueryClient();
-  return async (teacher: TeacherInfo) => {
-    await clearAccountQueries(queryClient, "teacher");
-    queryClient.setQueryData(teacherMeKey, teacher);
-    void queryClient.invalidateQueries({ queryKey: teacherStatusKey });
-  };
+  const apply = useApplyIdentity();
+  return useCallback((teacher: TeacherInfo) => apply({ teacher }), [apply]);
 }
-
 export function useApplyPersonalAuthed() {
-  const applyTeacher = useApplyTeacherAuthed();
-  const applyStudent = useApplyStudentAuthed();
-  return async ({ teacher, student }: PersonalSessionData) => {
-    await Promise.all([applyStudent(student), applyTeacher(teacher)]);
-  };
+  const apply = useApplyIdentity();
+  return useCallback(
+    (session: PersonalSessionData, operation?: AuthOperation) =>
+      apply(session, undefined, operation),
+    [apply],
+  );
 }
-
-/** 首次设置密码（成功自动登录） */
 export function useSetupTeacher() {
-  const applyAuthed = useApplyTeacherAuthed();
-  return useMutation({
-    mutationFn: setupTeacher,
-    onSuccess: applyAuthed,
-  });
+  const { setupTeacher } = usePortalClients();
+  const apply = useApplyIdentity();
+  return useAccountMutation(
+    setupTeacher,
+    (teacher, operation) => apply({ teacher }, undefined, operation),
+    ["teacher"],
+  );
 }
-
-/** 密码登录 */
 export function useLoginTeacher() {
-  const applyAuthed = useApplyTeacherAuthed();
-  const applyPersonal = useApplyPersonalAuthed();
-  return useMutation({
-    mutationFn: loginTeacher,
-    onSuccess: ({ student, ...teacher }) =>
-      student === undefined
-        ? applyAuthed(teacher)
-        : applyPersonal({ teacher, student }),
-  });
+  const { loginTeacher } = usePortalClients();
+  const apply = useApplyIdentity();
+  return useAccountMutation(
+    loginTeacher,
+    ({ student, ...teacher }, operation) =>
+      apply(student ? { student, teacher } : { teacher }, undefined, operation),
+    ["teacher"],
+  );
 }
-
-/** 自助注册（T2B.6，D3：成功即自动登录，缓存同步与登录一致） */
 export function useRegisterTeacher() {
-  const applyAuthed = useApplyTeacherAuthed();
-  return useMutation({
-    mutationFn: registerTeacher,
-    onSuccess: applyAuthed,
-  });
+  const { registerTeacher } = usePortalClients();
+  const apply = useApplyIdentity();
+  return useAccountMutation(
+    registerTeacher,
+    (teacher, operation) => apply({ teacher }, undefined, operation),
+    ["teacher"],
+  );
 }
-
-/** 退出登录：清理教师及管理数据并重置身份，学生会话继续保留。 */
 export function useLogoutTeacher(onLoggedOut?: () => void) {
-  const clearSession = useClearTeacherSession();
-  return useMutation({
-    mutationFn: logoutTeacher,
-    onSuccess: () => clearSession(onLoggedOut),
-  });
+  const { logoutTeacher } = usePortalClients();
+  const clear = useClearIdentitySessions();
+  return useAccountMutation(
+    () => logoutTeacher(),
+    (_data, operation) => clear(["teacher"], onLoggedOut, operation),
+    ["teacher"],
+  );
 }
-
 export function useClearTeacherSession() {
-  const queryClient = useQueryClient();
-  return async (onCleared?: () => void) => {
-    await clearAccountQueries(queryClient, "teacher");
-    const reset = queryClient.resetQueries({
-      queryKey: teacherMeKey,
-      exact: true,
-    });
-    // 身份已清空、页面尚未卸载时完成主动退出导航，再等待身份重取。
-    onCleared?.();
-    await reset;
-  };
+  const clear = useClearIdentitySessions();
+  return useCallback(
+    (onCleared?: () => void, expectedId?: string, before?: () => boolean) =>
+      clear(
+        ["teacher"],
+        onCleared,
+        undefined,
+        expectedId ? { role: "teacher", id: expectedId } : undefined,
+        before,
+      ),
+    [clear],
+  );
 }

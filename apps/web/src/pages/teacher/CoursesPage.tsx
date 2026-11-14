@@ -27,7 +27,9 @@ import {
   useTeacherCourses,
   useUpdateCourse,
 } from "@/features/courses/course-queries";
-import { ApiError } from "@/lib/api";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { formatRelativeTime } from "@/lib/time";
 
 /**
@@ -167,6 +169,8 @@ function CoursesEmpty({
 // ---------- 课程卡片 ----------
 
 function CourseCard({ course }: { course: CourseSummary }) {
+  const routes = usePortalRoutes();
+
   const navigate = useNavigate();
   const updateMutation = useUpdateCourse(course.id);
   const deleteMutation = useDeleteCourse();
@@ -181,7 +185,7 @@ function CourseCard({ course }: { course: CourseSummary }) {
       <button
         type="button"
         className="flex min-h-11 flex-col items-start gap-1 rounded-lg text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50"
-        onClick={() => void navigate(`/t/courses/${course.id}`)}
+        onClick={() => void navigate(routes.management(`courses/${course.id}`))}
       >
         <span className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 break-words text-base font-semibold">
@@ -360,6 +364,8 @@ function DeleteCourseDialog({
 // ---------- 新建课程 ----------
 
 function CreateCourseDialog({ onClose }: { onClose: () => void }) {
+  const routes = usePortalRoutes();
+
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const createMutation = useCreateCourse();
@@ -378,7 +384,7 @@ function CreateCourseDialog({ onClose }: { onClose: () => void }) {
         onSuccess: (data) => {
           onClose();
           // 新建后直达编辑页，引导「从资源库添加」
-          void navigate(`/t/courses/${data.id}`);
+          void navigate(routes.management(`courses/${data.id}`));
         },
       },
     );

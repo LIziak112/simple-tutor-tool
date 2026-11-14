@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { downloadTeacherExportCsv } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { ExportCsvButton } from "./ExportCsvButton";
 
 /**

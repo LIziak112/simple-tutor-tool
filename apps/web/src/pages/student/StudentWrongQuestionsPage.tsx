@@ -12,6 +12,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { workflowStartOptions } from "@/features/attempt/attempt-queries";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
 import { useStudentCourses } from "@/features/student/student-queries";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
 import {
@@ -43,7 +47,7 @@ import {
   wrongKnowledgeOptions,
   wrongQuestionsUrlQuery,
 } from "@/features/student/wrong-questions-ui";
-import { startWrongPracticeApi } from "@/lib/api";
+
 import { useReplayableCreate } from "@/lib/use-replayable-create";
 
 /**
@@ -232,6 +236,10 @@ function MasteryStandardPicker({
 }
 
 export default function StudentWrongQuestionsPage() {
+  const { startWrongPracticeApi } = usePortalClients();
+
+  const routes = usePortalRoutes();
+
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   // URL query 是 tab 与分组维度的单一事实来源（刷新与返回不丢）
@@ -373,7 +381,7 @@ export default function StudentWrongQuestionsPage() {
       setPracticeScope(input.scope);
     },
     onSuccess: (attempt) => {
-      void navigate(`/s/attempts/${attempt.id}`);
+      void navigate(routes.learning(`attempts/${attempt.id}`));
     },
     onSettled: () => {
       practiceInFlight.current = false;

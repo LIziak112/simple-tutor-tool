@@ -6,6 +6,7 @@ import type {
   AnnotationSurfaceLayout,
 } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testClientServices } from "@/test/portal-fixture";
 import {
   type AnnotationScope,
   type AnnotationSessionRef,
@@ -125,7 +126,7 @@ beforeEach(() => {
   viewMock.mockReset();
   baseMock.mockReset();
   baseImageMock.mockReset();
-  bindAnnotationSession(SESSION_A);
+  bindAnnotationSession(SESSION_A, testClientServices);
 });
 
 afterEach(() => {
@@ -364,7 +365,7 @@ describe("annotation-sync：会话生命周期", () => {
     );
     installAnnotationBackend(backend);
     resetAnnotationStoreForTest();
-    bindAnnotationSession(SESSION_A);
+    bindAnnotationSession(SESSION_A, testClientServices);
     await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1); // bind 扫描补传
   });
@@ -380,7 +381,7 @@ describe("annotation-sync：会话生命周期", () => {
     writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
     await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
-    bindAnnotationSession(SESSION_B); // 切账号
+    bindAnnotationSession(SESSION_B, testClientServices); // 切账号
     const aborted = callOf(0).signal?.aborted;
     expect(aborted).toBe(true);
     rejectPut(

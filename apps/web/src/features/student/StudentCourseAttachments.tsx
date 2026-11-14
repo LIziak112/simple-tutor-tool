@@ -5,7 +5,8 @@ import {
   formatAttachmentBytes,
 } from "@tutor/contract";
 import { Download, Paperclip } from "lucide-react";
-import { listStudentCourseAttachmentsApi } from "@/lib/attachment-api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { formatCnTime } from "@/lib/time";
 
 /**
@@ -17,6 +18,8 @@ export const studentCourseAttachmentsKey = (courseId: string) =>
   ["student", "course-attachments", courseId] as const;
 
 export function StudentCourseAttachments({ courseId }: { courseId: string }) {
+  const { listStudentCourseAttachmentsApi } = usePortalClients();
+
   const query = useQuery({
     queryKey: studentCourseAttachmentsKey(courseId),
     queryFn: () => listStudentCourseAttachmentsApi(courseId),

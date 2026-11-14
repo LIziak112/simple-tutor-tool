@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { AttemptStatus, LearningContext } from "@tutor/contract";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { resolveLearningContext } from "./learning-context-api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import {
   type HostLease,
   type LearningSource,
@@ -55,6 +56,8 @@ function sourceForCard(
 }
 /** 页面注册一个租约；题卡只发布动作，不注册或卸载整个共享焦点。 */
 export function useLearningContextPublisher(input: PublisherInput) {
+  const { resolveLearningContext } = usePortalClients();
+
   const query = useQueryClient();
   const principal = useContext(LearningPrincipalContext);
   const snapshot = useLearningContextSnapshot();
@@ -162,7 +165,7 @@ export function useLearningContextPublisher(input: PublisherInput) {
         })
         .catch(() => {});
     },
-    [query],
+    [query, resolveLearningContext],
   );
   const eligible = useCallback(() => {
     const selected = learningContextStore.getSnapshot();

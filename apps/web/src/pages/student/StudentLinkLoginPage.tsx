@@ -3,7 +3,7 @@ import { AuthScreenError, AuthScreenLoading } from "@/features/auth/AuthScreen";
 import { LoginShell } from "@/features/auth/LoginShell";
 import { useStudentLinkEntry } from "@/features/auth/use-student-link-entry";
 import { useStudentTheme } from "@/features/student/use-student-theme";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * /s/:token 学生专属链接登录页（T2.3，§5.7 专属链接）。

@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
 import type {
   AttemptActivity,
   AttemptResultQuestion,
   AttemptResultUnit,
 } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@/test/render-with-portal";
 import { ModuleResultTable } from "./ModuleResultTable";
 import { isRetrainable, moduleResultStatsOf } from "./module-result-model";
 

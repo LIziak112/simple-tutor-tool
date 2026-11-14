@@ -1,7 +1,7 @@
 import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
+import { formatReferenceAnswers } from "@/features/answering/answer-format";
+import { FinalAnswerInput } from "@/features/answering/FinalAnswerInput";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { formatReferenceAnswers } from "../../attempt/answer-format";
-import { FinalAnswerInput } from "../../attempt/FinalAnswerInput";
 import type {
   AnswerKindView,
   PreparedOf,

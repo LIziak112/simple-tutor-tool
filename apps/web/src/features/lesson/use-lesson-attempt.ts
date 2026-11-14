@@ -8,23 +8,23 @@ import type {
 } from "@tutor/contract";
 import { attemptSubmissionConflictSchema } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  draftStore,
-  getDraftSessionEpoch,
-} from "@/features/attempt/draft-store";
-import { prepareDraftForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptSaveStatus } from "@/features/attempt/use-attempt-save-status";
-import { useDraftSync } from "@/features/attempt/use-draft-sync";
-import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
   type SubmitEvidenceProblem,
 } from "@/features/notes/submit-evidence";
-import { ApiError, submitLessonQuestionApi } from "@/lib/api";
-import { requestErrorMessage } from "@/lib/api-response";
+import {
+  draftStore,
+  getDraftSessionEpoch,
+} from "@/features/persistence/draft-store";
+import { prepareDraftForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import { useDraftSync } from "@/features/persistence/use-draft-sync";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError, requestErrorMessage } from "@/lib/api-response";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useOnlineStatus } from "@/lib/use-online-status";
 
@@ -125,6 +125,10 @@ export function useLessonAttempt(
   handlers: LessonQuestionHandlers;
   draftSyncContext: ReturnType<typeof useDraftSync>;
 } {
+  const clients = usePortalClients();
+
+  const { submitLessonQuestionApi } = usePortalClients();
+
   const attemptId = data.attempt.id;
   // refetch 独立取值（useQuery 的 refetch 引用稳定）：submit/finish 的回调
   // 依赖不含 options 对象本身，题卡 handlers 引用随页面渲染保持稳定
@@ -231,7 +235,7 @@ export function useLessonAttempt(
       allowMissing?: ReadonlySet<string>,
     ): Promise<SubmitEvidencePrep | LessonSubmitOutcome> => {
       try {
-        return await prepareSubmitEvidence({
+        return await prepareSubmitEvidence(clients, {
           attemptId,
           questionIds: ids,
           ...(allowMissing !== undefined ? { allowMissing } : {}),
@@ -246,7 +250,7 @@ export function useLessonAttempt(
         };
       }
     },
-    [attemptId],
+    [attemptId, clients],
   );
 
   const submit = useCallback(
@@ -364,6 +368,7 @@ export function useLessonAttempt(
       flushAnswers,
       prepEvidence,
       refetch,
+      submitLessonQuestionApi,
     ],
   );
 

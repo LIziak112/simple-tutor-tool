@@ -14,6 +14,10 @@ import {
 } from "@/components/ui/dialog";
 import { useLearningContextSnapshot } from "@/features/learning-context/learning-context-store";
 import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+import {
   AiCompanionPanelBody,
   AiCompanionTrigger,
 } from "@/features/student-ai/AiCompanionRail";
@@ -41,7 +45,7 @@ import {
   studentModeReasonText,
   useAiSendController,
 } from "@/features/student-ai/use-ai-send-controller";
-import { fetchStudentAiTaskApi } from "@/lib/api";
+
 import {
   AiReadingMemoryContext,
   useAiReadingMemory,
@@ -121,6 +125,10 @@ const ensureAtQuestion = async (
 };
 
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
+  const routes = usePortalRoutes();
+
+  const { fetchStudentAiTaskApi } = usePortalClients();
+
   const { attemptId, questions, editor, labelOf } = host;
   const learning = useLearningContextSnapshot();
   const currentQuestionId =
@@ -259,7 +267,9 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       returnParams.set("aiQuestion", boundQuestionId);
     } else returnParams.set("aiCompose", boundQuestionId);
   }
-  const settingsHref = `/s/settings/ai?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}`;
+  const settingsHref = routes.learning(
+    `settings/ai?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}`,
+  );
   const openComposeRef = useRef(async (_questionId: string) => false);
   openComposeRef.current = async (questionId: string) => {
     if (!questions.some((question) => question.id === questionId))
@@ -398,7 +408,14 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     return () => {
       cancelled = true;
     };
-  }, [attemptId, host.ready, location.pathname, location.search, navigate]);
+  }, [
+    attemptId,
+    host.ready,
+    location.pathname,
+    location.search,
+    navigate,
+    fetchStudentAiTaskApi,
+  ]);
   const fixedActive = presentation === "side";
   const dialogActive = controller.open && presentation === "dialog";
   useEffect(() => {
@@ -639,7 +656,9 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
             .flush(boundQuestionId)
             .then(() => {
               void navigate(
-                `/s/settings?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}#ai-display`,
+                routes.learning(
+                  `settings?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}#ai-display`,
+                ),
               );
             })
             .catch(() =>

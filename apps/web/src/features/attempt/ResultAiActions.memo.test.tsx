@@ -1,14 +1,14 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { learningContextStore as store } from "@/features/learning-context/learning-context-store";
+import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
+import { enqueueMemo } from "@/features/memos/memo-outbox";
 import {
   act,
   cleanup,
   fireEvent,
   render,
   screen,
-} from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { learningContextStore as store } from "@/features/learning-context/learning-context-store";
-import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
-import { enqueueMemo } from "@/features/memos/memo-outbox";
+} from "@/test/render-with-portal";
 import { ResultAiActions, type useResultAiCompanion } from "./ResultAiActions";
 
 vi.mock("@/features/memos/memo-outbox", () => ({

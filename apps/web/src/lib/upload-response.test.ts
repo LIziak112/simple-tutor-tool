@@ -38,9 +38,10 @@ const memo = {
 
 function startUpload(upload: () => Promise<unknown>) {
   let xhr: UploadRequest | undefined;
-  class UploadRequest {
+  class UploadRequest extends EventTarget {
     open = vi.fn();
-    send = vi.fn<(body: FormData) => void>();
+    sendSpy = vi.fn<(body: FormData) => void>();
+    send = this.sendSpy;
     setRequestHeader = vi.fn();
     upload = { onprogress: (_event: ProgressEvent) => {} };
     status = 0;
@@ -50,11 +51,13 @@ function startUpload(upload: () => Promise<unknown>) {
     onabort = () => {};
 
     constructor() {
+      super();
       xhr = this;
     }
 
     abort() {
       this.onabort();
+      this.dispatchEvent(new Event("loadend"));
     }
   }
   vi.stubGlobal("XMLHttpRequest", UploadRequest);
@@ -68,6 +71,7 @@ function startUpload(upload: () => Promise<unknown>) {
       request.status = status;
       request.responseText = body;
       request.onload();
+      request.dispatchEvent(new Event("loadend"));
     },
   };
 }
@@ -145,7 +149,7 @@ describe.each([
   it("取消正在进行的上传时拒绝为 AbortError", async () => {
     const controller = new AbortController();
     const { xhr, result } = startUpload(() => upload(controller.signal));
-    expect(xhr.send).toHaveBeenCalledOnce();
+    expect(xhr.sendSpy).toHaveBeenCalledOnce();
     controller.abort();
     await expect(result).rejects.toMatchObject({ name: "AbortError" });
   });
@@ -160,7 +164,7 @@ it("附件上传发送原幂等键和可见性、报告进度，断网时提示�
       onProgress,
     }),
   );
-  const form = xhr.send.mock.calls[0]?.[0];
+  const form = xhr.sendSpy.mock.calls[0]?.[0];
   expect(xhr.open).toHaveBeenCalledWith("POST", "/api/teacher/attachments");
   expect(form?.get("uploadId")).toBe(ID);
   expect(form?.get("visibility")).toBe("teacher_only");
@@ -189,7 +193,7 @@ it("随笔上传绑定账号和 clientId，断网时保留补传队列识别的�
     MEMO_OUTBOX_ACCOUNT_HEADER,
     ACCOUNT_ID,
   );
-  expect(xhr.send.mock.calls[0]?.[0].get("clientId")).toBe(ID);
+  expect(xhr.sendSpy.mock.calls[0]?.[0].get("clientId")).toBe(ID);
   xhr.onerror();
   await expect(result).rejects.toBeInstanceOf(MemoNetworkError);
 });
@@ -200,7 +204,7 @@ it("随笔媒体取消不被设备登记或me网络等待阻断", async () => {
     vi.fn(() => new Promise<Response>(() => {})),
   );
   const controller = new AbortController();
-  class WaitingUpload {
+  class WaitingUpload extends EventTarget {
     open = vi.fn();
     setRequestHeader = vi.fn();
     send = vi.fn();

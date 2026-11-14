@@ -3,7 +3,7 @@ import type {
   PracticeQuestionProgress,
 } from "@tutor/contract";
 import { useCallback, useMemo } from "react";
-import type { useAttemptEditor } from "./AttemptEditorContext";
+import type { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import type { practiceProtocolOfDraft } from "./practice-protocol";
 import { useAttemptSubmitFlow } from "./use-attempt-submit-flow";
 import { useSubmitEvidenceConfirm } from "./use-submit-evidence-confirm";

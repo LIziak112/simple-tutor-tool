@@ -158,7 +158,8 @@ describe("putNoteDocumentApi（T6R.8）", () => {
       { baseRevision: 0, mutationId: "44444444-4444-4444-8444-444444444444" },
       controller.signal,
     );
-    expect(calls[0]?.init.signal).toBe(controller.signal);
+    expect(calls[0]?.init.signal).toBeInstanceOf(AbortSignal);
+    expect(calls[0]?.init.signal).not.toBe(controller.signal);
   });
 });
 
@@ -182,3 +183,24 @@ describe("putNoteDocumentApi：中止身份保留（T6R.8 复审⑬）", () => {
     expect((err as Error).name).toBe("AbortError");
   });
 });
+it.each(["fetch", "body"] as const)(
+  "跨realm的AbortError在%s阶段保留原始身份，不改成网络或响应错误",
+  async (phase) => {
+    const reason = new DOMException("已取消", "AbortError");
+    const response = new Response("{}");
+    vi.spyOn(response, "json").mockRejectedValue(reason);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => {
+        if (phase === "fetch") throw reason;
+        return response;
+      }),
+    );
+    await expect(
+      putNoteDocumentApi(ATTEMPT_ID, QUESTION_ID, new Blob(["{}"]), {
+        baseRevision: 0,
+        mutationId: "44444444-4444-4444-8444-444444444444",
+      }),
+    ).rejects.toBe(reason);
+  },
+);

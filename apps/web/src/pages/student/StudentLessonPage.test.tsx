@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AttemptQuestionPublic,
   AttemptResultQuestion,
@@ -18,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   installDraftBackend,
   memoryBackend,
-} from "@/features/attempt/draft-store";
+} from "@/features/persistence/draft-store";
 import {
   ApiError,
   fetchAttemptContextApi,
@@ -27,6 +19,14 @@ import {
   startLessonAttemptApi,
   submitLessonQuestionApi,
 } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import StudentLessonPage from "./StudentLessonPage";
 
 /**

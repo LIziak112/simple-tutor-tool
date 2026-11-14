@@ -1,16 +1,16 @@
+import { expect, it, vi } from "vitest";
+import {
+  AttemptEditorNotice,
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "@/features/answering/AttemptEditorContext";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { expect, it, vi } from "vitest";
-import {
-  AttemptEditorNotice,
-  AttemptEditorProvider,
-  useAttemptEditor,
-} from "./AttemptEditorContext";
+} from "@/test/render-with-portal";
 
 function Controls({ finish }: { finish: () => Promise<void> }) {
   const editor = useAttemptEditor();
