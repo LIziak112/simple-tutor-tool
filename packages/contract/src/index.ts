@@ -207,11 +207,10 @@ export * from "./learning-context-api.ts";
 export * from "./lesson-question-order.ts";
 export * from "./question-process.ts";
 export * from "./result-counts.ts";
+export * from "./review-adapters.ts";
+export * from "./review-facts.ts";
+export * from "./review-groups.ts";
+export * from "./review-verdict.ts";
 export * from "./rubric.ts";
 export * from "./student-ai-reply-check.ts";
 export * from "./student-mcp-submit.ts";
-
-export * from "./review-facts.ts";
-export * from "./review-verdict.ts";
-export * from "./review-groups.ts";
-export * from "./review-adapters.ts";

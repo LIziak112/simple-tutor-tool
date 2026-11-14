@@ -214,8 +214,11 @@ await writeSchema(
 await writeSchema(
   "review-facts.json",
   "结果事实与分组维度契约",
-  z.toJSONSchema(z.object({
-    fact: (await import("../src/review-facts.ts")).reviewQuestionFactSchema,
-    dimension: (await import("../src/review-facts.ts")).reviewGroupDimensionSchema,
-  })),
+  z.toJSONSchema(
+    z.object({
+      fact: (await import("../src/review-facts.ts")).reviewQuestionFactSchema,
+      dimension: (await import("../src/review-facts.ts"))
+        .reviewGroupDimensionSchema,
+    }),
+  ),
 );
