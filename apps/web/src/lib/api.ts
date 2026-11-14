@@ -709,10 +709,7 @@ export function deleteAssignmentApi(id: string): Promise<null> {
 
 // ---------- T2.3：学生端外壳 ----------
 
-/** 专属链接登录（GET /api/public/s/:token：成功写 90 天学生会话 Cookie） */
-export function loginStudentByLinkApi(token: string): Promise<StudentMeData> {
-  return callApi(() => api.api.public.s[":token"].$get({ param: { token } }));
-}
+export { loginStudentByLinkApi } from "./student-link-login-api";
 
 /** 当前登录学生（未登录 / 会话过期 / 被归档时 401 UNAUTHORIZED，由守卫跳登录） */
 export function fetchStudentMe(): Promise<StudentMeData> {

@@ -22,7 +22,7 @@
   "apps/web/src/features/export/ExportWizard.tsx": 1823,
   "apps/web/src/features/notes/note-store.ts": 1317,
   "apps/web/src/features/student/wrong-questions-ui.tsx": 1278,
-  "apps/web/src/lib/api.ts": 3257,
+  "apps/web/src/lib/api.ts": 3254,
   "apps/web/src/pages/student/StudentLessonPage.tsx": 1102,
   "apps/web/src/pages/teacher/ImportPage.tsx": 1225,
   "apps/web/src/pages/teacher/LibraryPage.tsx": 1759,
