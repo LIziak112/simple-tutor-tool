@@ -185,7 +185,15 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await expect(page).toHaveURL(/\/t\/courses$/);
   });
 
-  test("从管理视角退出回个人登录并结束双会话", async ({ page, request }) => {
+  test("从管理视角退出回个人登录并结束双会话", async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("退出回跳验收需要同源 baseURL");
+    const returnTo = "/t/settings?section=account";
+    const expectedLogin = new URL("/p/login", baseURL);
+    expectedLogin.searchParams.set("returnTo", returnTo);
     await openPersonalRegistration(request);
     const registered = await page.request.post(
       "/api/public/personal/register",
@@ -199,9 +207,16 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
       },
     );
     expect(registered.ok()).toBe(true);
-    await page.goto("/t/settings?section=account");
+    await page.goto(returnTo);
     await page.getByRole("button", { name: "退出登录" }).click();
-    await expect(page).toHaveURL(/\/p\/login$/);
+    await expect(page).toHaveURL(expectedLogin.href);
+    const actualLogin = new URL(page.url());
+    expect(actualLogin.origin).toBe(new URL(baseURL).origin);
+    expect(actualLogin.pathname).toBe("/p/login");
+    expect(actualLogin.hash).toBe("");
+    expect([...actualLogin.searchParams.entries()]).toEqual([
+      ["returnTo", returnTo],
+    ]);
     expect((await page.request.get("/api/teacher/me")).status()).toBe(401);
     expect((await page.request.get("/api/student/me")).status()).toBe(401);
   });
