@@ -93,7 +93,7 @@ describe("HomePage 登录入口面板", () => {
     );
   });
 
-  it("个人账号已登录（两侧会话同在）→ 只剩一张「个人学习」卡直达 /s/home", async () => {
+  it("个人账号已登录（两侧会话同在）→ 个人学习直达 /s/home，其他登录端口保持可达", async () => {
     mockedStudentMe.mockResolvedValue({
       ...STUDENT,
       displayName: "小考",
@@ -116,16 +116,23 @@ describe("HomePage 登录入口面板", () => {
     });
     const link = screen.getByRole("link", { name: /个人学习/ });
     expect(link).toHaveTextContent("已登录：小考");
-    expect(
-      screen.queryByRole("link", { name: /学生登录|教师登录|进入工作台/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /学生登录/ })).toHaveAttribute(
+      "href",
+      "/s/login",
+    );
+    expect(screen.getByRole("link", { name: /教师登录/ })).toHaveAttribute(
+      "href",
+      "/t/login",
+    );
   });
 
   it("学生已登录时学生卡直达 /s/home 并显示姓名，教师卡仍是登录入口", async () => {
     mockedStudentMe.mockResolvedValue(STUDENT);
     renderHomePage();
 
-    const studentLink = await screen.findByRole("link", { name: /继续学习/ });
+    const studentLink = await screen.findByRole("link", {
+      name: /学生端.*以张三身份进入/,
+    });
     expect(studentLink).toHaveAttribute("href", "/s/home");
     expect(studentLink).toHaveTextContent("已登录：张三");
     expect(screen.getByRole("link", { name: /教师登录/ })).toHaveAttribute(
@@ -145,7 +152,7 @@ describe("HomePage 登录入口面板", () => {
     const personal = await screen.findByRole("link", {
       name: /个人学习.*kaosheng/,
     });
-    expect(personal).toHaveAttribute("href", "/p/login");
+    expect(personal).toHaveAttribute("href", "/t");
     expect(personal).not.toHaveTextContent(STUDENT.displayName);
     expect(screen.getByRole("link", { name: /学生端.*张三/ })).toHaveAttribute(
       "href",
@@ -157,7 +164,9 @@ describe("HomePage 登录入口面板", () => {
     mockedTeacherMe.mockResolvedValue(TEACHER);
     renderHomePage();
 
-    const teacherLink = await screen.findByRole("link", { name: /进入工作台/ });
+    const teacherLink = await screen.findByRole("link", {
+      name: /教师端.*以demo身份进入/,
+    });
     expect(teacherLink).toHaveAttribute("href", "/t");
     expect(teacherLink).toHaveTextContent("已登录：demo");
     expect(screen.getByRole("link", { name: /学生登录/ })).toHaveAttribute(
@@ -189,4 +198,13 @@ describe("HomePage 系统状态卡", () => {
       expect(mockedHealth).toHaveBeenCalledTimes(2);
     });
   });
+});
+
+it("管理员首页显示管理端登录状态且不自动离开首页", async () => {
+  mockedTeacherMe.mockResolvedValue({ ...TEACHER, isAdmin: true });
+  renderHomePage();
+  expect(
+    await screen.findByRole("link", { name: /管理端.*以demo身份进入/ }),
+  ).toHaveAttribute("href", "/a");
+  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
 });

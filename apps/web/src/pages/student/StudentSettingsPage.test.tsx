@@ -12,9 +12,17 @@ import {
 import StudentSettingsPage from "./StudentSettingsPage";
 
 vi.mock("@/features/auth/student-auth", () => ({
+  useClearStudentSession: () => vi.fn(),
   useStudentMe: () => ({
     data: { displayName: "张三", loginName: "zhangsan", id: "内部身份编号" },
   }),
+}));
+
+vi.mock("@/lib/device-api", () => ({
+  listDevicesApi: vi.fn(async () => ({
+    devices: [],
+    unassignedSessionCount: 0,
+  })),
 }));
 
 // 快捷按钮沿用真实控制器，以固定接口响应验证展开、收起与草稿保留。

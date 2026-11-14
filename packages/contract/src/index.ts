@@ -23,6 +23,7 @@ export * from "./attempt.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
 export * from "./attempt-activity.ts";
 export * from "./attempt-batch-submission.ts";
+export * from "./attempt-session.ts";
 export * from "./attempt-state.ts";
 export {
   type FrozenQuestionRevisionId,
@@ -47,6 +48,7 @@ export * from "./content-signature.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */
 export * from "./course-api.ts";
 export * from "./create-operation.ts";
+export * from "./device-api.ts";
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
 export * from "./directives.ts";
 /** 判分输入契约（T2.5 起为权威定义）：学生答案按题型判别联合，与 content.ts 的 QuestionAnswers 对应 */
@@ -58,6 +60,7 @@ export * from "./ink-profile.ts";
  *  KeySpec 单键文法、命令 id 分层与本设备 localStorage 键位覆盖表（strict v1，
  *  只校验形状；命令词表与冲突规则归 apps/web 命令注册表） */
 export * from "./keyboard.ts";
+export * from "./learning-context.ts";
 /** 学习痕迹事件契约（T2.10 起为权威定义）：事件类型枚举（现 23 种）、批量上报请求/响应、上限常量 */
 export * from "./learning-event.ts";
 /** AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19）：导出请求（范围×模块×目标×隐私）、
@@ -101,12 +104,10 @@ export * from "./practice-question-submit.ts";
 export * from "./practice-workflow.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
-
 /** 题面语义节点契约（LR-4，学习记录模型设计稿 §5.1 起为权威定义）：节点键
  *  格式、kind 词表与枚举算法版本——md-dsl questionNodesOf 与渲染器
  *  data-lr-node（LR-PR2）的单源形状 */
 export * from "./question-node.ts";
-
 /** 学生主页「错题与存疑」聚合端点契约（T-PR4 Web-2② 起为权威定义，教师端迭代
  *  方案 §3）：GET /api/teacher/students/:id/question-review 查询参数与聚合行
  *  （一行 = questionId × 该 kind 口径下最新代表作答；口径与 MCP-A 同一构造器） */
@@ -153,6 +154,7 @@ export * from "./student-ai-policy.ts";
 /** 学生端课程契约（T2A.5 起为权威定义）：我的课程、课程可见目录（D5）、D22 错误码 */
 export * from "./student-course-api.ts";
 export * from "./student-mcp-live-focus.ts";
+export * from "./student-mcp-practice.ts";
 /** 学生端题目笔记本契约（T6R.15 起为权威定义，方案 §5.2/D7）：跨 attempt 聚合的
  *  同题历次轮次（仅已交卷；零答案零解析零题干正文，题目侧只有版本号数字） */
 export * from "./student-notebook-api.ts";
@@ -199,7 +201,10 @@ export const apiResponseSchema = z.discriminatedUnion("ok", [
 export type ApiOk = z.infer<typeof apiOkSchema>;
 export type ApiErr = z.infer<typeof apiErrSchema>;
 
+export * from "./learning-context-api.ts";
+export * from "./lesson-question-order.ts";
 export * from "./question-process.ts";
 export * from "./result-counts.ts";
 export * from "./rubric.ts";
 export * from "./student-ai-reply-check.ts";
+export * from "./student-mcp-submit.ts";

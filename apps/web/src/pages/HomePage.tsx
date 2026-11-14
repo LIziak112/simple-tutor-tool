@@ -8,9 +8,11 @@ import {
   Presentation,
   RefreshCw,
   ServerCog,
+  ShieldCheck,
 } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
+import { PORTALS } from "@/features/auth/portals";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { fetchHealth } from "@/lib/api";
@@ -66,7 +68,7 @@ function RoleEntryCard({
  * 首页：登录入口面板（学生 / 教师 / 个人学习三张身份卡）+ 底部系统状态卡。
  * - 两端会话独立，useStudentMe / useTeacherMe 未登录时 401（isError），
  *   探测未落定或未登录一律显示登录入口；已登录则换文案直接进对应端；
- * - 个人账号显示个人学习入口，混合会话另外保留已登录的班级入口。
+ * - 所有登录门户始终显示，个人身份归个人入口，管理员另有管理端入口。
  * - 系统状态卡保留 T1.x 的前后端联通自检（部署排障用），加载中 /
  *   错误（含重试）/ 成功 三态齐全（UI 约定硬性要求）。
  */
@@ -78,18 +80,15 @@ export function HomePage() {
   const { data } = healthQuery;
   const studentMe = useStudentMe();
   const teacherMe = useTeacherMe();
-  const student = studentMe.data;
-  const teacher = teacherMe.data;
-  const personalStudent = student?.accountKind === "personal" ? student : null;
-  const personalTeacher = teacher?.accountKind === "personal" ? teacher : null;
-  const personal = personalStudent !== null || personalTeacher !== null;
-  const showStudent = !personal || student?.accountKind === "class";
-  const showTeacher = !personal || teacher?.accountKind === "class";
-  const entryLayout = !personal
-    ? "max-w-3xl sm:grid-cols-3"
-    : showStudent || showTeacher
-      ? "max-w-2xl sm:grid-cols-2"
-      : "max-w-sm";
+  const student =
+    studentMe.data?.accountKind === "class" ? studentMe.data : undefined;
+  const teacher =
+    teacherMe.data?.accountKind === "class" ? teacherMe.data : undefined;
+  const personalStudent =
+    studentMe.data?.accountKind === "personal" ? studentMe.data : null;
+  const personalTeacher =
+    teacherMe.data?.accountKind === "personal" ? teacherMe.data : null;
+  const entryLayout = "max-w-4xl sm:grid-cols-3";
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-background px-6 py-12 text-foreground">
@@ -105,45 +104,62 @@ export function HomePage() {
         aria-label="登录入口"
         className={`grid w-full grid-cols-1 gap-4 ${entryLayout}`}
       >
-        {showStudent && (
-          <RoleEntryCard
-            to={student ? "/s/home" : "/s/login"}
-            icon={GraduationCap}
-            title={student ? "学生端" : "学生登录"}
-            description={
-              student
-                ? `已登录：${student.displayName}`
-                : "用老师给的登录名和密码登录，或打开老师发的专属链接"
-            }
-            actionLabel={student ? "继续学习" : "去登录"}
-          />
-        )}
-        {showTeacher && (
-          <RoleEntryCard
-            to={teacher ? "/t" : "/t/login"}
-            icon={Presentation}
-            title={teacher ? "教师端" : "教师登录"}
-            description={
-              teacher
-                ? `已登录：${teacher.loginName}`
-                : "进入辅导工作台，管理课程、讲义、作业与学情"
-            }
-            actionLabel={teacher ? "进入工作台" : "去登录"}
-          />
-        )}
         <RoleEntryCard
-          to={personalStudent ? "/s/home" : "/p/login"}
+          to={student ? PORTALS.student.homePath : PORTALS.student.loginPath}
+          icon={GraduationCap}
+          title={student ? "学生端" : "学生登录"}
+          description={
+            student
+              ? `已登录：${student.displayName}`
+              : "用老师给的登录名和密码登录，或打开老师发的专属链接"
+          }
+          actionLabel={student ? `以${student.displayName}身份进入` : "登录"}
+        />
+        <RoleEntryCard
+          to={teacher ? PORTALS.teacher.homePath : PORTALS.teacher.loginPath}
+          icon={Presentation}
+          title={teacher ? "教师端" : "教师登录"}
+          description={
+            teacher
+              ? `已登录：${teacher.loginName}`
+              : "进入辅导工作台，管理课程、讲义、作业与学情"
+          }
+          actionLabel={teacher ? `以${teacher.loginName}身份进入` : "登录"}
+        />
+        <RoleEntryCard
+          to={
+            personalStudent
+              ? PORTALS.personal.homePath
+              : personalTeacher
+                ? PORTALS.teacher.homePath
+                : PORTALS.personal.loginPath
+          }
           icon={BookOpenCheck}
           title="个人学习"
           description={
             personalStudent
               ? `已登录：${personalStudent.displayName}`
               : personalTeacher
-                ? `管理视角已登录：${personalTeacher.loginName}。请重新登录以进入学习视角。`
+                ? `管理视角已登录：${personalTeacher.loginName}`
                 : "自己导入资料、自己练、自己看学情。一个账号同时拥有学习与管理两个视角。"
           }
-          actionLabel={personalStudent ? "继续学习" : "去登录"}
+          actionLabel={
+            personalStudent
+              ? `以${personalStudent.displayName}身份进入`
+              : personalTeacher
+                ? `以${personalTeacher.loginName}身份进入管理视角`
+                : "登录"
+          }
         />
+        {teacherMe.data?.isAdmin && (
+          <RoleEntryCard
+            to={PORTALS.admin.homePath}
+            icon={ShieldCheck}
+            title={PORTALS.admin.label}
+            description={`已登录：${teacherMe.data.loginName}`}
+            actionLabel={`以${teacherMe.data.loginName}身份进入`}
+          />
+        )}
       </section>
 
       <section

@@ -193,3 +193,63 @@ it("随笔上传绑定账号和 clientId，断网时保留补传队列识别的�
   xhr.onerror();
   await expect(result).rejects.toBeInstanceOf(MemoNetworkError);
 });
+
+it("随笔媒体取消不被设备登记或me网络等待阻断", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise<Response>(() => {})),
+  );
+  const controller = new AbortController();
+  class WaitingUpload {
+    open = vi.fn();
+    setRequestHeader = vi.fn();
+    send = vi.fn();
+    upload = {};
+    onabort: (() => void) | null = null;
+    abort() {
+      this.onabort?.();
+    }
+  }
+  vi.stubGlobal("XMLHttpRequest", WaitingUpload);
+  const result = uploadMemoMediaApi(
+    new Blob(["图片"]),
+    { clientId: ID, kind: "image" },
+    ACCOUNT_ID,
+    { signal: controller.signal },
+  );
+  controller.abort();
+  const outcome = await Promise.race([
+    result.then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.name : String(error)),
+    ),
+    new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 40)),
+  ]);
+  expect(outcome).toBe("AbortError");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("已取消的随笔媒体上传在任何网络或XHR创建前拒绝", async () => {
+  const raw = vi.fn(() => new Promise<Response>(() => {}));
+  const xhr = vi.fn();
+  vi.stubGlobal("fetch", raw);
+  vi.stubGlobal("XMLHttpRequest", xhr);
+  const controller = new AbortController();
+  controller.abort();
+  const result = uploadMemoMediaApi(
+    new Blob(["图片"]),
+    { clientId: ID, kind: "image" },
+    ACCOUNT_ID,
+    { signal: controller.signal },
+  );
+  const outcome = await Promise.race([
+    result.then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.name : String(error)),
+    ),
+    new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 40)),
+  ]);
+  expect(outcome).toBe("AbortError");
+  expect(raw).not.toHaveBeenCalled();
+  expect(xhr).not.toHaveBeenCalled();
+});

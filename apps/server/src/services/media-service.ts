@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { MediaUploadResult } from "@tutor/contract";
 import { mediaUploadResultSchema } from "@tutor/contract";
@@ -230,13 +231,22 @@ export function saveMedia(
 }
 
 /** 扩展名 → Content-Type（blobs 伺服自建小映射；static.ts 的 CONTENT_TYPES 是 web/dist 托管专用） */
-const MEDIA_CONTENT_TYPES: Record<string, string> = {
+const MEDIA_CONTENT_TYPES = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   webp: "image/webp",
   gif: "image/gif",
-};
+} as const;
+
+/** 严格全局媒体文件名的MIME单源，也供raw读取前的真实元信息预算使用。 */
+export function mediaContentTypeOf(filename: string) {
+  if (!MEDIA_BLOB_FILENAME_PATTERN.test(filename)) return null;
+  const ext = filename.slice(filename.lastIndexOf(".") + 1);
+  return Object.hasOwn(MEDIA_CONTENT_TYPES, ext)
+    ? MEDIA_CONTENT_TYPES[ext as keyof typeof MEDIA_CONTENT_TYPES]
+    : null;
+}
 
 /** 伺服读取结果（/blobs/* 路由直出用） */
 export interface MediaBlob {
@@ -259,13 +269,9 @@ export function readMediaBlob(
   dataDir: string,
   filename: string,
 ): MediaBlob | null {
-  if (!MEDIA_BLOB_FILENAME_PATTERN.test(filename)) {
-    return null;
-  }
-  const ext = filename.slice(filename.lastIndexOf(".") + 1);
-  const contentType = MEDIA_CONTENT_TYPES[ext];
+  const contentType = mediaContentTypeOf(filename);
   // 理论不可达（正则已限定扩展名白名单），纵深防御兜底
-  if (contentType === undefined) {
+  if (contentType === null) {
     return null;
   }
   try {
@@ -274,6 +280,21 @@ export function readMediaBlob(
       bytes: readFileBytes(join(dataDir, "blobs", "media", filename)),
       contentType,
     };
+  } catch {
+    return null;
+  }
+}
+
+/** 与同步伺服相同路径/MIME白名单，供事务外异步附图读取。 */
+export async function readMediaBlobAsync(
+  dataDir: string,
+  filename: string,
+): Promise<MediaBlob | null> {
+  const contentType = mediaContentTypeOf(filename);
+  if (contentType === null) return null;
+  try {
+    const bytes = await readFile(join(dataDir, "blobs", "media", filename));
+    return { bytes: Uint8Array.from(bytes).buffer, contentType };
   } catch {
     return null;
   }
