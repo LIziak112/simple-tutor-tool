@@ -23,6 +23,7 @@ export * from "./attempt.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
 export * from "./attempt-activity.ts";
 export * from "./attempt-batch-submission.ts";
+export * from "./attempt-session.ts";
 export * from "./attempt-state.ts";
 export {
   type FrozenQuestionRevisionId,
@@ -47,6 +48,7 @@ export * from "./content-signature.ts";
 /** 课程 API 契约（T2A.4 起为权威定义）：课程编辑页（目录编排/可见性/成员）与学生可见预览 */
 export * from "./course-api.ts";
 export * from "./create-operation.ts";
+export * from "./device-api.ts";
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
 export * from "./directives.ts";
 /** 判分输入契约（T2.5 起为权威定义）：学生答案按题型判别联合，与 content.ts 的 QuestionAnswers 对应 */
@@ -58,6 +60,7 @@ export * from "./ink-profile.ts";
  *  KeySpec 单键文法、命令 id 分层与本设备 localStorage 键位覆盖表（strict v1，
  *  只校验形状；命令词表与冲突规则归 apps/web 命令注册表） */
 export * from "./keyboard.ts";
+export * from "./learning-context.ts";
 /** 学习痕迹事件契约（T2.10 起为权威定义）：事件类型枚举（现 23 种）、批量上报请求/响应、上限常量 */
 export * from "./learning-event.ts";
 /** AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19）：导出请求（范围×模块×目标×隐私）、
