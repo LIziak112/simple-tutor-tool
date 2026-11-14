@@ -320,8 +320,11 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
         '[data-slot="material-annotation-overlay"]',
       );
       await page.getByRole("button", { name: "第 1 题圈画题干" }).click();
-      await expect(overlay).toHaveAttribute("data-ink-ready", "true");
+      // 先等进入圈画，再等可以落笔：没进圈画时 data-ink-ready 恒为 true，
+      // 反过来等就等于没等——进入圈画后材料要再稳定几帧才接笔，这几帧里
+      // 落的笔会被丢掉。
       await expect(overlay).toHaveAttribute("data-drawing", "true");
+      await expect(overlay).toHaveAttribute("data-ink-ready", "true");
       await drawStrokeWithPointerEvents(
         overlay.locator('[data-slot="material-annotation-input"]'),
       );
