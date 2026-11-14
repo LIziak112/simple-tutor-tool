@@ -294,3 +294,72 @@ describe("StudentMemosPage", () => {
     expect(await screen.findByText("还没有随笔")).toBeInTheDocument();
   });
 });
+
+describe("随笔关联入口", () => {
+  it("seq精确筛父条仍能进入关联页；独立按父序号分页，错误可重试并保留来源回链", async () => {
+    const parent = memo({ id: "parent", seq: 12, kind: "text", text: "原条" });
+    const child = memo({
+      id: "child",
+      seq: 13,
+      parentMemoSeq: 12,
+      source: "agent",
+      kind: "text",
+      text: "Agent整理稿",
+      anchor: {
+        kind: "question",
+        attemptId: ATTEMPT,
+        questionId: "q-7",
+        label: "第 7 题 · 资料分析",
+      },
+    });
+    let failed = true;
+    mockedList.mockImplementation(async (query) => {
+      if (query?.parentMemoSeq === 12) {
+        if (failed) {
+          failed = false;
+          throw new Error("关联暂时不可用");
+        }
+        return query.cursor
+          ? {
+              memos: [
+                memo({
+                  id: "child-2",
+                  seq: 14,
+                  parentMemoSeq: 12,
+                  kind: "text",
+                  text: "更早关联",
+                }),
+              ],
+              nextCursor: null,
+            }
+          : { memos: [child], nextCursor: "older" };
+      }
+      return { memos: [parent], nextCursor: null };
+    });
+    renderPage("/s/memos?seq=12");
+    const entry = await screen.findByRole("link", {
+      name: "查看 #12 的关联条目",
+    });
+    expect(entry).toHaveAttribute("href", "/s/memos?parentMemoSeq=12");
+    fireEvent.click(entry);
+    expect(await screen.findByText("关联暂时不可用")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByText("Agent整理稿")).toBeInTheDocument();
+    expect(mockedList).toHaveBeenCalledWith({ parentMemoSeq: 12 });
+    expect(screen.queryByText("原条")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "关联原随笔 #12" }),
+    ).toHaveAttribute("href", "/s/memos?seq=12");
+    fireEvent.click(screen.getByRole("button", { name: /第 7 题/ }));
+    expect(
+      await screen.findByRole("link", { name: /第 7 题/ }),
+    ).toHaveAttribute("href", `/s/attempts/${ATTEMPT}?q=q-7`);
+    fireEvent.click(screen.getByRole("button", { name: "加载更早的" }));
+    expect(await screen.findByText("更早关联")).toBeInTheDocument();
+    expect(mockedList).toHaveBeenCalledWith({
+      parentMemoSeq: 12,
+      cursor: "older",
+    });
+    expect(screen.getAllByText("Agent整理稿")).toHaveLength(1);
+  });
+});

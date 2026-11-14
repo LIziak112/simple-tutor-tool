@@ -64,12 +64,14 @@ function preparedParameters(data: unknown) {
 describe.each(["class", "personal"] as const)(
   "A1 %s 真实SDK公开读出口",
   (kind) => {
-    it("25项学生工具真实注册；三个出口白名单，无学习业务写入", async () => {
+    it("学生工具名单真实注册含分批；三个读出口白名单，无学习业务写入", async () => {
       const env = await environment(kind);
       const names = (await env.client.listTools()).tools.map(
         (tool) => tool.name,
       );
-      expect(STUDENT_MCP_TOOL_NAMES).toHaveLength(25);
+      expect(names).toContain("student_settle_practice");
+      if (kind === "class")
+        expect([...names].sort()).toEqual([...STUDENT_MCP_TOOL_NAMES].sort());
       expect(names).toEqual(
         expect.arrayContaining([
           "create_review_run_v2",

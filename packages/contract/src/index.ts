@@ -218,4 +218,5 @@ export * from "./review-verdict.ts";
 export * from "./rubric.ts";
 export * from "./student-ai-reply-check.ts";
 export * from "./student-mcp-current.ts";
+export * from "./student-mcp-settle.ts";
 export * from "./student-mcp-submit.ts";
