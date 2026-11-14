@@ -1,5 +1,5 @@
 import type { TeacherAttemptDetailQuestion } from "@tutor/contract";
-import { optionsPublicStructureOf } from "@tutor/contract";
+import { optionsPublicStructureOf, teacherReviewFact } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
@@ -18,6 +18,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
+import { ReviewFactDetails } from "@/features/attempt/ReviewFactDetails";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
@@ -179,28 +180,6 @@ function SolutionFold({ solutionMd }: { solutionMd: string }) {
  * 教师端单题有效判定（QM-12：与结果视图/错题本/学情同一口径——教师判 >
  * 自评 > 自动；未判断行按行策略区分「待自评/待批」）。
  */
-function teacherEffectiveOf(question: TeacherAttemptDetailQuestion): {
-  value: boolean | null;
-  source: "teacher" | "self" | "auto" | null;
-} {
-  if (question.teacherMark === "correct") {
-    return { value: true, source: "teacher" };
-  }
-  if (question.teacherMark === "wrong") {
-    return { value: false, source: "teacher" };
-  }
-  if (question.selfReview?.verdict === "correct") {
-    return { value: true, source: "self" };
-  }
-  if (question.selfReview?.verdict === "wrong") {
-    return { value: false, source: "self" };
-  }
-  if (question.autoCorrect !== null) {
-    return { value: question.autoCorrect, source: "auto" };
-  }
-  return { value: null, source: null };
-}
-
 /** 判定区：draft 一律「未交卷」（D5）；已交卷展示五项判定/评语（QM-12 增自评行） */
 function VerdictSection({
   question,
@@ -218,7 +197,8 @@ function VerdictSection({
     );
   }
   const auto = verdictOf(question.autoCorrect, question.answered);
-  const effective = teacherEffectiveOf(question);
+  const fact = teacherReviewFact(question, true);
+  const effective = { value: fact.verdict, source: fact.judgmentSource };
   // #6980-3：判错且未做灰显「未做」——但人工显式判定（教师判/自评）不被
   // 「未做」掩盖，照常红显「答错」
   const explicit =
@@ -462,6 +442,7 @@ export function AttemptDetailQuestionCard({
       />
 
       <VerdictSection question={question} isDraft={isDraft} />
+      <ReviewFactDetails fact={teacherReviewFact(question, !isDraft)} />
 
       {/* 改判 / 评语（T3.2b，D3）：仅已交卷且带批注定位 id 的题渲染 */}
       {!isDraft && question.responseId !== null && (

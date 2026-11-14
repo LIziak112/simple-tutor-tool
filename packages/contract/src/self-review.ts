@@ -125,7 +125,7 @@ export function finalCorrectOf(
 export function effectiveVerdictOf(
   autoCorrect: boolean | null,
   teacherMark: TeacherMark | null,
-  selfReview: SelfReviewRecord | null,
+  selfReview: Pick<SelfReviewRecord, "verdict"> | null,
 ): EffectiveVerdict | null {
   if (teacherMark === "correct") return { source: "teacher", value: true };
   if (teacherMark === "wrong") return { source: "teacher", value: false };

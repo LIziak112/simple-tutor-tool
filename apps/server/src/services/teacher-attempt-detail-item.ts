@@ -4,8 +4,11 @@ import type {
   TeacherAttemptInkInfo,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
+import type { Db } from "../db/client.ts";
 import type { ResponseRow } from "../db/schema.ts";
 import { publicOfSnapshot, selfReviewRecordOf } from "./attempt-service.ts";
+import type { reviewEvidenceReader } from "./review-evidence.ts";
+import { rubricReviewOf } from "./rubric-review-read.ts";
 import { answerOf, releaseOfSnapshot } from "./snapshot.ts";
 
 /**
@@ -22,6 +25,8 @@ export function detailItemOf(
   row: ResponseRow,
   snapshot: Question,
   opts: {
+    db: Db;
+    evidence: ReturnType<ReturnType<typeof reviewEvidenceReader>>;
     isDraft: boolean;
     unitId: string;
     unitTitle: string;
@@ -32,7 +37,9 @@ export function detailItemOf(
   const isDraft = opts.isDraft;
   return {
     questionId: row.questionId,
+    ...opts.evidence,
     settlementSeq: row.settlementSeq,
+    rubricReview: isDraft ? null : rubricReviewOf(opts.db, row, snapshot),
     responseId: isDraft ? null : row.id,
     publicQuestion: publicOfSnapshot(snapshot, row.id, {
       materialSlots: opts.materialSlots,
