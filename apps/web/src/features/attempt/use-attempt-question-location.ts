@@ -65,16 +65,24 @@ export function useAttemptQuestionLocation({
   }, [boundAccountId, practiceProtocol]);
   const singleMode = practiceProtocol === "v1" && practiceLayout === "single";
   // 单题当前题：显式跳转 > URL q（须属本卷）> 滚动当前题 > 首道未提交 > 第一题
+  const automaticUrlQuestion = useRef<string | null>(null);
   const [singleQuestionId, setSingleQuestionId] = useState<string | null>(null);
   const resolvedSingleQuestionId = useMemo(() => {
     if (!singleMode) return null;
     if (singleQuestionId !== null && questionIds.includes(singleQuestionId))
       return singleQuestionId;
     const urlQ = searchParams.get("q");
-    if (urlQ !== null && questionIds.includes(urlQ)) return urlQ;
+    if (
+      urlQ !== null &&
+      urlQ !== automaticUrlQuestion.current &&
+      questionIds.includes(urlQ)
+    )
+      return urlQ;
+    // 初次续做已由阅读恢复筛选未提交题；轮询更新不改变用户当前阅读位置。
     if (currentQuestionId !== null && questionIds.includes(currentQuestionId))
       return currentQuestionId;
     return (
+      data.settlementProgress?.nextQuestionId ??
       firstUnsubmittedQuestionId(questionIds, questionProgress) ??
       questionIds[0] ??
       null
@@ -86,6 +94,7 @@ export function useAttemptQuestionLocation({
     searchParams,
     currentQuestionId,
     questionProgress,
+    data.settlementProgress?.nextQuestionId,
   ]);
   const singleIndex =
     resolvedSingleQuestionId === null
@@ -108,6 +117,7 @@ export function useAttemptQuestionLocation({
     const q = searchParams.get("q");
     if (singleMode && resolvedSingleQuestionId !== null) {
       if (q !== resolvedSingleQuestionId) {
+        automaticUrlQuestion.current = resolvedSingleQuestionId;
         setSearchParams(
           (prev) => {
             const next = new URLSearchParams(prev);

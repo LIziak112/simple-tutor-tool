@@ -5,6 +5,7 @@ import type {
   LearningEventBatchData,
   LectureEvent,
   LectureEventDelivery,
+  PracticeSubmissionOrigin,
 } from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -223,6 +224,7 @@ export function recordQuestionSubmitEvent(
   attemptId: string,
   questionId: string,
   now: string,
+  origin: PracticeSubmissionOrigin = { channel: "web" },
 ): void {
   const clientTs = Date.parse(now);
   tx.insert(events)
@@ -237,6 +239,7 @@ export function recordQuestionSubmitEvent(
         type: "question_submit",
         clientTs,
         questionId,
+        submissionOrigin: origin,
       }),
       clientTs,
       serverTs: now,

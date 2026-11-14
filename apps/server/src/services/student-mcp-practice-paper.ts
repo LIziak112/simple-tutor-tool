@@ -2,58 +2,22 @@ import {
   type AttemptQuestionPublic,
   attemptQuestionPublicSchema,
   lessonQuestionIdsInDisplayOrder,
-  questionRevisionIdSchema,
 } from "@tutor/contract";
 import { splitLessonBlocks } from "@tutor/md-dsl";
-import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { type Attempt, responses } from "../db/schema.ts";
+import type { Attempt } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { requireUsableAttempt } from "./attempt-access.ts";
+import {
+  frozenMemberRefs,
+  incompleteFrozenAttempt,
+} from "./attempt-frozen-integrity.ts";
 import { getStudentAttemptPaper } from "./attempt-service.ts";
-import { questionSnapshotOf } from "./snapshot.ts";
 import { requireVisibleStudentLecture } from "./student-course-service.ts";
 
-function incomplete(): never {
-  throw new HttpError(
-    409,
-    "ATTEMPT_CONTEXT_BROKEN",
-    "这份练习的冻结题目数据不完整，请联系老师检查",
-  );
-}
-
-/** 不重新编号：已完成既有owner/lazy兼容门后，校验所有冻结成员和公开身份。 */
+/** 保留既有MCP入口名；通用冻结成员校验由共享职责承担。 */
 export function assertStudentMcpFrozenMembers(db: Db, attemptId: string): void {
   frozenMemberRefs(db, attemptId);
-}
-
-function frozenMemberRefs(
-  db: Db,
-  attemptId: string,
-): ReadonlyMap<string, string> {
-  const rows = db
-    .select({
-      id: responses.id,
-      questionId: responses.questionId,
-      snapshot: responses.questionSnapshotJson,
-    })
-    .from(responses)
-    .where(eq(responses.attemptId, attemptId))
-    .all();
-  const revisions = new Map<string, string>();
-  for (const row of rows) {
-    const snapshot =
-      row.snapshot === null ? null : questionSnapshotOf(row.snapshot);
-    if (
-      snapshot === null ||
-      snapshot.id !== row.questionId ||
-      revisions.has(row.questionId) ||
-      !questionRevisionIdSchema.safeParse(row.id).success
-    )
-      incomplete();
-    revisions.set(row.questionId, row.id);
-  }
-  return revisions;
 }
 
 /** 一次公开取卷建立目录，绝不逐题调用canonical重解析整卷。 */
@@ -77,7 +41,7 @@ export function studentMcpPublicQuestions(
       (question) => revisions.get(question.id) !== question.questionRevisionId,
     )
   )
-    incomplete();
+    incompleteFrozenAttempt();
   return questions.map((question) =>
     attemptQuestionPublicSchema.parse(question),
   );

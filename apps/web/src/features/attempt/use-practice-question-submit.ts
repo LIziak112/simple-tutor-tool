@@ -10,10 +10,7 @@ import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
-import {
-  prepareSubmitEvidence,
-  type SubmitEvidenceProblem,
-} from "@/features/notes/submit-evidence";
+import type { SubmitEvidenceProblem } from "@/features/notes/submit-evidence";
 import {
   ApiError,
   fetchPracticeQuestionFeedbackApi,
@@ -28,6 +25,7 @@ import {
 } from "./attempt-queries";
 import { draftStore } from "./draft-store";
 import { firstUnsubmittedQuestionId } from "./practice-protocol";
+import { prepareQuestionSubmission } from "./prepare-question-submission";
 
 /**
  * 新协议逐题提交编排（M3-D2，计划 §10.2/§10.3，lesson useLessonAttempt.submit
@@ -223,26 +221,13 @@ export function usePracticeQuestionSubmit(input: {
       let keepPaused = false;
       try {
         if (!(await beforeSubmitRef.current())) return { kind: "aborted" };
-        if (!(await flushQuestionLocalRef.current(questionId))) {
-          return failWith("本题答案尚未保存到本机，请重试");
-        }
-        // 手写题笔迹先行（同整卷/lesson「提交前该题笔迹已上传」口径）
-        const controller = input.inkControllers.current.get(questionId);
-        if (controller !== undefined && !(await controller.flush())) {
-          return failWith("手写内容还没有上传完成，请稍后重试");
-        }
-        await syncNowRef.current();
-        // 按题 flush（M3-D3 §11-4）：只确认本题答案同步，不等其他题在途重试；
-        // 未追平不发提交请求，就地提示可重试（与其他错误路径同走 lastError）
-        if (!(await flushQuestionRef.current(questionId))) {
-          return failWith("本题答案尚未保存完成，请检查网络后重试");
-        }
-        if (draftStore.peekUnsyncedInkIds(attemptId).includes(questionId)) {
-          return failWith("手写内容还没有上传完成，请刷新核对后重试");
-        }
-        const prep = await prepareSubmitEvidence({
+        const prep = await prepareQuestionSubmission({
           attemptId,
           questionIds: [questionId],
+          flushQuestionLocal: flushQuestionLocalRef.current,
+          flushQuestion: flushQuestionRef.current,
+          syncNow: syncNowRef.current,
+          inkControllers: input.inkControllers,
           ...(opts?.allowMissing === true
             ? { allowMissing: new Set([questionId]) }
             : {}),

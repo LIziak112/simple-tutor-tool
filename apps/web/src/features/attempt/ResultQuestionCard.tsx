@@ -99,7 +99,10 @@ export function ResultQuestionCard({
   roundLabel,
   activity,
   onSolutionToggle,
+  completedTools = true,
 }: {
+  /** 订正与补充稿依赖整卷完成；批次结果只提供已公布题目的自评。 */
+  completedTools?: boolean;
   aiTrigger?: ReactNode;
   index: number;
   question: AttemptResultQuestion;
@@ -167,21 +170,29 @@ export function ResultQuestionCard({
             ariaPrefix={`第 ${index + 1} 题`}
           />
           {/* D8 找回草稿/补充稿同步状态：草稿材料语义，随草稿组挂载 */}
-          <DraftRecoverySection
-            attemptId={attemptId}
-            questionId={question.questionId}
-          />
+          {completedTools && (
+            <DraftRecoverySection
+              attemptId={attemptId}
+              questionId={question.questionId}
+            />
+          )}
         </>
       }
       correction={
-        <CorrectionSection
-          attemptId={attemptId}
-          questionId={question.questionId}
-          questionNo={index + 1}
-          ariaPrefix={`第 ${index + 1} 题`}
-          roundLabel={roundLabel}
-          question={question}
-        />
+        completedTools ? (
+          <CorrectionSection
+            attemptId={attemptId}
+            questionId={question.questionId}
+            questionNo={index + 1}
+            ariaPrefix={`第 ${index + 1} 题`}
+            roundLabel={roundLabel}
+            question={question}
+          />
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            整卷完成后可订正、补充草稿
+          </span>
+        )
       }
       more={
         <>

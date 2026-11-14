@@ -63,7 +63,7 @@ describe("学生MCP本人练习元数据索引", () => {
       }),
     ]);
     expect(JSON.stringify(data)).not.toMatch(
-      /score|autoCorrect|finalCorrect|teacherComment|私注|activated|canSettlePartially|"phase"/,
+      /score|autoCorrect|finalCorrect|teacherComment|私注|activated|"phase"/,
     );
     expect(db.select().from(attempts).all()).toEqual(before);
     expect(db.select().from(events).all()).toEqual([]);

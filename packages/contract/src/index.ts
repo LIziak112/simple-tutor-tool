@@ -201,9 +201,12 @@ export const apiResponseSchema = z.discriminatedUnion("ok", [
 export type ApiOk = z.infer<typeof apiOkSchema>;
 export type ApiErr = z.infer<typeof apiErrSchema>;
 
+export * from "./attempt-partial.ts";
+export * from "./attempt-settlement-progress.ts";
 export * from "./learning-context-api.ts";
 export * from "./lesson-question-order.ts";
 export * from "./question-process.ts";
 export * from "./result-counts.ts";
 export * from "./rubric.ts";
 export * from "./student-ai-reply-check.ts";
+export * from "./student-mcp-submit.ts";

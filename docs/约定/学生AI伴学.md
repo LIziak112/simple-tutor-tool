@@ -68,3 +68,11 @@
 ## 当前学习来源（2.3）
 
 作答、结果、讲练页面共用的 LearningContext 仓发布当前来源，AI Dock 只在打开时消费；已经绑定的求助题、材料、输入和在途任务继续沿原绑定，不随滚动重绑。MCP live focus 仅是该仓的心跳传输适配，每次从仓派生题目；继续由现有 opt-in / AI capability 的真实 generation 控制，后台/离线/旧 host/主体变化撤回旧 view。它不新增 MCP 工具或授予提交/结果权限。后续工具须在自身 Bearer、AI 与当前可见门之后消费共享 canonical projector，不能借历史 memo 的兼容吞错分支获得原题访问权。
+
+### 学生 MCP 提交 v2
+
+读取 `get_practice_question` 后仍须向学生复述题目和答案并取得确认，再调用 `student_submit_practice_question`。不传 `responseVersion` 时仍须提供 `submissionMutationId`，成功壳保持 `{success:true}`。
+
+显式传 `responseVersion:2` 可用 `questionNo` 定位，仍须原样携带读取时的工作流、冻结题目、答案版本与证据声明；同时提供 `questionId` 时两者必须一致。可省略幂等键，服务端从规范请求内容派生稳定 UUID；结果未知时重试原请求，不重新读取并替换草稿/证据版本。同显式键异内容返回冲突。
+
+v2 回执仅含本题提交事实、实际结算序号、已提交进度与下一未提交题，不含参考答案、解析或判定。进度是读取时刻的事实；重放不重写提交、不重复记事件。MCP 首次写入重验当前 AI 权限，已成功请求的重放仍遵守原提交幂等裁决。服务端事件来源由鉴权连接注入，不信客户端来源字段。此增强尚不代表已完成当前题候选或分批提交。

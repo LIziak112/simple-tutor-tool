@@ -182,3 +182,31 @@ await writeSchema(
     }),
   ),
 );
+
+await writeSchema(
+  "attempt-partial.json",
+  "分批提交与结果契约",
+  z.toJSONSchema(
+    z.object({
+      request: (await import("../src/attempt-partial.ts"))
+        .attemptPartialRequestSchema,
+      result: (await import("../src/attempt-partial.ts"))
+        .attemptSettlementResultSchema,
+      progress: (await import("../src/attempt-settlement-progress.ts"))
+        .attemptSettlementProgressSchema,
+    }),
+  ),
+);
+await writeSchema(
+  "student-mcp-submit.json",
+  "学生 MCP v2 提交契约",
+  z.toJSONSchema(
+    z.object({
+      input: (await import("../src/student-mcp-submit.ts"))
+        .studentMcpSubmitInputSchema,
+      receipt: (await import("../src/student-mcp-submit.ts"))
+        .studentMcpSubmitReceiptSchema,
+    }),
+    { io: "input" },
+  ),
+);

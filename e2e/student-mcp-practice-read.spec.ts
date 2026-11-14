@@ -223,6 +223,25 @@ for (const kind of ["class", "personal"] as const) {
             envelope,
           ),
         ).toEqual(submitted);
+        const enhanced = await callToolJson(
+          client,
+          "student_submit_practice_question",
+          { ...envelope, responseVersion: 2, questionNo: 1 },
+        );
+        expect(enhanced.isError).toBe(false);
+        expect(enhanced.data).toMatchObject({
+          success: true,
+          responseVersion: 2,
+          practiceId,
+          questionId: first.questionId,
+          questionNo: 1,
+          submissionMutationId: envelope.submissionMutationId,
+          progress: { submittedCount: 1, totalCount: 2 },
+          nextQuestion: { questionNo: 2 },
+        });
+        expect(JSON.stringify(enhanced.data)).not.toMatch(
+          /"answers"|solutionMd|teacherComment|autoCorrect|finalCorrect/,
+        );
         const reread = await callToolJson(client, "get_practice_question", {
           practiceId,
           questionId: first.questionId,

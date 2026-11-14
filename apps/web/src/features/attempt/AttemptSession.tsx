@@ -13,13 +13,6 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { CoordinatedAnnotationProvider } from "@/features/annotation/coordinated-annotation-context";
@@ -56,7 +49,6 @@ import { useLearningContextPublisher } from "@/features/learning-context/use-lea
 import { catchUpNotes } from "@/features/notes/note-sync";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import {
-  QuestionProcessControls,
   QuestionProcessSyncNotice,
   useQuestionProcess,
 } from "@/features/question-process/session";
@@ -65,12 +57,13 @@ import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
 import { setStudentFlagApi } from "@/lib/api";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
-import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "./AttemptEditorContext";
+import { AttemptPartialControls } from "./AttemptPartialControls";
+import { AttemptProcessDialog } from "./AttemptProcessDialog";
 import { AttemptResultLoader } from "./AttemptResultLoader";
 import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { AttemptSessionActions } from "./AttemptSessionActions";
@@ -78,16 +71,15 @@ import {
   AttemptSessionNavigator,
   AttemptSessionSubmitDialogs,
 } from "./AttemptSessionDialogs";
+import { AttemptSourceSummary } from "./AttemptSourceSummary";
 import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
-import { attemptSourceLabel } from "./answer-format";
 import { attemptNavigationItemsOf } from "./attempt-navigation-items";
 import {
   type TimedAttemptDetail,
   useAttemptContext,
   useUpdateAttemptWorkflow,
 } from "./attempt-queries";
-import { saveAutoSubmitChoice } from "./choice-submit-mode";
 import { useGroupMaterialLayout } from "./group-material-layout-store";
 import { LazyMountWindow } from "./lazy-mount-window";
 import { PracticeQuestionFooter } from "./PracticeQuestionSubmit";
@@ -112,7 +104,10 @@ import {
 } from "./use-attempt-save-status";
 import { useAttemptSubmitConfirmation } from "./use-attempt-submit-confirmation";
 import { usePracticeQuestionSubmit } from "./use-practice-question-submit";
-import { useReadingPosition } from "./use-reading-position";
+import {
+  attemptReadingResume,
+  useReadingPosition,
+} from "./use-reading-position";
 
 /**
  * 题卡视口懒挂载的启用阈值（性能：大量习题加载卡顿，2026-10-28）。
@@ -580,6 +575,7 @@ function AnswerView({
     setCurrentQuestionId,
     forceMountQuestion,
     cardMountVersion,
+    attemptReadingResume(data),
   );
 
   const location = useAttemptQuestionLocation({
@@ -778,10 +774,7 @@ function AnswerView({
           layout: practiceLayout,
           onLayoutChange: setPracticeLayoutExplicit,
           autoSubmitChoice,
-          onAutoSubmitChoiceChange: (auto: boolean) => {
-            setAutoSubmitChoice(auto);
-            saveAutoSubmitChoice(attemptId, auto);
-          },
+          onAutoSubmitChoiceChange: setAutoSubmitChoice,
           onFeedbackModeChange: (mode: typeof practiceWorkflow.feedbackMode) =>
             feedbackUpdate.mutate({
               feedbackMode: mode,
@@ -794,20 +787,12 @@ function AnswerView({
     <DraftSyncProvider value={{ ...draftSync, recovery: materialRecovery }}>
       <AttemptWorkspace process={recorder} learningLease={publisher.lease}>
         <QuestionProcessSyncNotice process={questionProcess} />
-        <Dialog open={processOpen} onOpenChange={setProcessOpen}>
-          <DialogContent
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              moreTriggerRef.current?.focus();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>做题过程记录</DialogTitle>
-              <DialogDescription>管理这次练习的过程回放。</DialogDescription>
-            </DialogHeader>
-            <QuestionProcessControls process={questionProcess} />
-          </DialogContent>
-        </Dialog>
+        <AttemptProcessDialog
+          open={processOpen}
+          onOpenChange={setProcessOpen}
+          returnFocusRef={moreTriggerRef}
+          process={questionProcess}
+        />
         {/* 练习资料与保存详情分别从更多菜单打开。 */}
         <AttemptHeader
           title={data.title}
@@ -859,18 +844,27 @@ function AnswerView({
             if (!editor || (await editor.request(null))) onBackHome();
           }}
         >
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>{attemptSourceLabel(data)}</span>
-            {data.attempt.sourceType === "assignment" && (
-              <span>
-                {data.dueAt === null
-                  ? "不限截止"
-                  : `${formatDueTime(data.dueAt)} 截止`}
-              </span>
-            )}
-            <span>共 {total} 题</span>
-          </p>
+          <AttemptSourceSummary data={data} total={total} />
         </AttemptHeader>
+        {data.practiceWorkflow && (
+          <AttemptPartialControls
+            data={data}
+            groups={contextQuery.data?.groups ?? []}
+            answers={answers}
+            progress={practiceSubmit.progress}
+            disabled={
+              !online ||
+              denied ||
+              submit.isPending ||
+              practiceSubmit.submittingId !== null
+            }
+            beforeSubmit={async () => !editor || (await editor.request(null))}
+            syncNow={draftSync.syncNow}
+            flushQuestionLocal={flushQuestionLocal}
+            flushQuestion={flushQuestion}
+            inkControllers={inkControllers}
+          />
+        )}
         <TimedAttemptControls
           timing={data.timing}
           clockAnchor={data.clockAnchor}
@@ -1122,6 +1116,9 @@ function AnswerView({
                     return (
                       <AttemptQuestionRow
                         key={question.id}
+                        settlementSeq={
+                          data.settlementProgress?.membership[question.id]
+                        }
                         className={
                           groupGrid
                             ? grouped

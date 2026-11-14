@@ -1,3 +1,4 @@
+import { studentSettlementProgress } from "./attempt-settlement-progress.ts";
 import type {
   AttemptDetailData,
   AttemptDraftData,
@@ -245,6 +246,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     answerRelease: meta.answerRelease,
     units,
     drafts,
+    settlementProgress: studentSettlementProgress(db, attempt),
     draftRevisions,
     hintsOpened,
     studentFlags,

@@ -11,6 +11,7 @@ type SettlementTx = Pick<Db, "select" | "insert" | "update">;
 export function writeFinalSettlementWithin(
   tx: SettlementTx,
   attemptId: string,
+  intent?: { mutationId: string; requestDigest: string },
 ) {
   const attempt = tx
     .select({ status: attempts.status, submittedAt: attempts.submittedAt })
@@ -71,10 +72,12 @@ export function writeFinalSettlementWithin(
       id: randomUUID(),
       attemptId,
       // 旧接口无结算幂等键，服务端键只表示唯一 final；不改变 HTTP 重复交卷409。
-      mutationId: "server-final-v1",
-      requestDigest: createHash("sha256")
-        .update(JSON.stringify(["server-final-v1", attemptId, remaining]))
-        .digest("hex"),
+      mutationId: intent?.mutationId ?? "server-final-v1",
+      requestDigest:
+        intent?.requestDigest ??
+        createHash("sha256")
+          .update(JSON.stringify(["server-final-v1", attemptId, remaining]))
+          .digest("hex"),
     })
     .run();
   const assigned = tx

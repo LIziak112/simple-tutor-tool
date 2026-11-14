@@ -13,6 +13,7 @@ import {
   requireUsableAttempt,
   saveDraftAnswer,
 } from "../services/attempt-service.ts";
+import { createStudentSettlementRoutes } from "./student-settlements.ts";
 import { respondAttemptDetail } from "./student-attempt-detail.ts";
 import { createStudentLearningContextRoutes } from "./student-learning-context";
 
@@ -21,6 +22,7 @@ export function createStudentAttemptRoutes(db: Db) {
   return (
     new Hono<StudentEnv>()
       .route("/", createStudentLearningContextRoutes(db))
+      .route("/", createStudentSettlementRoutes(db))
       .put("/attempts/:id/answers/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
         return c.json({

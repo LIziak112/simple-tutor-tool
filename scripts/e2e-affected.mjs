@@ -55,6 +55,7 @@ export const ALL_TAGS = [
 
 /** e2e/<文件名> → 标签。每个 spec 至少一个；未登记的 spec 变动按全量兜底 */
 export const SPEC_TAGS = {
+  "student-partial-settlement.spec.ts": ["@student"],
   "device-settings.spec.ts": ["@student", "@teacher"],
   "student-link-entry.spec.ts": ["@student"],
   "nested-course-catalog.spec.ts": ["@teacher", "@student"],
@@ -206,6 +207,7 @@ export const ROUTE_TAGS = {
   "student-lesson": ["@student"],
   "student-memos": ["@student"],
   "student-note-read": ["@student"],
+  "student-partial-settlement": ["@student"],
   "student-practice-question-submit": ["@student"],
   "student-practice-workflow": ["@student"],
   "student-records": ["@student"],

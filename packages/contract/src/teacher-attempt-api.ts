@@ -223,6 +223,7 @@ export const teacherAttemptInkSchema = z.object({
  *   optional + nullable：题目本身无标准答案 / 未提供详解时为 null）。
  */
 export const teacherAttemptDetailQuestionSchema = z.object({
+  settlementSeq: z.number().int().positive().nullable().optional(),
   /** 题目 id（来自 DSL） */
   questionId: z.string().min(1),
   /**

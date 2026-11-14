@@ -110,7 +110,8 @@ export function practiceQuestionFeedbackOf(
 export function practiceQuestionFeedbackStateOf(
   db: Db,
   attempt: Attempt,
-  row: Pick<ResponseRow, "submittedAt">,
+  row: Pick<ResponseRow, "submittedAt"> &
+    Partial<Pick<ResponseRow, "settlementSeq">>,
   now: Date | string = new Date(),
   view?: AttemptWorkflowView | null,
 ): ReturnType<typeof resolvePracticeQuestionFeedbackState> {
@@ -134,6 +135,7 @@ export function practiceQuestionFeedbackStateOf(
       : null;
   return resolvePracticeQuestionFeedbackState({
     submitted,
+    settled: row.settlementSeq != null,
     attemptSubmitted: finalized,
     published: attemptAnswersPublished(
       { attemptSubmitted: finalized, sourceType: attempt.sourceType, release },

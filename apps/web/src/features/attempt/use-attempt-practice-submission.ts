@@ -5,7 +5,10 @@ import type {
 } from "@tutor/contract";
 import { type RefObject, useCallback, useEffect, useState } from "react";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
-import { readAutoSubmitChoice } from "./choice-submit-mode";
+import {
+  readAutoSubmitChoice,
+  saveAutoSubmitChoice,
+} from "./choice-submit-mode";
 import type { PracticeProblemPhase } from "./PracticeQuestionSubmit";
 import type { usePracticeQuestionSubmit } from "./use-practice-question-submit";
 
@@ -139,9 +142,17 @@ export function useAttemptPracticeSubmission({
     runPracticeSubmit,
   ]);
 
+  const updateAutoSubmitChoice = useCallback(
+    (auto: boolean) => {
+      setAutoSubmitChoice(auto);
+      saveAutoSubmitChoice(attemptId, auto);
+    },
+    [attemptId],
+  );
+
   return {
     autoSubmitChoice,
-    setAutoSubmitChoice,
+    setAutoSubmitChoice: updateAutoSubmitChoice,
     canAutoSubmitChoice,
     practiceProblem,
     setPracticeProblem,

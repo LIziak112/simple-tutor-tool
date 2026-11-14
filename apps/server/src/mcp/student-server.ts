@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { studentMcpPracticeQuestionSubmitSchema } from "@tutor/contract";
+import { studentMcpSubmitInputSchema } from "@tutor/contract";
 import type { Db } from "../db/client";
-import { submitPracticeQuestion } from "../services/attempt-service.ts";
 import { listStudentMcpPractices } from "../services/student-mcp-practice-list.ts";
 import {
   getStudentMcpPractice,
   getStudentMcpPracticeQuestion,
 } from "../services/student-mcp-practice-read.ts";
+import { submitStudentMcpQuestion } from "../services/student-mcp-submit.ts";
 import { registerStudentAiTaskTools } from "./student-ai-task-tools.ts";
 import { registerStudentAttemptReviewTools } from "./student-attempt-review-tools.ts";
 import { registerStudentLiveFocusTool } from "./student-live-focus-tool.ts";
@@ -141,17 +141,24 @@ export function registerStudentTools(
     "student_submit_practice_question",
     {
       description:
-        "学生确认后提交一题。提交会锁定本题，最后一题会自动交卷。questionId 是 DSL 题号，questionRevisionId 是作答行 UUID。携带练习详情中的工作流版本、答案版本及笔记证据声明。可同时提供本次答案，省略则提交已保存的草稿。重试同一次提交须复用 submissionMutationId 和全部输入。",
-      inputSchema: studentMcpPracticeQuestionSubmitSchema,
+        "学生确认后提交一题。提交会锁定本题，最后一题会自动交卷。questionId 是 DSL 题号，questionRevisionId 是冻结作答行引用。responseVersion=2 时可用 questionNo 定位且可省略 submissionMutationId，回执返回提交事实、进度和下一题；未指定版本保持旧请求和成功壳。携带练习详情中的工作流版本、答案版本及笔记证据声明。可同时提供本次答案，省略则提交已保存的草稿。重试同一次提交须复用 submissionMutationId 和全部输入。",
+      inputSchema: studentMcpSubmitInputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: true,
       },
     },
-    guard(({ practiceId, questionId, ...request }) => {
-      submitPracticeQuestion(db, studentId, practiceId, questionId, request);
-      return jsonContent({ success: true });
-    }),
+    guard((input) =>
+      jsonContent(
+        submitStudentMcpQuestion(
+          db,
+          studentId,
+          input,
+          new Date(),
+          deps.connectionId ?? null,
+        ),
+      ),
+    ),
   );
 }

@@ -26,6 +26,7 @@ export function autoFinishPerQuestionAttempt(
   tx: Pick<Db, "select" | "update" | "insert">,
   attemptId: string,
   nowIso: string,
+  settlementIntent?: { mutationId: string; requestDigest: string },
 ): { rows: ScoreSummaryRow[]; attempt: Attempt | null } {
   const rowsAfter = tx
     .select({
@@ -71,7 +72,7 @@ export function autoFinishPerQuestionAttempt(
       .get();
     if (attempt) {
       recordConfirmedSubmit(tx, attempt, nowIso);
-      writeFinalSettlementWithin(tx, attemptId);
+      writeFinalSettlementWithin(tx, attemptId, settlementIntent);
     }
     return { rows: rowsAfter, attempt: attempt ?? null };
   }

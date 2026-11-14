@@ -145,7 +145,7 @@ function RedoConfirmDialog({
         <DialogTitle>{restarting ? "清空并重新作答" : "再做一次"}</DialogTitle>
         <DialogDescription className="mt-2">
           {restarting
-            ? "当前作答及其答案、手写、草稿和标画将从记录中移除，然后从空白开始。已交卷的记录仍可回看。"
+            ? "当前作答及其答案、手写、草稿和标画将从记录中移除，已提交的批次也会一起作废，然后从空白开始。其他已交卷的记录仍可回看。"
             : `将开始第 ${nextAttemptNo} 次，从空白开始。之前的记录会保留，可随时回看。`}
         </DialogDescription>
         {error !== null ? (

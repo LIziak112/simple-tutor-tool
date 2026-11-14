@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import {
   studentMcpPracticeQuestionDataSchema,
   studentMcpPracticeQuestionSubmitSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import {
   aiPolicyOverrides,
   aiTeacherSettings,
@@ -122,31 +122,30 @@ describe.each(["class", "personal"] as const)(
       );
       if (!submit) throw new Error("旧提交工具未注册");
       // SDK的JSON Schema可选属性含undefined，仅在此适配类型，不改注册schema内容。
-      const registeredInput = z.fromJSONSchema(
-        submit.inputSchema as unknown as Parameters<typeof z.fromJSONSchema>[0],
+      const registeredInput = new AjvJsonSchemaValidator().getValidator(
+        submit.inputSchema as unknown as Parameters<
+          AjvJsonSchemaValidator["getValidator"]
+        >[0],
       );
       const prepared = preparedParameters(question.data);
-      expect(registeredInput.safeParse(prepared).success).toBe(false);
+      expect(registeredInput(prepared).valid).toBe(false);
       const confirmed = {
         ...prepared,
         submissionMutationId: randomUUID(),
       };
-      expect(registeredInput.parse(confirmed)).toEqual(confirmed);
+      expect(registeredInput(confirmed).data).toEqual(confirmed);
       expect(studentMcpPracticeQuestionSubmitSchema.parse(confirmed)).toEqual(
         confirmed,
       );
-      for (const unsupported of [
-        { ...confirmed, responseVersion: 2 },
-        { ...confirmed, confirmed: true },
-      ]) {
-        expect(registeredInput.safeParse(unsupported).success).toBe(false);
+      for (const unsupported of [{ ...confirmed, confirmed: true }]) {
+        expect(registeredInput(unsupported).valid).toBe(false);
         expect(
           studentMcpPracticeQuestionSubmitSchema.safeParse(unsupported).success,
         ).toBe(false);
       }
       for (const result of [listed, directory, question])
         expect(JSON.stringify(result.data)).not.toMatch(
-          /"answers"|solutionMd|teacherComment|autoCorrect|scoreAuto|canSettlePartially|"phase"/,
+          /"answers"|solutionMd|teacherComment|autoCorrect|scoreAuto|"phase"/,
         );
       expect(env.db.select().from(responses).all()).toEqual(before);
       expect(env.db.select().from(events).all()).toEqual([]);
