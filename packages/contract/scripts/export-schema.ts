@@ -182,3 +182,17 @@ await writeSchema(
     }),
   ),
 );
+
+await writeSchema(
+  "student-mcp-submit.json",
+  "学生 MCP v2 提交契约",
+  z.toJSONSchema(
+    z.object({
+      input: (await import("../src/student-mcp-submit.ts"))
+        .studentMcpSubmitInputSchema,
+      receipt: (await import("../src/student-mcp-submit.ts"))
+        .studentMcpSubmitReceiptSchema,
+    }),
+    { io: "input" },
+  ),
+);

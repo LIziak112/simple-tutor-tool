@@ -1080,8 +1080,8 @@
                     },
                     "questionRevisionId": {
                       "type": "string",
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      "minLength": 1,
+                      "maxLength": 512
                     },
                     "questionNo": {
                       "type": "integer",
@@ -1336,7 +1336,55 @@
                         "questionId",
                         "state"
                       ],
-                      "additionalProperties": false
+                      "additionalProperties": false,
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "versionId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "revision": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            },
+                            "state": {
+                              "const": "frozen"
+                            }
+                          },
+                          "required": [
+                            "versionId",
+                            "revision"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "state": {
+                              "enum": [
+                                "none",
+                                "missing"
+                              ]
+                            }
+                          },
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "versionId"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "revision"
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
                     },
                     "practiceId": {
                       "type": "string",
@@ -1498,7 +1546,55 @@
             "questionId",
             "state"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "versionId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "state": {
+                  "const": "frozen"
+                }
+              },
+              "required": [
+                "versionId",
+                "revision"
+              ]
+            },
+            {
+              "properties": {
+                "state": {
+                  "enum": [
+                    "none",
+                    "missing"
+                  ]
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "versionId"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "revision"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
         },
         "practiceId": {
           "type": "string",

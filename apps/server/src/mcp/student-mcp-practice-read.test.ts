@@ -136,7 +136,6 @@ describe.each(["class", "personal"] as const)(
         confirmed,
       );
       for (const unsupported of [
-        { ...confirmed, responseVersion: 2 },
         { ...confirmed, confirmed: true },
       ]) {
         expect(registeredInput.safeParse(unsupported).success).toBe(false);

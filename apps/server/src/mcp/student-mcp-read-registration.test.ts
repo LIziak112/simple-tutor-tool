@@ -78,15 +78,14 @@ describe("A1 注册拆分的旧工具兼容", () => {
         destructiveHint: true,
         idempotentHint: true,
       });
+      expect(submit?.inputSchema.oneOf).toHaveLength(3);
       expect(submit?.inputSchema.required).toEqual(
         expect.arrayContaining([
           "practiceId",
-          "questionId",
           "questionRevisionId",
           "workflowVersion",
           "workflowRevision",
           "expectedAnswerRevision",
-          "submissionMutationId",
           "evidence",
         ]),
       );
