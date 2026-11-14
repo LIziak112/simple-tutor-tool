@@ -9,6 +9,7 @@
  */
 import {
   INK_LOGICAL_WIDTH,
+  inkStrokeIdSchema,
   NOTE_COORD_MAX_X,
   NOTE_COORD_MAX_Y,
   NOTE_MAX_POINTS_PER_STROKE,
@@ -85,10 +86,14 @@ export function repairNoteDoc(input: unknown): NoteDoc | null {
     if (points.length === 0) continue;
     if (totalPoints + points.length > NOTE_MAX_TOTAL_POINTS) break; // 全稿超限：丢弃余笔
     totalPoints += points.length;
+    // 局部橡皮切段的记号和 rendering 一样影响画法（同一笔的荧光笔段靠它合在
+    // 一起上一次色）：形态合法才带上，不合法只丢这一个字段
+    const cutFrom = inkStrokeIdSchema.safeParse(stroke.cutFrom);
     strokes.push({
       ...(typeof stroke.rendering === "object" && stroke.rendering !== null
         ? { rendering: stroke.rendering as RepairedStroke["rendering"] }
         : {}),
+      ...(cutFrom.success ? { cutFrom: cutFrom.data } : {}),
       tool: stroke.tool,
       color: stroke.color,
       weight: stroke.weight,

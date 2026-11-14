@@ -42,6 +42,8 @@ export function bindInkProfileAccount(next: InkProfileAccount | null) {
   }
   setSessionInputPreference(store.get().config.inputMode);
 }
+/** 当前绑定的账号（工具箱记忆按它分开存）；未登录为 null */
+export const getInkProfileAccount = () => account;
 export const getInkProfileSelection = () => store.get();
 export const subscribeInkProfileSelection = (cb: () => void) =>
   store.subscribe(cb);

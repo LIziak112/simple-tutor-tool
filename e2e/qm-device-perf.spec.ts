@@ -67,7 +67,7 @@ interface DeviceWorld {
 }
 
 let pair: QmPair;
-const worlds: Partial<Record<"WA" | "WB" | "WC", DeviceWorld>> = {};
+const worlds: Partial<Record<"WA" | "WB" | "WC" | "WD", DeviceWorld>> = {};
 
 function worldOf(key: "WA" | "WB"): DeviceWorld {
   const world = worlds[key];
@@ -93,7 +93,7 @@ async function registerTeacher(
 
 /** 建世界：新教师域导入一份语料 → 造学生 → 布置单元作业 */
 async function buildWorld(
-  key: "WA" | "WB" | "WC",
+  key: "WA" | "WB" | "WC" | "WD",
   teacherLogin: string | null,
   ip: string,
   sample: string,
@@ -417,6 +417,120 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
             ?.getBoundingClientRect().top ?? 0,
       }));
       expect(boundary.bottom).toBeLessThanOrEqual(boundary.nextTop);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("材料圈画的橡皮圈：悬停和擦除时跟着指针，大小就是命中范围；移出材料、换回笔收起", async ({
+    browser,
+  }, testInfo) => {
+    const world = await buildWorld(
+      "WD",
+      `qmdev-ring-${Date.now().toString(36)}`,
+      "10.232.4.1",
+      "valid-02-英语阅读五题.md",
+      "Reading Comprehension",
+      5,
+      Date.now().toString(36),
+    );
+    const context = await browser.newContext({
+      viewport: { width: 1112, height: 731 },
+      baseURL: pair.webUrl,
+    });
+    try {
+      const page = await openAssignmentAttempt(context, world);
+      const overlay = page
+        .locator('[data-slot="group-materials"]')
+        .locator('[data-slot="material-annotation-overlay"]');
+      const input = overlay.locator('[data-slot="material-annotation-input"]');
+      const ring = overlay.locator('circle[data-slot="ink-eraser-ring"]');
+      /** 橡皮圈此刻在屏幕上的圆心和半径（按临时层的坐标域换算成 CSS px） */
+      const ringOnScreen = () =>
+        ring.evaluate((node) => {
+          const svg = node.closest("svg");
+          if (!(svg instanceof SVGSVGElement))
+            throw new Error("橡皮圈不在临时层里");
+          const box = svg.getBoundingClientRect();
+          const view = svg.viewBox.baseVal;
+          const read = (name: string) => Number(node.getAttribute(name));
+          return {
+            x: box.left + (read("cx") / view.width) * box.width,
+            y: box.top + (read("cy") / view.height) * box.height,
+            radius: (read("r") / view.width) * box.width,
+          };
+        });
+      const inputBox = async () => {
+        const box = await input.boundingBox();
+        if (box === null) throw new Error("材料圈画输入层应可见");
+        return box;
+      };
+      /** 圈画中、材料已经稳定可以落笔（没进圈画时 data-ink-ready 也是 true） */
+      const writable = page.locator(
+        '[data-slot="group-materials"] [data-slot="material-annotation-overlay"][data-drawing="true"][data-ink-ready="true"]',
+      );
+
+      await page.getByRole("button", { name: "第 1 题圈画题干" }).click();
+      await expect(writable).toBeVisible();
+      // 先用笔在材料中间画一笔。第一笔之后材料定成固定宽度的框，等它重新就绪
+      await drawStrokeWithPointerEvents(input);
+      await expect(overlay).toHaveAttribute("data-stroke-count", "1");
+      await expect(writable).toBeVisible();
+      // 靠下再画一笔，留着不擦：材料上的笔迹擦光了固定框会解除，布局一变
+      // 在途的这一下擦除就按「布局变化先收笔」结束了
+      await drawStrokeWithPointerEvents(input, 1, 0, 0.3);
+      await expect(overlay).toHaveAttribute("data-stroke-count", "2");
+      // 笔在材料上悬停：没有橡皮圈
+      let box = await inputBox();
+      await page.mouse.move(box.x + 40, box.y + 20);
+      await expect(ring).toBeHidden();
+
+      const toolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
+      await toolbar.getByRole("button", { name: "橡皮", exact: true }).click();
+      // 橡皮悬停：圆心就在指针处，半径是中号橡皮的 14（1000 宽的坐标域）
+      box = await inputBox();
+      const at = { x: box.x + 60, y: box.y + 24 };
+      await page.mouse.move(at.x, at.y);
+      await expect(ring).toBeVisible();
+      const hovering = await ringOnScreen();
+      expect(Math.abs(hovering.x - at.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(hovering.y - at.y)).toBeLessThanOrEqual(1);
+      expect(hovering.radius).toBeCloseTo((14 * box.width) / 1000, 1);
+      await page.screenshot({
+        path: testInfo.outputPath("material-eraser-ring.png"),
+      });
+      // 悬停不擦东西
+      await expect(overlay).toHaveAttribute("data-stroke-count", "2");
+
+      // 按下，竖着划过中间那一笔：擦掉了，橡皮圈跟到最后一个落点；松开收起
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      await page.mouse.move(cx, cy - 70);
+      await page.mouse.down();
+      await page.mouse.move(cx, cy + 70, { steps: 14 });
+      await expect(overlay).toHaveAttribute("data-stroke-count", "1");
+      await expect(ring).toBeVisible();
+      const erasing = await ringOnScreen();
+      expect(Math.abs(erasing.x - cx)).toBeLessThanOrEqual(1);
+      expect(Math.abs(erasing.y - (cy + 70))).toBeLessThanOrEqual(1);
+      await page.mouse.up();
+      await expect(ring).toBeHidden();
+
+      // 再悬停又出现；指针移到题卡上（出了材料）收起
+      await expect(writable).toBeVisible();
+      box = await inputBox();
+      await page.mouse.move(box.x + 80, box.y + 30);
+      await expect(ring).toBeVisible();
+      const card = page.getByRole("article", { name: "第 1 题", exact: true });
+      const cardBox = await card.boundingBox();
+      if (cardBox === null) throw new Error("题卡应可见");
+      await page.mouse.move(cardBox.x + cardBox.width - 20, cardBox.y + 10);
+      await expect(ring).toBeHidden();
+
+      // 换回笔：悬停不再出圈
+      await toolbar.getByRole("button", { name: "笔", exact: true }).click();
+      await page.mouse.move(box.x + 80, box.y + 30);
+      await expect(ring).toBeHidden();
     } finally {
       await context.close();
     }

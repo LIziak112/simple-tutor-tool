@@ -19,13 +19,13 @@ const ink = vi.hoisted(() => ({
   replay: vi.fn(),
   encode: vi.fn(),
 }));
-vi.mock("@/features/ink/engine/atrament-adapter", () => ({
+vi.mock("@/features/ink/engine/atrament-replay", () => ({
   createProgrammaticAtrament: () => ({ destroy: ink.destroy }),
 }));
 vi.mock("@/features/ink/engine/canvas-png", () => ({
   canvasToPngBlob: ink.encode,
 }));
-vi.mock("./annotation-surface", () => ({ replayAnnotationStroke: ink.replay }));
+vi.mock("./annotation-replay", () => ({ replayAnnotationStrokes: ink.replay }));
 vi.mock("html-to-image", () => ({ toBlob: vi.fn() }));
 vi.mock("@/features/notes/rasterize-utils", async (original) => ({
   ...(await original<typeof import("@/features/notes/rasterize-utils")>()),
@@ -261,7 +261,9 @@ it("叠墨沿用原始点和宽度比例，不把附加答案区域变成新稿�
   } as unknown as CanvasRenderingContext2D);
   ink.encode.mockResolvedValue(png(600, 400));
   await renderCurrentQuestionImage(question, { layout, doc, reference });
-  expect(ink.replay).toHaveBeenCalledWith(expect.anything(), 0.5, stroke);
+  // 整串笔画一次交给重放（同一笔切出来的荧光笔各段要合在一起上色，不逐笔调）
+  expect(ink.replay).toHaveBeenCalledOnce();
+  expect(ink.replay).toHaveBeenCalledWith(expect.anything(), 0.5, [stroke]);
   expect(JSON.stringify(doc)).toBe(original);
   expect(ink.destroy).toHaveBeenCalledOnce();
 });

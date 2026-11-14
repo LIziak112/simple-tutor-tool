@@ -2,15 +2,26 @@
  * 回放的 atrament canvas 绘制薄层（T3.3）。
  *
  * 只负责「把 frameAt 的结果画上 canvas」：清屏 → 按可见点数截断每笔 → 复用
- * 引擎层导出的 replayAtramentStroke（与实时书写/全量重绘同一绘制原语）。
+ * 引擎层导出的 replayAtramentStrokes（与实时书写/全量重绘同一绘制原语）。
  * 按绘制顺序到达的普通笔段可直接追加；回退或替换旧笔时按矢量重建。
+ * 在途的荧光笔（整笔一条路径）不能逐段追加，放在临时层上，收笔后整笔落到
+ * 画布（engine/live-layer.ts）。
+ *
+ * 已有的笔画一律成串交给 replayAtramentStrokes：同一笔被局部橡皮切出来的
+ * 荧光笔各段要合在一起上一次色（engine/paint-runs.ts），逐笔画会把它们重叠
+ * 的地方叠深。
  */
 import {
   beginAtramentStroke,
   createProgrammaticAtrament,
-  replayAtramentStroke,
-} from "../engine/atrament-adapter.ts";
+  replayAtramentStrokes,
+} from "../engine/atrament-replay.ts";
+import { isOnePathStroke } from "../engine/highlighter-paint.ts";
 import type { InkStroke } from "../engine/index.ts";
+import { createInkLiveLayer, type InkLiveLayer } from "../engine/live-layer.ts";
+import { toLogical } from "../engine/normalize.ts";
+import { inSamePaintRun } from "../engine/paint-runs.ts";
+import { INK_LOGICAL_WIDTH } from "../engine/types.ts";
 
 /** devicePixelRatio 上限 2（与 atrament-adapter 同口径，控制内存） */
 const MAX_DPR = 2;
@@ -43,6 +54,15 @@ export interface AtramentReplayCanvas {
     }[],
     timeMs: number,
   ): void;
+  /**
+   * 盖在画布上的临时层（与笔画同一坐标域），供拿这块画布书写的一方画
+   * 拖动中的图形预览和橡皮圈。可选方法——既有 mock/消费方不实现时就没有
+   * 预览。
+   */
+  previewLayer?(): Pick<
+    InkLiveLayer,
+    "showOutline" | "clear" | "showRing" | "hideRing"
+  >;
   destroy(): void;
 }
 
@@ -60,6 +80,25 @@ function samePrefix(
   return true;
 }
 
+/**
+ * 接下来要画的那一笔，和画布上已有的最后一笔是不是同一组（同一笔切出来的
+ * 荧光笔段）。是的话不能往上追加——同组要合在一起上一次色，得整张重画。
+ *
+ * 现有的两个调用方都走不到这里：回放只在全是笔（不成组）时才顺序追加；材料
+ * 圈画里切出来的段是原位换掉原笔，前缀先对不上、已经整张重画。留着这一条是
+ * 让 drawOrdered 自己保证「追加的结果与整张重画一致」，不靠调用方守规矩。
+ */
+function continuesPaintedRun(
+  strokes: readonly InkStroke[],
+  painted: number,
+  completed: number,
+): boolean {
+  if (painted <= 0 || painted >= completed) return false;
+  const last = strokes[painted - 1];
+  const next = strokes[painted];
+  return last !== undefined && next !== undefined && inSamePaintRun(last, next);
+}
+
 /** 在容器内创建回放画布（canvas 撑满容器；容器负责纵横比/尺寸） */
 export function createAtramentReplayCanvas(
   container: HTMLElement,
@@ -74,10 +113,15 @@ export function createAtramentReplayCanvas(
   container.appendChild(canvas);
 
   let cssWidth = 0;
+  let cssHeight = 0;
   let clientWidth = -1;
   let clientHeight = -1;
   let orderedFrame: OrderedFrame | null = null;
   let activePen: ReturnType<typeof beginAtramentStroke> = null;
+  /**
+   * 在途荧光笔、图形预览的临时层：第一次用到才创建，纯回放页不多出这个元素
+   */
+  let liveLayer: InkLiveLayer | null = null;
   /** 最近一次 drawFrame 的入参（resize 后原样重画） */
   let lastFrame: {
     strokes: readonly InkStroke[];
@@ -110,9 +154,24 @@ export function createAtramentReplayCanvas(
     clientWidth = width;
     clientHeight = height;
     cssWidth = width || 300;
+    cssHeight = height || 200;
     canvas.width = pixelsWide;
     canvas.height = pixelsHigh;
+    sizeLiveLayer();
     return true;
+  }
+
+  /** 临时层的坐标域与笔画同为逻辑宽 1000 */
+  function sizeLiveLayer(): void {
+    liveLayer?.setViewBox(INK_LOGICAL_WIDTH, toLogical(cssWidth, cssHeight));
+  }
+
+  function ensureLiveLayer(): InkLiveLayer {
+    if (liveLayer === null) {
+      liveLayer = createInkLiveLayer(container);
+      sizeLiveLayer();
+    }
+    return liveLayer;
   }
 
   sizeCanvas();
@@ -122,7 +181,7 @@ export function createAtramentReplayCanvas(
     throw new Error("无法创建 canvas 2d 上下文（当前环境不支持回放）");
   }
   // 程序化重放实例（构造即配置画笔状态并解绑输入监听，见
-  // engine/atrament-adapter.createProgrammaticAtrament 的唯一注释段）
+  // engine/atrament-replay.createProgrammaticAtrament 的唯一注释段）
   const atrament = createProgrammaticAtrament(canvas);
   // 收窄后的 context 引用（const + 早退后声明箭头函数，类型收窄才能进闭包）
   const ctx2d = ctx;
@@ -142,6 +201,7 @@ export function createAtramentReplayCanvas(
   function resetOrdered(): void {
     activePen?.end();
     activePen = null;
+    liveLayer?.clear();
     orderedFrame = null;
   }
 
@@ -166,24 +226,34 @@ export function createAtramentReplayCanvas(
       previous === null ||
       completed < painted ||
       !samePrefix(previous[0], strokes, painted) ||
-      (previousActive != null && !promoted && !continuing)
+      (previousActive != null && !promoted && !continuing) ||
+      continuesPaintedRun(strokes, painted, completed)
     ) {
       resetOrdered();
       clear();
       painted = 0;
-    } else if (promoted) {
+    } else if (promoted && !isOnePathStroke(previousActive)) {
       activePen?.appendThrough(previousActive.points.length);
       activePen?.end();
       activePen = null;
       painted++;
     }
-    for (; painted < completed; painted++) {
-      const stroke = strokes[painted];
-      if (stroke) replayAtramentStroke(atrament, cssWidth, stroke);
+    // 刚收笔的荧光笔书写中不在画布上：和其余已完成笔画一样在这里整笔画出
+    if (painted < completed) {
+      replayAtramentStrokes(
+        atrament,
+        cssWidth,
+        strokes.slice(painted, completed),
+      );
     }
-    if (active !== null) {
-      activePen ??= beginAtramentStroke(atrament, cssWidth, active);
-      activePen?.appendThrough(points);
+    if (active !== null && isOnePathStroke(active)) {
+      ensureLiveLayer().showStroke(active, points);
+    } else {
+      liveLayer?.clear();
+      if (active !== null) {
+        activePen ??= beginAtramentStroke(atrament, cssWidth, active);
+        activePen?.appendThrough(points);
+      }
     }
     lastFrame = null;
     lastDeleted = null;
@@ -198,16 +268,15 @@ export function createAtramentReplayCanvas(
     lastFrame = { strokes, visiblePoints };
     lastDeleted = null;
     clear();
+    const shown: InkStroke[] = [];
     for (let i = 0; i < strokes.length; i++) {
       const stroke = strokes[i];
       const visible = visiblePoints[i];
       if (!stroke || !visible || visible <= 0) continue;
       // 截断到当前时刻已走过的点（slice 产生短数组，原笔画不可变）
-      replayAtramentStroke(atrament, cssWidth, {
-        ...stroke,
-        points: stroke.points.slice(0, visible),
-      });
+      shown.push({ ...stroke, points: stroke.points.slice(0, visible) });
     }
+    replayAtramentStrokes(atrament, cssWidth, shown);
   };
 
   // LR-PR4：墓碑淡色虚线（教师「看擦改」）。startMs ≤ t < deletedAtMs 可见，
@@ -230,6 +299,7 @@ export function createAtramentReplayCanvas(
     ctx2d.globalAlpha = 0.35;
     ctx2d.lineCap = "round";
     ctx2d.lineJoin = "round";
+    const shown: InkStroke[] = [];
     for (const tomb of tombstones) {
       if (timeMs < tomb.startMs || timeMs >= tomb.deletedAtMs) continue;
       let visible = 0;
@@ -238,11 +308,12 @@ export function createAtramentReplayCanvas(
         else break;
       }
       if (visible <= 0) continue;
-      replayAtramentStroke(atrament, cssWidth, {
+      shown.push({
         ...tomb.stroke,
         points: tomb.stroke.points.slice(0, visible),
       });
     }
+    replayAtramentStrokes(atrament, cssWidth, shown);
     ctx2d.restore();
   };
 
@@ -267,9 +338,12 @@ export function createAtramentReplayCanvas(
     drawFrame,
     drawOrdered,
     drawDeleted,
+    previewLayer: ensureLiveLayer,
     destroy(): void {
       observer.disconnect();
       resetOrdered();
+      liveLayer?.destroy();
+      liveLayer = null;
       atrament.destroy();
       canvas.remove();
     },

@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -31,12 +37,20 @@ let mockCanUndo = false;
 let mockCanRedo = false;
 /** T6R.9：捕获 create 收到的选项（background 透传断言） */
 let lastCreateOpts:
-  | { background?: string; height?: number; inputMode?: string }
+  | {
+      background?: string;
+      height?: number;
+      inputMode?: string;
+      onReady?: () => void;
+    }
   | undefined;
+/** 模拟 Excalidraw 懒加载完成：create 时即回调 onReady（缺省不回调=加载中） */
+let readyOnCreate = false;
 
 vi.mock("./engine/index.ts", () => ({
   create: (_container: HTMLElement, opts: unknown) => {
     lastCreateOpts = opts as typeof lastCreateOpts;
+    if (readyOnCreate) lastCreateOpts?.onReady?.();
     const engine: InkEngine = {
       getData: () => {
         throw new Error("测试未使用");
@@ -67,15 +81,19 @@ vi.mock("./engine/index.ts", () => ({
 
 import { InkPad } from "./InkPad.tsx";
 
-it("紧凑工具行保留五个图标入口，颜色和粗细通过菜单选择", () => {
-  render(<InkPad compactToolbar inputMode="session" />);
-  const toolbar = screen.getByRole("toolbar");
-  expect(toolbar.querySelectorAll("button")).toHaveLength(5);
-  fireEvent.pointerDown(screen.getByRole("button", { name: /更多操作/ }), {
-    button: 0,
-    ctrlKey: false,
+/** 工具栏里各按钮的可访问名（按显示顺序） */
+function toolbarButtonNames(name: string): Array<string | null> {
+  return within(screen.getByRole("toolbar", { name }))
+    .getAllByRole("button")
+    .map((el) => el.getAttribute("aria-label"));
+}
+
+/** 打开「更多」菜单（Radix 菜单按键盘打开，jsdom 下无需指针事件） */
+function openMoreMenu(): void {
+  fireEvent.keyDown(screen.getByRole("button", { name: /^更多操作/ }), {
+    key: "ArrowDown",
   });
-});
+}
 
 function emptyDoc(): InkDoc<"atrament"> {
   return {
@@ -93,6 +111,7 @@ beforeEach(() => {
   resetSessionInputPreference();
   vi.clearAllMocks();
   lastCreateOpts = undefined;
+  readyOnCreate = false;
 });
 
 afterEach(() => {
@@ -101,18 +120,44 @@ afterEach(() => {
 });
 
 describe("<InkPad> 工具栏", () => {
-  it("渲染笔/荧光笔/橡皮/滚动与撤销/重做/清空；撤销重做初始禁用", () => {
+  it("页内引擎：笔/荧光笔/橡皮/形状/滚动 + 撤销/重做 + 更多；撤销重做初始禁用，清空在更多里", () => {
     render(<InkPad />);
+    expect(toolbarButtonNames("手写答题区工具栏")).toEqual([
+      "笔",
+      "荧光笔",
+      "橡皮",
+      "形状",
+      "滚动",
+      "撤销",
+      "重做",
+      "更多操作（手写答题区）",
+    ]);
+    expect(screen.getByRole("button", { name: "笔" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     // 触发一次 change 后按钮才可用；初始态撤销/重做禁用
     expect(screen.getByRole("button", { name: "撤销" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "重做" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "清空画布" })).toBeEnabled();
-    expect(
-      screen.getByRole("button", { name: "颜色：蓝" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "粗细：粗" }),
-    ).toBeInTheDocument();
+    openMoreMenu();
+    expect(screen.getAllByRole("menuitem").map((el) => el.textContent)).toEqual(
+      ["清空画布"],
+    );
+  });
+
+  it('inputMode="session"：「手指书写」排在撤销重做之后、更多之前', () => {
+    render(<InkPad inputMode="session" />);
+    expect(toolbarButtonNames("手写答题区工具栏")).toEqual([
+      "笔",
+      "荧光笔",
+      "橡皮",
+      "形状",
+      "滚动",
+      "撤销",
+      "重做",
+      "手指书写",
+      "更多操作（手写答题区）",
+    ]);
   });
 
   it("change 解锁撤销/重做：点击转发到引擎", () => {
@@ -133,15 +178,18 @@ describe("<InkPad> 工具栏", () => {
 
   it("清空需二次确认", () => {
     render(<InkPad />);
-    fireEvent.click(screen.getByRole("button", { name: "清空画布" }));
+    openMoreMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "清空画布" }));
     expect(mockClear).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "清空画布？" }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^清空$/ }));
     expect(mockClear).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("切换工具下发 setTool；颜色与粗细随选择更新", () => {
+  it("切换工具下发 setTool；颜色、粗细、橡皮大小在各自的选项面板里调", () => {
     render(<InkPad />);
     // 初始下发默认笔（中/黑）
     expect(mockSetTool).toHaveBeenLastCalledWith({
@@ -150,28 +198,112 @@ describe("<InkPad> 工具栏", () => {
       size: "medium",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "颜色：蓝" }));
+    // 笔已选中：再点一次打开笔的选项面板
+    fireEvent.click(screen.getByRole("button", { name: "笔" }));
+    const penPanel = screen.getByRole("dialog", { name: "笔设置" });
+    fireEvent.click(within(penPanel).getByRole("radio", { name: "蓝" }));
     expect(mockSetTool).toHaveBeenLastCalledWith({
       type: "pen",
       color: "blue",
       size: "medium",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "粗细：细" }));
+    fireEvent.click(within(penPanel).getByRole("radio", { name: "细" }));
     expect(mockSetTool).toHaveBeenLastCalledWith({
       type: "pen",
       color: "blue",
       size: "thin",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /橡皮/ }));
-    expect(mockSetTool).toHaveBeenLastCalledWith({ type: "eraser" });
+    // 切到橡皮：笔的面板随之收起，橡皮缺省整笔擦、中号
+    fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "eraser",
+      mode: "stroke",
+      size: "medium",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "橡皮设置" })).getByRole(
+        "radio",
+        { name: "大" },
+      ),
+    );
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "eraser",
+      mode: "stroke",
+      size: "large",
+    });
 
-    fireEvent.click(screen.getByRole("button", { name: /荧光笔/ }));
-    expect(mockSetTool).toHaveBeenLastCalledWith({ type: "highlighter" });
+    fireEvent.click(screen.getByRole("button", { name: "荧光笔" }));
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "highlighter",
+      color: "yellow",
+      size: "medium",
+      straight: false,
+    });
 
-    fireEvent.click(screen.getByRole("button", { name: /滚动/ }));
+    // 荧光笔改成直线：下发的工具带上 straight
+    fireEvent.click(screen.getByRole("button", { name: "荧光笔" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "荧光笔设置" })).getByRole(
+        "radio",
+        { name: "直线" },
+      ),
+    );
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "highlighter",
+      color: "yellow",
+      size: "medium",
+      straight: true,
+    });
+
+    // 形状：缺省直线，颜色粗细用笔的；在面板里换成矩形
+    fireEvent.click(screen.getByRole("button", { name: "形状" }));
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "shape",
+      shape: "line",
+      color: "blue",
+      size: "thin",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "形状" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "形状设置" })).getByRole(
+        "radio",
+        { name: "矩形" },
+      ),
+    );
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "shape",
+      shape: "rect",
+      color: "blue",
+      size: "thin",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "滚动" }));
     expect(mockSetTool).toHaveBeenLastCalledWith({ type: "scroll" });
+
+    // 切回笔：之前调过的颜色、粗细还在
+    fireEvent.click(screen.getByRole("button", { name: "笔" }));
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "pen",
+      color: "blue",
+      size: "thin",
+    });
+  });
+
+  it("引擎重建后重发当前工具（新引擎回到缺省笔，不重发会与工具栏不一致）", () => {
+    const view = render(<InkPad background="grid" />);
+    fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+    mockSetTool.mockClear();
+    view.rerender(<InkPad background="line" />);
+    expect(lastCreateOpts?.background).toBe("line");
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "eraser",
+      mode: "stroke",
+      size: "medium",
+    });
   });
 
   it("卸载时销毁引擎；onDocChange 在每次 change 上抛", () => {
@@ -313,5 +445,36 @@ describe("<InkPad> 背景挂载后更新（T6R.9 复审⑥：重建键方案）"
     expect(
       screen.getAllByRole("img", { name: "手写答题区" }).length,
     ).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("<InkPad> 历史 Excalidraw 画布的工具栏", () => {
+  it("只提供笔/橡皮/选择；不认颜色粗细，所以点当前工具不出选项面板", () => {
+    readyOnCreate = true;
+    render(<InkPad engine="excalidraw" label="历史手写作答区" />);
+    expect(toolbarButtonNames("历史手写作答区工具栏")).toEqual([
+      "笔",
+      "橡皮",
+      "选择",
+      "撤销",
+      "重做",
+      "更多操作（历史手写作答区）",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "笔" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+    fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "选择" }));
+    expect(mockSetTool).toHaveBeenLastCalledWith({ type: "scroll" });
+  });
+
+  it("引擎加载完成前工具栏整体禁用", () => {
+    render(<InkPad engine="excalidraw" label="历史手写作答区" />);
+    const buttons = within(
+      screen.getByRole("toolbar", { name: "历史手写作答区工具栏" }),
+    ).getAllByRole("button");
+    expect(buttons).toHaveLength(6);
+    for (const el of buttons) expect(el).toBeDisabled();
   });
 });

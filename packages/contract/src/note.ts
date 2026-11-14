@@ -113,8 +113,13 @@ export const NOTE_REFLECTION_MAX_LENGTH = 500;
  * 方案 §7）。**递增时机 = 渲染行为发生会影响像素输出的变更**（背景画法/颜色、
  * 切片几何或重叠值、绘制原语版本、分析图/缩略图像素宽等）；纯重构不改像素
  * 输出时不递增。递增时旧版本派生图不自动重生成，补图链路按需重建。
+ *
+ * 版本 4：荧光笔由逐段描边改为整笔一条路径一次描边——一笔之内透明度均匀、
+ * 线宽不随压感变、末端画到真实采样点（apps/web 的 engine/highlighter-paint.ts）；
+ * 同一笔被局部橡皮切出来的各段（笔画上的 cutFrom 相同）合在一起上一次色，
+ * 重叠处不比擦之前深（engine/paint-runs.ts）。
  */
-export const NOTE_RENDER_VERSION = 3;
+export const NOTE_RENDER_VERSION = 4;
 
 // ---------- NoteDoc v1 ----------
 

@@ -15,7 +15,7 @@ import { createRoot } from "react-dom/client";
 import { QuestionRenderContext } from "@/features/answering/question-render-context";
 import { formatStudentAnswer } from "@/features/attempt/answer-format";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import {
   collectFontEmbedCss,
@@ -23,7 +23,7 @@ import {
   samplePngBlank,
   withTimeout,
 } from "@/features/notes/rasterize-utils";
-import { replayAnnotationStroke } from "./annotation-surface";
+import { replayAnnotationStrokes } from "./annotation-replay";
 import {
   assertPublicQuestion,
   awaitQuestionSurfaceReady,
@@ -228,8 +228,7 @@ export async function renderCurrentQuestionImage(
       atrament = createProgrammaticAtrament(canvas);
       context.drawImage(image, 0, 0, pixelWidth, pixelHeight);
       // 附加的本人作答只扩展导出画布；旧笔迹始终在原坐标域按原宽度重放。
-      for (const stroke of doc.strokes)
-        replayAnnotationStroke(atrament, cssWidth / doc.baseWidth, stroke);
+      replayAnnotationStrokes(atrament, cssWidth / doc.baseWidth, doc.strokes);
       const result = await canvasToPngBlob(canvas);
       check();
       if (!result.size || result.size > ANNOTATION_BASE_PNG_MAX_BYTES)

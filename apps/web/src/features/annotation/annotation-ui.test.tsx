@@ -132,17 +132,14 @@ vi.mock("@/lib/copy", async (importOriginal) => ({
   copyPngBlobToClipboard: vi.fn(async () => true),
 }));
 
-vi.mock(
-  "@/features/ink/engine/atrament-adapter.ts",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("@/features/ink/engine/atrament-adapter.ts")
-    >()),
-    createProgrammaticAtrament: vi.fn(() => new FakeAtrament()),
-  }),
-);
+vi.mock("@/features/ink/engine/atrament-replay.ts", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/features/ink/engine/atrament-replay.ts")
+  >()),
+  createProgrammaticAtrament: vi.fn(() => new FakeAtrament()),
+}));
 
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay.ts";
 import {
   ApiError,
   fetchAnnotationViewApi,

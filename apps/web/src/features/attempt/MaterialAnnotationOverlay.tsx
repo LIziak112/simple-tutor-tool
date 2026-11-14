@@ -4,13 +4,16 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { useCoordinatedAnnotation } from "@/features/annotation/coordinated-annotation-context";
-import { eraseHit } from "@/features/ink/engine/erase.ts";
-import { toLogicalPoint } from "@/features/ink/engine/normalize.ts";
+import {
+  createAnnotationToolbox,
+  useCoordinatedAnnotation,
+} from "@/features/annotation/coordinated-annotation-context";
+import { toLogical, toLogicalPoint } from "@/features/ink/engine/normalize.ts";
 import {
   advancePointerMachine,
   createPointerMachineState,
@@ -19,11 +22,12 @@ import {
   type PointerMachineState,
   touchActionForInput,
 } from "@/features/ink/engine/pointer-machine.ts";
+import { createShapeGesture } from "@/features/ink/engine/shape-gesture.ts";
+import { toolConfigOf } from "@/features/ink/engine/toolbox.ts";
 import {
-  INK_ERASE_RADIUS,
   INK_LOGICAL_WIDTH,
-  INK_PEN_COLORS,
-  INK_PEN_SIZES,
+  type InkGesture,
+  resolveGesture,
 } from "@/features/ink/engine/types.ts";
 import {
   type AtramentReplayCanvas,
@@ -37,72 +41,13 @@ import {
   type MaterialInkBaseMeta,
   subscribeLocalDraftChoice,
 } from "./draft-store";
+import { useMaterialErase } from "./material-erase";
+import { useMaterialEraserRing } from "./material-eraser-ring";
+import { awaitMaterialSurfaceReady } from "./material-surface-ready";
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 
-/** 首笔前材料就绪等待上限（同题面 STEP_TIMEOUT_MS 口径） */
-const MATERIAL_READY_TIMEOUT_MS = 15_000;
-
-/**
- * 材料表面就绪等待（题面 awaitQuestionSurfaceReady 的材料版，不栅格化）：
- * 字体就绪 + 图片解码/收尾 + 连续 3 帧宽高测量不变，任一阶段超时返回 false。
- */
-async function awaitMaterialSurfaceReady(
-  surface: HTMLElement,
-  isCancelled: () => boolean,
-): Promise<boolean> {
-  const deadline = performance.now() + MATERIAL_READY_TIMEOUT_MS;
-  const frames = async () => {
-    let previous = "";
-    let unchanged = 0;
-    while (performance.now() < deadline) {
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => resolve()),
-      );
-      if (isCancelled()) return false;
-      const rect = surface.getBoundingClientRect();
-      const signature = `${rect.width}x${rect.height}`;
-      if (signature === previous) {
-        unchanged += 1;
-        if (unchanged >= 3) return true;
-      } else {
-        unchanged = 0;
-        previous = signature;
-      }
-    }
-    return false;
-  };
-  const body = async () => {
-    if (document.fonts) await document.fonts.ready;
-    if (isCancelled()) return false;
-    const images = [...surface.querySelectorAll("img")];
-    await Promise.all(
-      images.map(
-        (image) =>
-          new Promise<void>((resolve) => {
-            if (image.complete) {
-              if (typeof image.decode === "function") {
-                image.decode().then(
-                  () => resolve(),
-                  () => resolve(),
-                );
-              } else {
-                resolve();
-              }
-              return;
-            }
-            image.addEventListener("load", () => resolve(), { once: true });
-            image.addEventListener("error", () => resolve(), { once: true });
-          }),
-      ),
-    );
-    if (isCancelled()) return false;
-    return frames();
-  };
-  const timeout = new Promise<false>((resolve) => {
-    setTimeout(() => resolve(false), MATERIAL_READY_TIMEOUT_MS);
-  });
-  return Promise.race([body(), timeout]);
-}
+/** 无共享工具箱（单测、独立挂载）时用圈画缺省：红色细笔 */
+const FALLBACK_TOOLBOX = createAnnotationToolbox();
 
 export interface MaterialAnnotationOverlayProps {
   attemptId: string;
@@ -127,8 +72,9 @@ export interface MaterialAnnotationOverlayProps {
  *   变化先收笔等决策矩阵与其单测共用），固定笔写、手指滚动；
  * - 绘制：ink/replay/draw 的 createAtramentReplayCanvas（与回放/导出同一
  *   atrament 绘制原语、DPR 上限 2、尺寸变化自重画）；
- * - 笔色/笔粗/橡皮半径：INK_PEN_COLORS / INK_PEN_SIZES / INK_ERASE_RADIUS，
- *   橡皮命中走 eraseHit（半径内含半笔宽，与题面圈画同手感）；
+ * - 笔色/笔粗/橡皮大小与擦除方式：跟随协同工具箱，经 resolveGesture 换成
+ *   落笔规格；橡皮走 erase-session（整笔或局部，命中半径内含半笔宽，与题面
+ *   圈画同手感），悬停和擦除时有橡皮圈跟着指针；
  * - 矢量坐标一律按 INK_LOGICAL_WIDTH(1000) 归一化存储（normalize.ts）。
  * 笔迹按 attemptId + inkKey 合并存入 draftStore（本机稿；交卷不清除，
  * 结果页只读回看——见 clearDraft 的保稿分支）。
@@ -147,9 +93,14 @@ export function MaterialAnnotationOverlay({
 }: MaterialAnnotationOverlayProps) {
   const editor = useAttemptEditor();
   const coordinated = useCoordinatedAnnotation();
-  const tool = coordinated?.tool ?? "pen";
-  const color = coordinated?.color ?? "red";
-  const size = coordinated?.size ?? "thin";
+  const toolbox = coordinated?.toolbox ?? FALLBACK_TOOLBOX;
+  /** 当前工具对应的手势（落笔时取快照，见 liveGestureRef） */
+  const gesture = useMemo(
+    () => resolveGesture(toolConfigOf(toolbox), toolbox.pen).gesture,
+    [toolbox],
+  );
+  /** 本次手势的工具快照：一笔之内的采样都按落笔时的工具分派 */
+  const liveGestureRef = useRef<InkGesture>({ kind: "none" });
   const storeKey = inkKey ?? materialId;
 
   const isAssociated =
@@ -237,16 +188,32 @@ export function MaterialAnnotationOverlay({
     createPointerMachineState("pen"),
   );
   const currentStrokeRef = useRef<InkStroke | null>(null);
+  /**
+   * 图形工具或直线荧光笔的这一次拖动：预览在画布上面的临时层，抬笔给出
+   * 这一笔的点列（拖动期间 currentStrokeRef 是空的，画布上没有在途的一笔）
+   */
+  const [shaper] = useState(() =>
+    createShapeGesture({
+      layer: () => replayRef.current?.previewLayer?.() ?? null,
+    }),
+  );
+  /** 橡皮圈：橡皮悬停和擦除时跟着指针的圆圈（material-eraser-ring.ts） */
+  const ring = useMaterialEraserRing(
+    () => replayRef.current?.previewLayer?.() ?? null,
+    isAnnotationActive && gesture.kind === "erase" ? gesture.radius : null,
+  );
   /** 本笔落笔矩形：首笔冻结基准的捕获源（一笔不混用两个排版基准） */
   const strokeBaseRef = useRef<{ width: number; height: number } | null>(null);
   const strokeStartRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
   const rectRef = useRef<DOMRect | null>(null);
-  const lastEraseRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number | null>(null);
 
   // 壳与材料子树常驻；已有基准在阅读和圈画时共用同一真实固定宽框。
   const frameMounted = frozen !== null;
+  /** 固定框此刻是否挂在页面上（基准一变，要到下一次渲染才跟着挂上或撤掉） */
+  const frameMountedRef = useRef(false);
+  frameMountedRef.current = frameMounted;
   const missingBase = frozen === null && strokes.length > 0;
   const showInk = !missingBase && (frameMounted || isAnnotationActive);
   const showInkRef = useRef(showInk);
@@ -439,6 +406,14 @@ export function MaterialAnnotationOverlay({
         draftStore.removeMaterialInkBase(attemptId, storeKey);
         frozenRef.current = null;
         setFrozen(null);
+        if (frameMountedRef.current) {
+          // 固定框要到下一次渲染才撤掉，这之前量到的还是框里的排版，不能拿来
+          // 定新基准：就绪标志当即放下（撤框后首笔就绪门控重新核验）。同一个
+          // 事件里紧跟着的落笔——上一次手势的收尾事件丢了、由这次按下代为
+          // 收尾时——就被拦在门外
+          surfaceReadyRef.current = false;
+          setSurfaceReady(false);
+        }
         return;
       }
       const base = frozenRef.current;
@@ -468,30 +443,25 @@ export function MaterialAnnotationOverlay({
     [],
   );
 
-  const eraseAt = useCallback(
-    (point: { x: number; y: number }) => {
-      const hits = eraseHit(
-        strokesRef.current,
-        point.x,
-        point.y,
-        INK_ERASE_RADIUS,
-        undefined,
-        lastEraseRef.current ?? undefined,
-      );
-      lastEraseRef.current = point;
-      if (hits.length === 0) return;
-      const hitSet = new Set(hits);
-      const remaining = strokesRef.current.filter(
-        (_, index) => !hitSet.has(index),
-      );
-      setStrokesBoth(remaining);
-      saveToDraftStore(remaining);
-    },
-    [saveToDraftStore, setStrokesBoth],
-  );
+  /** 草稿仓里这份材料现在的稿（只认本组件写的 atrament 稿；没有是 null） */
+  const storedDoc = useCallback(() => {
+    const doc = draftStore.getMaterialInk(attemptId, storeKey);
+    return doc?.engine === "atrament" ? doc : null;
+  }, [attemptId, storeKey]);
+
+  /** 橡皮：每个落点各自生效，擦掉的等手势结束存一次（material-erase.ts） */
+  const eraser = useMaterialErase({
+    strokes: () => strokesRef.current,
+    show: setStrokesBoth,
+    stored: storedDoc,
+    save: saveToDraftStore,
+    ring: ring.show,
+  });
 
   const beginInteraction = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      // 下面任何一处不接这一笔，随后的移动都不能按上一次的手势（比如橡皮）走
+      liveGestureRef.current = { kind: "none" };
       // 就绪门控：旧稿缺基准保稿；新材料等资源稳定，已有基准核验布局。
       if (missingBaseRef.current) return;
       if (frozenRef.current === null && !surfaceReadyRef.current) return;
@@ -502,11 +472,8 @@ export function MaterialAnnotationOverlay({
         return;
       }
       // 同键双实例（同 materialId 被两个锚渲染）兜底：落笔前对齐草稿仓最新
-      const latest = draftStore.getMaterialInk(attemptId, storeKey);
-      if (
-        latest?.engine === "atrament" &&
-        latest.data.strokes !== strokesRef.current
-      ) {
+      const latest = storedDoc();
+      if (latest !== null && latest.data.strokes !== strokesRef.current) {
         setStrokesBoth(latest.data.strokes);
       }
       // 他实例已按另一列宽冻结并存基准：采用该基准并丢弃本势（下一笔起
@@ -532,19 +499,48 @@ export function MaterialAnnotationOverlay({
         rect !== null ? { width: rect.width, height: rect.height } : null;
       strokeStartRef.current = Date.now();
       const point = pointOf(e);
-      if (tool === "eraser") {
-        lastEraseRef.current = null;
-        eraseAt(point);
+      liveGestureRef.current = gesture;
+      if (gesture.kind === "erase") {
+        eraser.begin(point, gesture);
+        return;
+      }
+      if (gesture.kind !== "draw") return;
+      if (gesture.shape !== "free") {
+        shaper.begin({
+          shape: gesture.shape,
+          from: point,
+          brush: gesture.brush,
+          // 指针捕获后可以拖出材料范围：图形只画到边上
+          ...(rect !== null && rect.width > 0
+            ? {
+                bounds: {
+                  width: INK_LOGICAL_WIDTH,
+                  height: toLogical(rect.width, rect.height),
+                },
+              }
+            : {}),
+          // 荧光笔整笔一条路径，画的就是起止点的连线，不用加密
+          sparse: gesture.tool === "highlighter",
+        });
         return;
       }
       currentStrokeRef.current = {
-        tool: "pen",
-        color: INK_PEN_COLORS[color],
-        weight: INK_PEN_SIZES[size],
+        tool: gesture.tool,
+        color: gesture.brush.color,
+        weight: gesture.brush.weight,
         points: [point],
       };
     },
-    [attemptId, storeKey, tool, color, size, pointOf, eraseAt, setStrokesBoth],
+    [
+      attemptId,
+      storeKey,
+      gesture,
+      pointOf,
+      eraser,
+      setStrokesBoth,
+      shaper,
+      storedDoc,
+    ],
   );
 
   /** 释放指针捕获（收笔/丢弃共用；捕获可能已被浏览器释放，防御忽略） */
@@ -564,9 +560,21 @@ export function MaterialAnnotationOverlay({
   /** 按已收到的真实采样收笔（状态机语义：不补造终点） */
   const finishInteraction = useCallback(() => {
     releaseCapture();
+    ring.hide();
     rectRef.current = null;
-    lastEraseRef.current = null;
-    const stroke = currentStrokeRef.current;
+    eraser.end();
+    // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
+    const live = liveGestureRef.current;
+    const shapePoints = shaper.end();
+    const stroke: InkStroke | null =
+      shapePoints !== null && live.kind === "draw"
+        ? {
+            tool: live.tool,
+            color: live.brush.color,
+            weight: live.brush.weight,
+            points: shapePoints,
+          }
+        : currentStrokeRef.current;
     if (!stroke) return;
     currentStrokeRef.current = null;
     // 首笔冻结：无基准时按本笔落笔矩形捕获冻结基准并随稿保存——之后
@@ -587,7 +595,17 @@ export function MaterialAnnotationOverlay({
     const next = [...strokesRef.current, stroke];
     setStrokesBoth(next);
     saveToDraftStore(next);
-  }, [releaseCapture, saveToDraftStore, setStrokesBoth]);
+    // 图形书写中不在画布上：预览已收起，这里立即把整笔画上去，中间不空一帧
+    if (shapePoints !== null) drawCurrent();
+  }, [
+    releaseCapture,
+    saveToDraftStore,
+    setStrokesBoth,
+    shaper,
+    drawCurrent,
+    ring,
+    eraser,
+  ]);
 
   usePwaUpdateGuard(
     () =>
@@ -610,12 +628,24 @@ export function MaterialAnnotationOverlay({
           finishInteraction();
         } else if (decision.action === "discard") {
           releaseCapture();
+          ring.hide();
           currentStrokeRef.current = null;
+          shaper.end();
+          // 已经擦掉的照旧算数（材料圈画没有撤销），只是到这里才存
+          eraser.end();
           scheduleRedraw();
         }
       }
     },
-    [beginInteraction, finishInteraction, releaseCapture, scheduleRedraw],
+    [
+      beginInteraction,
+      finishInteraction,
+      releaseCapture,
+      scheduleRedraw,
+      shaper,
+      ring,
+      eraser,
+    ],
   );
 
   const handlePointerDown = useCallback(
@@ -636,9 +666,18 @@ export function MaterialAnnotationOverlay({
 
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      // 没在写：当前是橡皮就让橡皮圈跟着指针走
+      if (activePointerIdRef.current === null) ring.hover(e);
       if (!isSampleMove(machineRef.current, e.pointerId)) return;
-      if (tool === "eraser") {
-        eraseAt(pointOf(e));
+      const live = liveGestureRef.current;
+      if (live.kind === "erase") {
+        eraser.sweep(pointOf(e), live);
+        return;
+      }
+      // 图形：只看拖到哪儿，更新预览
+      if (shaper.active) {
+        const to = pointOf(e);
+        shaper.through(to, Math.max(0, to.t));
         return;
       }
       const stroke = currentStrokeRef.current;
@@ -646,7 +685,7 @@ export function MaterialAnnotationOverlay({
       stroke.points.push(pointOf(e));
       scheduleRedraw();
     },
-    [tool, pointOf, eraseAt, scheduleRedraw],
+    [pointOf, eraser, scheduleRedraw, shaper, ring],
   );
 
   const handlePointerEnd = useCallback(
@@ -775,6 +814,10 @@ export function MaterialAnnotationOverlay({
       onPointerUp={(e) => handlePointerEnd(e, "pointerup")}
       onPointerCancel={(e) => handlePointerEnd(e, "pointercancel")}
       onLostPointerCapture={(e) => handlePointerEnd(e, "lostpointercapture")}
+      // 悬停留下的橡皮圈：指针离开材料就收起（按着擦的由收笔收起）
+      onPointerLeave={() => {
+        if (activePointerIdRef.current === null) ring.hide();
+      }}
       style={{
         // 输入门控：非标注态不拦截；标注态下未就绪（首笔/挂框门控）或
         // 挂框宽高漂移期间不拦截（与「不匹配禁墨」同口径）
@@ -785,7 +828,7 @@ export function MaterialAnnotationOverlay({
       }}
       className={`absolute inset-0 [&_canvas]:pointer-events-none ${
         isAnnotationActive
-          ? tool === "eraser"
+          ? gesture.kind === "erase"
             ? "cursor-cell"
             : "cursor-crosshair"
           : ""

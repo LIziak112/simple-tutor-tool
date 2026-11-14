@@ -30,7 +30,11 @@ export const inkEngineKindSchema = z.enum(["atrament", "excalidraw"]);
  */
 export const INK_MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
-/** 一个笔迹点：x/y 归一化坐标、p 压力（0–1，无压感恒 0.5）、t 相对本笔起点毫秒数 */
+/**
+ * 一个笔迹点：x/y 归一化坐标、p 压力（0–1，无压感恒 0.5）、t 相对本笔起点毫秒数。
+ * 形状工具落成的笔画各点 p 恒为 0.51（不是量出来的压感，是「整笔等粗」的
+ * 意思，原因见 apps/web 的 engine/shape-points.ts）。
+ */
 export const inkStrokePointSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -55,7 +59,11 @@ export const inkStrokeIdSchema = z
 export const inkPointerKindSchema = z.enum(["pen", "touch", "mouse"]);
 export type InkPointerKind = z.infer<typeof inkPointerKindSchema>;
 
-/** 一笔完整笔画（整笔橡皮删除笔画本身，不产生橡皮笔画） */
+/**
+ * 一笔完整笔画。橡皮不产生「橡皮笔画」：整笔擦除删掉笔画本身；局部擦除把
+ * 原笔删掉，切剩的每一段各成一笔普通笔画（新 id），并带上 cutFrom 记下它们
+ * 出自同一笔。
+ */
 export const inkStrokeSchema = z.object({
   /** 实际绘制参数，缺省使用标准笔；不含临时预测。 */
   rendering: inkRenderingSchema.optional(),
@@ -72,9 +80,24 @@ export const inkStrokeSchema = z.object({
   startedAt: z.number().int().positive().optional(),
   /** 输入来源；旧稿缺省 */
   pointer: inkPointerKindSchema.optional(),
+  /**
+   * 局部擦除切出来的段才有：同一笔切出的各段共用的记号。取原笔的 id；原笔
+   * 自己也是切出来的，沿用它的记号（再切多少次都指向最初那一笔）；原笔没有
+   * id（旧稿）时，是切开那一刻新铸的一个记号。
+   *
+   * 用途是绘制：荧光笔是半透明色，一笔之内只上一次色。切开后各段若各画各的，
+   * 原来同一笔里相互重叠的地方会被上两次色，比擦之前深一块；绘制时把相邻、
+   * 记号相同的荧光笔段合在一起上一次色。记号不必指向文档里现存的笔画或墓碑
+   * （墓碑会被压实丢弃），也不参与 id 唯一性校验。可选、只增不改：旧客户端
+   * 不发，旧文件不含。
+   */
+  cutFrom: inkStrokeIdSchema.optional(),
 });
 
-/** LR-2：墓碑的删除来源（整笔橡皮 / 清空 / 撤销时回收新增笔画） */
+/**
+ * LR-2：墓碑的删除来源（橡皮——整笔擦掉的笔画、局部擦除时被切开的原笔 /
+ * 清空 / 撤销时回收新增笔画）
+ */
 export const inkDeletedBySchema = z.enum(["eraser", "clear", "undo"]);
 
 /**

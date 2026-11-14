@@ -1,0 +1,337 @@
+/**
+ * 回放画布上的荧光笔（整笔一条路径）：在途那一笔只在临时层上，收笔后整笔
+ * 一次落到画布。与 draw.test.ts 分开，是因为这里要用真的程序化 atrament
+ * 实例（那边整个替换成了桩）。
+ */
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { onePathSvg } from "../engine/highlighter-paint.ts";
+import { INK_LIVE_LAYER_SELECTOR } from "../engine/live-layer.ts";
+import { INK_HIGHLIGHTER, type InkStroke } from "../engine/types.ts";
+import { createAtramentReplayCanvas } from "./draw.ts";
+
+/** 计数式 2d 上下文桩：只数描边和清屏的次数 */
+class CountingContext {
+  static strokes = 0;
+  static clears = 0;
+  fillStyle = "";
+  strokeStyle = "";
+  lineWidth = 1;
+  lineCap = "";
+  lineJoin = "";
+  globalAlpha = 1;
+  globalCompositeOperation = "source-over";
+  beginPath(): void {}
+  moveTo(): void {}
+  lineTo(): void {}
+  quadraticCurveTo(): void {}
+  arc(): void {}
+  closePath(): void {}
+  stroke(): void {
+    CountingContext.strokes += 1;
+  }
+  fill(): void {}
+  clearRect(): void {
+    CountingContext.clears += 1;
+  }
+  save(): void {}
+  restore(): void {}
+  setTransform(): void {}
+  setLineDash(): void {}
+}
+
+let resize: () => void;
+let getContextSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  CountingContext.strokes = 0;
+  CountingContext.clears = 0;
+  getContextSpy = vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockImplementation(
+      () => new CountingContext() as unknown as CanvasRenderingContext2D,
+    );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        resize = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => {
+  getContextSpy.mockRestore();
+  vi.unstubAllGlobals();
+});
+
+const pen = (): InkStroke => ({
+  tool: "pen",
+  color: "#000000",
+  weight: 4,
+  points: [{ x: 20, y: 20, p: 0.5, t: 0 }],
+});
+const highlighter = (): InkStroke => ({
+  tool: "highlighter",
+  color: INK_HIGHLIGHTER.color,
+  weight: INK_HIGHLIGHTER.weight,
+  points: [
+    { x: 100, y: 100, p: 0.5, t: 0 },
+    { x: 300, y: 100, p: 0.5, t: 8 },
+  ],
+});
+
+function livePath(host: HTMLElement): Element | null {
+  return host.querySelector(`${INK_LIVE_LAYER_SELECTOR} path`);
+}
+
+/** 创建回放画布；atrament 构造时自己清一次屏，计数从创建之后算起 */
+function mountReplay() {
+  const host = document.createElement("div");
+  const canvas = createAtramentReplayCanvas(host);
+  CountingContext.strokes = 0;
+  CountingContext.clears = 0;
+  return { host, canvas };
+}
+
+it("在途荧光笔只显示在临时层，收笔后整笔一次落到画布，不重画旧笔", () => {
+  const { host, canvas } = mountReplay();
+  const old = [pen()];
+  const active = highlighter();
+  canvas.drawOrdered(old, 1, active, 1);
+  // 旧笔一个采样点一次描边；在途荧光笔不上画布
+  expect(CountingContext.strokes).toBe(1);
+  expect(livePath(host)?.getAttribute("d")).toBe(onePathSvg(active.points, 1));
+
+  canvas.drawOrdered(old, 1, active, 2);
+  expect(CountingContext.strokes).toBe(1);
+  const path = livePath(host);
+  expect(path?.getAttribute("d")).toBe(onePathSvg(active.points));
+  expect(path?.getAttribute("stroke")).toBe(INK_HIGHLIGHTER.color);
+  expect(path?.getAttribute("stroke-width")).toBe(
+    String(INK_HIGHLIGHTER.weight),
+  );
+  // 临时层盖在回放画布之上，坐标域是逻辑宽 1000（容器无尺寸时按 300×200）
+  const layer = host.querySelector(INK_LIVE_LAYER_SELECTOR);
+  expect(layer?.previousElementSibling?.getAttribute("data-slot")).toBe(
+    "ink-replay-canvas",
+  );
+  expect(layer?.getAttribute("viewBox")).toBe("0 0 1000 666.67");
+
+  const committed = [...old, active];
+  canvas.drawOrdered(committed, 2, null, 0);
+  expect(CountingContext.strokes).toBe(2);
+  expect(CountingContext.clears).toBe(1);
+  expect(livePath(host)?.hasAttribute("d")).toBe(false);
+  // 同一帧再画一次：什么都不动
+  canvas.drawOrdered(committed, 2, null, 0);
+  expect(CountingContext.strokes).toBe(2);
+  canvas.destroy();
+  expect(host.querySelector(INK_LIVE_LAYER_SELECTOR)).toBeNull();
+});
+
+it("丢弃在途荧光笔：临时层清空，画布按现存笔画重画", () => {
+  const { host, canvas } = mountReplay();
+  const old = [pen()];
+  canvas.drawOrdered(old, 1, highlighter(), 2);
+  canvas.drawOrdered(old, 1, null, 0);
+  expect(livePath(host)?.hasAttribute("d")).toBe(false);
+  expect(CountingContext.clears).toBe(2);
+  expect(CountingContext.strokes).toBe(2);
+  canvas.destroy();
+});
+
+it("紧接着写下一笔荧光笔：上一笔落到画布，临时层换成新的一笔", () => {
+  const { host, canvas } = mountReplay();
+  const first = highlighter();
+  canvas.drawOrdered([], 0, first, 2);
+  const second: InkStroke = {
+    ...highlighter(),
+    points: [
+      { x: 100, y: 200, p: 0.5, t: 0 },
+      { x: 300, y: 220, p: 0.5, t: 8 },
+    ],
+  };
+  canvas.drawOrdered([first], 1, second, 2);
+  expect(CountingContext.strokes).toBe(1);
+  expect(CountingContext.clears).toBe(1);
+  expect(livePath(host)?.getAttribute("d")).toBe(onePathSvg(second.points));
+  canvas.destroy();
+});
+
+it("尺寸变化：在途荧光笔留在临时层，坐标域跟着更新", () => {
+  const { host, canvas } = mountReplay();
+  const active = highlighter();
+  canvas.drawOrdered([pen()], 1, active, 2);
+  vi.spyOn(host, "clientWidth", "get").mockReturnValue(600);
+  vi.spyOn(host, "clientHeight", "get").mockReturnValue(300);
+  resize();
+  expect(
+    host.querySelector(INK_LIVE_LAYER_SELECTOR)?.getAttribute("viewBox"),
+  ).toBe("0 0 1000 500");
+  expect(livePath(host)?.getAttribute("d")).toBe(onePathSvg(active.points));
+  // 重设位图后旧笔重画一次；荧光笔仍不上画布
+  expect(CountingContext.strokes).toBe(2);
+  canvas.destroy();
+});
+
+it("改用整帧重画（回放拖动）时临时层清空，荧光笔每笔一次描边", () => {
+  const { host, canvas } = mountReplay();
+  const active = highlighter();
+  canvas.drawOrdered([], 0, active, 2);
+  expect(CountingContext.strokes).toBe(0);
+  canvas.drawFrame([active, highlighter()], [2, 1]);
+  expect(livePath(host)?.hasAttribute("d")).toBe(false);
+  // 第二笔只走过一个采样点：是一个圆点（填充，不描边）
+  expect(CountingContext.strokes).toBe(1);
+  canvas.destroy();
+});
+
+/** 一笔荧光笔被局部橡皮切成的两段：带着同一个记号 */
+function pieces(): [InkStroke, InkStroke] {
+  return [
+    {
+      ...highlighter(),
+      id: "piece-0001",
+      cutFrom: "stroke-0001",
+      points: [
+        { x: 100, y: 100, p: 0.5, t: 0 },
+        { x: 190, y: 100, p: 0.5, t: 8 },
+      ],
+    },
+    {
+      ...highlighter(),
+      id: "piece-0002",
+      cutFrom: "stroke-0001",
+      points: [
+        { x: 210, y: 100, p: 0.5, t: 0 },
+        { x: 300, y: 100, p: 0.5, t: 8 },
+      ],
+    },
+  ];
+}
+
+it("整帧重画：同一笔切出来的荧光笔各段合在一起只描一次（重叠处不叠深）", () => {
+  const { canvas } = mountReplay();
+  canvas.drawFrame([pen(), ...pieces()], [1, 2, 2]);
+  // 笔一个采样点一次描边 + 两段荧光笔合成一次
+  expect(CountingContext.strokes).toBe(2);
+  canvas.destroy();
+});
+
+it("整帧重画：后一段刚走到第一个点时，也和前一段在同一次描边里（不单独填一个圆点）", () => {
+  const { canvas } = mountReplay();
+  const fill = vi.spyOn(CountingContext.prototype, "fill");
+  canvas.drawFrame(pieces(), [2, 1]);
+  expect(CountingContext.strokes).toBe(1);
+  expect(fill).not.toHaveBeenCalled();
+  fill.mockRestore();
+  canvas.destroy();
+});
+
+it("按顺序重画：新到的一笔和画布上最后一笔是同一组时不往上追加，整张重画", () => {
+  const { canvas } = mountReplay();
+  const [first, second] = pieces();
+  const old = [pen(), first];
+  canvas.drawOrdered(old, 2, null, 0);
+  expect(CountingContext.clears).toBe(1);
+  expect(CountingContext.strokes).toBe(2);
+
+  // 前两笔没变，多出同一组的第二段：追加会让两段重叠处叠深
+  const next = [...old, second];
+  canvas.drawOrdered(next, 3, null, 0);
+  expect(CountingContext.clears).toBe(2);
+  // 清屏后：笔一次 + 两段合成一次
+  expect(CountingContext.strokes).toBe(4);
+
+  // 再多出一笔不相干的：照常只追加这一笔
+  canvas.drawOrdered([...next, pen()], 4, null, 0);
+  expect(CountingContext.clears).toBe(2);
+  expect(CountingContext.strokes).toBe(5);
+  canvas.destroy();
+});
+
+it("看擦改：被擦掉的同一组荧光笔段也合在一起画一次", () => {
+  const { canvas } = mountReplay();
+  canvas.drawFrame([], []);
+  canvas.drawDeleted?.(
+    pieces().map((stroke) => ({
+      stroke,
+      startMs: 0,
+      deletedAtMs: Number.POSITIVE_INFINITY,
+      pointTimesMs: stroke.points.map(() => 0),
+    })),
+    0,
+  );
+  expect(CountingContext.strokes).toBe(1);
+  canvas.destroy();
+});
+
+it("没有在途荧光笔就不创建临时层（纯回放页的 DOM 不变）", () => {
+  const { host, canvas } = mountReplay();
+  canvas.drawOrdered([highlighter()], 1, pen(), 1);
+  canvas.drawFrame([highlighter(), pen()], [2, 1]);
+  expect(host.querySelector(INK_LIVE_LAYER_SELECTOR)).toBeNull();
+  expect(host.children).toHaveLength(1);
+  canvas.destroy();
+});
+
+it("图形预览用的临时层：要的时候才创建，盖在画布上、坐标域与笔画一致；图形落成一笔后画到画布，预览不留", () => {
+  const { host, canvas } = mountReplay();
+  expect(host.querySelector(INK_LIVE_LAYER_SELECTOR)).toBeNull();
+  const layer = canvas.previewLayer?.();
+  const node = host.querySelector(INK_LIVE_LAYER_SELECTOR);
+  expect(node?.previousElementSibling?.getAttribute("data-slot")).toBe(
+    "ink-replay-canvas",
+  );
+  expect(node?.getAttribute("viewBox")).toBe("0 0 1000 666.67");
+  layer?.showOutline(
+    [
+      { x: 100, y: 100 },
+      { x: 300, y: 100 },
+      { x: 300, y: 200 },
+    ],
+    { color: "#dc2626", weight: 2.5 },
+  );
+  expect(livePath(host)?.getAttribute("d")).toBe("M100 100L300 100L300 200");
+  // 再要一次还是同一层
+  canvas.previewLayer?.();
+  expect(host.querySelectorAll(INK_LIVE_LAYER_SELECTOR)).toHaveLength(1);
+  // 预览不上画布
+  expect(CountingContext.strokes).toBe(0);
+
+  // 落成一笔（两个采样点各一次描边）：画布上多出这一笔，临时层清空
+  const shape: InkStroke = {
+    ...pen(),
+    points: [
+      { x: 100, y: 100, p: 0.5, t: 0 },
+      { x: 300, y: 100, p: 0.5, t: 8 },
+    ],
+  };
+  canvas.drawOrdered([shape], 1, null, 0);
+  expect(CountingContext.strokes).toBe(2);
+  expect(livePath(host)?.hasAttribute("d")).toBe(false);
+  canvas.destroy();
+  expect(host.querySelector(INK_LIVE_LAYER_SELECTOR)).toBeNull();
+});
+
+it("橡皮圈也画在这一层（材料圈画用）：擦掉笔画引起的重画不把它收起", () => {
+  const { host, canvas } = mountReplay();
+  const layer = canvas.previewLayer?.();
+  layer?.showRing(100, 120, 14);
+  const ring = host.querySelector<SVGElement>(
+    `${INK_LIVE_LAYER_SELECTOR} circle[data-slot="ink-eraser-ring"]`,
+  );
+  expect(ring?.getAttribute("cx")).toBe("100");
+  expect(ring?.getAttribute("cy")).toBe("120");
+  expect(ring?.getAttribute("r")).toBe("14");
+  expect(ring?.style.display).toBe("");
+  // 擦掉一笔之后按剩下的笔画重画（顺序重画、整帧重画两条路径）
+  canvas.drawOrdered([pen()], 1, null, 0);
+  canvas.drawFrame([pen()], [1]);
+  expect(ring?.style.display).toBe("");
+  layer?.hideRing();
+  expect(ring?.style.display).toBe("none");
+  canvas.destroy();
+});

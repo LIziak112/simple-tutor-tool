@@ -77,6 +77,29 @@ describe("repairNoteDoc：可修复的坏数据", () => {
     expect(repaired?.ink.strokes.length).toBe(1);
   });
 
+  it("局部橡皮切段的记号 cutFrom：形态合法的保留（同一笔的荧光笔段靠它合在一起上色），不合法的只丢这个字段", () => {
+    const piece = (cutFrom: unknown) => ({
+      ...stroke([
+        [10, 20],
+        [40, 60],
+      ]),
+      tool: "highlighter",
+      cutFrom,
+    });
+    const repaired = repairNoteDoc({
+      ...validDoc(),
+      ink: {
+        width: 1000,
+        strokes: [piece("stroke-0001"), piece("坏"), piece(7)],
+      },
+    });
+    expect(repaired?.ink.strokes.map((s) => s.cutFrom)).toEqual([
+      "stroke-0001",
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("纸张高越界夹紧、非法背景回默认、宽度恒 1000", () => {
     const repaired = repairNoteDoc({
       ...validDoc(),

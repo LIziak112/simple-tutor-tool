@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import type { NoteHeadData } from "@tutor/contract";
 import { useState } from "react";
@@ -272,11 +273,11 @@ describe("NoteLayer：收起/展开形态", () => {
     expect(onOpenChange).toHaveBeenCalledWith(true);
     // Harness 已回写 open → 工具条出现
     expect(await screen.findByRole("toolbar")).toBeInTheDocument();
-    for (const name of ["笔", "橡皮", "撤销", "更多"]) {
-      expect(
-        screen.getByRole("button", { name: new RegExp(name) }),
-      ).toBeInTheDocument();
+    // 工具名按全名找：「笔」是「荧光笔」的子串，模糊匹配会撞上两个按钮
+    for (const name of ["笔", "荧光笔", "橡皮", "撤销"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
+    expect(screen.getByRole("button", { name: /更多/ })).toBeInTheDocument();
     await waitForEngine(); // 引擎挂载（localLoaded settle 后）
   });
 
@@ -326,7 +327,11 @@ describe("NoteLayer：收起/展开形态", () => {
       // （复审①⑥——新引擎 initial 可能陈旧，幂等重载保证引擎=store）
       fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
       const second = await waitForEngine(2);
-      expect(mockSetTool).toHaveBeenLastCalledWith({ type: "eraser" });
+      expect(mockSetTool).toHaveBeenLastCalledWith({
+        type: "eraser",
+        mode: "stroke",
+        size: "medium",
+      });
       const initial = (second.opts as { initial?: InkDoc<"atrament"> }).initial;
       expect(initial?.data.strokes.length).toBe(1);
       expect(second.load).toHaveBeenCalledTimes(1);
@@ -459,11 +464,28 @@ describe("NoteLayer：工具条与操作", () => {
     renderLayer({ initialOpen: true });
     await waitForEngine();
     fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
-    expect(mockSetTool).toHaveBeenLastCalledWith({ type: "eraser" });
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "eraser",
+      mode: "stroke",
+      size: "medium",
+    });
     fireEvent.click(screen.getByRole("button", { name: "笔" }));
     expect(mockSetTool).toHaveBeenLastCalledWith({
       type: "pen",
       color: "black",
+      size: "medium",
+    });
+    // 再点一次当前的笔：出选项面板，换色即下发引擎
+    fireEvent.click(screen.getByRole("button", { name: "笔" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "笔设置" })).getByRole(
+        "radio",
+        { name: "绿" },
+      ),
+    );
+    expect(mockSetTool).toHaveBeenLastCalledWith({
+      type: "pen",
+      color: "green",
       size: "medium",
     });
     const undo = screen.getByRole("button", { name: "撤销" });
@@ -505,13 +527,21 @@ describe("NoteLayer：工具条与操作", () => {
     expect(mockSetInputMode).toHaveBeenLastCalledWith("pen");
   });
 
-  it("「更多」title 提示含布局段（闸门修复 F10：NoteToolbar 抽取时丢失回归）", async () => {
+  it("「更多」title 提示含布局段（闸门修复 F10：工具条抽取时丢失回归）；菜单里确有布局三项与清空", async () => {
     renderLayer({ initialOpen: true });
     await waitForEngine();
-    expect(screen.getByRole("button", { name: /更多/ })).toHaveAttribute(
-      "title",
-      "更多（重做/颜色/粗细/清空/布局）",
-    );
+    const more = screen.getByRole("button", { name: /更多/ });
+    // 颜色、粗细已移到笔的选项面板，重做是工具栏上的独立按钮
+    expect(more).toHaveAttribute("title", "更多（布局/清空）");
+    fireEvent.keyDown(more, { key: "ArrowDown" });
+    expect(
+      (await screen.findAllByRole("menuitem")).map((el) => el.textContent),
+    ).toEqual([
+      "布局：自动（按宽度）",
+      "布局：左右分栏",
+      "布局：上下排列",
+      "清空草稿纸",
+    ]);
   });
 });
 

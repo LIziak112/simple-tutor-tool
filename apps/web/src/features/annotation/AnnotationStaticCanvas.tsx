@@ -1,7 +1,7 @@
 import type { AnnotationBaseRef, AnnotationDoc } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter";
-import { replayAnnotationStroke } from "./annotation-surface";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay";
+import { replayAnnotationStrokes } from "./annotation-replay";
 
 /**
  * 静态笔迹层：真实题面同框的只读 canvas（backing=底图像素域，CSS 同盒缩放）。
@@ -59,9 +59,7 @@ export function AnnotationStaticCanvas({
     let atrament = null;
     try {
       atrament = createProgrammaticAtrament(canvas);
-      for (const stroke of doc.strokes) {
-        replayAnnotationStroke(atrament, cssPerBase, stroke);
-      }
+      replayAnnotationStrokes(atrament, cssPerBase, doc.strokes);
     } catch (error) {
       atrament?.destroy();
       throw error;

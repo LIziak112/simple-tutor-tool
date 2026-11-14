@@ -6,9 +6,9 @@
  * - **收起**：只显示「草稿纸 · N 笔」标记按钮（有笔迹时含笔数与待处理
  *   提示）；纸面隐藏保留（复审⑦：收起后引擎保活 NOTE_ENGINE_KEEPALIVE_MS，
  *   重开零重建；超时才卸载）；
- * - **展开**：与圈画共用的精简工具条（笔/橡皮/撤销/更多，手指只滚动）
+ * - **展开**：与圈画共用的工具栏（笔/荧光笔/橡皮/撤销/重做/更多，手指只滚动）
  *   + 纸面（InkPad 隐藏工具条形态）+ 四维状态区。
- *   T6R.15：工具条与引擎接线核心抽至 NoteToolbar / useNoteEditor（订正
+ *   T6R.15：工具栏与引擎接线核心在 PaperEditor / useNoteEditor（订正
  *   编辑器 CorrectionWorkspace 共用），冲突/被拒动作接线抽至 useNoteSyncActions
  *   （闸门修复 F4；CorrectionSection 补充稿块共用），本组件
  *   保留答题页形态编排（用户展开/保活/布局 preference/答题页 head 接线/
@@ -404,8 +404,7 @@ export function NoteLayer({
             <PaperEditor
               mountPad={paperReady}
               showToolbar={open}
-              compact={coordinator !== null}
-              moreTitle="更多（重做/颜色/粗细/清空/布局）"
+              moreTitle="更多（布局/清空）"
               clearLabel={
                 phase === "correction" ? "清空订正草稿" : "清空草稿纸"
               }

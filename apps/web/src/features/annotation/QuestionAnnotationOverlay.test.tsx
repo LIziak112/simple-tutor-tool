@@ -1,9 +1,11 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type {
   AnnotationDoc,
@@ -20,6 +22,8 @@ import {
 } from "@/features/attempt/AttemptEditorContext";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
+import { bindInkProfileAccount } from "@/features/ink/ink-profile-store";
+import { getRememberedTools } from "@/features/ink/toolbox-memory.ts";
 import { preparePwaUpdate } from "@/lib/pwa-update-safety";
 import {
   annotationKeyOf,
@@ -588,20 +592,95 @@ it("标画收起保活到期释放空画布，重新打开恢复引擎", async (
 
 it("无 CoordinatedAnnotationProvider 的挂载语境（讲练页）工具切换仍生效", async () => {
   // 回归：协同标画 Context 默认值曾携带具体值，导致无 Provider 时
-  // `coordinated.tool ?? localTool` 永不回退，橡皮/颜色/粗细切换全部失灵
+  // `coordinated.toolbox ?? localToolbox` 永不回退，橡皮/颜色/粗细切换全部失灵
   render(<Harness />);
   await settleGeometry();
   fireEvent.click(screen.getByText("标画"));
   await waitFor(() =>
     expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
   );
+  // 圈画缺省红色细笔
+  expect(engine.setTool).toHaveBeenLastCalledWith({
+    type: "pen",
+    color: "red",
+    size: "thin",
+  });
   const eraser = screen.getByRole("button", { name: "橡皮" });
   expect(eraser).toHaveAttribute("aria-pressed", "false");
   fireEvent.click(eraser);
   await waitFor(() => expect(eraser).toHaveAttribute("aria-pressed", "true"));
   await waitFor(() =>
-    expect(engine.setTool).toHaveBeenLastCalledWith({ type: "eraser" }),
+    expect(engine.setTool).toHaveBeenLastCalledWith({
+      type: "eraser",
+      mode: "stroke",
+      size: "medium",
+    }),
   );
+  // 颜色、粗细同样生效：回到笔，再点一次打开面板改色
+  const pen = screen.getByRole("button", { name: "笔" });
+  fireEvent.click(pen);
+  fireEvent.click(pen);
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "笔设置" })).getByRole("radio", {
+      name: "蓝",
+    }),
+  );
+  await waitFor(() =>
+    expect(engine.setTool).toHaveBeenLastCalledWith({
+      type: "pen",
+      color: "blue",
+      size: "thin",
+    }),
+  );
+});
+it("有账号时圈画工具的设置记在本机：重新打开还是上次选的，当前工具回到笔", async () => {
+  localStorage.clear();
+  bindInkProfileAccount({ role: "student", id: "memory-1" });
+  try {
+    const first = render(<Harness />);
+    await settleGeometry();
+    fireEvent.click(screen.getByText("标画"));
+    await waitFor(() =>
+      expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true),
+    );
+    const pen = screen.getByRole("button", { name: "笔" });
+    fireEvent.click(pen);
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "笔设置" })).getByRole(
+        "radio",
+        { name: "蓝" },
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "橡皮" }));
+    await waitFor(() =>
+      expect(engine.setTool).toHaveBeenLastCalledWith({
+        type: "eraser",
+        mode: "stroke",
+        size: "medium",
+      }),
+    );
+    first.unmount();
+
+    render(<Harness />);
+    await settleGeometry();
+    fireEvent.click(screen.getByText("标画"));
+    await waitFor(() =>
+      expect(engine.setTool).toHaveBeenLastCalledWith({
+        type: "pen",
+        color: "blue",
+        size: "thin",
+      }),
+    );
+    // 圈画这一份和草稿纸那一份分开记
+    expect(getRememberedTools("paper")).toEqual({});
+    expect(getRememberedTools("annotation")).toMatchObject({
+      pen: { color: "blue", size: "thin" },
+    });
+  } finally {
+    cleanup();
+    bindInkProfileAccount(null);
+    localStorage.clear();
+  }
 });
 it("切题 flush 由固定原稿唯一宿主收笔并等待本机保存", async () => {
   render(<Harness />);

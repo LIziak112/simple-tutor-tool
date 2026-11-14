@@ -4,7 +4,7 @@
  * 分层（jsdom 无法测真实 canvas，故逻辑纯函数化 + 绘制薄层可替换）：
  * - 画面 = frameAt(data, tMs)（model.ts 纯函数，本组件只负责照着画）；
  * - 调度 = requestAnimationFrame 驱动 advancePlayhead（倍速只影响这里）；
- * - atrament 绘制 = draw.ts 复用引擎层 replayAtramentStroke；
+ * - atrament 绘制 = draw.ts 复用引擎层 replayAtramentStrokes；
  * - excalidraw 绘制 = ExcalidrawReplay 复用库的 restore + updateScene。
  *
  * 控制条：播放/暂停、进度条拖动（跳转=重绘到该时刻的累积状态）、1×/2×/4×
