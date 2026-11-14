@@ -7,7 +7,7 @@ import {
 } from "@tutor/contract";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { attempts } from "../db/schema.ts";
+import { type Attempt, attempts } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { attemptSourceMeta } from "./attempt-rows.ts";
 import { attemptWorkflowView } from "./practice-workflow-wiring.ts";
@@ -55,31 +55,49 @@ export function listStudentMcpPractices(
         const row = byId.get(record.attemptId);
         if (row === undefined)
           throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
-        return {
-          practiceId: record.attemptId,
-          title: attemptSourceMeta(db, row).title,
-          sourceType: record.sourceType,
-          status: record.status,
-          activatedAt: row.activatedAt,
-          frozenAt: row.frozenAt,
-          phase: attemptPhaseOf(row),
-          startedAt: record.startedAt,
-          submittedAt: record.submittedAt,
-          answerProgress: record.answerProgress ?? null,
-          submissionProgress:
-            record.practiceSubmittedCount === undefined ||
-            record.practiceQuestionCount === undefined
-              ? null
-              : {
-                  submittedCount: record.practiceSubmittedCount,
-                  totalCount: record.practiceQuestionCount,
-                },
-          practiceWorkflow:
-            attemptWorkflowView(db, row, now)?.practiceWorkflow ?? null,
-        };
+        return studentMcpPracticeEntryOf(
+          db,
+          row,
+          {
+            answerProgress: record.answerProgress ?? null,
+            submissionProgress:
+              record.practiceSubmittedCount === undefined ||
+              record.practiceQuestionCount === undefined
+                ? null
+                : {
+                    submittedCount: record.practiceSubmittedCount,
+                    totalCount: record.practiceQuestionCount,
+                  },
+          },
+          now,
+        );
       }),
     });
     assertStudentMcpListMetadata(data);
     return data;
   });
+}
+
+type PracticeEntry = StudentMcpPracticeListData["practices"][number];
+/** 记录索引与最近会话只共用元数据投影，不共用是否入账的选择条件。 */
+export function studentMcpPracticeEntryOf(
+  db: Db,
+  row: Attempt,
+  progress: Pick<PracticeEntry, "answerProgress" | "submissionProgress">,
+  now: Date | string,
+): PracticeEntry {
+  return {
+    practiceId: row.id,
+    title: attemptSourceMeta(db, row).title,
+    sourceType: row.sourceType,
+    status: row.status,
+    activatedAt: row.activatedAt,
+    frozenAt: row.frozenAt,
+    phase: attemptPhaseOf(row),
+    startedAt: row.startedAt,
+    submittedAt: row.submittedAt,
+    ...progress,
+    practiceWorkflow:
+      attemptWorkflowView(db, row, now)?.practiceWorkflow ?? null,
+  };
 }

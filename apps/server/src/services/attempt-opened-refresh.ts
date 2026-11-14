@@ -7,6 +7,7 @@ import {
   attempts,
   responses,
 } from "../db/schema.ts";
+import { HttpError } from "../lib/http-error.ts";
 import { touchAttemptActivity } from "./attempt-activity.ts";
 import {
   contextEntriesOf,
@@ -29,13 +30,23 @@ import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service
 export function refreshOpenedAttempt(db: Db, attempt: Attempt): Attempt {
   return db.transaction(
     (tx) => {
-      const fresh =
-        tx.select().from(attempts).where(eq(attempts.id, attempt.id)).get() ??
-        attempt;
+      const fresh = tx
+        .select()
+        .from(attempts)
+        .where(eq(attempts.id, attempt.id))
+        .get();
+      if (!fresh)
+        throw new HttpError(
+          404,
+          "ATTEMPT_NOT_FOUND",
+          "作答记录不存在，请从练习入口重新进入",
+        );
       if (
         fresh.status !== "draft" ||
         fresh.activatedAt !== null ||
         fresh.abandonedAt !== null ||
+        fresh.frozenAt === null ||
+        fresh.legacyUnverified ||
         fresh.sourceType === "wrong"
       )
         return fresh;

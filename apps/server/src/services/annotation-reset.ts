@@ -5,6 +5,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
+  type Attempt,
   annotationBases,
   annotations,
   appSettings,
@@ -123,4 +124,26 @@ export function resetDraftAttemptAnnotations(
       .run();
     return { baseCount: bases.length, strokeCount, resetVersion };
   });
+}
+
+/** 写入 phase 与 attempt 状态的对称门槛（审查修复 8：与 putAnnotationDoc 一致） */
+export function requirePhaseWritable(
+  attempt: Attempt,
+  phase: AnnotationPhase,
+): void {
+  if (phase === "scratch") {
+    if (attempt.status !== "draft") {
+      throw new HttpError(
+        409,
+        "ALREADY_SUBMITTED",
+        "这份作业已交卷，作答期标注底图不能再生成或回传（回看请展开标注视图；订正请新开标注）",
+      );
+    }
+  } else if (attempt.status === "draft") {
+    throw new HttpError(
+      409,
+      "ANNOTATION_NOT_SUBMITTED",
+      "这份作业尚未交卷，订正标注底图只能在交卷后生成",
+    );
+  }
 }

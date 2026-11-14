@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
 import { attemptScoreSummarySchema } from "./attempt-score-summary.ts";
+import { attemptWriteProofFields } from "./attempt-session.ts";
 import { attemptSettlementProgressSchema } from "./attempt-settlement-progress.ts";
 import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import { attemptSummarySchema } from "./attempt-summary.ts";
@@ -593,6 +594,7 @@ export const attemptResultDataSchema = z.object({
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */
 export const attemptAnswerSaveRequestSchema = z
   .object({
+    ...attemptWriteProofFields,
     answer: studentAnswerSchema,
     /** 新端发送冻结行身份，拒绝旧标签页把答案写到重冻后的题目。 */
     questionRevisionId: questionRevisionIdSchema.optional(),
@@ -775,6 +777,7 @@ export const lessonLandingDataSchema = z.object({
  * HINT_INDEX_OUT_OF_RANGE（400，T2.11 验收项），保证两个越界方向同一错误码。
  */
 export const hintOpenRequestSchema = z.object({
+  ...attemptWriteProofFields,
   questionId: z.string().min(1, "questionId 不能为空"),
   index: z.number().int({ message: "index 必须是整数" }),
 });
@@ -838,6 +841,7 @@ export const attemptDetailDataSchema = z
 
 /** 标注「不会」的请求体（#6980-4）：flag=null 表示取消标记 */
 export const attemptFlagRequestSchema = z.object({
+  ...attemptWriteProofFields,
   flag: studentFlagSchema.nullable(),
 });
 

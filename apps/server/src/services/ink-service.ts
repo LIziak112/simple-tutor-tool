@@ -21,6 +21,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { pngSize } from "../lib/png";
 import {
+  assertAttemptWriteProof,
   assertAttemptWriteVersion,
   touchAttemptActivity,
 } from "./attempt-activity";
@@ -175,6 +176,7 @@ export function saveInk(
   meta?: InkWriteMeta,
 ): InkUploadData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  assertAttemptWriteProof(attempt, meta);
   if (attempt.status !== "draft") {
     throw new HttpError(
       409,

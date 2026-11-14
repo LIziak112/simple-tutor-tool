@@ -2,6 +2,7 @@ import type {
   AnnotationBaseImageMeta,
   AnnotationUploadMeta,
   NoteImageUploadMeta,
+  NoteUploadMeta,
 } from "@tutor/contract";
 import {
   ANNOTATION_BASE_IMAGE_FORM_FIELDS,
@@ -11,6 +12,7 @@ import {
   annotationUploadMetaSchema,
   NOTE_IMAGE_FORM_FIELDS,
   noteImageUploadMetaSchema,
+  noteUploadMetaSchema,
 } from "@tutor/contract";
 import { firstIssueMessage, HttpError } from "./http-error";
 
@@ -57,6 +59,43 @@ export function formString(
 ): string | undefined {
   const raw = form[key];
   return typeof raw === "string" ? raw : undefined;
+}
+
+/** multipart的显式null与缺席不同；日期格式继续由同一契约校验。 */
+export function formSnapshotVersion(
+  form: LooseFormBody,
+  key = "expectedFrozenAt",
+): string | null | undefined {
+  const value = formString(form, key);
+  return value === "null" ? null : value;
+}
+
+export async function parseNoteUploadForm(
+  form: LooseFormBody,
+): Promise<{ bodyBytes: Uint8Array; meta: NoteUploadMeta }> {
+  const body = form.body;
+  if (!(body instanceof File))
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段",
+    );
+  const parsed = noteUploadMetaSchema.safeParse({
+    baseRevision: strictFormInt(form, "baseRevision"),
+    mutationId: formString(form, "mutationId"),
+    phase: formString(form, "phase"),
+    expectedFrozenAt: formSnapshotVersion(form),
+  });
+  if (!parsed.success)
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      `草稿上传元信息不合法：${firstIssueMessage(parsed.error)}`,
+    );
+  return {
+    bodyBytes: new Uint8Array(await body.arrayBuffer()),
+    meta: parsed.data,
+  };
 }
 
 /** 补图上传的 multipart 形态约束（字段名集与错误文案，两端口径一致） */
@@ -203,6 +242,7 @@ export async function parseAnnotationUploadForm(
     throw new HttpError(400, "VALIDATION_ERROR", ANNOTATION_UPLOAD_FORM_HINT);
   }
   const parsed = annotationUploadMetaSchema.safeParse({
+    expectedFrozenAt: formSnapshotVersion(form, F.expectedFrozenAt),
     baseRevision: strictFormInt(form, F.baseRevision),
     mutationId: formString(form, F.mutationId),
     resetVersion: resetVersionOf(form, F.resetVersion),

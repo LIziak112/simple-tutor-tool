@@ -16,6 +16,13 @@ export const attemptSessionFields = {
   frozenAt: z.iso.datetime().nullable().optional(),
 };
 
+/** 绑定到实际渲染/本机稿的冻结身份；旧协议缺省由服务端按是否重冻裁决。 */
+export const attemptWriteProofFields = {
+  expectedFrozenAt: z.iso.datetime().nullable().optional(),
+};
+export const attemptWriteProofSchema = z.object(attemptWriteProofFields);
+export type AttemptWriteProof = z.infer<typeof attemptWriteProofSchema>;
+
 type AttemptPhaseInput = {
   status: AttemptStatus;
   activatedAt?: string | null | undefined;

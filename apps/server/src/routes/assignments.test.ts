@@ -32,6 +32,7 @@ import {
 } from "../services/assignment-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import { addLimitFixtureQuestions } from "../test/question-limit-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
@@ -1290,7 +1291,10 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
 
   it("移出已开始（仅草稿未交卷）学生同样需要 confirmStarted", async () => {
     const env = await makeEnv();
-    await startAttempt(env.app, env.aCookie, env.assignmentId);
+    activateTestAttempt(
+      env.db,
+      String((await startAttempt(env.app, env.aCookie, env.assignmentId)).id),
+    );
     const blocked = await patchAssignment(
       env.app,
       env.teacherCookie,
@@ -1314,8 +1318,14 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
       { addStudentIds: [env.bId, cId] },
     );
     expect(added.status).toBe(200);
-    await startAttempt(env.app, env.aCookie, env.assignmentId);
-    await startAttempt(env.app, env.bCookie, env.assignmentId);
+    activateTestAttempt(
+      env.db,
+      String((await startAttempt(env.app, env.aCookie, env.assignmentId)).id),
+    );
+    activateTestAttempt(
+      env.db,
+      String((await startAttempt(env.app, env.bCookie, env.assignmentId)).id),
+    );
 
     const blocked = await patchAssignment(
       env.app,
@@ -1642,6 +1652,22 @@ describe("内容锁定（D14：首个 attempt 后 unitIds 不可改）", () => {
         .studentCount,
     ).toBe(2);
 
+    // 只有opened也保护物理内容锁；实际本机动作激活后才进入已开始人数。
+    const opened = (await (
+      await env.app.request(`/api/teacher/assignments/${env.assignmentId}`, {
+        headers: { cookie: env.teacherCookie },
+      })
+    ).json()) as { data: { locked: boolean; startedCount: number } };
+    expect(opened.data).toMatchObject({ locked: true, startedCount: 0 });
+    const activated = await env.app.request(
+      `/api/student/attempts/${String(attempt.id)}/activate`,
+      {
+        method: "POST",
+        headers: { cookie: env.cookie, "content-type": "application/json" },
+        body: JSON.stringify({ expectedFrozenAt: attempt.frozenAt }),
+      },
+    );
+    expect(activated.status).toBe(200);
     // 列表行 locked=true；详情 startedCount=1
     const list = await teacherList(env.app, env.teacherCookie);
     expect(list[0]?.locked).toBe(true);

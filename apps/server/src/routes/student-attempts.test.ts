@@ -32,6 +32,7 @@ import * as snapshot from "../services/snapshot.ts";
 import { editTeacherDraftResponse } from "../services/teacher-attempt-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import {
   fetchSubmitRevisions,
   submitAttemptRequest,
@@ -1602,7 +1603,7 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
 
 describe("作业状态联动（GET /api/student/assignments）", () => {
   it("开始作答后 in_progress，自评卷交卷后 graded", async () => {
-    const { app, aCookie, assignmentId } = await makeAttemptApp();
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
 
     const before = await listAssignments(app, aCookie);
     expect(before.assignments.find((a) => a.id === assignmentId)?.status).toBe(
@@ -1611,6 +1612,11 @@ describe("作业状态联动（GET /api/student/assignments）", () => {
 
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
+    const opened = await listAssignments(app, aCookie);
+    expect(opened.assignments.find((a) => a.id === assignmentId)?.status).toBe(
+      "not_started",
+    );
+    activateTestAttempt(db, attemptId);
     const during = await listAssignments(app, aCookie);
     expect(during.assignments.find((a) => a.id === assignmentId)?.status).toBe(
       "in_progress",

@@ -20,14 +20,34 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { expectHttpError } from "../test/ai-companion-fixtures.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { makeStudent } from "../test/note-fixtures.ts";
+import {
+  gzipJson,
+  makeNotePng,
+  makeStudent,
+  noteDoc,
+} from "../test/note-fixtures.ts";
+import {
+  assembleAnnotationBase,
+  putAnnotationDoc,
+  registerBaseImage,
+} from "./annotation-service.ts";
+import {
+  createAssignment,
+  getAssignmentDetail,
+  updateAssignment,
+} from "./assignment-service.ts";
 import { activateAttempt, getOpenedAttempt } from "./attempt-activation.ts";
 import { saveDraftAnswer } from "./attempt-answer.ts";
-import { startCourseAttempt } from "./attempt-start.ts";
+import { purgeOpenedAttempts } from "./attempt-opened-purge.ts";
+import { refreshOpenedAttempt } from "./attempt-opened-refresh.ts";
+import { startAttempt, startCourseAttempt } from "./attempt-start.ts";
 import { commitImport } from "./content-service.ts";
 import { openHint } from "./hint-service.ts";
+import { saveInk } from "./ink-service.ts";
 import { createTextMemo } from "./memo-service.ts";
+import { saveNoteVersion } from "./note-service.ts";
 import { getStudentUnitLanding } from "./student-course-service.ts";
 import { listStudentRecords } from "./student-records.ts";
 import { listTeacherAttempts } from "./teacher-attempt-service.ts";
@@ -109,6 +129,266 @@ function fixture() {
   const query = { sourceType: "course" as const, courseId, unitId };
   return { db, studentId, courseId, unitId, start, row, refs, query };
 }
+
+it.each(["answer", "ink", "note", "annotation"] as const)(
+  "ACT01 %s 重冻后无论是否已激活都要求本稿版本凭据",
+  (kind) => {
+    for (const active of [false, true]) {
+      const env = fixture(),
+        dataDir = createTestDir(),
+        first = env.start();
+      env.db
+        .update(questions)
+        .set({ version: 2, stemMd: "新版题" })
+        .where(eq(questions.id, "activation-q"))
+        .run();
+      const current = env.start();
+      if (kind === "annotation") {
+        const base = assembleAnnotationBase(
+          env.db,
+          env.studentId,
+          first.id,
+          "activation-q",
+          "scratch",
+        );
+        const row = env.refs(first.id)[0];
+        if (!row) throw new Error("测试题缺失");
+        registerBaseImage(
+          env.db,
+          dataDir,
+          env.studentId,
+          first.id,
+          "activation-q",
+          makeNotePng(1440, 900),
+          {
+            questionRevisionId: row.id,
+            baseRenderVersion: base.baseRenderVersion,
+            phase: "scratch",
+          },
+        );
+      }
+      if (active)
+        activateAttempt(env.db, env.studentId, first.id, {
+          expectedFrozenAt: current.frozenAt ?? null,
+        });
+      const before = env.row(first.id)?.activatedAt;
+      const write = (proof?: string | null) => {
+        const meta = {
+          baseRevision: 0,
+          mutationId: randomUUID(),
+          ...(proof === undefined ? {} : { expectedFrozenAt: proof }),
+        };
+        if (kind === "answer")
+          return saveDraftAnswer(
+            env.db,
+            env.studentId,
+            first.id,
+            "activation-q",
+            { kind: "judge", value: true },
+            meta,
+          );
+        if (kind === "ink")
+          return saveInk(
+            env.db,
+            dataDir,
+            env.studentId,
+            first.id,
+            "activation-q",
+            gzipJson({
+              engine: "atrament",
+              version: 1,
+              data: noteDoc().ink,
+              updatedAt: 1,
+            }),
+            makeNotePng(),
+            meta,
+          );
+        if (kind === "note")
+          return saveNoteVersion(
+            env.db,
+            dataDir,
+            env.studentId,
+            first.id,
+            "activation-q",
+            gzipJson(noteDoc()),
+            meta,
+          );
+        return putAnnotationDoc(
+          env.db,
+          dataDir,
+          env.studentId,
+          first.id,
+          "activation-q",
+          gzipJson({
+            version: 1,
+            baseWidth: 1440,
+            baseHeight: 900,
+            strokes: noteDoc().ink.strokes,
+          }),
+          meta,
+        );
+      };
+      expectHttpError(() => write(), 409, "ATTEMPT_SNAPSHOT_CHANGED");
+      expectHttpError(
+        () => write(first.frozenAt ?? null),
+        409,
+        "ATTEMPT_SNAPSHOT_CHANGED",
+      );
+      expect(env.row(first.id)?.activatedAt).toBe(before);
+      expect(() => write(current.frozenAt ?? null)).not.toThrow();
+      expect(env.row(first.id)?.activatedAt).toBeTruthy();
+    }
+  },
+);
+
+it.each(["ink", "note", "annotation"] as const)(
+  "ACT01 %s 真实multipart传递并校验本稿expectedFrozenAt",
+  async (kind) => {
+    const env = fixture(),
+      dataDir = createTestDir(),
+      first = env.start();
+    env.db
+      .update(questions)
+      .set({ version: 2 })
+      .where(eq(questions.id, "activation-q"))
+      .run();
+    const current = env.start();
+    if (kind === "annotation") {
+      const base = assembleAnnotationBase(
+        env.db,
+        env.studentId,
+        first.id,
+        "activation-q",
+        "scratch",
+      );
+      const row = env.refs(first.id)[0];
+      if (!row) throw new Error("题缺失");
+      registerBaseImage(
+        env.db,
+        dataDir,
+        env.studentId,
+        first.id,
+        "activation-q",
+        makeNotePng(1440, 900),
+        {
+          questionRevisionId: row.id,
+          baseRenderVersion: base.baseRenderVersion,
+          phase: "scratch",
+        },
+      );
+    }
+    const app = createApp({
+      db: env.db,
+      dataDir,
+      logger: pino({ enabled: false }),
+      publicUrl: "http://localhost:8787",
+      isProduction: false,
+    });
+    const cookie = `tutor_student_session=${createStudentSession(env.db, env.studentId).token}`;
+    const send = (token?: string) => {
+      const body = new FormData(),
+        meta = {
+          baseRevision: 0,
+          mutationId: randomUUID(),
+          ...(token === undefined ? {} : { expectedFrozenAt: token }),
+        };
+      if (kind === "ink") {
+        body.set(
+          "strokes",
+          new File(
+            [
+              new Uint8Array(
+                gzipJson({
+                  engine: "atrament",
+                  version: 1,
+                  data: noteDoc().ink,
+                  updatedAt: 1,
+                }),
+              ),
+            ],
+            "strokes.gz",
+          ),
+        );
+        body.set(
+          "snapshot",
+          new File([new Uint8Array(makeNotePng())], "snapshot.png"),
+        );
+        body.set("meta", JSON.stringify(meta));
+      } else {
+        const doc =
+          kind === "note"
+            ? noteDoc()
+            : {
+                version: 1,
+                baseWidth: 1440,
+                baseHeight: 900,
+                strokes: noteDoc().ink.strokes,
+              };
+        body.set("body", new File([new Uint8Array(gzipJson(doc))], "body.gz"));
+        body.set("baseRevision", "0");
+        body.set("mutationId", meta.mutationId);
+        if (token !== undefined) body.set("expectedFrozenAt", token);
+      }
+      const path =
+        kind === "annotation"
+          ? `questions/activation-q/annotation`
+          : `${kind === "ink" ? "ink" : "notes"}/activation-q`;
+      return app.request(`/api/student/attempts/${first.id}/${path}`, {
+        method: "PUT",
+        headers: { cookie },
+        body,
+      });
+    };
+    expect((await send()).status).toBe(409);
+    expect((await send(first.frozenAt ?? "null")).status).toBe(409);
+    expect((await send("malformed")).status).toBe(400);
+    expect((await send(current.frozenAt ?? "null")).status).toBe(200);
+  },
+);
+
+it("ACT03 清除后的旧对象恢复返回404，不再重建孤儿快照", () => {
+  const env = fixture(),
+    first = env.start(),
+    stale = env.row(first.id);
+  if (!stale) throw new Error("测试卷缺失");
+  expect(
+    purgeOpenedAttempts(env.db, {
+      enabled: true,
+      days: 1,
+      now: new Date(Date.now() + 2 * 86400_000),
+    }),
+  ).toBe(1);
+  expectHttpError(
+    () => refreshOpenedAttempt(env.db, stale),
+    404,
+    "ATTEMPT_NOT_FOUND",
+  );
+  expect(env.db.select().from(attempts).all()).toEqual([]);
+});
+
+it("ACT04 仅opened作业未开始但物理内容锁仍投影为true", () => {
+  const env = fixture();
+  const assigned = createAssignment(env.db, TEST_TEACHER_ID, {
+    unitIds: [env.unitId],
+    studentIds: [env.studentId],
+  }).assignments[0];
+  if (!assigned) throw new Error("作业未生成");
+  expect(
+    getAssignmentDetail(env.db, TEST_TEACHER_ID, assigned.id),
+  ).toMatchObject({ locked: false, startedCount: 0 });
+  startAttempt(env.db, env.studentId, assigned.id);
+  expect(
+    getAssignmentDetail(env.db, TEST_TEACHER_ID, assigned.id),
+  ).toMatchObject({ locked: true, startedCount: 0 });
+  expectHttpError(
+    () =>
+      updateAssignment(env.db, TEST_TEACHER_ID, assigned.id, {
+        unitIds: [env.unitId],
+      }),
+    409,
+    "ASSIGNMENT_CONTENT_LOCKED",
+  );
+});
 
 it("未激活卷从学生/教师记录、单元历次汇总隐藏，预检只读且无答案泄露", async () => {
   const env = fixture();

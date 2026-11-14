@@ -1,7 +1,46 @@
+import type { AttemptWriteProof } from "@tutor/contract";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, attempts } from "../db/schema";
 import { HttpError } from "../lib/http-error.ts";
+
+/** 请求到达前发生的重冻，必须由实际渲染/本机正文携带的身份证明。 */
+export function assertAttemptWriteProof(
+  attempt: Pick<Attempt, "frozenAt" | "startedAt" | "legacyUnverified">,
+  proof: AttemptWriteProof | undefined,
+  questionRevisionId?: string,
+  frozenQuestionRevisionId?: string,
+): void {
+  if (
+    questionRevisionId !== undefined &&
+    questionRevisionId !== frozenQuestionRevisionId
+  )
+    throw new HttpError(
+      409,
+      "QUESTION_REVISION_STALE",
+      "题目版本已变化，请保留本机草稿并刷新练习",
+    );
+  if (proof?.expectedFrozenAt !== undefined) {
+    if (proof.expectedFrozenAt !== attempt.frozenAt)
+      throw new HttpError(
+        409,
+        "ATTEMPT_SNAPSHOT_CHANGED",
+        "本机稿对应的题目版本已变化，请保留原稿并刷新练习",
+      );
+    return;
+  }
+  if (questionRevisionId !== undefined) return;
+  if (
+    !attempt.legacyUnverified &&
+    attempt.frozenAt !== null &&
+    attempt.frozenAt !== attempt.startedAt
+  )
+    throw new HttpError(
+      409,
+      "ATTEMPT_SNAPSHOT_CHANGED",
+      "当前页面缺少原稿版本凭据，请保留本机稿并刷新练习",
+    );
+}
 
 /** 文件校验/落盘在事务外时，取得写锁后再核对原冻结版本，关闭重冻竞态。 */
 export function assertAttemptWriteVersion(

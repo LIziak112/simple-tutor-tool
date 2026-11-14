@@ -15,7 +15,6 @@ import {
   inkWriteMetaSchema,
   lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
-  noteUploadMetaSchema,
   practiceQuestionFeedbackDataSchema,
   practiceQuestionSubmitDataSchema,
   practiceQuestionSubmitRequestSchema,
@@ -43,12 +42,11 @@ import {
   stripPngSuffix,
 } from "../lib/binary-response";
 import {
-  formString,
   parseAnnotationBaseImageForm,
   parseAnnotationPhaseParam,
   parseAnnotationUploadForm,
   parseNoteImageUploadForm,
-  strictFormInt,
+  parseNoteUploadForm,
 } from "../lib/form-fields";
 import {
   firstIssueMessage,
@@ -557,32 +555,9 @@ export function createStudentRoutes(
       // 的业务门槛（已交卷、未封存行定位、每 (attempt,question) 唯一性）在
       // service.saveNoteVersion 三 phase 分派内执行。
       .put("/attempts/:id/notes/:questionId", async (c) => {
-        const form = await c.req.parseBody();
-        const body = form.body;
-        // 正文必须是文件字段（multipart 文件；字符串字段说明客户端组装错误）
-        if (!(body instanceof File)) {
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段",
-          );
-        }
-        // multipart 字段全是字符串：baseRevision 按严格十进制整数串转数
-        // （T6R.4 复审③——空串与科学计数/十六进制/小数一律不转，交契约
-        // schema 出 400；JSON 通道的 number 形态契约不变，此转换属传输层）
-        const parsed = noteUploadMetaSchema.safeParse({
-          baseRevision: strictFormInt(form, "baseRevision"),
-          mutationId: formString(form, "mutationId"),
-          phase: formString(form, "phase"),
-        });
-        if (!parsed.success) {
-          const first = firstIssueMessage(parsed.error);
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            `草稿上传元信息不合法：${first}`,
-          );
-        }
+        const { bodyBytes, meta } = await parseNoteUploadForm(
+          await c.req.parseBody(),
+        );
         return c.json({
           ok: true,
           data: saveNoteVersion(
@@ -591,8 +566,8 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             c.req.param("questionId"),
-            new Uint8Array(await body.arrayBuffer()),
-            parsed.data,
+            bodyBytes,
+            meta,
           ),
         });
       })

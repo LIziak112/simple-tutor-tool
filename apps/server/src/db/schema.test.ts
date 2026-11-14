@@ -471,6 +471,7 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
       ...attempt,
       abandonedAt: null,
       lastActivityAt: null,
+      activatedAt: null,
       practiceScopeJson: null, // 0043 新增（#6980-2），缺省 NULL
     });
     db.$client.close();
@@ -643,6 +644,7 @@ describe("讲练一体三列一索引（2026-10：lectures.kind / attempts.lectu
       ...attempt,
       abandonedAt: null,
       lastActivityAt: null,
+      activatedAt: null,
       practiceScopeJson: null, // 0043 新增（#6980-2），缺省 NULL
     });
     db.$client.close();

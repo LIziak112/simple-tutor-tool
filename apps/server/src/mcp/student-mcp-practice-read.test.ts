@@ -29,6 +29,7 @@ import {
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import { callToolJson } from "../test/mcp-test-utils.ts";
 import { gzipJson, makeStudent, noteDoc } from "../test/note-fixtures.ts";
 import {
@@ -66,6 +67,7 @@ describe.each(["class", "personal"] as const)(
   (kind) => {
     it("25项学生工具真实注册；三个出口白名单，无学习业务写入", async () => {
       const env = await environment(kind);
+      activateTestAttempt(env.db, env.practiceId);
       const names = (await env.client.listTools()).tools.map(
         (tool) => tool.name,
       );
@@ -154,8 +156,10 @@ describe.each(["class", "personal"] as const)(
       }
       for (const result of [listed, directory, question])
         expect(JSON.stringify(result.data)).not.toMatch(
-          /"answers"|solutionMd|teacherComment|autoCorrect|scoreAuto|"phase"/,
+          /"answers"|solutionMd|teacherComment|autoCorrect|scoreAuto/,
         );
+      expect(directory.data).toMatchObject({ phase: "active" });
+      expect(question.data).toMatchObject({ phase: "active" });
       expect(env.db.select().from(responses).all()).toEqual(before);
       expect(env.db.select().from(events).all()).toEqual([]);
       expect(await callToolJson(env.client, "get_current_context", {})).toEqual(
