@@ -497,7 +497,8 @@ it("局部擦除记成「拿掉原笔、原位放回切出的几段」，回放�
   expect(ids(3)).toEqual(["first-left", "first-right", "second-stroke"]);
   expect(ghosts(3)).toEqual(["first-stroke"]);
   // 撤销：原笔回来，不再算被拿走的；这一步拿走的是切出的两段，和撤销一笔
-  // 新写的笔画同一口径记进「看擦改」（两段正叠在回来的原笔上，画出来看不出）
+  // 新写的笔画同一口径记进「看擦改」。两段正叠在回来的原笔上：不透明的笔
+  // 同色相叠看不出；荧光笔半透明，原笔上会多出淡淡的虚线
   expect(ids(4)).toEqual(["first-stroke", "second-stroke"]);
   expect(ghosts(4)).toEqual(["first-left", "first-right"]);
 });

@@ -1,4 +1,9 @@
-import { DEFAULT_INK_PROFILE_CONFIG } from "@tutor/contract";
+import {
+  DEFAULT_INK_PROFILE_CONFIG,
+  type InkRendering,
+  inkRenderingOf,
+  inkRenderingSchema,
+} from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import { forEachPaintRun, inSamePaintRun } from "./paint-runs.ts";
 import { INK_HIGHLIGHTER, type InkStroke } from "./types.ts";
@@ -75,12 +80,38 @@ describe("合在一起画的笔画", () => {
         piece("piece-0002", { rendering: { ...freehand } }),
       ),
     ).toBe(true);
-    expect(
-      inSamePaintRun(
-        piece("piece-0001", { rendering: freehand }),
-        piece("piece-0002", { rendering: { ...freehand, sizeScale: 2 } }),
-      ),
-    ).toBe(false);
+  });
+
+  it("画法参数任何一项不同都不成组（字段取自契约，加了字段也照样比）", () => {
+    const rendering = inkRenderingOf({
+      ...DEFAULT_INK_PROFILE_CONFIG,
+      renderer: "freehand",
+    });
+    // 每个字段各改一个值；契约加了字段而这里没补，下面的核对会失败
+    const changed: InkRendering = {
+      renderer: "atrament",
+      smoothing: rendering.smoothing + 0.1,
+      thinning: rendering.thinning + 0.1,
+      streamline: rendering.streamline + 0.1,
+      sizeScale: rendering.sizeScale + 0.5,
+      simulatePressure: !rendering.simulatePressure,
+    };
+    const fields = Object.keys(inkRenderingSchema.shape) as Array<
+      keyof InkRendering
+    >;
+    expect(Object.keys(changed).sort()).toEqual([...fields].sort());
+    for (const field of fields) {
+      expect(changed[field]).not.toBe(rendering[field]);
+      expect(
+        inSamePaintRun(
+          piece("piece-0001", { rendering }),
+          piece("piece-0002", {
+            rendering: { ...rendering, [field]: changed[field] },
+          }),
+        ),
+        field,
+      ).toBe(false);
+    }
   });
 
   it("按绘制顺序分组：只有相邻的才并进一组，中间隔着别的笔画就断开", () => {

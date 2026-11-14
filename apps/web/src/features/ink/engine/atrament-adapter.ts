@@ -57,7 +57,6 @@ import type { InkRendering, NoteBackground } from "@tutor/contract";
 import type Atrament from "atrament";
 import {
   createProgrammaticAtrament,
-  replayAtramentStroke,
   replayAtramentStrokes,
 } from "./atrament-replay.ts";
 import { canvasToPngBlob } from "./canvas-png.ts";
@@ -336,15 +335,9 @@ export function createAtramentSurface(
     c.lineJoin = "round";
   }
 
-  /** 按当前容器宽度重放一笔（模块级原语的闭包便捷封装） */
-  function replayStroke(s: InkStroke): void {
-    if (!atrament) return;
-    replayAtramentStroke(atrament, cssWidth, s);
-  }
-
   /**
-   * 按顺序重放一串已有的笔画：同一笔切出来的荧光笔各段合在一起上一次色
-   * （paint-runs.ts）。整张重画和局部重画都走这里，不逐笔调 replayStroke。
+   * 按当前容器宽度、按顺序重放一串笔画：同一笔切出来的荧光笔各段合在一起上
+   * 一次色（paint-runs.ts）。整张重画、局部重画和刚收的一笔都走这里。
    */
   function replayStrokes(strokes: readonly InkStroke[]): void {
     if (!atrament) return;
@@ -449,7 +442,7 @@ export function createAtramentSurface(
         };
         // 整笔一条路径的笔、图形书写中都不在画布上：这时整笔落到画布（与
         // 重绘同一画法）
-        if (liveOnLayer || shaped) replayStroke(stroke);
+        if (liveOnLayer || shaped) replayStrokes([stroke]);
         withReason("stroke", () => store.commitAdd([stroke]));
       }
     }

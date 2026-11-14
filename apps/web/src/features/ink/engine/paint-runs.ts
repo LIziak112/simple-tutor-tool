@@ -11,12 +11,21 @@
  * 画笔画的地方（书写面整张重画与局部重画、回放、派生图、圈画合成）都按组
  * 画，不逐笔循环。不透明的笔不用成组：重叠处本来就看不出深浅。
  */
+import { type InkRendering, inkRenderingSchema } from "@tutor/contract";
 import type { InkStroke } from "./types.ts";
 
 type RunStroke = Pick<
   InkStroke,
   "tool" | "color" | "weight" | "rendering" | "cutFrom"
 >;
+
+/**
+ * 画法参数的全部字段，取自契约：契约给画法参数加了字段，这里跟着比——漏比
+ * 一项，画法不同的两段会被并成一组、都按第一段的画法画。
+ */
+const RENDERING_FIELDS = Object.keys(
+  inkRenderingSchema.shape,
+) as (keyof InkRendering)[];
 
 /** 画法参数逐项相同（存取之后各段的参数各是各的对象，不能只比引用） */
 function sameRendering(
@@ -25,14 +34,7 @@ function sameRendering(
 ): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
-  return (
-    a.renderer === b.renderer &&
-    a.smoothing === b.smoothing &&
-    a.thinning === b.thinning &&
-    a.streamline === b.streamline &&
-    a.sizeScale === b.sizeScale &&
-    a.simulatePressure === b.simulatePressure
-  );
+  return RENDERING_FIELDS.every((field) => a[field] === b[field]);
 }
 
 /**

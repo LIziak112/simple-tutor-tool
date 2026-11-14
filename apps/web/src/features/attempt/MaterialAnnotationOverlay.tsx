@@ -13,7 +13,6 @@ import {
   createAnnotationToolbox,
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
-import { createEraseSession } from "@/features/ink/engine/erase-session.ts";
 import { toLogical, toLogicalPoint } from "@/features/ink/engine/normalize.ts";
 import {
   advancePointerMachine,
@@ -42,6 +41,7 @@ import {
   type MaterialInkBaseMeta,
   subscribeLocalDraftChoice,
 } from "./draft-store";
+import { useMaterialErase } from "./material-erase";
 import { useMaterialEraserRing } from "./material-eraser-ring";
 import { awaitMaterialSurfaceReady } from "./material-surface-ready";
 import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
@@ -207,13 +207,13 @@ export function MaterialAnnotationOverlay({
   const strokeStartRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
   const rectRef = useRef<DOMRect | null>(null);
-  const lastEraseRef = useRef<{ x: number; y: number } | null>(null);
-  /** 这一次橡皮手势擦掉了东西、还没存进草稿仓（见 flushErase） */
-  const eraseDirtyRef = useRef(false);
   const rafRef = useRef<number | null>(null);
 
   // 壳与材料子树常驻；已有基准在阅读和圈画时共用同一真实固定宽框。
   const frameMounted = frozen !== null;
+  /** 固定框此刻是否挂在页面上（基准一变，要到下一次渲染才跟着挂上或撤掉） */
+  const frameMountedRef = useRef(false);
+  frameMountedRef.current = frameMounted;
   const missingBase = frozen === null && strokes.length > 0;
   const showInk = !missingBase && (frameMounted || isAnnotationActive);
   const showInkRef = useRef(showInk);
@@ -406,6 +406,14 @@ export function MaterialAnnotationOverlay({
         draftStore.removeMaterialInkBase(attemptId, storeKey);
         frozenRef.current = null;
         setFrozen(null);
+        if (frameMountedRef.current) {
+          // 固定框要到下一次渲染才撤掉，这之前量到的还是框里的排版，不能拿来
+          // 定新基准：就绪标志当即放下（撤框后首笔就绪门控重新核验）。同一个
+          // 事件里紧跟着的落笔——上一次手势的收尾事件丢了、由这次按下代为
+          // 收尾时——就被拦在门外
+          surfaceReadyRef.current = false;
+          setSurfaceReady(false);
+        }
         return;
       }
       const base = frozenRef.current;
@@ -435,43 +443,20 @@ export function MaterialAnnotationOverlay({
     [],
   );
 
-  /**
-   * 橡皮经过一个落点：从上一个落点扫到这里，碰到的笔画整笔拿掉（整笔模式）
-   * 或只切掉碰到的一段（局部模式）。材料圈画没有撤销，每个落点各算各的，
-   * 画面立即跟上；存进草稿仓等这一次手势结束（flushErase）——草稿仓一变，
-   * 整个作答页跟着重渲染，局部橡皮几乎每个落点都有改动，逐点存会卡。
-   */
-  const eraseAt = useCallback(
-    (
-      point: { x: number; y: number },
-      eraser: Extract<InkGesture, { kind: "erase" }>,
-    ) => {
-      ring.show(point.x, point.y, eraser.radius);
-      const session = createEraseSession(strokesRef.current, eraser.mode);
-      const changed = session.sweep(
-        point.x,
-        point.y,
-        eraser.radius,
-        lastEraseRef.current ?? undefined,
-      );
-      lastEraseRef.current = point;
-      if (changed === null) return;
-      setStrokesBoth(session.visible().map((item) => item.stroke));
-      eraseDirtyRef.current = true;
-    },
-    [setStrokesBoth, ring],
-  );
+  /** 草稿仓里这份材料现在的稿（只认本组件写的 atrament 稿；没有是 null） */
+  const storedDoc = useCallback(() => {
+    const doc = draftStore.getMaterialInk(attemptId, storeKey);
+    return doc?.engine === "atrament" ? doc : null;
+  }, [attemptId, storeKey]);
 
-  /**
-   * 把这一次橡皮手势里擦掉的存进草稿仓，一次手势只存一次（抬起、被打断、
-   * 应用更新前都算手势结束）。擦空了的话，冻结基准也在这时才清：手势途中
-   * 不换排版。组件在手势途中被卸载时不补存，和在途的一笔一样。
-   */
-  const flushErase = useCallback(() => {
-    if (!eraseDirtyRef.current) return;
-    eraseDirtyRef.current = false;
-    saveToDraftStore(strokesRef.current);
-  }, [saveToDraftStore]);
+  /** 橡皮：每个落点各自生效，擦掉的等手势结束存一次（material-erase.ts） */
+  const eraser = useMaterialErase({
+    strokes: () => strokesRef.current,
+    show: setStrokesBoth,
+    stored: storedDoc,
+    save: saveToDraftStore,
+    ring: ring.show,
+  });
 
   const beginInteraction = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -487,11 +472,8 @@ export function MaterialAnnotationOverlay({
         return;
       }
       // 同键双实例（同 materialId 被两个锚渲染）兜底：落笔前对齐草稿仓最新
-      const latest = draftStore.getMaterialInk(attemptId, storeKey);
-      if (
-        latest?.engine === "atrament" &&
-        latest.data.strokes !== strokesRef.current
-      ) {
+      const latest = storedDoc();
+      if (latest !== null && latest.data.strokes !== strokesRef.current) {
         setStrokesBoth(latest.data.strokes);
       }
       // 他实例已按另一列宽冻结并存基准：采用该基准并丢弃本势（下一笔起
@@ -519,8 +501,7 @@ export function MaterialAnnotationOverlay({
       const point = pointOf(e);
       liveGestureRef.current = gesture;
       if (gesture.kind === "erase") {
-        lastEraseRef.current = null;
-        eraseAt(point, gesture);
+        eraser.begin(point, gesture);
         return;
       }
       if (gesture.kind !== "draw") return;
@@ -550,7 +531,16 @@ export function MaterialAnnotationOverlay({
         points: [point],
       };
     },
-    [attemptId, storeKey, gesture, pointOf, eraseAt, setStrokesBoth, shaper],
+    [
+      attemptId,
+      storeKey,
+      gesture,
+      pointOf,
+      eraser,
+      setStrokesBoth,
+      shaper,
+      storedDoc,
+    ],
   );
 
   /** 释放指针捕获（收笔/丢弃共用；捕获可能已被浏览器释放，防御忽略） */
@@ -572,8 +562,7 @@ export function MaterialAnnotationOverlay({
     releaseCapture();
     ring.hide();
     rectRef.current = null;
-    lastEraseRef.current = null;
-    flushErase();
+    eraser.end();
     // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
     const live = liveGestureRef.current;
     const shapePoints = shaper.end();
@@ -615,7 +604,7 @@ export function MaterialAnnotationOverlay({
     shaper,
     drawCurrent,
     ring,
-    flushErase,
+    eraser,
   ]);
 
   usePwaUpdateGuard(
@@ -643,7 +632,7 @@ export function MaterialAnnotationOverlay({
           currentStrokeRef.current = null;
           shaper.end();
           // 已经擦掉的照旧算数（材料圈画没有撤销），只是到这里才存
-          flushErase();
+          eraser.end();
           scheduleRedraw();
         }
       }
@@ -655,7 +644,7 @@ export function MaterialAnnotationOverlay({
       scheduleRedraw,
       shaper,
       ring,
-      flushErase,
+      eraser,
     ],
   );
 
@@ -682,7 +671,7 @@ export function MaterialAnnotationOverlay({
       if (!isSampleMove(machineRef.current, e.pointerId)) return;
       const live = liveGestureRef.current;
       if (live.kind === "erase") {
-        eraseAt(pointOf(e), live);
+        eraser.sweep(pointOf(e), live);
         return;
       }
       // 图形：只看拖到哪儿，更新预览
@@ -696,7 +685,7 @@ export function MaterialAnnotationOverlay({
       stroke.points.push(pointOf(e));
       scheduleRedraw();
     },
-    [pointOf, eraseAt, scheduleRedraw, shaper, ring],
+    [pointOf, eraser, scheduleRedraw, shaper, ring],
   );
 
   const handlePointerEnd = useCallback(

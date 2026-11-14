@@ -68,10 +68,7 @@ import {
   resolveGesture,
   resolveToolSpec,
 } from "@/features/ink/engine/types.ts";
-import {
-  replayAnnotationStroke,
-  replayAnnotationStrokes,
-} from "./annotation-replay.ts";
+import { replayAnnotationStrokes } from "./annotation-replay.ts";
 
 /** 标注画布的 DOM 标识（E2E/注入器定位用；风格对齐 INK_CANVAS_DATA_SLOT） */
 export const ANNOTATION_CANVAS_DATA_SLOT = "annotation-canvas";
@@ -368,7 +365,7 @@ export function createAnnotationSurface(
     return s?.id === undefined ? undefined : anchors[s.id];
   }
 
-  /** 全量重绘（undo/redo/erase/load 后）：清位图 → 逐笔重放（擦除途中画预览） */
+  /** 全量重绘（undo/redo/erase/load 后）：清位图 → 按顺序重放（擦除途中画预览） */
   function redraw(): void {
     const c = ctx2d;
     const a = atrament;
@@ -475,7 +472,7 @@ export function createAnnotationSurface(
     }
     // 先整笔落到画布（视图域这一笔，与之后全量重绘同一画法），再提交
     if (paintWhole && atrament) {
-      replayAnnotationStroke(atrament, cssPerBase(), rawStroke);
+      replayAnnotationStrokes(atrament, cssPerBase(), [rawStroke]);
     }
     withReason("stroke", () => store.commitAdd([mapped.stroke]));
   }

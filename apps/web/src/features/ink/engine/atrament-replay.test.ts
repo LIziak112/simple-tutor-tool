@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createProgrammaticAtrament,
   paintOnePathOnAtrament,
-  replayAtramentStroke,
   replayAtramentStrokes,
 } from "./atrament-replay.ts";
 import * as freehandPaint from "./freehand-paint";
@@ -112,10 +111,10 @@ const pen: InkStroke = {
   points,
 };
 
-describe("replayAtramentStroke：荧光笔整笔一次描边", () => {
+describe("replayAtramentStrokes：只有一笔时，荧光笔整笔一次描边", () => {
   it("来回重叠、带压感的一笔只描一次，线宽不随压感变", () => {
     const { atrament, ctx } = canvasOf();
-    replayAtramentStroke(atrament, 500, highlighter);
+    replayAtramentStrokes(atrament, 500, [highlighter]);
     expect(ctx.strokes).toHaveLength(1);
     expect(ctx.strokes[0]).toMatchObject({
       style: INK_HIGHLIGHTER.color,
@@ -125,26 +124,26 @@ describe("replayAtramentStroke：荧光笔整笔一次描边", () => {
 
   it("路径用逻辑坐标，位图比例 = 位图宽 / 逻辑宽（与 atrament 的换算同一口径）", () => {
     const { atrament, ctx } = canvasOf(500, 1000);
-    replayAtramentStroke(atrament, 500, highlighter);
+    replayAtramentStrokes(atrament, 500, [highlighter]);
     expect(ctx.strokes[0]?.scale).toBe(1);
     expect(ctx.strokes[0]?.path[0]).toEqual(["moveTo", 100, 100]);
     expect(ctx.strokes[0]?.path.at(-1)).toEqual(["lineTo", 300, 116]);
 
     // 派生图：位图 480 宽、CSS 1000 宽（css 坐标即逻辑坐标）
     const thumbnail = canvasOf(1000, 480);
-    replayAtramentStroke(thumbnail.atrament, 1000, highlighter);
+    replayAtramentStrokes(thumbnail.atrament, 1000, [highlighter]);
     expect(thumbnail.ctx.strokes[0]?.scale).toBe(0.48);
   });
 
   it("画完不改动 atrament 画布上原有的变换", () => {
     const { atrament, ctx } = canvasOf();
-    replayAtramentStroke(atrament, 500, highlighter);
+    replayAtramentStrokes(atrament, 500, [highlighter]);
     expect(ctx.scale).toBe(1);
   });
 
   it("笔仍然逐段描边（线宽随压感变化），不受影响", () => {
     const { atrament, ctx } = canvasOf();
-    replayAtramentStroke(atrament, 500, pen);
+    replayAtramentStrokes(atrament, 500, [pen]);
     expect(ctx.strokes).toHaveLength(points.length);
     expect(new Set(ctx.strokes.map((s) => s.style))).toEqual(
       new Set([INK_PEN_COLORS.black]),
@@ -159,12 +158,19 @@ describe("replayAtramentStroke：荧光笔整笔一次描边", () => {
       .spyOn(freehandPaint, "paintFreehandStroke")
       .mockImplementation(() => {});
     try {
-      const { atrament, ctx } = canvasOf();
-      replayAtramentStroke(atrament, 500, {
+      // 位图 900 宽、CSS 300 宽（dpr 3）：比例与成组时取自同一处换算
+      const { atrament, ctx } = canvasOf(300, 900);
+      const stroke: InkStroke = {
         ...highlighter,
         rendering: { ...DEFAULT_INK_PROFILE_CONFIG, renderer: "freehand" },
-      });
+      };
+      replayAtramentStrokes(atrament, 300, [stroke]);
       expect(paint).toHaveBeenCalledOnce();
+      expect(paint.mock.calls[0]?.slice(1)).toEqual([
+        (900 / 300) * (300 / 1000),
+        stroke,
+        stroke.rendering,
+      ]);
       expect(ctx.strokes).toHaveLength(0);
     } finally {
       paint.mockRestore();
