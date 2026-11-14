@@ -261,23 +261,10 @@ test.describe("整卷复盘入口与求助记录分组（手机窄屏）", {
       await page.setViewportSize(PHONE.viewport);
       await shot("1-顶栏-首次发起");
 
-      const modules = page.getByRole("region", { name: "按模块看结果" });
-      const moduleToggle = modules.locator("summary");
-      const cards = modules.getByTestId("module-results-cards");
-      await expect(cards).toBeVisible();
-      await moduleToggle.press("Space");
-      await expect(cards).toBeHidden();
-      await expect(moduleToggle).toBeFocused();
-      await moduleToggle.press("Enter");
-      await expect(cards).toBeVisible();
-
+      // 单单元、一次整卷结算不显示重复分组表；手机和桌面同一规则。
+      await expect(page.getByTestId("module-results")).toHaveCount(0);
       await page.setViewportSize({ width: 915, height: PHONE.viewport.height });
-      const moduleTable = modules.getByRole("table");
-      await expect(moduleTable).toBeVisible();
-      await moduleToggle.click();
-      await expect(moduleTable).toBeHidden();
-      await moduleToggle.click();
-      await expect(moduleTable).toBeVisible();
+      await expect(page.getByTestId("module-results")).toHaveCount(0);
       await page.setViewportSize(PHONE.viewport);
 
       await entry.click();
