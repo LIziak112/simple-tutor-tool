@@ -1,4 +1,3 @@
-import { studentSettlementProgress } from "./attempt-settlement-progress.ts";
 import type {
   AttemptDetailData,
   AttemptDraftData,
@@ -40,6 +39,7 @@ import {
   groupedSnapshotRows,
 } from "./attempt-rows.ts";
 import { scoreSummaryOf } from "./attempt-score-summary.ts";
+import { studentSettlementProgress } from "./attempt-settlement-progress.ts";
 import { attemptSummaryOf } from "./attempt-summary.ts";
 import { attemptTimingOf } from "./attempt-timing";
 import { openedHintEcho } from "./hint-service";

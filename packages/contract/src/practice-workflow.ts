@@ -102,7 +102,10 @@ export const practiceWorkflowSchema = z
       }),
     canSubmitQuestion: z.boolean(),
     canSettlePartially: z.boolean().optional(),
-    partialSettlementRestriction: z.enum(["timed_attempt", "teacher_restricted", "attempt_finished"]).nullable().optional(),
+    partialSettlementRestriction: z
+      .enum(["timed_attempt", "teacher_restricted", "attempt_finished"])
+      .nullable()
+      .optional(),
     restrictionReason: practiceRestrictionReasonSchema.nullable(),
     /** UTC ISO（Z 后缀）或 null；与 assignmentDueAtSchema 同策略但本文件
      * 不从 content.ts 导入（M5 content 将反向引用 practice 推荐字段，避免环） */

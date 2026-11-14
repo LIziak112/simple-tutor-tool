@@ -1,7 +1,7 @@
-import { attemptSettlementProgressSchema } from "./attempt-settlement-progress.ts";
 import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
 import { attemptScoreSummarySchema } from "./attempt-score-summary.ts";
+import { attemptSettlementProgressSchema } from "./attempt-settlement-progress.ts";
 import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import { attemptSummarySchema } from "./attempt-summary.ts";
 import {
