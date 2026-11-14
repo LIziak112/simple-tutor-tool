@@ -54,7 +54,10 @@ export function asPointerKind(value: string): InkPointerKind | undefined {
 /** 一个笔迹点（契约形状：x/y 归一化坐标、p 压力 0–1、t 相对本笔毫秒） */
 export type InkStrokePoint = ContractInkStrokePoint;
 
-/** 一笔完整笔画。橡皮不产生笔画，而是删除已有笔画（整笔橡皮，见 erase.ts） */
+/**
+ * 一笔完整笔画。橡皮不产生笔画：整笔擦除删掉已有笔画，局部擦除把一笔换成
+ * 切剩的几段（见 erase-session.ts）
+ */
 export type InkStroke = ContractInkStroke;
 
 /** Atrament 引擎（页内答题区）的矢量数据 */

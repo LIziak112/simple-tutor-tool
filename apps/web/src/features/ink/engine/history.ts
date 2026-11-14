@@ -40,8 +40,16 @@ export function mintStrokeId(): string {
 export type InkHistoryEntry =
   /** 新增笔画（按提交顺序追加在末尾） */
   | { kind: "add"; strokes: InkStroke[] }
-  /** 删除笔画：记录原下标（升序）与内容，撤销时按下标插回 */
-  | { kind: "remove"; removed: Array<{ index: number; stroke: InkStroke }> }
+  /**
+   * 删除笔画：记录原下标（升序）与内容，撤销时按下标插回。局部橡皮另带
+   * added——切剩的各段，下标（升序）是删除并插入之后的位置；撤销时先按下标
+   * 拿掉这些段，再插回原笔画。
+   */
+  | {
+      kind: "remove";
+      removed: Array<{ index: number; stroke: InkStroke }>;
+      added?: Array<{ index: number; stroke: InkStroke }>;
+    }
   /** 清空：撤销恢复全部 */
   | { kind: "clear"; previous: InkStroke[] }
   /** 整体替换（load 外部文档用）：撤销回到旧内容，重做回到新内容 */
@@ -178,11 +186,19 @@ export class InkStore {
   }
 
   /**
-   * 整笔橡皮提交：indices 为被删除笔画的当前下标（任意顺序，内部排序）。
+   * 橡皮提交：indices 为被删除笔画的当前下标（任意顺序，内部排序）。
    * 一次拖动的多次命中应累积后一次性提交（一个历史条目）。
    * LR-2：被删笔画整体移入墓碑（deletedBy:"eraser"，同一 deletedAt）。
+   *
+   * 局部橡皮另传 added：被切开的笔画剩下的各段，index 是删除并插入之后的
+   * 下标（任意顺序，内部排序）——段落在原笔画的位置上，层次不变。段是新
+   * 笔画（新 id）：撤销时直接消失、不进墓碑（它们没有独立存在过），重做时
+   * 同一批原样回来。
    */
-  commitErase(indices: number[]): void {
+  commitErase(
+    indices: number[],
+    added: ReadonlyArray<{ index: number; stroke: InkStroke }> = [],
+  ): void {
     const sorted = [...indices].sort((a, b) => a - b);
     const removed: Array<{ index: number; stroke: InkStroke }> = [];
     // 从大到小删，保证前面的下标不受影响
@@ -195,12 +211,19 @@ export class InkStore {
       this.#strokes.splice(index, 1);
     }
     if (removed.length === 0) return;
+    const pieces = [...added]
+      .sort((a, b) => a.index - b.index)
+      .map(({ index, stroke }) => ({ index, stroke: clone(stroke) }));
+    this.#insertAt(pieces);
     const tombs = this.#toTombstones(
       removed.map((item) => item.stroke),
       "eraser",
     );
     this.#deleted.push(...tombs);
-    const entry: InkHistoryEntry = { kind: "remove", removed };
+    const entry: InkHistoryEntry =
+      pieces.length > 0
+        ? { kind: "remove", removed, added: pieces }
+        : { kind: "remove", removed };
     this.#entryTombs.set(entry, tombs);
     this.#pushUndo(entry);
     this.#trimDeleted();
@@ -411,6 +434,13 @@ export class InkStore {
     if (trimmed.length > 0) this.#onTrimmed?.(trimmed);
   }
 
+  /** 按下标升序逐个插入（下标是全部插入完成后的位置）；插入的是副本 */
+  #insertAt(items: ReadonlyArray<{ index: number; stroke: InkStroke }>): void {
+    for (const { index, stroke } of items) {
+      this.#strokes.splice(index, 0, clone(stroke));
+    }
+  }
+
   #applyInverse(entry: InkHistoryEntry): void {
     switch (entry.kind) {
       case "add": {
@@ -419,10 +449,13 @@ export class InkStore {
         break;
       }
       case "remove": {
-        // 撤销擦除：按记录的下标升序插回原位
-        for (const { index, stroke } of entry.removed) {
-          this.#strokes.splice(index, 0, clone(stroke));
+        // 撤销擦除：先按下标从大到小拿掉切剩的段，再把原笔画升序插回原位
+        const pieces = entry.added ?? [];
+        for (let i = pieces.length - 1; i >= 0; i--) {
+          const piece = pieces[i];
+          if (piece) this.#strokes.splice(piece.index, 1);
         }
+        this.#insertAt(entry.removed);
         break;
       }
       case "clear": {
@@ -450,6 +483,8 @@ export class InkStore {
             this.#strokes.splice(item.index, 1);
           }
         }
+        // 局部橡皮：切剩的段回到原来的位置
+        this.#insertAt(entry.added ?? []);
         break;
       }
       case "clear": {
@@ -479,7 +514,7 @@ function historyPoints(entry: InkHistoryEntry): number {
     case "add":
       return points(entry.strokes);
     case "remove":
-      return entry.removed.reduce(
+      return [...entry.removed, ...(entry.added ?? [])].reduce(
         (sum, item) => sum + item.stroke.points.length,
         0,
       );

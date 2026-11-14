@@ -88,6 +88,39 @@ describe("书写中那一笔的临时层", () => {
     expect(path.hasAttribute("d")).toBe(false);
   });
 
+  it("橡皮圈：圆心、半径用笔画同一单位，描边粗细不随缩放变；收起后不显示", () => {
+    const { layer, svg } = mount();
+    const ring = svg.querySelector('circle[data-slot="ink-eraser-ring"]');
+    if (!ring) throw new Error("临时层缺少橡皮圈");
+    expect((ring as SVGElement).style.display).toBe("none");
+
+    layer.showRing(120.5, 80, 14);
+    expect((ring as SVGElement).style.display).toBe("");
+    expect(ring.getAttribute("cx")).toBe("120.5");
+    expect(ring.getAttribute("cy")).toBe("80");
+    expect(ring.getAttribute("r")).toBe("14");
+    expect(ring.getAttribute("vector-effect")).toBe("non-scaling-stroke");
+
+    layer.showRing(10, 20, 8);
+    expect(svg.querySelectorAll("circle")).toHaveLength(1);
+    expect(ring.getAttribute("r")).toBe("8");
+
+    layer.hideRing();
+    expect((ring as SVGElement).style.display).toBe("none");
+  });
+
+  it("橡皮圈与书写中的一笔互不影响：clear 只收起那一笔", () => {
+    const { layer, svg, path } = mount();
+    const ring = svg.querySelector<SVGElement>(
+      'circle[data-slot="ink-eraser-ring"]',
+    );
+    layer.showRing(10, 20, 8);
+    layer.showStroke(stroke);
+    layer.clear();
+    expect(path.style.display).toBe("none");
+    expect(ring?.style.display).toBe("");
+  });
+
   it("clear 收起这一笔；destroy 连同节点一起移除", () => {
     const { host, layer, path } = mount();
     layer.showStroke(stroke);

@@ -68,6 +68,12 @@ export const INK_ERASER_MODE_LABEL: Record<InkEraserMode, string> = {
   partial: "局部",
 };
 
+/** 两种擦除方式各擦掉什么：选项下面的一行说明 */
+export const INK_ERASER_MODE_HINT: Record<InkEraserMode, string> = {
+  stroke: "碰到哪一笔，就擦掉那一整笔",
+  partial: "只擦掉橡皮碰到的那一段",
+};
+
 export const INK_ERASER_SIZE_LABEL: Record<InkEraserSize, string> = {
   small: "小",
   medium: "中",

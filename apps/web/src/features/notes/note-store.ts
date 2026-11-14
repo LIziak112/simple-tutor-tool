@@ -50,15 +50,14 @@ import type {
   NoteStatusOverview,
   NoteVersionReceipt,
 } from "@tutor/contract";
-import {
-  NOTE_MAX_POINTS_PER_STROKE,
-  NOTE_MAX_TOTAL_POINTS,
-  NOTE_PAPER_HEIGHT_DEFAULT,
-  noteDocSchema,
-} from "@tutor/contract";
+import { NOTE_PAPER_HEIGHT_DEFAULT, noteDocSchema } from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import { worstImageState } from "@/features/notes/note-image-state";
+import {
+  countPoints,
+  totalPointsAfterWrite,
+} from "@/features/notes/note-points";
 import {
   idbKVBackend,
   type KVStoreBackend,
@@ -219,16 +218,10 @@ export interface NoteLocalRecord {
   docVersion: number;
   /**
    * 全稿累计点数（T6R.9 复审⑤）：写入时增量维护（追加笔 O(新笔)、
-   * 减笔冷路径重算）——配合视图标量物化，书写热路径不再全稿 parse/重扫。
+   * 其余形态重算，见 note-points.ts）——配合视图标量物化，书写热路径不再
+   * 全稿 parse/重扫。
    */
   totalPoints: number;
-}
-
-/** 全稿点数求和（revive/减笔冷路径；追加笔走增量不经过这里） */
-function countPoints(strokes: readonly { points: unknown[] }[]): number {
-  let total = 0;
-  for (const stroke of strokes) total += stroke.points.length;
-  return total;
 }
 
 function freshRecord(): NoteLocalRecord {
@@ -707,32 +700,12 @@ export function writeNoteDoc(
 ): number {
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
-    // 增量点数维护（复审⑤）：引擎每次给全稿，但形态只有「尾部追加」
-    // 「笔数减少（撤销/擦除/清空）」「等长（信任存量——撤销/重做的子集
-    // 形态）」三种。追加笔逐笔校验单笔上限（超限告警不阻断——服务端 413
-    // 是预算权威，方案 §7「矢量超限保留本机」）；减笔冷路径重算。
-    const prevStrokes = record.doc.ink.strokes;
-    const nextStrokes = input.ink.strokes;
-    if (nextStrokes.length > prevStrokes.length) {
-      for (let i = prevStrokes.length; i < nextStrokes.length; i++) {
-        const added = nextStrokes[i];
-        if (
-          added === undefined ||
-          added.points.length > NOTE_MAX_POINTS_PER_STROKE
-        ) {
-          console.warn("草稿新笔超单笔点数上限（保留本机，同步由服务端裁决）");
-        } else {
-          record.totalPoints += added.points.length;
-        }
-      }
-      if (record.totalPoints > NOTE_MAX_TOTAL_POINTS) {
-        console.warn("草稿累计点数超全稿预算（保留本机，同步由服务端裁决）");
-      }
-    } else {
-      // 非追加形态（undo/redo/erase/clear/**等长替换**——复审⑫）：全量重算，
-      // 不依赖追加分支的增量假设
-      record.totalPoints = countPoints(nextStrokes);
-    }
+    // 点数维护（复审⑤）：尾部追加按新笔累加，其余形态全量重算（note-points.ts）
+    record.totalPoints = totalPointsAfterWrite(
+      record.doc.ink.strokes,
+      input.ink.strokes,
+      record.totalPoints,
+    );
     // 热路径零拷贝（复审⑬）：入参对象即仓内对象——**入参交出后调用方不得
     // 再改**（引擎每次变更整体换新数组，契约层笔迹不可变；gzip/parse 的
     // WeakMap memo 亦以引用为键，同引用同字节反而保幂等）

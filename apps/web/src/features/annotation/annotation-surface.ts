@@ -5,8 +5,9 @@
  * 与 ink engine 的关系（计划决策 6 的落地口径）：
  * - **复用**（不重写）：pointer-machine.ts 输入状态机（第二指针/
  *   pointercancel/lostpointercapture/失焦/布局变化全矩阵）、InkStore 历史、
- *   erase.ts 整笔橡皮、bounds.ts、atrament 程序化绘制原语（绘制路径与实时
- *   书写/重放/草稿渲染同一实现）；
+ *   erase-gesture.ts 橡皮（整笔与局部）、touch-guards.ts 触摸防护、atrament
+ *   程序化绘制原语（绘制路径与实时书写/重放/草稿渲染同一实现，一笔的重放
+ *   在 annotation-replay.ts）；
  * - **标注专用画布**（非改 atrament-adapter）：InkDoc 的 width=1000 纸不
  *   变量是契约锁定（inkDocSchema 字面量），标注坐标域=底图像素坐标
  *   （AnnotationDoc），坐标系不同——适配器层独立、引擎件全共用；
@@ -25,6 +26,7 @@
 import {
   ANNOTATION_MAX_DELETED_POINTS,
   ANNOTATION_MAX_DELETED_STROKES,
+  ANNOTATION_MAX_STROKES,
   type AnnotationDoc,
   type AnnotationSurfaceCompatibility,
 } from "@tutor/contract";
@@ -33,15 +35,8 @@ import {
   anchorKeyForStroke,
   strokeBbox,
 } from "@/features/annotation/annotation-anchor";
-import {
-  createProgrammaticAtrament,
-  paintOnePathOnAtrament,
-} from "@/features/ink/engine/atrament-replay.ts";
-import {
-  type StrokeBounds,
-  strokeBounds,
-} from "@/features/ink/engine/bounds.ts";
-import { eraseHit } from "@/features/ink/engine/erase.ts";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay.ts";
+import { createEraseGesture } from "@/features/ink/engine/erase-gesture.ts";
 import { isOnePathStroke } from "@/features/ink/engine/highlighter-paint.ts";
 import { InkStore, mintStrokeId } from "@/features/ink/engine/history.ts";
 import {
@@ -57,7 +52,9 @@ import {
   type PointerMachineState,
   touchActionForInput,
 } from "@/features/ink/engine/pointer-machine.ts";
+import { PAINT_SPREAD_CSS } from "@/features/ink/engine/region-redraw.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface.ts";
+import { createTouchGuards } from "@/features/ink/engine/touch-guards.ts";
 import {
   asPointerKind,
   INK_LOGICAL_WIDTH,
@@ -70,6 +67,7 @@ import {
   resolveGesture,
   resolveToolSpec,
 } from "@/features/ink/engine/types.ts";
+import { replayAnnotationStroke } from "./annotation-replay.ts";
 
 /** 标注画布的 DOM 标识（E2E/注入器定位用；风格对齐 INK_CANVAS_DATA_SLOT） */
 export const ANNOTATION_CANVAS_DATA_SLOT = "annotation-canvas";
@@ -160,39 +158,6 @@ function logicalToBase(baseWidth: number, value: number): number {
   return round2((value / INK_LOGICAL_WIDTH) * baseWidth);
 }
 
-/**
- * 在底图像素域内按一笔重放（atrament 官方程序化绘制；CSS 坐标桥接）。
- *
- * atrament 以 **CSS 单位**收点与线宽，内部乘 canvas.width/offsetWidth 落
- * 位图。cssPerBase = CSS 像素/底图像素：坐标 base×cssPerBase、线宽
- * weight_base×cssPerBase 交给 atrament 后，净落位图值 = 原底图像素值。
- * 荧光笔整笔一次描边（同一换算，见 engine/highlighter-paint）。
- */
-export function replayAnnotationStroke(
-  atrament: Atrament,
-  cssPerBase: number,
-  s: InkStroke,
-): void {
-  if (s.points.length === 0) return;
-  if (paintOnePathOnAtrament(atrament, cssPerBase, s)) return;
-  atrament.color = s.color;
-  atrament.weight = s.weight * cssPerBase;
-  const first = s.points[0];
-  if (!first) return;
-  const sx = first.x * cssPerBase;
-  const sy = first.y * cssPerBase;
-  atrament.beginStroke(sx, sy);
-  let prev = atrament.draw(sx, sy, sx, sy, first.p);
-  for (let i = 1; i < s.points.length; i++) {
-    const pt = s.points[i];
-    if (!pt) continue;
-    const x = pt.x * cssPerBase;
-    const y = pt.y * cssPerBase;
-    prev = atrament.draw(x, y, prev.x, prev.y, pt.p);
-  }
-  atrament.endStroke(prev.x, prev.y);
-}
-
 export function createAnnotationSurface(
   options: AnnotationSurfaceOptions,
 ): AnnotationSurface {
@@ -239,12 +204,30 @@ export function createAnnotationSurface(
   let liveBrush: { color: string; weight: number } | null = null;
   /** 本笔是否整笔一条路径（荧光笔）：书写中只在临时层上，不往画布逐段画 */
   let liveOnLayer = false;
-  let liveStrokeIsErase = false;
+  /**
+   * 橡皮从落下到抬起的这一次擦除（落笔时按当时的工具开始，eraser.active 即
+   * 本次手势是擦除）。拖动途中正文不动，抬起时一次提交。
+   * 近似原位时笔画在存储域、画布在视图域，对不上：不做局部重画，整张重画。
+   */
+  const eraser = createEraseGesture({
+    repaintTarget: () =>
+      view || !ctx2d || !canvas
+        ? null
+        : {
+            context: ctx2d,
+            canvas,
+            pixelsPerUnit: 1, // 位图恒 = 底图像素域
+            spread: PAINT_SPREAD_CSS / cssPerBase(),
+          },
+    paint: (item) => {
+      if (atrament) replayAnnotationStroke(atrament, cssPerBase(), item.stroke);
+    },
+    redraw,
+    ring: () => liveLayer,
+  });
   /** 本次擦除的橡皮半径（底图像素域），取落笔时的档位 */
   let liveEraseRadius = 0;
   let livePrev: { x: number; y: number } | null = null;
-  let pendingErase = new Set<number>();
-  let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
 
   let reasonOverride: InkChangeReason | null = null;
   let finishCause: import("@tutor/contract").QuestionProcessFinish | undefined;
@@ -278,15 +261,21 @@ export function createAnnotationSurface(
   }
 
   function getDoc(): AnnotationDoc {
+    const strokes = store.getStrokes();
+    const deleted = store.getDeleted();
+    // 锚点只带正文与墓碑里有的笔画（服务端按此校验）：局部擦除被撤销后，
+    // 切出来的段两边都不在；重做时它们原样回来，所以表里的键留着不删
+    const known = new Set([...strokes, ...deleted].map((stroke) => stroke.id));
+    const kept = Object.entries(anchors).filter(([id]) => known.has(id));
     return {
       version: 1,
       // 近似原位：文档恒在存储域（保存底图域），画布域（视图）只是显示
       baseWidth: view?.storedBaseWidth ?? baseWidth,
       baseHeight: view?.storedBaseHeight ?? baseHeight,
-      strokes: store.getStrokes(),
+      strokes,
       // LR-2/LR-4：墓碑与锚点非空才写键（空稿/旧稿字节兼容）
-      ...(store.getDeleted().length > 0 ? { deleted: store.getDeleted() } : {}),
-      ...(Object.keys(anchors).length > 0 ? { anchors: { ...anchors } } : {}),
+      ...(deleted.length > 0 ? { deleted } : {}),
+      ...(kept.length > 0 ? { anchors: Object.fromEntries(kept) } : {}),
     };
   }
 
@@ -360,7 +349,12 @@ export function createAnnotationSurface(
     c.lineJoin = "round";
   }
 
-  /** 全量重绘（undo/redo/erase/load 后）：清位图 → 逐笔重放（跳过待擦除） */
+  /** 这一笔的锚键（没有 id 或没锚过为 undefined） */
+  function anchorOf(s: InkStroke | undefined): string | undefined {
+    return s?.id === undefined ? undefined : anchors[s.id];
+  }
+
+  /** 全量重绘（undo/redo/erase/load 后）：清位图 → 逐笔重放（擦除途中画预览） */
   function redraw(): void {
     const c = ctx2d;
     const a = atrament;
@@ -370,20 +364,24 @@ export function createAnnotationSurface(
     c.clearRect(0, 0, canvas.width, canvas.height);
     c.restore();
     resetContext();
-    const rect = canvas.getBoundingClientRect();
-    const cssW = rect.width > 0 ? rect.width : baseWidth;
-    const scale = cssW / baseWidth;
-    store.peekStrokes().forEach((s, i) => {
-      if (pendingErase.has(i)) return;
-      // 近似原位：重绘在视图域画——存储笔画经锚映射到当前布局（锚缺失走 root）
+    const scale = cssPerBase();
+    const strokes = store.peekStrokes();
+    // 近似原位：重绘在视图域画——存储笔画经锚映射到当前布局（锚缺失走 root）
+    const paint = (s: InkStroke, anchorKey: string | undefined) =>
       replayAnnotationStroke(
         a,
         scale,
-        view
-          ? view.strokeToView(s, s.id === undefined ? undefined : anchors[s.id])
-          : s,
+        view ? view.strokeToView(s, anchorKey) : s,
       );
-    });
+    const preview = eraser.visible();
+    // 擦除途中：切剩的段还没有自己的锚点，按它出自的那一笔的锚映射
+    if (preview) {
+      for (const item of preview) {
+        paint(item.stroke, anchorOf(strokes[item.source]));
+      }
+    } else {
+      for (const s of strokes) paint(s, anchorOf(s));
+    }
   }
 
   /** 把书写中的整笔一条路径的那一笔（视图域）更新到临时层 */
@@ -401,10 +399,22 @@ export function createAnnotationSurface(
     livePrev = null;
     liveOnLayer = false;
     liveLayer?.clear();
-    liveStrokeIsErase = false;
-    pendingErase = new Set();
-    erasePrev = undefined;
+    eraser.end();
     redraw();
+  }
+
+  /** 橡皮的一个落点（画布域）→ 擦除用的落点与橡皮圈的位置 */
+  function erasePointOf(at: { x: number; y: number }) {
+    // 近似原位：橡皮命中在存储域做——指针点先映射回存储域（ratio 供半径换算）
+    const stored = view ? view.pointToStored(at) : { ...at, ratio: 1 };
+    return {
+      point: {
+        x: stored.x,
+        y: stored.y,
+        radius: liveEraseRadius * stored.ratio,
+      },
+      ring: { ...at, radius: liveEraseRadius },
+    };
   }
 
   /** 收笔：按已收真实采样提交（不补造终点；落笔快照分派，同引擎口径） */
@@ -412,12 +422,21 @@ export function createAnnotationSurface(
     cause: import("@tutor/contract").QuestionProcessFinish,
   ): void {
     finishCause = cause;
-    if (liveStrokeIsErase) {
-      // 删除前的预览下标不能继续用于删除后正文。
-      const indices = [...pendingErase];
-      pendingErase.clear();
-      if (indices.length > 0) {
-        withReason("erase", () => store.commitErase(indices));
+    if (eraser.active) {
+      // 结果里的下标属于删除前的正文：先结束这次擦除，再提交、重绘
+      const erased = eraser.end();
+      if (erased) {
+        // 切剩的段沿用原笔画的锚点（近似原位时与原笔画按同一块映射）
+        const origin = store.peekStrokes();
+        for (const { stroke, source } of erased.added) {
+          const anchorKey = anchorOf(origin[source]);
+          if (stroke.id !== undefined && anchorKey !== undefined) {
+            anchors[stroke.id] = anchorKey;
+          }
+        }
+        withReason("erase", () =>
+          store.commitErase(erased.removed, erased.added),
+        );
       }
       redraw();
     } else if (livePoints.length > 0 && liveBrush) {
@@ -469,9 +488,6 @@ export function createAnnotationSurface(
     livePrev = null;
     liveOnLayer = false;
     liveLayer?.clear();
-    liveStrokeIsErase = false;
-    pendingErase = new Set();
-    erasePrev = undefined;
   }
 
   // ---- 事件处理（接线同 atrament-adapter；坐标域换为底图像素） ----
@@ -517,23 +533,16 @@ export function createAnnotationSurface(
     const resolved = resolveGesture(tool, base);
     base = resolved.base;
     const gesture = resolved.gesture;
-    liveStrokeIsErase = gesture.kind === "erase";
 
     if (gesture.kind === "erase") {
       // 引擎档位按 1000 纸基准定义 → 底图像素域等比换算
       liveEraseRadius = logicalToBase(baseWidth, gesture.radius);
-      // 近似原位：橡皮命中在存储域做——指针点先映射回存储域（ratio 供半径换算）
-      const stored = view ? view.pointToStored({ x, y }) : { x, y, ratio: 1 };
-      erasePrev = { x: stored.x, y: stored.y };
-      pendingErase = new Set(
-        eraseHit(
-          store.peekStrokes(),
-          stored.x,
-          stored.y,
-          liveEraseRadius * stored.ratio,
-        ),
-      );
-      redraw();
+      // 圈画有笔画数上限：局部擦除把一笔切成几段，切到上限后改为整笔擦掉
+      eraser.begin(store.peekStrokes(), gesture.mode, {
+        maxStrokes: ANNOTATION_MAX_STROKES,
+      });
+      const at = erasePointOf({ x, y });
+      eraser.through([at.point], at.ring);
       return;
     }
 
@@ -561,6 +570,19 @@ export function createAnnotationSurface(
   }
 
   function onPointerMove(e: PointerEvent): void {
+    // 橡皮悬停（鼠标、笔，没按下）：显示橡皮圈，让人先看清擦多大一块
+    if (
+      machine.activePointerId === null &&
+      e.buttons === 0 &&
+      e.pointerType !== "touch"
+    ) {
+      const hover = resolveGesture(tool, base).gesture;
+      if (hover.kind === "erase") {
+        const at = eventToBase(e);
+        const radius = logicalToBase(baseWidth, hover.radius);
+        liveLayer?.showRing(at.x, at.y, radius);
+      }
+    }
     if (!isSampleMove(machine, e.pointerId)) return;
     const rect = canvas?.getBoundingClientRect();
     let coalesced: PointerEvent[] = [];
@@ -569,38 +591,18 @@ export function createAnnotationSurface(
     }
     const events = coalesced.length > 0 ? coalesced : [e];
 
-    let eraseView: readonly InkStroke[] | null = null;
-    let eraseBoxes: Array<StrokeBounds | null> | null = null;
-    if (liveStrokeIsErase) {
-      eraseView = store.peekStrokes();
-      eraseBoxes = eraseView.map((s) => strokeBounds(s));
+    // 橡皮：一批采样记完再重画一次；橡皮圈跟到最后一个落点
+    if (eraser.active) {
+      const batch = events.map((ev) => erasePointOf(eventToBase(ev, rect)));
+      eraser.through(
+        batch.map((at) => at.point),
+        batch.at(-1)?.ring,
+      );
+      return;
     }
 
-    const radius = liveEraseRadius;
     for (const ev of events) {
       const { x, y } = eventToBase(ev, rect);
-      if (eraseView && eraseBoxes) {
-        // 近似原位：逐采样映射回存储域再整笔命中（半径按局部线比换算）
-        const stored = view ? view.pointToStored({ x, y }) : { x, y, ratio: 1 };
-        const hits = eraseHit(
-          eraseView,
-          stored.x,
-          stored.y,
-          radius * stored.ratio,
-          eraseBoxes,
-          erasePrev,
-        );
-        erasePrev = { x: stored.x, y: stored.y };
-        let changed = false;
-        for (const h of hits) {
-          if (!pendingErase.has(h)) {
-            pendingErase.add(h);
-            changed = true;
-          }
-        }
-        if (changed) redraw();
-        continue;
-      }
       if (!liveBrush) continue;
       const p = pressureOf(ev);
       const t = Math.max(0, Math.round(ev.timeStamp - liveStartStamp));
@@ -651,36 +653,16 @@ export function createAnnotationSurface(
     if (document.hidden) finishPointer({ kind: "blur" });
   }
 
-  function anyStylusTouch(
-    touches: TouchList | Array<{ touchType?: string }> | undefined,
-  ): boolean {
-    if (touches === undefined) return false;
-    for (let i = 0; i < touches.length; i++) {
-      const t = touches[i];
-      if (t?.touchType === "stylus") return true;
-    }
-    return false;
+  /** 悬停留下的橡皮圈：指针离开画布就收起（拖动中的由收笔收起） */
+  function onPointerLeave(): void {
+    if (!eraser.active) liveLayer?.hideRing();
   }
 
-  function onTouchStart(e: TouchEvent): void {
-    if (!anyStylusTouch(e.changedTouches) && !anyStylusTouch(e.touches)) {
-      return;
-    }
+  /** 触摸侧「笔写字、手指滚动」与长按防误触（见 touch-guards.ts） */
+  const guards = createTouchGuards(() => {
     machine = observeStylusTouch(machine);
     applyTouchAction();
-    e.preventDefault();
-  }
-  function onTouchMove(e: TouchEvent): void {
-    if (anyStylusTouch(e.changedTouches) || anyStylusTouch(e.touches)) {
-      e.preventDefault();
-    }
-  }
-  function onContextMenu(e: Event): void {
-    e.preventDefault();
-  }
-  function onSelectStart(e: Event): void {
-    e.preventDefault();
-  }
+  });
 
   function bindInput(enabled: boolean): void {
     if (!canvas) return;
@@ -694,24 +676,31 @@ export function createAnnotationSurface(
       canvas.addEventListener("pointerup", onPointerUp);
       canvas.addEventListener("pointercancel", onPointerCancel);
       canvas.addEventListener("lostpointercapture", onLostPointerCapture);
-      canvas.addEventListener("touchstart", onTouchStart, { passive: false });
-      canvas.addEventListener("touchmove", onTouchMove, { passive: false });
-      canvas.addEventListener("contextmenu", onContextMenu);
-      canvas.addEventListener("selectstart", onSelectStart);
+      canvas.addEventListener("pointerleave", onPointerLeave);
+      canvas.addEventListener("touchstart", guards.onTouchStart, {
+        passive: false,
+      });
+      canvas.addEventListener("touchmove", guards.onTouchMove, {
+        passive: false,
+      });
+      canvas.addEventListener("contextmenu", guards.onContextMenu);
+      canvas.addEventListener("selectstart", guards.onSelectStart);
       window.addEventListener("blur", onWindowBlur);
       document.addEventListener("visibilitychange", onVisibilityChange);
       applyTouchAction();
     } else {
       finishPointer({ kind: "layoutchange" });
+      onPointerLeave();
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerCancel);
       canvas.removeEventListener("lostpointercapture", onLostPointerCapture);
-      canvas.removeEventListener("touchstart", onTouchStart);
-      canvas.removeEventListener("touchmove", onTouchMove);
-      canvas.removeEventListener("contextmenu", onContextMenu);
-      canvas.removeEventListener("selectstart", onSelectStart);
+      canvas.removeEventListener("pointerleave", onPointerLeave);
+      canvas.removeEventListener("touchstart", guards.onTouchStart);
+      canvas.removeEventListener("touchmove", guards.onTouchMove);
+      canvas.removeEventListener("contextmenu", guards.onContextMenu);
+      canvas.removeEventListener("selectstart", guards.onSelectStart);
       window.removeEventListener("blur", onWindowBlur);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     }
@@ -816,6 +805,8 @@ export function createAnnotationSurface(
       const resolved = resolveToolSpec(next, base);
       base = resolved.base;
       applyTouchAction();
+      // 悬停时留下的橡皮圈不跟到别的工具上
+      onPointerLeave();
     },
 
     canUndo(): boolean {

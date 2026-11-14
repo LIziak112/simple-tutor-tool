@@ -963,3 +963,192 @@ test(
     await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
   },
 );
+
+/** 用当前的笔在画布中线上横着写一笔：中心左右各 100px */
+async function writeLineAcross(canvas: Locator): Promise<void> {
+  await canvas.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const fire = (type: string, x: number, buttons: number) =>
+      element.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: 11,
+          pointerType: "pen",
+          isPrimary: true,
+          clientX: rect.left + x,
+          clientY: rect.top + cy,
+          button: 0,
+          buttons,
+          pressure: 0.5,
+        }),
+      );
+    fire("pointerdown", cx - 100, 1);
+    for (let x = cx - 90; x <= cx + 100; x += 10) fire("pointermove", x, 1);
+    fire("pointerup", cx + 100, 0);
+  });
+}
+
+/**
+ * 橡皮从画布中心上方 30px 竖着划到下方 30px，取抬笔前、抬笔后的读数：橡皮圈
+ * 有没有显示，中心与中心左右各 60px 处有没有墨。
+ */
+async function eraseDownAndProbe(canvas: Locator) {
+  return canvas.evaluate((element) => {
+    if (!(element instanceof HTMLCanvasElement)) throw new Error("不是画布");
+    const rect = element.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const fire = (type: string, y: number, buttons: number) =>
+      element.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: 12,
+          pointerType: "pen",
+          isPrimary: true,
+          clientX: rect.left + cx,
+          clientY: rect.top + y,
+          button: 0,
+          buttons,
+          pressure: 0.5,
+        }),
+      );
+    /** (x, y) 周围 3 CSS px 见方里最浓的那个像素的不透明度 */
+    const inkAt = (x: number, y: number) => {
+      const scale = element.width / rect.width;
+      const data =
+        element
+          .getContext("2d")
+          ?.getImageData(
+            Math.round((x - 1.5) * scale),
+            Math.round((y - 1.5) * scale),
+            Math.ceil(3 * scale),
+            Math.ceil(3 * scale),
+          ).data ?? [];
+      let alpha = 0;
+      for (let i = 3; i < data.length; i += 4)
+        alpha = Math.max(alpha, data[i] ?? 0);
+      return alpha;
+    };
+    const read = () => {
+      const ring = element.parentElement?.querySelector<SVGElement>(
+        'svg[data-slot="ink-live-layer"] circle[data-slot="ink-eraser-ring"]',
+      );
+      return {
+        ring: ring != null && ring.style.display !== "none",
+        center: inkAt(cx, cy),
+        left: inkAt(cx - 60, cy),
+        right: inkAt(cx + 60, cy),
+      };
+    };
+    fire("pointerdown", cy - 30, 1);
+    for (const y of [cy - 15, cy, cy + 15, cy + 30]) fire("pointermove", y, 1);
+    const erasing = read();
+    fire("pointerup", cy + 30, 0);
+    return { erasing, done: read() };
+  });
+}
+
+test(
+  "局部橡皮：面板里选「局部」，只擦掉碰到的一段，橡皮圈跟着走（草稿纸与圈画）",
+  {
+    tag: ["@annotation"],
+  },
+  async ({ page }, testInfo) => {
+    const card = page.getByRole("article", { name: "第 1 题", exact: true });
+
+    // 草稿纸：写一条横线，橡皮面板里把擦除方式从「整笔」改成「局部」
+    await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+    const paper = card.locator('[data-slot="note-layer"]');
+    const paperToolbar = paper.getByRole("toolbar");
+    const paperCanvas = paper.locator("canvas");
+    await writeLineAcross(paperCanvas);
+    await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    const paperEraser = paperToolbar.getByRole("button", {
+      name: "橡皮",
+      exact: true,
+    });
+    await paperEraser.click();
+    await paperEraser.click();
+    const panel = page.getByRole("dialog", { name: "橡皮设置" });
+    const modes = panel.getByRole("radiogroup", { name: "擦除方式" });
+    await expect(modes.getByRole("radio")).toHaveCount(2);
+    await expect(modes.getByRole("radio", { name: "整笔" })).toBeChecked();
+    await expect(panel.getByText("碰到哪一笔，就擦掉那一整笔")).toBeVisible();
+    await modes.getByRole("radio", { name: "局部" }).click();
+    await expect(modes.getByRole("radio", { name: "局部" })).toBeChecked();
+    await expect(panel.getByText("只擦掉橡皮碰到的那一段")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("eraser-panel.png") });
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+
+    // 竖着划过横线中间：划的途中橡皮圈跟着、中间那一段已经擦掉、两头还在；
+    // 抬笔后橡皮圈收起，一笔变两笔
+    const onPaper = await eraseDownAndProbe(paperCanvas);
+    expect(onPaper.erasing.ring).toBe(true);
+    expect(onPaper.erasing.center).toBe(0);
+    expect(onPaper.erasing.left).toBeGreaterThan(0);
+    expect(onPaper.erasing.right).toBeGreaterThan(0);
+    expect(onPaper.done).toEqual({ ...onPaper.erasing, ring: false });
+    await expect(paper.getByText("2 笔", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("eraser-partial-paper.png"),
+    });
+    // 一次拖动一步撤销；重做回到两段
+    await paperToolbar
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await expect(paper.getByText("1 笔", { exact: true })).toBeVisible();
+    await paperToolbar
+      .getByRole("button", { name: "重做", exact: true })
+      .click();
+    await expect(paper.getByText("2 笔", { exact: true })).toBeVisible();
+    await card.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ }).click();
+
+    // 圈画：各书写面的工具箱各管各的，这里的橡皮还是缺省的整笔
+    const trigger = card.getByRole("button", { name: /圈画题干/ });
+    await trigger.click();
+    const markCanvas = card.locator('canvas[data-slot="annotation-canvas"]');
+    await expect(markCanvas).toHaveAttribute("data-input-enabled", "true");
+    const markToolbar = page.getByRole("toolbar", {
+      name: "第 1 题标画工具栏",
+    });
+    await writeLineAcross(markCanvas);
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    const markEraser = markToolbar.getByRole("button", {
+      name: "橡皮",
+      exact: true,
+    });
+    await markEraser.click();
+    await markEraser.click();
+    const markModes = page
+      .getByRole("dialog", { name: "橡皮设置" })
+      .getByRole("radiogroup", { name: "擦除方式" });
+    await expect(markModes.getByRole("radio", { name: "整笔" })).toBeChecked();
+    await markModes.getByRole("radio", { name: "局部" }).click();
+    await page.keyboard.press("Escape");
+    const onQuestion = await eraseDownAndProbe(markCanvas);
+    expect(onQuestion.erasing.ring).toBe(true);
+    expect(onQuestion.erasing.center).toBe(0);
+    expect(onQuestion.erasing.left).toBeGreaterThan(0);
+    expect(onQuestion.erasing.right).toBeGreaterThan(0);
+    expect(onQuestion.done).toEqual({ ...onQuestion.erasing, ring: false });
+    await expect(trigger).toHaveAccessibleName(/已有 2 笔/);
+    await page.screenshot({
+      path: testInfo.outputPath("eraser-partial-question.png"),
+    });
+    await markToolbar
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    await markToolbar
+      .getByRole("button", { name: "完成标画", exact: true })
+      .click();
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  },
+);

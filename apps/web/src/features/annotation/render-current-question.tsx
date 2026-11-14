@@ -23,7 +23,7 @@ import {
   samplePngBlank,
   withTimeout,
 } from "@/features/notes/rasterize-utils";
-import { replayAnnotationStroke } from "./annotation-surface";
+import { replayAnnotationStroke } from "./annotation-replay";
 import {
   assertPublicQuestion,
   awaitQuestionSurfaceReady,

@@ -947,6 +947,48 @@ describe("note-store：replaceDoc 单点与热路径（T6R.9 复审⑩⑫⑬）"
     expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(0);
   });
 
+  it("笔数变多但不是尾部追加（局部擦除把一笔切成两段、撤销把擦掉的一笔放回原位）：totalPoints 仍是实际点数", async () => {
+    const withId = (id: string, points: Array<[number, number]>) => ({
+      ...stroke(points),
+      id,
+    });
+    const first = withId("stroke-first", [
+      [0, 0],
+      [10, 0],
+      [20, 0],
+      [30, 0],
+    ]);
+    const second = withId("stroke-second", [
+      [0, 50],
+      [10, 50],
+    ]);
+    const total = async () => (await recordOf(SESSION_A, SCOPE)).totalPoints;
+    writeNoteDoc(SESSION_A, SCOPE, docOf([first, second]));
+    expect(await total()).toBe(6);
+    // 局部擦除：第一笔中间被擦掉，剩两段各 2 点；第二笔往后挪了一位
+    writeNoteDoc(
+      SESSION_A,
+      SCOPE,
+      docOf([
+        withId("piece-head", [
+          [0, 0],
+          [8, 0],
+        ]),
+        withId("piece-tail", [
+          [22, 0],
+          [30, 0],
+        ]),
+        second,
+      ]),
+    );
+    expect(await total()).toBe(6);
+    // 整笔擦掉第一笔，再撤销：它回到第二笔前面
+    writeNoteDoc(SESSION_A, SCOPE, docOf([second]));
+    expect(await total()).toBe(2);
+    writeNoteDoc(SESSION_A, SCOPE, docOf([first, second]));
+    expect(await total()).toBe(6);
+  });
+
   it("物化与 Zod parse 锁步（materializeDoc 输出 ≡ parse 物化，复审⑪）", () => {
     const bare = {
       version: 1,

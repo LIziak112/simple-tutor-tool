@@ -820,6 +820,89 @@ describe("MaterialAnnotationOverlay 材料圈画手写图层", () => {
     },
   );
 
+  it("局部橡皮：只擦掉碰到的一段，两头各留一笔并即时保存；拖动时相邻落点之间按线段扫过", async () => {
+    // 横线 x 100→300、y=100（笔宽 2.5，半宽 1.25），另有一笔在远处
+    const line: InkStroke = {
+      tool: "pen",
+      color: "#dc2626",
+      weight: 2.5,
+      points: [
+        { x: 100, y: 100, p: 0.5, t: 1 },
+        { x: 300, y: 100, p: 0.5, t: 21 },
+      ],
+    };
+    draftStore.saveMaterialInk(
+      "att-1",
+      "mat-1",
+      inkDocOf([line, strokeAt(100, 300)]),
+    );
+    draftStore.saveMaterialInkBase("att-1", "mat-1", {
+      cssWidth: 500,
+      cssHeight: 400,
+    });
+    const { container } = render(
+      <AttemptEditorProvider>
+        <CoordinatedAnnotationProvider
+          initialToolbox={{
+            active: "eraser",
+            eraser: { mode: "partial", size: "small" },
+          }}
+        >
+          <AnnotationToggle questionId="q1" />
+          <MaterialAnnotationOverlay attemptId="att-1" materialId="mat-1">
+            <div>擦除材料</div>
+          </MaterialAnnotationOverlay>
+        </CoordinatedAnnotationProvider>
+      </AttemptEditorProvider>,
+    );
+    fireEvent.click(screen.getByTestId("toggle-annotation"));
+    const root = overlayRootOf(container);
+    await waitInkReady(root);
+    const layer = inputLayerOf(container);
+    mockLayerRect(layer);
+    const storedXs = () => {
+      const stored = draftStore.getMaterialInk("att-1", "mat-1");
+      return stored?.engine === "atrament"
+        ? stored.data.strokes.map((stroke) => stroke.points.map((p) => p.x))
+        : null;
+    };
+
+    await act(async () => {
+      // (100,50) = 逻辑 (200,100)：小号半径 8 + 半笔宽 1.25 → 切掉 190.75–209.25
+      fireEvent.pointerDown(layer, {
+        pointerId: 1,
+        button: 0,
+        pointerType: "pen",
+        clientX: 100,
+        clientY: 50,
+        pressure: 0.5,
+      });
+    });
+    expect(storedXs()).toEqual([
+      [100, 190.75],
+      [209.25, 300],
+      [100, 120],
+    ]);
+
+    await act(async () => {
+      // 拖到 (110,50) = 逻辑 (220,100)：从上一个落点扫过来，切口右沿推到 229.25
+      fireEvent.pointerMove(layer, {
+        pointerId: 1,
+        pointerType: "pen",
+        clientX: 110,
+        clientY: 50,
+        pressure: 0.5,
+      });
+      fireEvent.pointerUp(layer, { pointerId: 1, pointerType: "pen" });
+    });
+    expect(storedXs()).toEqual([
+      [100, 190.75],
+      [229.25, 300],
+      [100, 120],
+    ]);
+    expect(root).toHaveAttribute("data-stroke-count", "3");
+  });
+
   it("笔色、粗细跟随协同工具箱：落笔写入对应的颜色与线宽", async () => {
     const { container } = render(
       <AttemptEditorProvider>

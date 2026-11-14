@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { RadioGroup } from "radix-ui";
 import { type ReactNode, useId } from "react";
 import {
+  INK_ERASER_MODES,
   INK_ERASER_SIZE_KEYS,
   INK_HIGHLIGHTER_COLOR_KEYS,
   INK_HIGHLIGHTER_SIZE_KEYS,
@@ -14,9 +15,12 @@ import {
   INK_HIGHLIGHTER_SIZES,
   INK_PEN_COLORS,
   INK_PEN_SIZES,
+  type InkEraserMode,
   type InkToolType,
 } from "../engine/types.ts";
 import {
+  INK_ERASER_MODE_HINT,
+  INK_ERASER_MODE_LABEL,
   INK_ERASER_SIZE_LABEL,
   INK_HIGHLIGHTER_COLOR_LABEL,
   INK_HIGHLIGHTER_SIZE_LABEL,
@@ -38,6 +42,10 @@ interface OptionGroupProps<T extends string> {
   onChange(value: T): void;
   /** 选项的图形（色块、圆点等）；名字由 optionLabel 提供给读屏 */
   render(option: T): ReactNode;
+  /** 图形后面再写上名字：光看图形分不出来的选项用（擦除方式） */
+  named?: boolean;
+  /** 选项下面的一行说明（当前选中项是什么意思） */
+  hint?: string;
 }
 
 function OptionGroup<T extends string>({
@@ -47,8 +55,11 @@ function OptionGroup<T extends string>({
   optionLabel,
   onChange,
   render,
+  named = false,
+  hint,
 }: OptionGroupProps<T>) {
   const labelId = useId();
+  const hintId = useId();
   return (
     <div className="flex flex-col gap-1">
       <span id={labelId} className="px-1 text-xs text-muted-foreground">
@@ -56,6 +67,7 @@ function OptionGroup<T extends string>({
       </span>
       <RadioGroup.Root
         aria-labelledby={labelId}
+        aria-describedby={hint === undefined ? undefined : hintId}
         orientation="horizontal"
         value={value}
         onValueChange={(next) => {
@@ -72,15 +84,22 @@ function OptionGroup<T extends string>({
             aria-label={optionLabel[option]}
             title={optionLabel[option]}
             className={cn(
-              "flex size-11 items-center justify-center rounded-lg border border-transparent outline-none transition-colors",
+              "flex h-11 items-center justify-center rounded-lg border border-transparent outline-none transition-colors",
               "hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
               "data-[state=checked]:border-ring data-[state=checked]:bg-muted",
+              named ? "gap-1.5 px-2.5 text-sm" : "w-11",
             )}
           >
             {render(option)}
+            {named && <span aria-hidden>{optionLabel[option]}</span>}
           </RadioGroup.Item>
         ))}
       </RadioGroup.Root>
+      {hint !== undefined && (
+        <span id={hintId} className="px-1 text-xs text-muted-foreground">
+          {hint}
+        </span>
+      )}
     </div>
   );
 }
@@ -180,27 +199,66 @@ function HighlighterOptions({ toolbox, onChange }: PanelProps) {
   );
 }
 
-/** 橡皮：大小 */
+/**
+ * 擦除方式的图形：一笔波浪线。整笔——整条都擦成了虚线；局部——只有中间断开
+ * 一截，两头还是实线。
+ */
+function EraserModeGlyph({ mode }: { mode: InkEraserMode }) {
+  const wave = "M3 13 C 7 3, 11 3, 14 10 S 21 17, 25 7";
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 28 20"
+      className="h-5 w-7 shrink-0 fill-none stroke-foreground"
+      strokeWidth={2}
+      strokeLinecap="round"
+    >
+      {mode === "stroke" ? (
+        <path d={wave} strokeDasharray="1.5 3.5" className="opacity-50" />
+      ) : (
+        <path d={wave} pathLength={100} strokeDasharray="36 28 36" />
+      )}
+    </svg>
+  );
+}
+
+/** 橡皮：擦除方式与大小 */
 function EraserOptions({ toolbox, onChange }: PanelProps) {
   const { eraser } = toolbox;
   return (
-    <OptionGroup
-      label="大小"
-      value={eraser.size}
-      options={INK_ERASER_SIZE_KEYS}
-      optionLabel={INK_ERASER_SIZE_LABEL}
-      onChange={(size) => onChange({ ...toolbox, eraser: { ...eraser, size } })}
-      render={(size) => {
-        const ring = 8 + INK_ERASER_SIZES[size] * 0.6;
-        return (
-          <span
-            aria-hidden
-            className="rounded-full border-2 border-foreground/70"
-            style={{ width: ring, height: ring }}
-          />
-        );
-      }}
-    />
+    <>
+      <OptionGroup
+        label="擦除方式"
+        value={eraser.mode}
+        options={INK_ERASER_MODES}
+        optionLabel={INK_ERASER_MODE_LABEL}
+        hint={INK_ERASER_MODE_HINT[eraser.mode]}
+        onChange={(mode) =>
+          onChange({ ...toolbox, eraser: { ...eraser, mode } })
+        }
+        render={(mode) => <EraserModeGlyph mode={mode} />}
+        named
+      />
+      <OptionGroup
+        label="大小"
+        value={eraser.size}
+        options={INK_ERASER_SIZE_KEYS}
+        optionLabel={INK_ERASER_SIZE_LABEL}
+        onChange={(size) =>
+          onChange({ ...toolbox, eraser: { ...eraser, size } })
+        }
+        render={(size) => {
+          const ring = 8 + INK_ERASER_SIZES[size] * 0.6;
+          return (
+            <span
+              aria-hidden
+              className="rounded-full border-2 border-foreground/70"
+              style={{ width: ring, height: ring }}
+            />
+          );
+        }}
+      />
+    </>
   );
 }
 

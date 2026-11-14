@@ -13,7 +13,7 @@ import {
   createAnnotationToolbox,
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
-import { eraseHit } from "@/features/ink/engine/erase.ts";
+import { createEraseSession } from "@/features/ink/engine/erase-session.ts";
 import { toLogicalPoint } from "@/features/ink/engine/normalize.ts";
 import {
   advancePointerMachine,
@@ -134,8 +134,9 @@ export interface MaterialAnnotationOverlayProps {
  *   变化先收笔等决策矩阵与其单测共用），固定笔写、手指滚动；
  * - 绘制：ink/replay/draw 的 createAtramentReplayCanvas（与回放/导出同一
  *   atrament 绘制原语、DPR 上限 2、尺寸变化自重画）；
- * - 笔色/笔粗/橡皮大小：跟随协同工具箱，经 resolveGesture 换成落笔规格；
- *   橡皮命中走 eraseHit（半径内含半笔宽，与题面圈画同手感）；
+ * - 笔色/笔粗/橡皮大小与擦除方式：跟随协同工具箱，经 resolveGesture 换成
+ *   落笔规格；橡皮走 erase-session（整笔或局部，命中半径内含半笔宽，与题面
+ *   圈画同手感）；
  * - 矢量坐标一律按 INK_LOGICAL_WIDTH(1000) 归一化存储（normalize.ts）。
  * 笔迹按 attemptId + inkKey 合并存入 draftStore（本机稿；交卷不清除，
  * 结果页只读回看——见 clearDraft 的保稿分支）。
@@ -480,22 +481,26 @@ export function MaterialAnnotationOverlay({
     [],
   );
 
+  /**
+   * 橡皮经过一个落点：从上一个落点扫到这里，碰到的笔画整笔拿掉（整笔模式）
+   * 或只切掉碰到的一段（局部模式），随即保存。材料圈画没有撤销，每个落点
+   * 各算各的，不用等抬笔。
+   */
   const eraseAt = useCallback(
-    (point: { x: number; y: number }, radius: number) => {
-      const hits = eraseHit(
-        strokesRef.current,
+    (
+      point: { x: number; y: number },
+      eraser: Extract<InkGesture, { kind: "erase" }>,
+    ) => {
+      const session = createEraseSession(strokesRef.current, eraser.mode);
+      const changed = session.sweep(
         point.x,
         point.y,
-        radius,
-        undefined,
+        eraser.radius,
         lastEraseRef.current ?? undefined,
       );
       lastEraseRef.current = point;
-      if (hits.length === 0) return;
-      const hitSet = new Set(hits);
-      const remaining = strokesRef.current.filter(
-        (_, index) => !hitSet.has(index),
-      );
+      if (changed === null) return;
+      const remaining = session.visible().map((item) => item.stroke);
       setStrokesBoth(remaining);
       saveToDraftStore(remaining);
     },
@@ -547,7 +552,7 @@ export function MaterialAnnotationOverlay({
       liveGestureRef.current = gesture;
       if (gesture.kind === "erase") {
         lastEraseRef.current = null;
-        eraseAt(point, gesture.radius);
+        eraseAt(point, gesture);
         return;
       }
       if (gesture.kind !== "draw") return;
@@ -653,7 +658,7 @@ export function MaterialAnnotationOverlay({
       if (!isSampleMove(machineRef.current, e.pointerId)) return;
       const live = liveGestureRef.current;
       if (live.kind === "erase") {
-        eraseAt(pointOf(e), live.radius);
+        eraseAt(pointOf(e), live);
         return;
       }
       const stroke = currentStrokeRef.current;

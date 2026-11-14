@@ -55,7 +55,10 @@ export const inkStrokeIdSchema = z
 export const inkPointerKindSchema = z.enum(["pen", "touch", "mouse"]);
 export type InkPointerKind = z.infer<typeof inkPointerKindSchema>;
 
-/** 一笔完整笔画（整笔橡皮删除笔画本身，不产生橡皮笔画） */
+/**
+ * 一笔完整笔画。橡皮不产生「橡皮笔画」：整笔擦除删掉笔画本身；局部擦除把
+ * 原笔删掉，切剩的每一段各成一笔普通笔画（新 id）。
+ */
 export const inkStrokeSchema = z.object({
   /** 实际绘制参数，缺省使用标准笔；不含临时预测。 */
   rendering: inkRenderingSchema.optional(),
@@ -74,7 +77,10 @@ export const inkStrokeSchema = z.object({
   pointer: inkPointerKindSchema.optional(),
 });
 
-/** LR-2：墓碑的删除来源（整笔橡皮 / 清空 / 撤销时回收新增笔画） */
+/**
+ * LR-2：墓碑的删除来源（橡皮——整笔擦掉的笔画、局部擦除时被切开的原笔 /
+ * 清空 / 撤销时回收新增笔画）
+ */
 export const inkDeletedBySchema = z.enum(["eraser", "clear", "undo"]);
 
 /**

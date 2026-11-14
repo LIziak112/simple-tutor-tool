@@ -22,7 +22,8 @@
  *    finger=工具菜单「手指书写」切换。touch-action 与手指语义随模式切换，
  *    且只在**手势开始前**设置（pointerdown 后修改不可靠，W3C Pointer
  *    Events §8）。不以 UA 推断设备。
- * 4. "笔写字、手指滚动"的触摸侧：touchstart/touchmove 遍历 changedTouches
+ * 4. "笔写字、手指滚动"的触摸侧（实现在 touch-guards.ts，与圈画共用）：
+ *    touchstart/touchmove 遍历 changedTouches
  *    核对 touchType（不默认 touches[0] 是笔——手掌先落、笔第二个落下的
  *    场景同样识别 stylus）；仅含 stylus 的事件 preventDefault()（阻断该
  *    触摸引发的原生滚动），手指（direct）触摸不拦截——canvas 置
@@ -35,8 +36,10 @@
  * 6. 防误触：CSS user-select/-webkit-touch-callout 关闭，拦截
  *    contextmenu/selectstart（防长按放大镜与菜单）；容器 touch-action
  *    manipulation 级别由 InkPad 页面负责（防双击缩放）。
- * 7. Apple Pencil 悬停：pointermove 且 buttons===0 时显示笔尖预览圈，
- *    不落墨。
+ * 7. 悬停（pointermove 且 buttons===0，不落墨）：Apple Pencil 显示笔尖
+ *    预览圈；当前工具是橡皮时改为显示橡皮圈（鼠标同样），大小即擦除范围。
+ * 7a. 橡皮：整笔或局部（engine/erase-gesture.ts，与圈画共用）。拖动途中
+ *    正文不动、只重画改动到的那一块，抬起时一次提交成一个历史条目。
  * 8. 屏幕端纸张背景（T6R.7）：可选配置 background（缺省 white=不设置任何
  *    背景样式，旧作答组件零变化）；格线/横线经 engine/paper-style 与 PNG
  *    渲染同源常量生成 CSS 背景，resize 时随宽度换算重设。
@@ -54,10 +57,9 @@ import {
   createProgrammaticAtrament,
   replayAtramentStroke,
 } from "./atrament-replay.ts";
-import { type StrokeBounds, strokeBounds } from "./bounds.ts";
 import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
-import { eraseHit } from "./erase.ts";
+import { createEraseGesture, type ErasePoint } from "./erase-gesture.ts";
 import { isOnePathStroke } from "./highlighter-paint.ts";
 import { InkStore, mintStrokeId } from "./history.ts";
 import { createInkLiveLayer, type InkLiveLayer } from "./live-layer.ts";
@@ -72,7 +74,9 @@ import {
   type PointerMachineState,
   touchActionForInput,
 } from "./pointer-machine.ts";
+import { PAINT_SPREAD_CSS } from "./region-redraw.ts";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
+import { createTouchGuards } from "./touch-guards.ts";
 import {
   asPointerKind,
   INK_DEFAULT_SMOOTHING,
@@ -166,18 +170,30 @@ export function createAtramentSurface(
   /** 本笔是否整笔一条路径（荧光笔）：书写中只在临时层上，不往画布逐段画 */
   let liveOnLayer = false;
   /**
-   * 落笔时的工具快照（复审③）：一笔生命周期内的 move 采样与收笔提交都按
-   * **落笔时**的工具分派——工具条在笔未抬起时切换不影响在途笔画（避免
-   * 「中途切橡皮→收笔误走橡皮分支→笔迹被静默丢弃」）。
+   * 橡皮从落下到抬起的这一次擦除（eraser.active 即本次手势是擦除）。落笔时
+   * 按**当时**的工具（整笔还是局部）开始——落笔时的工具快照（复审③）：一笔
+   * 生命周期内的 move 采样与收笔提交都按落笔时的工具分派，工具条在笔未抬起
+   * 时切换不影响在途笔画（避免「中途切橡皮→收笔误走橡皮分支→笔迹被静默
+   * 丢弃」）。拖动途中正文不动，抬起时一次提交（一个历史条目）。
    */
-  let liveStrokeIsErase = false;
+  const eraser = createEraseGesture({
+    repaintTarget: () =>
+      ctx2d && canvas
+        ? {
+            context: ctx2d,
+            canvas,
+            pixelsPerUnit: canvas.width / INK_LOGICAL_WIDTH,
+            spread: toLogical(cssWidth, PAINT_SPREAD_CSS),
+          }
+        : null,
+    paint: (item) => replayStroke(item.stroke),
+    redraw,
+    ring: () => liveLayer,
+  });
   /** 本次擦除的橡皮半径（逻辑单位），同样取落笔时的档位 */
   let liveEraseRadius = INK_ERASE_RADIUS;
   /** 上一次 draw() 返回的已处理坐标（atrament 平滑过滤后的位置） */
   let livePrev: { x: number; y: number } | null = null;
-  /** 橡皮拖动中待删除的笔画下标集合（一次拖动合并为一个历史条目） */
-  let pendingErase = new Set<number>();
-  let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
 
   /**
    * 下一次 store 变化通知携带的原因（T4.0b，§5.0-C14）：在调用 store 的变更
@@ -317,7 +333,7 @@ export function createAtramentSurface(
     replayAtramentStroke(atrament, cssWidth, s);
   }
 
-  /** 全量重绘：清位图 → 重置 context → 依次重放（跳过 pendingErase 中的笔画） */
+  /** 全量重绘：清位图 → 重置 context → 依次重放（擦除途中画会话里的预览） */
   function redraw(): void {
     const c = ctx2d;
     if (!c || !canvas) return;
@@ -326,10 +342,21 @@ export function createAtramentSurface(
     c.clearRect(0, 0, canvas.width, canvas.height);
     c.restore();
     resetContext();
+    const preview = eraser.visible();
+    if (preview) {
+      for (const item of preview) replayStroke(item.stroke);
+      return;
+    }
     // 只读视图同步重放（peekStrokes：重放期间无提交，零拷贝安全，复审⑨）
-    store.peekStrokes().forEach((s, i) => {
-      if (!pendingErase.has(i)) replayStroke(s);
-    });
+    for (const s of store.peekStrokes()) replayStroke(s);
+  }
+
+  /** 橡皮经过一个落点（CSS 坐标）：换成逻辑坐标，带上本次擦除的半径 */
+  function erasePointOf(css: { x: number; y: number }): ErasePoint {
+    return {
+      ...toLogicalPoint(cssWidth, css.x, css.y),
+      radius: liveEraseRadius,
+    };
   }
 
   /** 丢弃当前正在书写的笔画（auto 模式手掌先落、笔随后落下的场景；活动指针已由状态机清除） */
@@ -341,10 +368,8 @@ export function createAtramentSurface(
     livePrev = null;
     liveOnLayer = false;
     liveLayer?.clear();
-    liveStrokeIsErase = false;
-    pendingErase = new Set();
-    erasePrev = undefined;
-    redraw(); // 抹掉手掌已画的部分
+    eraser.end();
+    redraw(); // 抹掉手掌已画的部分（手掌用橡皮擦掉的也画回来）
   }
 
   /** 把书写中的整笔一条路径的那一笔更新到临时层 */
@@ -358,20 +383,21 @@ export function createAtramentSurface(
    * superseded 共用本路径（触发源 cause 保留在状态机决策对象里，供矩阵测试
    * 断言）——终点一律用 atrament 已处理的上一坐标（livePrev），不使用事件
    * 自带坐标补造终点（cancel 事件的坐标可能是 (0,0) 或宿位值）。分派按
-   * **落笔快照** liveStrokeIsErase（复审③）：工具条中途切换不改变在途笔画
+   * **落笔快照**（复审③，擦除在落笔时开始）：工具条中途切换不改变在途笔画
    * 的提交归属。
    */
   function commitLiveStroke(
     cause: import("@tutor/contract").QuestionProcessFinish,
   ): void {
     finishCause = cause;
-    if (liveStrokeIsErase) {
-      // 下标属于删除前正文，提交前清空预览，避免重绘时误隐藏前移的其他笔画。
-      const indices = [...pendingErase];
-      pendingErase.clear();
-      // 一次拖动的全部命中合并为一个历史条目（撤销=全部恢复）
-      if (indices.length > 0) {
-        withReason("erase", () => store.commitErase(indices));
+    if (eraser.active) {
+      // 结果里的下标属于删除前的正文：先结束这次擦除，重绘才按提交后的正文画
+      const erased = eraser.end();
+      // 一次拖动的全部改动合并为一个历史条目（撤销=全部恢复）
+      if (erased) {
+        withReason("erase", () =>
+          store.commitErase(erased.removed, erased.added),
+        );
       }
       redraw();
     } else if (livePoints.length > 0 && liveBrush) {
@@ -404,9 +430,6 @@ export function createAtramentSurface(
     livePrev = null;
     liveOnLayer = false;
     liveLayer?.clear();
-    liveStrokeIsErase = false;
-    pendingErase = new Set();
-    erasePrev = undefined;
     liveStartedAt = 0;
     livePointerKind = undefined;
     finishCause = undefined;
@@ -455,20 +478,13 @@ export function createAtramentSurface(
     const resolved = resolveGesture(tool, base);
     base = resolved.base;
     const gesture = resolved.gesture;
-    liveStrokeIsErase = gesture.kind === "erase";
 
     if (gesture.kind === "erase") {
       liveEraseRadius = gesture.radius;
-      erasePrev = { x: toLogical(cssWidth, x), y: toLogical(cssWidth, y) };
-      pendingErase = new Set(
-        eraseHit(
-          store.peekStrokes(),
-          toLogical(cssWidth, x),
-          toLogical(cssWidth, y),
-          liveEraseRadius,
-        ),
-      );
-      redraw();
+      // 按此刻的正文算（只读视图：擦除期间正文不变——撤销、载入、清空都
+      // 先收笔）
+      eraser.begin(store.peekStrokes(), gesture.mode);
+      eraser.through([erasePointOf({ x, y })]);
       return;
     }
 
@@ -496,18 +512,24 @@ export function createAtramentSurface(
   }
 
   function onPointerMove(e: PointerEvent): void {
-    // 悬停预览圈：Apple Pencil 悬停（buttons===0）且无活动笔时显示笔尖位置，
-    // 不落墨（双条件合并，复审⑬）
+    // 悬停预览（buttons===0 且无活动笔，不落墨）：橡皮显示橡皮圈（鼠标与笔，
+    // 让人先看清擦多大一块）；其余工具下 Apple Pencil 悬停显示笔尖位置
     if (
-      hoverDot &&
       machine.activePointerId === null &&
-      e.pointerType === "pen" &&
-      e.buttons === 0
+      e.buttons === 0 &&
+      e.pointerType !== "touch"
     ) {
       const { x, y } = eventToCss(e);
-      hoverDot.style.display = "block";
-      hoverDot.style.left = `${x}px`;
-      hoverDot.style.top = `${y}px`;
+      const hover = resolveGesture(tool, base).gesture;
+      if (hover.kind === "erase") {
+        if (hoverDot) hoverDot.style.display = "none";
+        const at = toLogicalPoint(cssWidth, x, y);
+        liveLayer?.showRing(at.x, at.y, hover.radius);
+      } else if (hoverDot && e.pointerType === "pen") {
+        hoverDot.style.display = "block";
+        hoverDot.style.left = `${x}px`;
+        hoverDot.style.top = `${y}px`;
+      }
     }
 
     // 只有活动指针的移动被采样：零分配守卫（复审⑦，与状态机 pointermove
@@ -524,37 +546,14 @@ export function createAtramentSurface(
     }
     const events = coalesced.length > 0 ? coalesced : [e];
 
-    // 橡皮热路径快照（复审⑨）：只读零拷贝视图 + 逐笔包围盒每 move 只算
-    // 一次，批内 coalesced 采样点共享（仅同步消费，见 InkStore.peekStrokes）
-    let eraseView: readonly InkStroke[] | null = null;
-    let eraseBoxes: Array<StrokeBounds | null> | null = null;
-    if (liveStrokeIsErase) {
-      eraseView = store.peekStrokes();
-      eraseBoxes = eraseView.map((s) => strokeBounds(s));
+    // 橡皮：一批采样记完再重画一次（即时反馈；提交在收笔时）
+    if (eraser.active) {
+      eraser.through(events.map((ev) => erasePointOf(eventToCss(ev, rect))));
+      return;
     }
 
     for (const ev of events) {
       const { x, y } = eventToCss(ev, rect);
-      if (eraseView && eraseBoxes) {
-        const hits = eraseHit(
-          eraseView,
-          toLogical(cssWidth, x),
-          toLogical(cssWidth, y),
-          liveEraseRadius,
-          eraseBoxes,
-          erasePrev,
-        );
-        erasePrev = { x: toLogical(cssWidth, x), y: toLogical(cssWidth, y) };
-        let changed = false;
-        for (const h of hits) {
-          if (!pendingErase.has(h)) {
-            pendingErase.add(h);
-            changed = true;
-          }
-        }
-        if (changed) redraw(); // 即时反馈：命中的笔画从视图中消失（提交在收笔时）
-        continue;
-      }
       if (!liveBrush) continue;
       const point: InkStrokePoint = {
         ...toLogicalPoint(cssWidth, x, y),
@@ -625,54 +624,16 @@ export function createAtramentSurface(
     if (document.hidden) finishPointer({ kind: "blur" });
   }
 
-  /**
-   * "笔写字、手指滚动"的触摸侧（§5.4.1 输入层第 3 条，T6R.7 改为遍历）：
-   * **遍历触点核对 touchType**，不默认 touches[0] 是笔。拦截条件＝新旧并集
-   * （复审②）：changedTouches 含 stylus（笔这一触点新落下——手掌先落、笔
-   * 第二个落下的场景里 changedTouches 才含笔）**或** e.touches 含 stylus
-   * （笔已在屏书写、手掌后落——该触摸事件同样可能引发原生滚动/缩放破坏
-   * 笔迹，须拦截）。纯 direct 触摸不拦截，配合 touch-action: pan-y 由
-   * 浏览器原生滚动页面。
-   * 🧑 真机复核：stylus 拦截在 HTTP/HTTPS 下行为一致（清单第 1 项）；笔先
-   * 落手掌后落（清单第 14 项）。
-   */
-  function anyStylusTouch(
-    touches: TouchList | Array<{ touchType?: string }> | undefined,
-  ): boolean {
-    // 防御：合成/不完整事件可能缺某一触点列表（真实 TouchEvent 恒两者皆有）
-    if (touches === undefined) return false;
-    for (let i = 0; i < touches.length; i++) {
-      const t = touches[i];
-      if (t?.touchType === "stylus") return true;
-    }
-    return false;
-  }
-
-  function onTouchStart(e: TouchEvent): void {
-    if (!anyStylusTouch(e.changedTouches) && !anyStylusTouch(e.touches)) {
-      return;
-    }
+  /** 触摸侧「笔写字、手指滚动」与长按防误触（见 touch-guards.ts） */
+  const guards = createTouchGuards(() => {
     machine = observeStylusTouch(machine);
     applyTouchAction();
-    e.preventDefault();
-  }
-
-  function onTouchMove(e: TouchEvent): void {
-    if (anyStylusTouch(e.changedTouches) || anyStylusTouch(e.touches)) {
-      e.preventDefault();
-    }
-  }
-
-  function onContextMenu(e: Event): void {
-    e.preventDefault(); // 防长按弹出系统菜单/放大镜
-  }
-
-  function onSelectStart(e: Event): void {
-    e.preventDefault(); // 防长按选择文字
-  }
+  });
 
   function onPointerLeave(): void {
     if (hoverDot) hoverDot.style.display = "none";
+    // 拖动中的橡皮圈由收笔收起（指针被捕获，移出画布还在擦）
+    if (!eraser.active) liveLayer?.hideRing();
   }
 
   let inputBound = false;
@@ -701,10 +662,10 @@ export function createAtramentSurface(
     bind("pointercancel", onPointerCancel);
     bind("lostpointercapture", onLostPointerCapture);
     bind("pointerleave", onPointerLeave);
-    bind("touchstart", onTouchStart);
-    bind("touchmove", onTouchMove);
-    bind("contextmenu", onContextMenu);
-    bind("selectstart", onSelectStart);
+    bind("touchstart", guards.onTouchStart);
+    bind("touchmove", guards.onTouchMove);
+    bind("contextmenu", guards.onContextMenu);
+    bind("selectstart", guards.onSelectStart);
     window[method]("blur", onWindowBlur);
     document[method]("visibilitychange", onVisibilityChange);
   }
@@ -798,7 +759,7 @@ export function createAtramentSurface(
 
     load(data: InkDoc): void {
       // 在途笔先按已收采样收笔（layoutchange 语义，T6R.9 复审②）：一笔
-      // 不跨正文替换——在途笔/橡皮 pendingErase 都对**旧正文**提交（下标
+      // 不跨正文替换——在途笔/橡皮的擦除会话都对**旧正文**提交（下标
       // 有效、采样完整），随后 replace/redraw 换新；收笔后同一手势的后续
       // 事件由状态机丢弃（不粘笔）。若不先收笔：live 缓冲像素被 redraw
       // 清掉且 replace 后按下标提交的 erase 会删错新稿笔画。
@@ -855,6 +816,8 @@ export function createAtramentSurface(
       const resolved = resolveToolSpec(next, base);
       base = resolved.base;
       applyTouchAction();
+      // 悬停时留下的橡皮圈不跟到别的工具上
+      if (!eraser.active) liveLayer?.hideRing();
     },
 
     setInputMode(mode: InkInputMode): void {

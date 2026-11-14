@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  INK_ERASER_RING_SELECTOR,
+  INK_LIVE_LAYER_SELECTOR,
+} from "../engine/live-layer";
 import { createFeelSurface, DEFAULT_FEEL_PARAMS } from "./feel-surface";
 
 class ContextStub {
@@ -13,6 +17,8 @@ class ContextStub {
   closePath() {}
   fillRect() {}
   drawImage() {}
+  rect() {}
+  clip() {}
 }
 
 let surface: ReturnType<typeof createFeelSurface>;
@@ -45,18 +51,27 @@ beforeEach(() => {
     HTMLCanvasElement.prototype,
     "getBoundingClientRect",
   ).mockReturnValue({ left: 0, top: 0, width: 500, height: 400 } as DOMRect);
+  mountSurface();
+});
+/** 挂一块 500×400 的书写面（缺省是实验页的用法）；重复调用先拆掉上一块 */
+function mountSurface(options?: Parameters<typeof createFeelSurface>[1]) {
+  surface?.destroy();
+  document.body.replaceChildren();
   const host = document.createElement("div");
   Object.defineProperties(host, {
     clientWidth: { value: 500, configurable: true },
     clientHeight: { value: 400 },
   });
   document.body.append(host);
-  surface = createFeelSurface({ ...DEFAULT_FEEL_PARAMS, prediction: true });
+  surface = createFeelSurface(
+    { ...DEFAULT_FEEL_PARAMS, prediction: true },
+    options,
+  );
   surface.mount(host);
   const target = host.querySelector<HTMLCanvasElement>("[data-slot=feel-wet]");
   if (!target) throw new Error("实验画布未挂载");
   canvas = target;
-});
+}
 afterEach(() => {
   surface?.destroy();
   document.body.replaceChildren();
@@ -136,6 +151,108 @@ it("橡皮大小决定命中范围：小号擦不到的距离中号擦得到，�
   surface.setTool({ type: "eraser", size: "large" });
   tapAt(160);
   expect(points()).toHaveLength(0);
+});
+
+/** 横线 CSS (100,60) → (300,60)，即逻辑 (200,120) → (600,120)；笔宽 4 */
+function drawLine() {
+  send("pointerdown", 100, 1, 1, { clientY: 60 });
+  send("pointermove", 300, 1, 2, { clientY: 60 });
+  send("pointerup", 300, 1, 3, { clientY: 60 });
+}
+function ring() {
+  const node = canvas.parentElement?.querySelector<SVGElement>(
+    INK_ERASER_RING_SELECTOR,
+  );
+  if (!node) throw new Error("缺少橡皮圈");
+  return {
+    shown: node.style.display !== "none",
+    at: ["cx", "cy", "r"].map((name) => Number(node.getAttribute(name))),
+  };
+}
+
+it("局部橡皮：只擦掉碰到的一段，两头各成一笔；拖动途中正文不变，一次拖动一步撤销", () => {
+  drawLine();
+  surface.setTool({ type: "eraser", mode: "partial", size: "small" });
+  // 落点逻辑 x=400；小号半径 8 + 半笔宽 2 → 切掉 390–410
+  send("pointerdown", 200, 1, 10, { clientY: 60 });
+  expect(points()).toHaveLength(1);
+  send("pointermove", 220, 1, 11, { clientY: 60 });
+  send("pointerup", 220, 1, 12, { clientY: 60 });
+  const xs = () => points().map((stroke) => stroke.map((point) => point.x));
+  expect(xs()).toEqual([
+    [200, 390],
+    [450, 600],
+  ]);
+  surface.undo();
+  expect(xs()).toEqual([[200, 600]]);
+  surface.redo();
+  expect(xs()).toEqual([
+    [200, 390],
+    [450, 600],
+  ]);
+});
+
+it("局部橡皮被第二指针打断：按已擦的提交；橡皮缺省仍是整笔擦", () => {
+  drawLine();
+  surface.setTool({ type: "eraser", mode: "partial", size: "small" });
+  send("pointerdown", 200, 1, 10, { clientY: 60 });
+  send("pointerdown", 400, 2, 11, { clientY: 300 });
+  expect(points()).toHaveLength(2);
+  surface.setTool({ type: "eraser" });
+  send("pointerdown", 120, 3, 20, { clientY: 60 });
+  send("pointerup", 120, 3, 21, { clientY: 60 });
+  expect(points()).toHaveLength(1);
+});
+
+it("橡皮圈：按下显示在落点、拖动跟着走、抬起收起；悬停显示，移出画布或换工具收起", () => {
+  const layer = canvas.parentElement?.querySelector(INK_LIVE_LAYER_SELECTOR);
+  expect(layer?.getAttribute("viewBox")).toBe("0 0 1000 800");
+  const hover = (stamp: number) =>
+    send("pointermove", 120, 1, stamp, {
+      clientY: 60,
+      buttons: 0,
+      pointerType: "mouse",
+    });
+  hover(1);
+  expect(ring().shown).toBe(false);
+
+  surface.setTool({ type: "eraser", size: "large" });
+  send("pointerdown", 100, 1, 10, { clientY: 60 });
+  expect(ring()).toEqual({ shown: true, at: [200, 120, 24] });
+  send("pointermove", 150, 1, 11, { clientY: 60 });
+  expect(ring().at).toEqual([300, 120, 24]);
+  send("pointerup", 150, 1, 12, { clientY: 60 });
+  expect(ring().shown).toBe(false);
+
+  hover(20);
+  expect(ring()).toEqual({ shown: true, at: [240, 120, 24] });
+  send("pointerleave", 120, 1, 21);
+  expect(ring().shown).toBe(false);
+  hover(22);
+  surface.setTool({ type: "pen" });
+  expect(ring().shown).toBe(false);
+});
+
+it("正式手写（各笔保留自己的画法）局部擦除只重画改动的那一块；实验页调参会换掉全部笔画的画法，整张重画", () => {
+  const clip = vi.spyOn(ContextStub.prototype, "clip");
+  drawLine();
+  surface.setTool({ type: "eraser", mode: "partial" });
+  send("pointerdown", 200, 1, 10, { clientY: 60 });
+  send("pointerup", 200, 1, 11, { clientY: 60 });
+  expect(points()).toHaveLength(2);
+  expect(clip).not.toHaveBeenCalled();
+
+  mountSurface({ preserveRendering: true });
+  drawLine();
+  surface.setTool({ type: "eraser", mode: "partial" });
+  send("pointerdown", 200, 1, 10, { clientY: 60 });
+  expect(clip).toHaveBeenCalledTimes(1);
+  // 没有新改动的落点不重画
+  send("pointermove", 201, 1, 11, { clientY: 60 });
+  send("pointermove", 200, 1, 12, { clientY: 60 });
+  expect(clip).toHaveBeenCalledTimes(2);
+  send("pointerup", 200, 1, 13, { clientY: 60 });
+  expect(points()).toHaveLength(2);
 });
 
 it("预测只显示；真实点替换预测，取消不补造终点", () => {

@@ -134,6 +134,49 @@ describe("InkToolbar 工具切换与选项面板", () => {
     );
   });
 
+  it("橡皮的面板选擦除方式：缺省整笔，可改成局部并说明区别；大小不动，面板不收起", () => {
+    const onChange = vi.fn();
+    render(
+      <Harness
+        init={{ active: "eraser", eraser: { size: "large" } }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(button("橡皮"));
+    const panel = screen.getByRole("dialog", { name: "橡皮设置" });
+    const modes = within(panel).getByRole("radiogroup", { name: "擦除方式" });
+    expect(
+      within(modes)
+        .getAllByRole("radio")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["整笔", "局部"]);
+    expect(within(modes).getByRole("radio", { name: "整笔" })).toBeChecked();
+    expect(modes).toHaveAccessibleDescription("碰到哪一笔，就擦掉那一整笔");
+    // 两种方式光看图形分不出来，按钮上直接写着名字
+    expect(
+      within(modes).getByRole("radio", { name: "整笔" }),
+    ).toHaveTextContent("整笔");
+    expect(
+      within(modes).getByRole("radio", { name: "局部" }),
+    ).toHaveTextContent("局部");
+
+    fireEvent.click(within(modes).getByRole("radio", { name: "局部" }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      createInkToolbox({
+        active: "eraser",
+        eraser: { mode: "partial", size: "large" },
+      }),
+    );
+    expect(within(modes).getByRole("radio", { name: "局部" })).toBeChecked();
+    expect(modes).toHaveAccessibleDescription("只擦掉橡皮碰到的那一段");
+    expect(
+      within(panel).getByRole("radiogroup", { name: "大小" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "橡皮设置" }),
+    ).toBeInTheDocument();
+  });
+
   it("荧光笔的面板调颜色、粗细：只改荧光笔的设置，笔的设置不动", () => {
     const onChange = vi.fn();
     render(

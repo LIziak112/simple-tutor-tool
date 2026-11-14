@@ -1,7 +1,7 @@
 import type { AnnotationBaseRef, AnnotationDoc } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-replay";
-import { replayAnnotationStroke } from "./annotation-surface";
+import { replayAnnotationStroke } from "./annotation-replay";
 
 /**
  * 静态笔迹层：真实题面同框的只读 canvas（backing=底图像素域，CSS 同盒缩放）。

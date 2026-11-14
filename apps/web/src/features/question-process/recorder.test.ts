@@ -427,3 +427,76 @@ it("材料不可编辑仍续传已落盘批次，结果页新实例也能补传"
   expect(review.getDroppedEvents()).toBe(1);
   await review.close();
 });
+
+it("局部擦除记成「拿掉原笔、原位放回切出的几段」，回放按原来的先后顺序还原，撤销回到原笔", async () => {
+  const uploads: QuestionProcessBatch[] = [];
+  const recorder = new QuestionProcessRecorder({
+    attemptId: "attempt",
+    recordingId: active,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    prefix: "partial-erase",
+    store: memoryKVBackend(),
+    revision: () => "revision",
+    current: () => true,
+    snapshot: () => ({ answer: null, hints: [], layers: {} }),
+    upload: async (batch) => {
+      uploads.push(batch);
+      return batch.events.at(-1)?.seq ?? -1;
+    },
+  });
+  const line = (id: string, from: number, to: number) => ({
+    ...stroke,
+    id,
+    points: [
+      { x: from, y: 60, t: 0, p: 0.5 },
+      { x: to, y: 60, t: 15, p: 0.5 },
+    ],
+  });
+  const first = line("first-stroke", 100, 500);
+  const second = line("second-stroke", 100, 900);
+  const left = line("first-left", 100, 250);
+  const right = line("first-right", 350, 500);
+  const paper = (strokes: QuestionProcessStroke[]): ProcessSurface => ({
+    width: 1000,
+    height: 800,
+    strokes,
+  });
+  const written = paper([first, second]);
+  const erased = paper([left, right, second]);
+  recorder.ink("q", "scratch", "stroke", undefined, paper([first]));
+  recorder.ink("q", "scratch", "stroke", paper([first]), written);
+  recorder.ink("q", "scratch", "erase", written, erased);
+  recorder.ink("q", "scratch", "undo", erased, written);
+  await recorder.flush();
+  await recorder.close();
+
+  const events = uploads.flatMap((batch) => batch.events);
+  expect(events[3]).toMatchObject({
+    operation: "erase",
+    removed: ["first-stroke"],
+    added: [
+      { index: 0, stroke: left },
+      { index: 1, stroke: right },
+    ],
+  });
+  expect(events[4]).toMatchObject({
+    operation: "undo",
+    removed: ["first-left", "first-right"],
+    added: [{ index: 0, stroke: first }],
+  });
+  const ids = (seq: number) =>
+    frameAt(events, Number.POSITIVE_INFINITY, seq)?.layers.scratch?.strokes.map(
+      (item) => item.id,
+    );
+  const ghosts = (seq: number) =>
+    frameAt(events, Number.POSITIVE_INFINITY, seq)?.removedSince.scratch?.map(
+      (item) => item.stroke.id,
+    );
+  expect(ids(2)).toEqual(["first-stroke", "second-stroke"]);
+  // 擦完：两段留在原笔的位置（仍在第二笔下面）；「看擦改」里是被擦的那一整笔
+  expect(ids(3)).toEqual(["first-left", "first-right", "second-stroke"]);
+  expect(ghosts(3)).toEqual(["first-stroke"]);
+  // 撤销：原笔回来，切出的两段不算「擦掉的笔画」
+  expect(ids(4)).toEqual(["first-stroke", "second-stroke"]);
+  expect(ghosts(4)).toEqual(["first-left", "first-right"]);
+});

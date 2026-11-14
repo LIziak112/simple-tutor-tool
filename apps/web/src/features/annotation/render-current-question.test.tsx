@@ -25,7 +25,7 @@ vi.mock("@/features/ink/engine/atrament-replay", () => ({
 vi.mock("@/features/ink/engine/canvas-png", () => ({
   canvasToPngBlob: ink.encode,
 }));
-vi.mock("./annotation-surface", () => ({ replayAnnotationStroke: ink.replay }));
+vi.mock("./annotation-replay", () => ({ replayAnnotationStroke: ink.replay }));
 vi.mock("html-to-image", () => ({ toBlob: vi.fn() }));
 vi.mock("@/features/notes/rasterize-utils", async (original) => ({
   ...(await original<typeof import("@/features/notes/rasterize-utils")>()),

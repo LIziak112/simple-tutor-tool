@@ -8,6 +8,8 @@
  * 用 SVG 而不是第二块画布：不占位图内存（一张长草稿纸的画布在高分屏上有几十
  * MB），路径数据还能在单测里直接断言。坐标域（viewBox）由宿主设成和笔画相同
  * 的单位，路径和线宽直接用笔画的数值。
+ *
+ * 橡皮圈也画在这一层：橡皮按下或悬停时跟着走，半径就是橡皮的命中半径。
  */
 import { onePathSvg } from "./highlighter-paint.ts";
 import type { InkStroke } from "./types.ts";
@@ -16,6 +18,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 export const INK_LIVE_LAYER_DATA_SLOT = "ink-live-layer";
 export const INK_LIVE_LAYER_SELECTOR = `svg[data-slot="${INK_LIVE_LAYER_DATA_SLOT}"]`;
+export const INK_ERASER_RING_DATA_SLOT = "ink-eraser-ring";
+export const INK_ERASER_RING_SELECTOR = `circle[data-slot="${INK_ERASER_RING_DATA_SLOT}"]`;
 
 export interface InkLiveLayer {
   /** 坐标域：草稿纸为逻辑宽 1000 及对应的高，圈画为底图像素宽高 */
@@ -26,6 +30,9 @@ export interface InkLiveLayer {
     count?: number,
   ): void;
   clear(): void;
+  /** 橡皮圈：让人看见橡皮擦到哪儿、多大；圆心与半径用笔画同一单位 */
+  showRing(x: number, y: number, radius: number): void;
+  hideRing(): void;
   destroy(): void;
 }
 
@@ -47,6 +54,16 @@ export function createInkLiveLayer(host: HTMLElement): InkLiveLayer {
   path.setAttribute("stroke-linejoin", "round");
   path.style.display = "none";
   svg.appendChild(path);
+
+  const ring = document.createElementNS(SVG_NS, "circle");
+  ring.setAttribute("data-slot", INK_ERASER_RING_DATA_SLOT);
+  ring.setAttribute("fill", "rgba(255, 255, 255, 0.4)");
+  ring.setAttribute("stroke", "rgba(31, 35, 40, 0.55)");
+  ring.setAttribute("stroke-width", "1.5");
+  // 描边按屏幕像素算，不跟着坐标域缩放变粗变细
+  ring.setAttribute("vector-effect", "non-scaling-stroke");
+  ring.style.display = "none";
+  svg.appendChild(ring);
   host.appendChild(svg);
 
   function clear(): void {
@@ -71,6 +88,15 @@ export function createInkLiveLayer(host: HTMLElement): InkLiveLayer {
       path.style.display = "";
     },
     clear,
+    showRing(x, y, radius): void {
+      ring.setAttribute("cx", String(x));
+      ring.setAttribute("cy", String(y));
+      ring.setAttribute("r", String(radius));
+      ring.style.display = "";
+    },
+    hideRing(): void {
+      ring.style.display = "none";
+    },
     destroy(): void {
       svg.remove();
     },

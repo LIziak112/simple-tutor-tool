@@ -1,7 +1,10 @@
 import type { AnnotationDoc } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onePathSvg } from "@/features/ink/engine/highlighter-paint.ts";
-import { INK_LIVE_LAYER_SELECTOR } from "@/features/ink/engine/live-layer.ts";
+import {
+  INK_ERASER_RING_SELECTOR,
+  INK_LIVE_LAYER_SELECTOR,
+} from "@/features/ink/engine/live-layer.ts";
 import { INK_HIGHLIGHTER_COLORS } from "@/features/ink/engine/types.ts";
 import {
   ANNOTATION_CANVAS_DATA_SLOT,
@@ -38,6 +41,8 @@ class StubContext {
   fill(): void {}
   fillRect(): void {}
   clearRect(): void {}
+  rect(): void {}
+  clip(): void {}
   save(): void {}
   restore(): void {}
   setTransform(): void {}
@@ -949,6 +954,268 @@ describe("标注画布：近似原位域视图（reprojectedView，LR-PR4 第二
     // 墓碑几何 = 存储域原笔（不是视图域映射后的形状）
     expect(doc.deleted?.[0]?.points[0]?.x).toBeCloseTo(80, 5);
     expect(doc.deleted?.[0]?.id).toBe("keep-1");
+  });
+
+  it("局部橡皮也在存储域切：段沿用原笔画的锚点，预览与重绘都按这个锚映射；整张重画、橡皮圈在视图域", () => {
+    const h = mountViewSurface({
+      version: 1,
+      baseWidth: STORED_W,
+      baseHeight: STORED_H,
+      strokes: [
+        {
+          tool: "pen" as const,
+          color: "#1f2328",
+          weight: 5.76,
+          id: "keep-1",
+          points: [
+            { x: 80, y: 16, p: 0.5, t: 0 },
+            { x: 160, y: 24, p: 0.5, t: 16 },
+          ],
+        },
+      ],
+      anchors: { "keep-1": "stem/p/0" },
+    });
+    h.surface.setTool({ type: "eraser", mode: "partial", size: "small" });
+    h.strokeToView.mockClear();
+    const clip = vi.spyOn(StubContext.prototype, "clip");
+    // 视图指针 (150,25) → 存储 (120,20)，正好是笔画中点；小号橡皮视图半径
+    // 14.4 → 存储 11.52，加半笔宽 2.88，沿笔画各切掉 14.4
+    pointer(h.canvas, "pointerdown", { clientX: 175, clientY: 62.5 });
+    // 拖动途中的预览：两段都按原笔画的锚映射到视图；不做局部重画
+    expect(h.strokeToView).toHaveBeenCalledTimes(2);
+    for (const nth of [1, 2]) {
+      expect(h.strokeToView).toHaveBeenNthCalledWith(
+        nth,
+        expect.objectContaining({ tool: "pen" }),
+        "stem/p/0",
+      );
+    }
+    expect(clip).not.toHaveBeenCalled();
+    clip.mockRestore();
+    const ring = h.container.querySelector(INK_ERASER_RING_SELECTOR);
+    expect(
+      ["cx", "cy", "r"].map((name) => Number(ring?.getAttribute(name))),
+    ).toEqual([150, 25, 14.4]);
+
+    pointer(h.canvas, "pointerup", { clientX: 175, clientY: 62.5 });
+    const doc = h.surface.getDoc();
+    expect(doc.strokes).toHaveLength(2);
+    const [head, tail] = doc.strokes;
+    expect(head?.points.at(-1)?.x).toBeCloseTo(105.67, 1);
+    expect(head?.points.at(-1)?.y).toBeCloseTo(18.57, 1);
+    expect(tail?.points[0]?.x).toBeCloseTo(134.33, 1);
+    expect(tail?.points[0]?.y).toBeCloseTo(21.43, 1);
+    expect(doc.anchors).toEqual({
+      "keep-1": "stem/p/0",
+      [head?.id ?? ""]: "stem/p/0",
+      [tail?.id ?? ""]: "stem/p/0",
+    });
+    // 提交后的重绘：段带着自己的 id 与锚键
+    expect(h.strokeToView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: tail?.id }),
+      "stem/p/0",
+    );
+  });
+});
+
+describe("标注画布：局部橡皮", () => {
+  const PARTIAL_SMALL = {
+    type: "eraser",
+    mode: "partial",
+    size: "small",
+  } as const;
+  /** 一条存好的横线：底图 (111.11,44.44) → (333.33,44.44)，即 client (150,70) → (250,70) */
+  function lineDoc(extra: AnnotationDoc["strokes"] = []): AnnotationDoc {
+    return {
+      version: 1,
+      baseWidth: BASE_W,
+      baseHeight: BASE_H,
+      strokes: [
+        ...extra,
+        {
+          tool: "pen",
+          color: "#1f2328",
+          weight: 5.76,
+          id: "keep-line",
+          points: [
+            { x: 111.11, y: 44.44, p: 0.5, t: 0 },
+            { x: 333.33, y: 44.44, p: 0.5, t: 16 },
+          ],
+        },
+      ],
+      anchors: { "keep-line": "stem/p/0" },
+    };
+  }
+  /** 远处的若干个墨点（不会被擦到），用来把笔画数垫到上限附近 */
+  function dots(count: number): AnnotationDoc["strokes"] {
+    return Array.from({ length: count }, (_, i) => ({
+      tool: "pen" as const,
+      color: "#1f2328",
+      weight: 5.76,
+      id: `dot-${String(i).padStart(5, "0")}`,
+      points: [{ x: 10 + i * 7, y: 800, p: 0.5, t: 0 }],
+    }));
+  }
+  function tap(h: ReturnType<typeof mountSurface>, x: number, y: number) {
+    pointer(h.canvas, "pointerdown", { clientX: x, clientY: y });
+    pointer(h.canvas, "pointerup", { clientX: x, clientY: y });
+  }
+  const xsOf = (doc: AnnotationDoc) =>
+    doc.strokes.map((stroke) => stroke.points.map((point) => point.x));
+
+  it("擦掉中段：两头各成一笔，原笔画进墓碑，段沿用它的锚点", () => {
+    const h = mountSurface(lineDoc());
+    h.surface.setTool(PARTIAL_SMALL);
+    // 落点底图 x=222.22；小号半径 11.52 + 半笔宽 2.88 → 切掉 207.82–236.62
+    tap(h, 200, 70);
+    const doc = h.surface.getDoc();
+    expect(xsOf(doc)).toEqual([
+      [111.11, 207.82],
+      [236.62, 333.33],
+    ]);
+    expect(
+      doc.deleted?.map(({ id, deletedBy }) => ({ id, deletedBy })),
+    ).toEqual([{ id: "keep-line", deletedBy: "eraser" }]);
+    const [head, tail] = doc.strokes;
+    expect(new Set([head?.id, tail?.id, "keep-line"]).size).toBe(3);
+    expect(doc.anchors).toEqual({
+      "keep-line": "stem/p/0",
+      [head?.id ?? ""]: "stem/p/0",
+      [tail?.id ?? ""]: "stem/p/0",
+    });
+    expect(h.events.at(-1)).toEqual({ reason: "erase", strokes: 2 });
+  });
+
+  it("撤销后文档里不带段的锚点（它们既不在正文也不在墓碑），重做后原样回来", () => {
+    const h = mountSurface(lineDoc());
+    h.surface.setTool(PARTIAL_SMALL);
+    tap(h, 200, 70);
+    const erased = h.surface.getDoc();
+
+    h.surface.undo();
+    const undone = h.surface.getDoc();
+    expect(undone.strokes.map((stroke) => stroke.id)).toEqual(["keep-line"]);
+    expect(undone.deleted).toBeUndefined();
+    expect(undone.anchors).toEqual({ "keep-line": "stem/p/0" });
+
+    h.surface.redo();
+    const redone = h.surface.getDoc();
+    expect(redone.strokes).toEqual(erased.strokes);
+    expect(redone.anchors).toEqual(erased.anchors);
+  });
+
+  it("没有锚点的笔画被切开：段也不带锚点", () => {
+    const h = mountSurface({ ...lineDoc(), anchors: {} });
+    h.surface.setTool(PARTIAL_SMALL);
+    tap(h, 200, 70);
+    expect(h.surface.getDoc().strokes).toHaveLength(2);
+    expect(h.surface.getDoc().anchors).toBeUndefined();
+  });
+
+  it("笔画数到上限（200）时：切开会超限的那一笔改为整笔擦掉；还差一笔时照常切开", () => {
+    const full = mountSurface(lineDoc(dots(199)));
+    full.surface.setTool(PARTIAL_SMALL);
+    tap(full, 200, 70);
+    expect(full.surface.getDoc().strokes).toHaveLength(199);
+    expect(
+      full.surface.getDoc().strokes.some((stroke) => stroke.id === "keep-line"),
+    ).toBe(false);
+
+    const roomy = mountSurface(lineDoc(dots(198)));
+    roomy.surface.setTool(PARTIAL_SMALL);
+    tap(roomy, 200, 70);
+    expect(roomy.surface.getDoc().strokes).toHaveLength(200);
+  });
+
+  it("拖动途中正文不变、只重画改动的那一块；抬起才提交，一次拖动一个历史条目", () => {
+    const h = mountSurface(lineDoc(dots(3)));
+    h.surface.setTool(PARTIAL_SMALL);
+    const clip = vi.spyOn(StubContext.prototype, "clip");
+    const clearRect = vi.spyOn(StubContext.prototype, "clearRect");
+    StubContext.strokeCalls = 0;
+    pointer(h.canvas, "pointerdown", { clientX: 200, clientY: 70 });
+    expect(h.surface.getDoc().strokes).toHaveLength(4);
+    expect(clip).toHaveBeenCalledTimes(1);
+    // 只重放切剩的两段（各 2 个采样点），远处的墨点不重放
+    expect(StubContext.strokeCalls).toBe(4);
+    const [x, y, width, height] = clearRect.mock
+      .calls[0] as unknown as number[];
+    expect(x).toBeGreaterThan(0);
+    expect((x ?? 0) + (width ?? 0)).toBeLessThan(BASE_W);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect((y ?? 0) + (height ?? 0)).toBeLessThan(BASE_H / 2);
+    clip.mockRestore();
+    clearRect.mockRestore();
+
+    pointer(h.canvas, "pointermove", { clientX: 230, clientY: 70 });
+    pointer(h.canvas, "pointerup", { clientX: 230, clientY: 70 });
+    expect(h.events.filter((event) => event.reason === "erase")).toHaveLength(
+      1,
+    );
+    expect(h.surface.getDoc().strokes).toHaveLength(5);
+    h.surface.undo();
+    expect(h.surface.getDoc().strokes).toHaveLength(4);
+  });
+});
+
+describe("标注画布：橡皮圈", () => {
+  function ringOf(h: ReturnType<typeof mountSurface>) {
+    const node = h.container.querySelector<SVGElement>(
+      INK_ERASER_RING_SELECTOR,
+    );
+    if (node === null) throw new Error("临时层缺少橡皮圈");
+    return {
+      shown: node.style.display !== "none",
+      at: ["cx", "cy", "r"].map((name) => Number(node.getAttribute(name))),
+    };
+  }
+
+  it("按下显示在落点（底图像素域）、半径是橡皮半径；拖动跟着走；抬起收起", () => {
+    const h = mountSurface();
+    h.surface.setTool({ type: "eraser", size: "large" });
+    expect(ringOf(h).shown).toBe(false);
+    pointer(h.canvas, "pointerdown", { clientX: 200, clientY: 70 });
+    // 大号 24 逻辑单位 → 34.56 底图像素
+    expect(ringOf(h)).toEqual({ shown: true, at: [222.22, 44.44, 34.56] });
+    pointer(h.canvas, "pointermove", { clientX: 250, clientY: 70 });
+    expect(ringOf(h).at).toEqual([333.33, 44.44, 34.56]);
+    pointer(h.canvas, "pointerup", { clientX: 250, clientY: 70 });
+    expect(ringOf(h).shown).toBe(false);
+  });
+
+  it("鼠标悬停（没按下）显示橡皮圈；移出画布、换成别的工具都收起；不是橡皮不显示", () => {
+    const h = mountSurface();
+    const hover = () =>
+      pointer(h.canvas, "pointermove", {
+        pointerType: "mouse",
+        buttons: 0,
+        clientX: 200,
+        clientY: 70,
+      });
+    hover();
+    expect(ringOf(h).shown).toBe(false);
+    h.surface.setTool({ type: "eraser", size: "small" });
+    hover();
+    expect(ringOf(h)).toEqual({ shown: true, at: [222.22, 44.44, 11.52] });
+    h.canvas.dispatchEvent(new PointerEvent("pointerleave"));
+    expect(ringOf(h).shown).toBe(false);
+    hover();
+    h.surface.setTool({ type: "pen" });
+    expect(ringOf(h).shown).toBe(false);
+  });
+
+  it("橡皮拖动被布局变化打断：按已擦的提交，橡皮圈收起", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 150, y: 70 },
+      { x: 250, y: 70 },
+    ]);
+    h.surface.setTool({ type: "eraser" });
+    pointer(h.canvas, "pointerdown", { clientX: 200, clientY: 70 });
+    expect(ringOf(h).shown).toBe(true);
+    h.triggerLayoutChange();
+    expect(ringOf(h).shown).toBe(false);
+    expect(h.surface.getDoc().strokes).toHaveLength(0);
   });
 });
 

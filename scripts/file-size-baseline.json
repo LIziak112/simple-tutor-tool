@@ -21,7 +21,7 @@
   "apps/web/src/features/assignments/AssignmentComposeWizard.tsx": 1235,
   "apps/web/src/features/attempt/AttemptSession.tsx": 2101,
   "apps/web/src/features/export/ExportWizard.tsx": 1823,
-  "apps/web/src/features/notes/note-store.ts": 1317,
+  "apps/web/src/features/notes/note-store.ts": 1290,
   "apps/web/src/features/student/wrong-questions-ui.tsx": 1278,
   "apps/web/src/lib/api.ts": 3265,
   "apps/web/src/pages/student/StudentLessonPage.tsx": 1102,
