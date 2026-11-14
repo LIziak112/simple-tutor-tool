@@ -46,6 +46,17 @@ const q = analyticsQuerySchema.parse({});
 beforeAll(async () => {
   db = createTestDb();
   seed = await seedDemoData(db, TEST_TEACHER_ID, { now: SEED_NOW });
+  // 矩阵按 createdAt/id 排序；显式给夹具递增时间，避免同毫秒时随机 UUID 决定列序。
+  Object.values(seed.assignments).forEach((assignment, index) => {
+    db.update(assignments)
+      .set({
+        createdAt: new Date(
+          Date.parse(SEED_NOW) - 30 * 86_400_000 + index,
+        ).toISOString(),
+      })
+      .where(eq(assignments.id, assignment.id))
+      .run();
+  });
 });
 
 /** 作业列单元格定位 */
@@ -109,6 +120,31 @@ describe("完成矩阵（D2）", () => {
     ]);
     // 稠密单元格：3 学生 ×（4 作业 + 2 单元）= 18
     expect(overview.matrix.cells).toHaveLength(18);
+  });
+
+  it("作业创建时间相同时按 id 升序排列，不把插入顺序当作排序契约", () => {
+    const originals = db
+      .select({ id: assignments.id, createdAt: assignments.createdAt })
+      .from(assignments)
+      .where(eq(assignments.teacherId, TEST_TEACHER_ID))
+      .all();
+    try {
+      db.update(assignments)
+        .set({ createdAt: SEED_NOW })
+        .where(eq(assignments.teacherId, TEST_TEACHER_ID))
+        .run();
+      const overview = getAnalyticsOverview(db, TEST_TEACHER_ID, q, SEED_NOW);
+      expect(
+        overview.matrix.assignmentColumns.map((c) => c.assignmentId),
+      ).toEqual(originals.map((row) => row.id).sort());
+    } finally {
+      for (const row of originals) {
+        db.update(assignments)
+          .set({ createdAt: row.createdAt })
+          .where(eq(assignments.id, row.id))
+          .run();
+      }
+    }
   });
 
   it("作业列格子：graded / submitted / in-progress / not-started / not-assigned 全覆盖", () => {
