@@ -453,13 +453,22 @@ export const draftStore = {
     attemptId: string,
     source: AttemptDraftRecord,
     expectedFrozenAt?: string | null,
+    questionRevisions: Readonly<Record<string, string>> = {},
   ): Promise<void> {
     const generation = backendGeneration;
     await loadDraft(attemptId, { strictRead: true });
     if (generation !== backendGeneration) throw new Error("作答会话已切换");
     mutate(attemptId, (record) => {
-      for (const [id, answer] of Object.entries(source.answers))
+      for (const [id, answer] of Object.entries(source.answers)) {
         record.answers[id] ??= structuredClone(answer);
+        if (
+          questionRevisions[id] &&
+          digestOf(record.answers[id]) === digestOf(answer)
+        ) {
+          record.answerQuestionRevisions ??= {};
+          record.answerQuestionRevisions[id] = questionRevisions[id];
+        }
+      }
       for (const [id, doc] of Object.entries(source.inks)) {
         const { serverRevision: _revision, ...body } = doc;
         record.inks[id] ??= structuredClone(body);

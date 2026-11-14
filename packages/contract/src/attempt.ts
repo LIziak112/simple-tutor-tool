@@ -777,6 +777,7 @@ export const lessonLandingDataSchema = z.object({
  * HINT_INDEX_OUT_OF_RANGE（400，T2.11 验收项），保证两个越界方向同一错误码。
  */
 export const hintOpenRequestSchema = z.object({
+  ...attemptWriteProofFields,
   questionId: z.string().min(1, "questionId 不能为空"),
   index: z.number().int({ message: "index 必须是整数" }),
 });
@@ -840,6 +841,7 @@ export const attemptDetailDataSchema = z
 
 /** 标注「不会」的请求体（#6980-4）：flag=null 表示取消标记 */
 export const attemptFlagRequestSchema = z.object({
+  ...attemptWriteProofFields,
   flag: studentFlagSchema.nullable(),
 });
 

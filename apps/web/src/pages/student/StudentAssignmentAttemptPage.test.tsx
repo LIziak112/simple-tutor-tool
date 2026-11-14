@@ -561,10 +561,15 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     fireEvent.click(screen.getByRole("radio", { name: /对/ }));
 
     await waitFor(() => {
-      expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {
-        kind: "judge",
-        value: true,
-      } satisfies StudentAnswer);
+      expect(mockedSave).toHaveBeenCalledWith(
+        ATTEMPT_ID,
+        "练习四-1",
+        {
+          kind: "judge",
+          value: true,
+        } satisfies StudentAnswer,
+        { questionRevisionId: "rev-练习四-1" },
+      );
     });
     expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
       "已填写 1/2",
@@ -1197,10 +1202,15 @@ describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () 
       expect(screen.getByTestId("draft-status")).toHaveTextContent(/已保存/),
     );
     await waitFor(() =>
-      expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {
-        kind: "judge",
-        value: false,
-      } satisfies StudentAnswer),
+      expect(mockedSave).toHaveBeenCalledWith(
+        ATTEMPT_ID,
+        "练习四-1",
+        {
+          kind: "judge",
+          value: false,
+        } satisfies StudentAnswer,
+        { questionRevisionId: "rev-练习四-1" },
+      ),
     );
   });
 });

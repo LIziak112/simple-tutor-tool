@@ -103,7 +103,7 @@ describe("清除后按内容版本恢复", () => {
     expect(restored?.answerQuestionRevisions).toEqual({ q: "new-row" });
     expect(
       (await draftStore.loadDraft("old"))?.answerQuestionRevisions,
-    ).toBeUndefined();
+    ).not.toHaveProperty("q");
     expect((await draftStore.loadDraft("old"))?.materialInks?.["m|1"]).toEqual(
       ink,
     );

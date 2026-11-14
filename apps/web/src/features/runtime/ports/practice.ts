@@ -9,6 +9,7 @@ import type {
   AttemptStartData,
   AttemptSummary,
   AttemptWorkflowUpdateData,
+  AttemptWriteProof,
   CourseAttemptStartOptions,
   PracticeWorkflowStartOptions,
   PracticeWorkflowUpdateRequest,
@@ -57,6 +58,7 @@ export interface PracticePorts {
     attemptId: string,
     questionId: string,
     flag: StudentFlag | null,
+    proof?: AttemptWriteProof,
   ): Promise<AttemptFlagData>;
   fetchAttemptApi(
     attemptId: string,

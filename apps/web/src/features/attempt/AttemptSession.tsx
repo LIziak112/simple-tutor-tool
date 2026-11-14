@@ -56,7 +56,6 @@ import {
   QuestionProcessSyncNotice,
   useQuestionProcess,
 } from "@/features/question-process/session";
-import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
@@ -118,6 +117,7 @@ import {
 const ATTEMPT_LAZY_MOUNT_THRESHOLD = 20;
 
 import { Button } from "@/components/ui/button";
+import { useStudentFlags } from "./use-student-flags";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 是否结果视图（submitted/graded） */
@@ -195,8 +195,6 @@ function AnswerView({
   /** 交卷成功后的标注 seal 失败回调（非阻断警示——AttemptSession 顶态） */
   onAnnotationSealFailed: () => void;
 }) {
-  const { setStudentFlagApi } = usePortalClients();
-
   const editor = useAttemptEditor(null);
   // 模块 2 限时测试：服务端时钟；到时（grace/locked）锁编辑、停自动提交，只留交卷
   const phase = useAttemptPhase(data.timing, data.clockAnchor);
@@ -430,28 +428,9 @@ function AnswerView({
   });
   const { flags: flaggedQuestions, toggle: toggleFlag } =
     useWorkspaceFlags(attemptId);
-  // #6980-4：服务端「不会」标记（draft 限定，交卷后只读）。乐观更新、失败
-  // 回滚——标记只影响错题本归档口径，不阻塞作答与提交
-  const [studentFlags, setStudentFlags] = useState<ReadonlySet<string>>(
-    () => new Set(Object.keys(data.studentFlags ?? {})),
-  );
-  const toggleUnsure = useCallback(
-    (questionId: string) => {
-      const next = new Set(studentFlags);
-      const flag: "unsure" | null = next.has(questionId) ? null : "unsure";
-      if (flag === null) next.delete(questionId);
-      else next.add(questionId);
-      setStudentFlags(next);
-      setStudentFlagApi(attemptId, questionId, flag).catch(() => {
-        setStudentFlags((previous) => {
-          const rollback = new Set(previous);
-          if (flag === null) rollback.add(questionId);
-          else rollback.delete(questionId);
-          return rollback;
-        });
-      });
-    },
-    [attemptId, studentFlags, setStudentFlagApi],
+  const { studentFlags, toggleUnsure } = useStudentFlags(
+    data.attempt,
+    data.studentFlags,
   );
   const [formalInkPresence, setFormalInkPresence] = useState<
     ReadonlyMap<string, boolean>

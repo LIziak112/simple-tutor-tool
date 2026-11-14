@@ -18,7 +18,11 @@ import {
   sameAttemptSource,
   saveLocalAttemptSession,
 } from "./attempt-session-catalog";
-import { inkDigestOf, inkStrokeCountOf } from "./draft-merge";
+import {
+  inkDigestOf,
+  inkStrokeCountOf,
+  unsyncedAnswerIds,
+} from "./draft-merge";
 import {
   type AttemptDraftRecord,
   draftStore,
@@ -73,6 +77,20 @@ export function draftSnapshotConflict(
     }),
   );
 }
+/** 目录可能被别的标签页更新；未同步旧正文缺独立题版本时不能借新目录恢复。 */
+function unprovenAnswers(
+  record: AttemptDraftRecord | null,
+  attempt: AttemptSummary,
+): boolean {
+  return (
+    record !== null &&
+    attempt.frozenAt != null &&
+    attempt.frozenAt !== attempt.startedAt &&
+    unsyncedAnswerIds(record).some(
+      (id) => !record.answerQuestionRevisions?.[id],
+    )
+  );
+}
 export function assertDraftEpoch(epoch: number): void {
   if (epoch !== getDraftSessionEpoch())
     throw new Error("作答会话已切换，请重新打开练习");
@@ -92,6 +110,9 @@ export async function protectOpenedDraft(
   readOriginal?: (id: string) => Promise<AttemptDetailData>,
 ): Promise<void> {
   if (attempt?.status !== "draft") return;
+  // 旧缓存缺新列按共享协议属于历史已激活卷，不对它臆造重冻事实。
+  if (attempt.frozenAt === undefined && attempt.activatedAt === undefined)
+    return;
   const epoch = getDraftSessionEpoch();
   const record = await draftStore.recoverLegacyDraft(attempt.id);
   assertDraftEpoch(epoch);
@@ -104,6 +125,7 @@ export async function protectOpenedDraft(
       known &&
       (known.quarantined ||
         known.attempt.frozenAt !== attempt.frozenAt ||
+        unprovenAnswers(record, attempt) ||
         draftSnapshotConflict(record, attempt) ||
         attachmentsSnapshotConflict(attachments, attempt))
     )
@@ -160,6 +182,7 @@ export async function assertLocalAttemptSnapshot(
   const attachments = await readLocalAttemptAttachments(next.attempt.id);
   assertDraftEpoch(epoch);
   if (
+    unprovenAnswers(record, next.attempt) ||
     draftSnapshotConflict(record, next.attempt) ||
     attachmentsSnapshotConflict(attachments, next.attempt)
   )
@@ -238,6 +261,7 @@ export async function migrateClearedDraft(
         next.attempt.id,
         record,
         next.attempt.frozenAt,
+        next.questionRevisions,
       );
     await copyLocalAttemptAttachments(
       next.attempt.id,

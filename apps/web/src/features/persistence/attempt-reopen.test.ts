@@ -79,12 +79,24 @@ beforeEach(() => {
 describe("真实前端客户端的预检与重开", () => {
   it("另一标签页只更新了目录，不能把缺少自身版本的旧正文认作新稿", async () => {
     const refreshed = { ...old, frozenAt: "2026-11-14T00:00:00.001Z" };
-    await saveLocalAttemptSession({ attempt: refreshed, questions: { q: 2 }, questionRevisions: { q: "row-new" }, materials: [] });
+    await saveLocalAttemptSession({
+      attempt: refreshed,
+      questions: { q: 2 },
+      questionRevisions: { q: "row-new" },
+      materials: [],
+    });
     draftStore.saveAnswer(old.id, "q", { kind: "judge", value: true });
     const send = vi.fn<typeof fetch>();
-    await expect(prepareLocalAttempt(services(send), detail(refreshed))).rejects.toThrow("旧本机原稿仍保留");
-    expect((await draftStore.loadDraft(old.id))?.answers.q).toEqual({ kind: "judge", value: true });
-    expect((await draftStore.loadDraft(old.id))?.answerQuestionRevisions).toBeUndefined();
+    await expect(
+      prepareLocalAttempt(services(send), detail(refreshed)),
+    ).rejects.toThrow("旧本机原稿仍保留");
+    expect((await draftStore.loadDraft(old.id))?.answers.q).toEqual({
+      kind: "judge",
+      value: true,
+    });
+    expect(
+      (await draftStore.loadDraft(old.id))?.answerQuestionRevisions,
+    ).toBeUndefined();
     expect(send).not.toHaveBeenCalled();
   });
   it("同id重冻时有稿阻断普通加载，旧冻结目录与正文均不覆盖", async () => {

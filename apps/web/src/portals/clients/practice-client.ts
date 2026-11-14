@@ -9,6 +9,7 @@ import {
   type AttemptStartData,
   type AttemptSummary,
   type AttemptWorkflowUpdateData,
+  type AttemptWriteProof,
   attemptFlagDataSchema,
   type CourseAttemptStartOptions,
   type PracticeWorkflowStartOptions,
@@ -144,10 +145,11 @@ export function createPracticeClient(
     attemptId: string,
     questionId: string,
     flag: StudentFlag | null,
+    proof?: AttemptWriteProof,
   ): Promise<AttemptFlagData> {
     const args = {
       param: { id: attemptId, questionId },
-      json: { flag },
+      json: { flag, ...proof },
     };
     return callApi(() =>
       api.api.student.attempts[":id"].flags[":questionId"].$put(args),
