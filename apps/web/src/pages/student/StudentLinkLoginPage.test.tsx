@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, loginStudentByLinkApi } from "@/lib/api";
@@ -15,9 +15,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     loginStudentByLinkApi: vi.fn(),
-    fetchStudentAssignmentsApi: vi.fn(),
-    fetchStudentCoursesApi: vi.fn(),
-    fetchStudentLecturesApi: vi.fn(),
+    fetchStudentAssignmentsApi: vi.fn(async () => ({ assignments: [] })),
+    fetchStudentCoursesApi: vi.fn(async () => ({ courses: [] })),
+    fetchStudentLecturesApi: vi.fn(async () => ({ lectures: [] })),
   };
 });
 
@@ -48,7 +48,7 @@ describe("StudentLinkLoginPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
     });
-    // TanStack v5 的 mutationFn 第二参为回调上下文，只断言首参（token）
+    // 入口以首参传token，第二参仅为本次兑换的AbortSignal。
     expect(mockedLinkLogin.mock.calls[0]?.[0]).toBe("valid-token-123");
   });
 
@@ -75,7 +75,7 @@ describe("StudentLinkLoginPage", () => {
 
     const retry = await screen.findByRole("button", { name: "重试" });
     expect(screen.getByText("连不上服务器")).toBeInTheDocument();
-    retry.click();
+    fireEvent.click(retry);
 
     await waitFor(() => {
       expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");

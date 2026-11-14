@@ -23,6 +23,12 @@ export const memos = sqliteTable(
     studentId: text("student_id").notNull(),
     /** 客户端生成的幂等键（UUID）；(student_id, client_id) 唯一——离线补传重复只落一行 */
     clientId: text("client_id").notNull(),
+    /** 本人递增序号；结构迁移后由启动回填补齐历史值。 */
+    seq: integer("seq"),
+    /** 版本化内容与会话坐标 JSON；无法可靠恢复的旧锚保持 NULL。 */
+    contextJson: text("context_json"),
+    /** 本人已登记设备；历史设备类型不能反推设备身份。 */
+    deviceId: text("device_id"),
     /** 形态：text / voice / image / ink（契约 memoKindSchema） */
     kind: text("kind").$type<"text" | "voice" | "image" | "ink">().notNull(),
     /** 文字随笔正文；媒体随笔的可选说明；无则 NULL */
@@ -55,6 +61,7 @@ export const memos = sqliteTable(
     deletedAt: text("deleted_at"),
   },
   (table) => [
+    uniqueIndex("memos_student_seq_uk").on(table.studentId, table.seq),
     uniqueIndex("memos_student_client_uk").on(table.studentId, table.clientId),
     index("memos_student_recorded_idx").on(
       table.studentId,

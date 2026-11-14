@@ -1,6 +1,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
-import type { Memo } from "@tutor/contract";
+import type { LearningContext, Memo } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveLearningContext } from "@/features/learning-context/learning-context-api";
 import { ApiError } from "@/lib/api";
 import { type KVStoreBackend, memoryKVBackend } from "@/lib/kv-backend";
 import {
@@ -72,6 +73,11 @@ vi.mock("@/lib/memo-api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/features/learning-context/learning-context-api", () => ({
+  resolveLearningContext: vi.fn(),
+}));
+const mockedResolve = vi.mocked(resolveLearningContext);
+
 const mockedText = vi.mocked(createTextMemoApi);
 const mockedMedia = vi.mocked(uploadMemoMediaApi);
 
@@ -107,6 +113,7 @@ beforeEach(() => {
   installMemoOutboxBackendForTest(backend);
   mockedText.mockReset();
   mockedMedia.mockReset();
+  mockedResolve.mockReset();
 });
 
 afterEach(() => {
@@ -517,4 +524,178 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
     ]);
     expect(await backend.getAll('["memo-outbox","stu-b"')).toEqual([]);
   });
+});
+
+const sourceAttempt = crypto.randomUUID();
+const sourceRevision = crypto.randomUUID();
+const sourceReference = {
+  kind: "question" as const,
+  attemptId: sourceAttempt,
+  questionId: "q2",
+  surface: "attempt" as const,
+  expectedQuestionRevisionId: sourceRevision,
+};
+const sourceAnchor = {
+  kind: "question" as const,
+  attemptId: sourceAttempt,
+  questionId: "q2",
+  label: "第 2 题",
+};
+const canonicalSource: LearningContext = {
+  schemaVersion: 1,
+  content: {
+    courseId: null,
+    unitId: null,
+    lectureId: null,
+    sectionId: null,
+    questionId: "q2",
+    titles: { course: null, unit: null, lecture: null },
+  },
+  session: {
+    attemptId: sourceAttempt,
+    questionRevisionId: sourceRevision,
+    questionNo: 2,
+    questionCount: 2,
+    settlementSeq: null,
+  },
+  view: null,
+  deviceId: null,
+};
+
+it("来源canonical仍在网络等待时已经本机入队，回执使用原题/真实设备/打开view", async () => {
+  await bindMemoOutboxAccount("stu-a");
+  let resolve!: (context: LearningContext) => void;
+  mockedResolve.mockReturnValueOnce(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  const sourceView = {
+    surface: "attempt" as const,
+    layout: "list",
+    viewId: crypto.randomUUID(),
+  };
+  const deviceId = crypto.randomUUID();
+  mockedText.mockResolvedValueOnce(memoOf("第二题"));
+  const clientId = await enqueueMemo({
+    ...TEXT_INPUT,
+    text: "第二题",
+    anchor: sourceAnchor,
+    reference: sourceReference,
+    sourceDisplay: { questionNo: 2, questionCount: 2 },
+    sourceView,
+    deviceId,
+    sourcePrincipal: "stu-a",
+  });
+  expect(mockedText).not.toHaveBeenCalled();
+  expect(await backend.getAll('["memo-outbox","stu-a"')).toHaveLength(1);
+  resolve(canonicalSource);
+  await flushMemoOutbox();
+  expect(mockedText).toHaveBeenCalledWith(
+    expect.objectContaining({
+      clientId,
+      anchor: sourceAnchor,
+      context: { ...canonicalSource, view: sourceView, deviceId },
+      deviceId,
+    }),
+    "stu-a",
+  );
+});
+
+it("expected revision不符保留原稿/原reference并拒绝静默重绑", async () => {
+  await bindMemoOutboxAccount("stu-a");
+  mockedResolve.mockRejectedValueOnce(
+    new ApiError("LEARNING_CONTEXT_STALE", "题目来源已变化", 409),
+  );
+  const clientId = await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+  });
+  await flushMemoOutbox();
+  expect(mockedText).not.toHaveBeenCalled();
+  const stored = await backend.getAll('["memo-outbox","stu-a"');
+  expect(stored).toHaveLength(1);
+  expect(stored[0]?.[1]).toMatchObject({
+    clientId,
+    reference: sourceReference,
+    text: TEXT_INPUT.text,
+    failedMessage: "题目来源已变化",
+  });
+});
+
+it("已显示题序变化同样保留原稿，不能套新目录坐标", async () => {
+  await bindMemoOutboxAccount("stu-a");
+  mockedResolve.mockResolvedValueOnce(canonicalSource);
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+    sourceDisplay: { questionNo: 1, questionCount: 2 },
+  });
+  await flushMemoOutbox();
+  expect(mockedText).not.toHaveBeenCalled();
+  expect(queueProbe().current[0]?.failedMessage).toContain("题目来源已变化");
+});
+
+it("旧来源404只回退旧anchor，缺失context必须省略而非null", async () => {
+  await bindMemoOutboxAccount("stu-a");
+  mockedResolve.mockRejectedValueOnce(
+    new ApiError("LEARNING_CONTEXT_NOT_FOUND", "来源不存在或不可见", 404),
+  );
+  mockedText.mockResolvedValueOnce(memoOf("第一条"));
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+  });
+  await flushMemoOutbox();
+  const body = mockedText.mock.calls[0]?.[0];
+  expect(body?.anchor).toEqual(sourceAnchor);
+  expect(Object.hasOwn(body ?? {}, "context")).toBe(false);
+});
+
+it("旧账号canonical迟到时不发送新账号请求，不把来源放进新队列", async () => {
+  await bindMemoOutboxAccount("stu-a");
+  let resolve!: (context: LearningContext) => void;
+  mockedResolve.mockReturnValueOnce(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+    sourcePrincipal: "stu-a",
+  });
+  await bindMemoOutboxAccount("stu-b");
+  resolve(canonicalSource);
+  await flushMemoOutbox();
+  expect(mockedText).not.toHaveBeenCalled();
+  expect(await backend.getAll('["memo-outbox","stu-a"')).toHaveLength(1);
+  expect(await backend.getAll('["memo-outbox","stu-b"')).toEqual([]);
+  await expect(
+    enqueueMemo({ ...TEXT_INPUT, sourcePrincipal: "stu-a" }),
+  ).rejects.toThrow("账号已变化");
+});
+
+it("媒体补传携带入队时真实context，不借用当前阅读源", async () => {
+  await bindMemoOutboxAccount("stu-a");
+  const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+  mockedMedia.mockResolvedValueOnce(memoOf("图片"));
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    kind: "image",
+    blob,
+    anchor: sourceAnchor,
+    context: canonicalSource,
+  });
+  await flushMemoOutbox();
+  expect(mockedResolve).not.toHaveBeenCalled();
+  expect(mockedMedia).toHaveBeenCalledWith(
+    blob,
+    expect.objectContaining({ anchor: sourceAnchor, context: canonicalSource }),
+    "stu-a",
+  );
 });
