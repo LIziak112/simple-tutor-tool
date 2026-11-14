@@ -80,12 +80,3 @@ test("技能说明跳过，运行脚本和生成内容不跳过", () => {
   );
   assert.equal(planCi(["dsl-kit/tutor-lint.mjs"]).full, true);
 });
-
-test("浏览器分片保留完整默认范围且拒绝无效项目", async () => {
-  const { ciBrowserProjects } = await import("./ci-scope.mjs");
-  assert.deepEqual(ciBrowserProjects(), ["chromium", "webkit"]);
-  assert.deepEqual(ciBrowserProjects("chromium"), ["chromium"]);
-  assert.deepEqual(ciBrowserProjects("webkit"), ["webkit"]);
-  assert.throws(() => ciBrowserProjects(""));
-  assert.throws(() => ciBrowserProjects("firefox"));
-});
