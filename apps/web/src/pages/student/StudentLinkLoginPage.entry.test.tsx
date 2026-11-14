@@ -317,3 +317,56 @@ it("入口等待清理时外部主体已切换，不把旧兑换应用到新主�
   expect(client.getQueryData(["student", "me"])).toEqual(B);
   expect(links).toHaveLength(1);
 });
+
+for (const change of ["B", "ABA", "same-id"] as const)
+  it(`同事件${change}身份更新不被旧入口清理或覆盖`, async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(["student", "me"], A);
+    const gate = deferred<void>();
+    const cancel = vi
+      .spyOn(client, "cancelQueries")
+      .mockImplementationOnce(() => gate.promise);
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <PortalHost>
+              <Outlet />
+            </PortalHost>
+          ),
+          children: [
+            { path: "/s/:token", element: <StudentLinkLoginPage /> },
+            { path: "/s/home", element: <p>学生首页</p> },
+          ],
+        },
+      ],
+      { initialEntries: ["/s/link-external"] },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    await ready("link-external");
+    await answer("link-external", A);
+    await waitFor(() => expect(cancel).toHaveBeenCalled());
+    await act(async () => {
+      client.setQueryData(["student", "me"], change === "same-id" ? A : B);
+      if (change === "ABA") client.setQueryData(["student", "me"], A);
+      client.setQueryData(["student", "current-private"], { preserved: true });
+      gate.resolve();
+    });
+
+    expect(client.getQueryData(["student", "me"])).toEqual(
+      change === "B" ? B : A,
+    );
+    expect(client.getQueryData(["student", "current-private"])).toEqual({
+      preserved: true,
+    });
+    expect(links).toHaveLength(1);
+  });

@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StudentMeData, TeacherInfo } from "@tutor/contract";
-import { type ReactNode, useEffect, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import {
   type PortalId,
@@ -12,6 +12,8 @@ import { createHttpRuntime } from "./clients/http-runtime";
 import { createClientServices } from "./clients/services";
 import { portalCapabilitiesOf } from "./registry";
 import { createPortalRoutes } from "./routes";
+import { prefetchAuthenticatedStudent } from "./student-auth-prefetch";
+import { watchSubjectIdentity } from "./subject-identity";
 import { createSubjectScope } from "./subject-scope";
 
 function roleSessionQuery(role: "student" | "teacher") {
@@ -29,6 +31,8 @@ function roleSessionQuery(role: "student" | "teacher") {
 /** 认证bootstrap在L3，领域查询仍共用原角色缓存；每个真实subject生成新租约。 */
 export function PortalHost({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
+  const cache = useQueryClient();
+  const [identityEpoch, setIdentityEpoch] = useState(0);
   const portal: PortalId = pathname.startsWith("/p")
     ? "personal"
     : pathname.startsWith("/a")
@@ -59,13 +63,23 @@ export function PortalHost({ children }: { children: ReactNode }) {
           type: role,
           id: id ?? "unconfirmed",
           portal,
+          generation: identityEpoch,
           ...(pairedSubjectId === null ? {} : { pairedSubjectId }),
         },
         (input, init) => globalThis.fetch(input, init),
       ),
-    [role, id, portal, pairedSubjectId],
+    [role, id, portal, pairedSubjectId, identityEpoch],
   );
-  useEffect(() => scope.retain(), [scope]);
+  useEffect(() => {
+    const release = scope.retain();
+    const stop = watchSubjectIdentity(cache, scope, () =>
+      setIdentityEpoch((value) => value + 1),
+    );
+    return () => {
+      stop();
+      release();
+    };
+  }, [cache, scope]);
   const clients = useMemo(
     () => createClientServices(createHttpRuntime(scope)),
     [scope],
@@ -86,6 +100,8 @@ export function PortalHost({ children }: { children: ReactNode }) {
       ),
       capabilitiesFor: portalCapabilitiesOf,
       signal: scope.signal,
+      prefetchStudentAfterAuth: (student, client) =>
+        prefetchAuthenticatedStudent(portal, student, client),
     }),
     [portal, view, id, role, accountKind, clients, routes, scope],
   );

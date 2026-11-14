@@ -1,6 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { StudentMeData } from "@tutor/contract";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import {
+  MemoryRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
 import { ApiError, fetchStudentMe, logoutStudentApi } from "@/lib/api";
@@ -62,6 +68,7 @@ function renderLayout(entry = "/s/home") {
         <Routes>
           <Route path="/p/learn/*" element={<PersonalDestination />} />
           <Route path="/s" element={<StudentLayout />}>
+            <Route index element={<Navigate to="/s/home" replace />} />
             <Route
               path="settings"
               element={<p data-testid="route-stub">学生设置页</p>}
@@ -242,3 +249,12 @@ describe("StudentLayout", () => {
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
   });
 });
+
+for (const entry of ["/s", "/s/"])
+  it(`个人旧根${entry}经实际父布局和原index到个人首页`, async () => {
+    mockedMe.mockResolvedValue({ ...STUDENT, accountKind: "personal" });
+    renderLayout(entry);
+    expect(await screen.findByTestId("personal-destination")).toHaveTextContent(
+      "/p/learn/home",
+    );
+  });

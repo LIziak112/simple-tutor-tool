@@ -1,8 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   usePortalClients,
   usePortalRuntime,
 } from "@/features/runtime/portal-runtime";
+import { captureAccountIdentity } from "./account-identity";
 
 import { useApplyStudentAuthed } from "./student-auth";
 
@@ -24,6 +26,7 @@ export function useStudentLinkEntry(token: string) {
   // ref只供下一次token/重试setup取快照，在途exchange不读取后来的端口。
   const operations = useRef({ loginStudentByLinkApi, applyAuthed, signal });
   operations.current = { loginStudentByLinkApi, applyAuthed, signal };
+  const queryClient = useQueryClient();
   const generation = useRef(0);
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<EntryResult>({
@@ -34,24 +37,35 @@ export function useStudentLinkEntry(token: string) {
   useEffect(() => {
     if (token.length === 0) return;
     const { loginStudentByLinkApi, applyAuthed, signal } = operations.current;
+    const identity = captureAccountIdentity(queryClient, "student");
     const id = ++generation.current;
     const controller = new AbortController();
     const ownsEntry = () =>
       generation.current === id && !controller.signal.aborted;
-    const isCurrent = () => ownsEntry() && !signal.aborted;
+    const isCurrent = () =>
+      ownsEntry() && !signal.aborted && identity.isCurrent();
     setResult({ token, attempt, status: "pending" });
     async function exchange() {
-      if (!isCurrent()) return;
+      if (!ownsEntry()) return;
       try {
+        if (!isCurrent())
+          throw signal.reason ?? new Error("账号状态已更新，请重试");
         const student = await loginStudentByLinkApi(token, controller.signal);
-        if (!isCurrent()) return;
+        if (!ownsEntry()) return;
+        if (!isCurrent())
+          throw signal.reason ?? new Error("账号状态已更新，请重试");
         const applied = await applyAuthed(student, isCurrent);
         // 身份已由本入口成功提交后，自己的Host换租约不应重新兑换；
         // 提交前外部换主体仍由捕获的旧signal阻止clear和写缓存。
         if (!ownsEntry()) return;
         if (applied) setResult({ token, attempt, status: "success" });
         else
-          setResult({ token, attempt, status: "error", error: signal.reason });
+          setResult({
+            token,
+            attempt,
+            status: "error",
+            error: signal.reason ?? new Error("账号状态已更新，请重试"),
+          });
       } catch (error) {
         if (ownsEntry()) setResult({ token, attempt, status: "error", error });
       }
@@ -63,8 +77,9 @@ export function useStudentLinkEntry(token: string) {
     return () => {
       generation.current++;
       controller.abort();
+      identity.finish();
     };
-  }, [token, attempt]);
+  }, [token, attempt, queryClient]);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
   const current = result.token === token && result.attempt === attempt;
   return {

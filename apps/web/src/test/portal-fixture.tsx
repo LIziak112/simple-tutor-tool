@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { prefetchStudentQueries } from "@/features/auth/student-prefetch";
 import {
   type PortalRuntime,
   PortalRuntimeProvider,
@@ -54,6 +55,13 @@ export function createTestRuntime(
     capabilities: portalCapabilitiesOf("student", "class"),
     capabilitiesFor: portalCapabilitiesOf,
     signal: new AbortController().signal,
+    prefetchStudentAfterAuth: (student, cache) => {
+      void prefetchStudentQueries(
+        cache,
+        overrides.clients ?? testClientServices,
+        portalCapabilitiesOf("student", student.accountKind).assignments,
+      );
+    },
     ...overrides,
   };
 }

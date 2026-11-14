@@ -4,6 +4,8 @@ export interface SubjectIdentity {
   readonly id: string;
   readonly portal?: string;
   readonly pairedSubjectId?: string;
+  /** 仅用于宿主重建已撤销租约，不是认证数据。 */
+  readonly generation?: number;
 }
 /** 每个已确认主体独占不可重绑租约；切账号仅关闭旧租约，不替换其客户端。 */
 export function createSubjectScope(

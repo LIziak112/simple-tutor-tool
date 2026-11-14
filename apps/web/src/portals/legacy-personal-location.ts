@@ -1,9 +1,22 @@
 const ORIGIN = "https://legacy.invalid";
-const unsafe = (value: string) =>
-  !value.startsWith("/") ||
-  value.startsWith("//") ||
-  /[\\\s]|%(?:2f|5c|0[0-9a-f]|1[0-9a-f]|7f)/i.test(value);
+function safePath(value: string) {
+  const path = value.split(/[?#]/, 1)[0] ?? "";
+  if (
+    !path.startsWith("/") ||
+    path.startsWith("//") ||
+    /[\\\s]|%(?:2f|5c|0[0-9a-f]|1[0-9a-f]|7f)/i.test(path)
+  )
+    return false;
+  try {
+    return !decodeURIComponent(path)
+      .split("/")
+      .some((part) => part === "." || part === "..");
+  } catch {
+    return false;
+  }
+}
 function mapPath(path: string): string | null {
+  if (path === "/s" || path === "/s/") return "/p/learn/home";
   if (
     /^\/s\/(?:home|assignments|courses|lectures|attempts|wrong|records|settings|memos|notebook)(?:\/|$)/.test(
       path,
@@ -16,21 +29,29 @@ function mapPath(path: string): string | null {
     return `/p/manage${tail.replace(/^\/content/, "/library")}`;
   return `/p/manage${tail.replace(/^\/insights\/students(?=\/|$)/, "/students")}`;
 }
-/** 旧门户入口适配集中在L3，嵌套来源转译后仍须经领域白名单。 */
-export function legacyPersonalLocation(value: string): string {
-  if (!value.startsWith("/") || value.startsWith("//") || /[\\\s]/.test(value))
-    return value;
+/** 每层只校验origin/pathname，不把合法的嵌套查询编码误判为路径绕过。 */
+function translate(value: string, depth: number, nested: boolean): string {
+  if (depth >= 8 || value.length > 32768 || !safePath(value)) return value;
   const url = new URL(value, ORIGIN);
-  const path = mapPath(url.pathname);
-  if (!path) return value;
+  if (url.origin !== ORIGIN) return value;
+  const path =
+    mapPath(url.pathname) ??
+    (/^\/p\/learn(?:\/|$)/.test(url.pathname) ? url.pathname : null);
+  if (!path || (nested && !path.startsWith("/p/learn/"))) return value;
   url.pathname = path;
-  for (const key of ["returnTo", "aiFrom", "from"]) {
-    const raw = url.searchParams.get(key);
-    if (!raw || unsafe(raw)) continue;
-    const nested = new URL(raw, ORIGIN);
-    const target = mapPath(nested.pathname);
-    if (nested.origin === ORIGIN && target?.startsWith("/p/learn/"))
-      url.searchParams.set(key, `${target}${nested.search}${nested.hash}`);
+  const search = new URLSearchParams();
+  let changed = false;
+  for (const [key, raw] of url.searchParams) {
+    const target = ["returnTo", "aiFrom", "from"].includes(key)
+      ? translate(raw, depth + 1, true)
+      : raw;
+    search.append(key, target);
+    changed ||= target !== raw;
   }
+  if (changed) url.search = search.toString();
   return `${url.pathname}${url.search}${url.hash}`;
+}
+/** 旧门户入口适配集中在L3；最多8层/每层32KiB，之后仍由领域白名单校验。 */
+export function legacyPersonalLocation(value: string): string {
+  return translate(value, 0, false);
 }

@@ -4,6 +4,7 @@ import {
   aiQueueReturnTarget,
   recordsReturnTarget,
 } from "@/features/student/record-review-navigation";
+import { aiDisplayReturnTo } from "@/features/student-ai/ai-display-return";
 import { legacyPersonalLocation } from "./legacy-personal-location";
 import { personalRoutes } from "./personal/routes";
 import { safeReturnTo } from "./registry";
@@ -68,4 +69,91 @@ it("个人连接入口已注册在受保护管理壳", () => {
   expect(
     matchRoutes(createRoutesFromChildren(personalRoutes), "/p/manage/connect"),
   ).not.toBeNull();
+});
+it("真实AI返回消费者接受转译后的多层from", () => {
+  const raw =
+    "/s/attempts/a?" +
+    new URLSearchParams({ returnTo: "/s/records?offset=20", aiCompose: "q" });
+  const mapped = new URL(
+    legacyPersonalLocation(
+      "/s/settings/ai?" + new URLSearchParams({ from: raw }),
+    ),
+    location.origin,
+  );
+  expect(aiDisplayReturnTo(createPortalRoutes("student"), raw)).not.toBeNull();
+  expect(
+    aiDisplayReturnTo(
+      createPortalRoutes("personal"),
+      mapped.searchParams.get("from"),
+    ),
+  ).not.toBeNull();
+  const parent = new URL(
+    mapped.searchParams.get("from") ?? "",
+    location.origin,
+  );
+  expect(parent.searchParams.get("returnTo")).toBe(
+    "/p/learn/records?offset=20",
+  );
+});
+it("真实笔记本结果白名单接受多层returnTo并保留题与hash", () => {
+  const raw =
+    "/s/attempts/a?" +
+    new URLSearchParams({
+      returnTo: "/s/records?offset=20",
+      reviewQuestion: "q",
+    }) +
+    "#q2";
+  const mapped = new URL(
+    legacyPersonalLocation(
+      "/s/notebook/q?" + new URLSearchParams({ returnTo: raw }),
+    ),
+    location.origin,
+  );
+  const pattern = "(?:attempts|assignments)\\/[a-zA-Z0-9_-]+(?:[?#].*)?$";
+  expect(
+    createPortalRoutes("student").learningPattern(pattern, "").test(raw),
+  ).toBe(true);
+  const target = mapped.searchParams.get("returnTo");
+  expect(
+    createPortalRoutes("personal")
+      .learningPattern(pattern, "")
+      .test(target ?? ""),
+  ).toBe(true);
+  const parent = new URL(target ?? "", location.origin);
+  expect(parent.searchParams.get("returnTo")).toBe(
+    "/p/learn/records?offset=20",
+  );
+  expect(parent.searchParams.get("reviewQuestion")).toBe("q");
+  expect(parent.hash).toBe("#q2");
+});
+it("旧根映到home且完整保留查询hash", () => {
+  expect(legacyPersonalLocation("/s?tab=recent#q1")).toBe(
+    "/p/learn/home?tab=recent#q1",
+  );
+  expect(legacyPersonalLocation("/s/?tab=recent#q1")).toBe(
+    "/p/learn/home?tab=recent#q1",
+  );
+});
+it("多层来源逐层拒绝外站、穿越及路径编码斜杠", () => {
+  for (const bad of [
+    "//evil/s/home",
+    "https://evil/s/home",
+    "/s/courses/../home",
+    "/s/courses/%2fescape",
+    "/s/courses/%5cescape",
+  ]) {
+    const parent = "/s/attempts/a?" + new URLSearchParams({ returnTo: bad });
+    const mapped = new URL(
+      legacyPersonalLocation(
+        "/s/settings/ai?" + new URLSearchParams({ from: parent }),
+      ),
+      location.origin,
+    );
+    const middle = new URL(
+      mapped.searchParams.get("from") ?? "",
+      location.origin,
+    );
+    expect(middle.pathname).toBe("/p/learn/attempts/a");
+    expect(middle.searchParams.get("returnTo")).toBe(bad);
+  }
 });
