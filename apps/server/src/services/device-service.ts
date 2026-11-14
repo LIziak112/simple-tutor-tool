@@ -5,76 +5,27 @@ import {
 } from "@tutor/contract";
 import { and, eq, gt, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { devices, memos, sessions } from "../db/schema";
+import { devices, sessions } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import {
+  type DeviceOwner,
+  ownerWhere,
+  requireDevice,
+  sessionOwnerWhere,
+  toDevice,
+} from "./device-record";
 
-export interface DeviceOwner {
-  readonly type: "student" | "teacher";
-  readonly id: string;
-}
-type DeviceRow = typeof devices.$inferSelect;
-const ownerWhere = (owner: DeviceOwner) =>
-  and(eq(devices.subjectType, owner.type), eq(devices.subjectId, owner.id));
-const sessionOwnerWhere = (owner: DeviceOwner) =>
-  and(eq(sessions.subjectType, owner.type), eq(sessions.subjectId, owner.id));
+export { mergeDevices } from "./device-merge";
+export { type DeviceOwner, requireDevice } from "./device-record";
 
-/** 未知设备与他人设备统一 404，不以设备标识提供认证。 */
-export function requireDevice(
+export function listDevices(
   db: Db,
   owner: DeviceOwner,
-  deviceId: string,
-): DeviceRow {
-  const seen = new Set<string>();
-  let id = deviceId;
-  while (!seen.has(id)) {
-    seen.add(id);
-    const row = db
-      .select()
-      .from(devices)
-      .where(and(ownerWhere(owner), eq(devices.deviceId, id)))
-      .get();
-    if (row === undefined) break;
-    if (row.mergedIntoId === null) return row;
-    id = row.mergedIntoId;
-  }
-  throw new HttpError(404, "DEVICE_NOT_FOUND", "设备不存在");
-}
-
-function toDevice(
-  db: Db,
-  owner: DeviceOwner,
-  row: DeviceRow,
-  now: Date,
-): Device {
-  const count =
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(sessions)
-      .where(
-        and(
-          sessionOwnerWhere(owner),
-          eq(sessions.deviceId, row.deviceId),
-          gt(sessions.expiresAt, now.toISOString()),
-        ),
-      )
-      .get()?.count ?? 0;
+  now = new Date(),
+  currentSessionId?: string,
+) {
   return {
-    deviceId: row.deviceId,
-    type: row.type,
-    os: row.os,
-    browser: row.browser,
-    standalone: row.standalone,
-    automaticName: row.automaticName,
-    name: row.name,
-    displayName: row.name ?? row.automaticName,
-    firstSeenAt: row.firstSeenAt,
-    lastSeenAt: row.lastSeenAt,
-    activeSessionCount: count,
-  };
-}
-
-export function listDevices(db: Db, owner: DeviceOwner, now = new Date()) {
-  return {
+    currentDeviceId: currentSessionDevice(db, owner, currentSessionId, now),
     devices: db
       .select()
       .from(devices)
@@ -94,6 +45,35 @@ export function listDevices(db: Db, owner: DeviceOwner, now = new Date()) {
         )
         .get()?.count ?? 0,
   };
+}
+
+/** 仅从认证 Cookie 指向的本人会话取设备；不信客户端的“当前设备”参数。 */
+function currentSessionDevice(
+  db: Db,
+  owner: DeviceOwner,
+  token: string | undefined,
+  now: Date,
+): string | null {
+  if (token === undefined) return null;
+  const row = db
+    .select({ deviceId: sessions.deviceId })
+    .from(sessions)
+    .where(
+      and(
+        sessionOwnerWhere(owner),
+        eq(sessions.id, token),
+        gt(sessions.expiresAt, now.toISOString()),
+      ),
+    )
+    .get();
+  if (row?.deviceId == null) return null;
+  try {
+    return requireDevice(db, owner, row.deviceId).deviceId;
+  } catch (error) {
+    if (error instanceof HttpError && error.code === "DEVICE_NOT_FOUND")
+      return null;
+    throw error;
+  }
 }
 
 export function getDevice(db: Db, owner: DeviceOwner, id: string): Device {
@@ -259,63 +239,6 @@ export function bindKnownDeviceSession(
   }
   if (known !== undefined || info !== undefined)
     bindDeviceSession(db, owner, id, token);
-}
-
-export function mergeDevices(
-  db: Db,
-  owner: DeviceOwner,
-  sourceId: string,
-  targetId: string,
-): Device {
-  const source = requireDevice(db, owner, sourceId);
-  const target = requireDevice(db, owner, targetId);
-  if (source.deviceId === target.deviceId)
-    return toDevice(db, owner, target, new Date());
-  db.transaction(() => {
-    db.update(sessions)
-      .set({ deviceId: target.deviceId })
-      .where(
-        and(sessionOwnerWhere(owner), eq(sessions.deviceId, source.deviceId)),
-      )
-      .run();
-    if (owner.type === "student") {
-      db.update(memos)
-        .set({
-          deviceId: target.deviceId,
-          contextJson: sql`case when ${memos.contextJson} is null then null else json_set(${memos.contextJson}, '$.deviceId', ${target.deviceId}) end`,
-        })
-        .where(
-          and(
-            eq(memos.studentId, owner.id),
-            eq(memos.deviceId, source.deviceId),
-          ),
-        )
-        .run();
-    }
-    db.update(devices)
-      .set({
-        firstSeenAt:
-          source.firstSeenAt < target.firstSeenAt
-            ? source.firstSeenAt
-            : target.firstSeenAt,
-        lastSeenAt:
-          source.lastSeenAt > target.lastSeenAt
-            ? source.lastSeenAt
-            : target.lastSeenAt,
-      })
-      .where(and(ownerWhere(owner), eq(devices.deviceId, target.deviceId)))
-      .run();
-    db.update(devices)
-      .set({ mergedIntoId: target.deviceId })
-      .where(and(ownerWhere(owner), eq(devices.deviceId, source.deviceId)))
-      .run();
-  });
-  return toDevice(
-    db,
-    owner,
-    requireDevice(db, owner, target.deviceId),
-    new Date(),
-  );
 }
 
 export function revokeDeviceSessions(

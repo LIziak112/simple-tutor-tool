@@ -16,6 +16,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { portalCapabilitiesOf } from "@/features/auth/portals";
+import { useTeacherMe } from "@/features/auth/teacher-auth";
 import {
   useAddCourseMembers,
   useRemoveCourseMembers,
@@ -212,6 +214,11 @@ function AddMembersDialog({
   memberIds: Set<string>;
   onClose: () => void;
 }) {
+  const me = useTeacherMe();
+  const capabilities = portalCapabilitiesOf(
+    "teacher",
+    me.data?.accountKind ?? "personal",
+  );
   const studentsQuery = useStudents(false);
   const addMutation = useAddCourseMembers(courseId);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -296,9 +303,11 @@ function AddMembersDialog({
                     <span className="min-w-0 flex-1 truncate font-medium">
                       {student.displayName}
                     </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      登录名：{student.loginName}
-                    </span>
+                    {capabilities.showLoginName && (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        登录名：{student.loginName}
+                      </span>
+                    )}
                   </label>
                 </li>
               ))}

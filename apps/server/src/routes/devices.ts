@@ -33,9 +33,21 @@ function routes<E extends Env>(
 ) {
   return new Hono<E>()
     .get("/devices", (c) =>
-      c.json({ ok: true, data: listDevices(db, ownerOf(c.var)) }, 200, {
-        "Cache-Control": "private, no-store",
-      }),
+      c.json(
+        {
+          ok: true,
+          data: listDevices(
+            db,
+            ownerOf(c.var),
+            new Date(),
+            getCookie(c, cookie),
+          ),
+        },
+        200,
+        {
+          "Cache-Control": "private, no-store",
+        },
+      ),
     )
     .post("/devices/register", async (c) => {
       const owner = ownerOf(c.var);
@@ -67,17 +79,19 @@ function routes<E extends Env>(
         ),
       }),
     )
-    .post("/devices/:id/merge", async (c) =>
-      c.json({
+    .post("/devices/:id/merge", async (c) => {
+      const input = await parseJsonBody(c, deviceMergeSchema);
+      return c.json({
         ok: true,
         data: mergeDevices(
           db,
           ownerOf(c.var),
           c.req.param("id"),
-          (await parseJsonBody(c, deviceMergeSchema)).targetDeviceId,
+          input.targetDeviceId,
+          input.intent,
         ),
-      }),
-    )
+      });
+    })
     .post("/devices/:id/revoke-sessions", (c) =>
       c.json({
         ok: true,

@@ -33,7 +33,12 @@ function memoMetadataByteLength(input: MemoMetadataInput): number {
 
 /** 本人界面、离线补传和 MCP 共用；来源展开后也要验证，超量不部分落库。 */
 export function assertMemoMetadataBudget(input: MemoMetadataInput): void {
-  if (memoMetadataByteLength(input) > MEMO_METADATA_MAX_BYTES) tooLarge();
+  assertMetadataByteBudget(memoMetadataByteLength(input));
+}
+
+/** 同一64KiB政策和错误协议；各出口按实际公开元数据投影计量。 */
+export function assertMetadataByteBudget(bytes: number): void {
+  if (bytes > MEMO_METADATA_MAX_BYTES) tooLarge();
 }
 
 /** multipart 文件沿用媒体限额，其余所有字段（含重复/未知字段）另计信封预算。 */

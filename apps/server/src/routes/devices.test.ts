@@ -12,7 +12,14 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createStudentSession, createTeacherSession } from "../auth/session.ts";
-import { attempts, events, sessions, teachers } from "../db/schema.ts";
+import {
+  aiConnections,
+  attempts,
+  events,
+  sessions,
+  students,
+  teachers,
+} from "../db/schema.ts";
 import {
   createTestDb,
   createTestDir,
@@ -50,6 +57,135 @@ function setup() {
 }
 
 describe("本人设备接口", () => {
+  it("撤销真实远端浏览器登录，保留当前subject以外会话及MCP凭证事实", async () => {
+    const { app, db, cookie, studentId, json } = setup();
+    const local = randomUUID();
+    const remote = randomUUID();
+    await app.request(
+      "/api/student/devices/register",
+      json("POST", { deviceId: local, type: "desktop" }),
+    );
+    const remoteCookie = `tutor_student_session=${createStudentSession(db, studentId).token}`;
+    await app.request(
+      "/api/student/devices/register",
+      json("POST", { deviceId: remote, type: "agent" }, remoteCookie),
+    );
+    db.update(teachers)
+      .set({
+        accountKind: "personal",
+        personalStudentId: studentId,
+        loginName: "device-personal-fixture",
+      })
+      .where(eq(teachers.id, TEST_TEACHER_ID))
+      .run();
+    db.update(students)
+      .set({ linkEnabled: false, passwordEnabled: false })
+      .where(eq(students.id, studentId))
+      .run();
+    const teacherToken = createTeacherSession(db, TEST_TEACHER_ID).token;
+    await app.request(
+      "/api/teacher/devices/register",
+      json(
+        "POST",
+        { deviceId: local, type: "desktop" },
+        `tutor_session=${teacherToken}`,
+      ),
+    );
+    const studentMe = await app.request("/api/student/me", {
+      headers: { cookie },
+    });
+    expect(studentMe.status).toBe(200);
+    expect(
+      ((await studentMe.json()) as { data: { accountKind: string } }).data
+        .accountKind,
+    ).toBe("personal");
+    const connectionId = randomUUID();
+    const configJson = JSON.stringify({ tokenHash: "隔离夹具凭证哨兵" });
+    db.insert(aiConnections)
+      .values({
+        id: connectionId,
+        studentId,
+        channel: "mcp",
+        configJson,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+    const result = await app.request(
+      `/api/student/devices/${remote}/revoke-sessions`,
+      json("POST", {}),
+    );
+    expect(await result.json()).toEqual({ ok: true, data: { revoked: 1 } });
+    expect(
+      (
+        await app.request("/api/student/me", {
+          headers: { cookie: remoteCookie },
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (await app.request("/api/student/me", { headers: { cookie } })).status,
+    ).toBe(200);
+    expect(
+      (
+        await app.request("/api/teacher/me", {
+          headers: { cookie: `tutor_session=${teacherToken}` },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      db
+        .select()
+        .from(aiConnections)
+        .where(eq(aiConnections.id, connectionId))
+        .get()?.configJson,
+    ).toBe(configJson);
+    const current = await app.request(
+      `/api/student/devices/${local}/revoke-sessions`,
+      json("POST", {}),
+    );
+    expect(await current.json()).toEqual({ ok: true, data: { revoked: 1 } });
+    expect(
+      (await app.request("/api/student/me", { headers: { cookie } })).status,
+    ).toBe(401);
+    expect(
+      db.select().from(sessions).where(eq(sessions.id, teacherToken)).get(),
+    ).toBeDefined();
+  });
+  it("当前设备从本人会话解析合并别名，不信请求的当前设备参数", async () => {
+    const { app, db, cookie, studentId, json } = setup();
+    const source = randomUUID();
+    const target = randomUUID();
+    await app.request(
+      "/api/student/devices/register",
+      json("POST", { deviceId: source, type: "desktop" }),
+    );
+    const secondCookie = `tutor_student_session=${createStudentSession(db, studentId).token}`;
+    await app.request(
+      "/api/student/devices/register",
+      json("POST", { deviceId: target, type: "tablet" }, secondCookie),
+    );
+    await app.request(
+      `/api/student/devices/${source}/merge`,
+      json("POST", { targetDeviceId: target }),
+    );
+    const listed = await app.request(
+      `/api/student/devices?currentDeviceId=${randomUUID()}`,
+      { headers: { cookie } },
+    );
+    const body = (await listed.json()) as { data: unknown };
+    assertNoLeak(body);
+    expect(deviceListDataSchema.parse(body.data).currentDeviceId).toBe(target);
+    const unknownCookie = `tutor_student_session=${createStudentSession(db, studentId).token}`;
+    const unknown = await app.request("/api/student/devices", {
+      headers: { cookie: unknownCookie },
+    });
+    expect(
+      deviceListDataSchema.parse(
+        ((await unknown.json()) as { data: unknown }).data,
+      ).currentDeviceId,
+    ).toBeNull();
+  });
   it("真实请求登记并绑定当前会话，随笔、事件与任意来源作答引用同一设备", async () => {
     const { app, db, cookie, studentId, json } = setup();
     const device = {

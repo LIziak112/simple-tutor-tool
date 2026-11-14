@@ -11,6 +11,7 @@ import type { AiTaskPublic, AttemptQuestionPublic } from "@tutor/contract";
 import { useState } from "react";
 import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { learningContextStore } from "@/features/learning-context/learning-context-store";
 import {
   createStudentAiTaskApi,
   fetchStudentAiStatusApi,
@@ -159,6 +160,28 @@ const capturedClient: { current: QueryClient | null } = { current: null };
 const capturedDock: { current: ReturnType<typeof useAiCompanionDock> | null } =
   { current: null };
 beforeEach(() => {
+  learningContextStore.reset();
+  const lease = learningContextStore.registerHost(
+    "attempt",
+    (id) => ({
+      anchor: {
+        kind: "question",
+        attemptId: "attempt",
+        questionId: id,
+        label: id,
+      },
+    }),
+    "draft",
+  );
+  learningContextStore.explicit(lease, {
+    anchor: {
+      kind: "question",
+      attemptId: "attempt",
+      questionId: "q1",
+      label: "第 1 题",
+    },
+  });
+
   vi.clearAllMocks();
   localStorage.clear();
   bindAiDisplayAccount(null);

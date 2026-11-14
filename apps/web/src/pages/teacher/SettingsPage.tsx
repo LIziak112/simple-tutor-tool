@@ -7,11 +7,14 @@ import {
 } from "lucide-react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { AuthScreenLoading } from "@/features/auth/AuthScreen";
 import {
   useAccountLoginPath,
   useLogoutPersonal,
 } from "@/features/auth/personal-auth";
+import { portalCapabilitiesOf } from "@/features/auth/portals";
 import { useLogoutTeacher, useTeacherMe } from "@/features/auth/teacher-auth";
+import { DeviceSettingsSection } from "@/features/devices/DeviceSettingsSection";
 import { TeacherAiSettingsPanel } from "@/features/student-ai/TeacherAiSettingsPanel";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
@@ -19,7 +22,6 @@ import { PracticeFeedbackSection } from "@/features/teacher-settings/PracticeFee
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
-import { AuthScreenLoading } from "./SetupPage";
 
 const SECTIONS = [
   { id: "teaching", label: "学生作答方式", shortLabel: "作答方式" },
@@ -32,10 +34,11 @@ const SECTIONS = [
 export function SettingsPage() {
   // 登录回执会预填身份，整站备份权限由 /me 单独读取。
   const meQuery = useTeacherMe({ freshOnMount: true });
-  const logoutTeacherMutation = useLogoutTeacher();
-  const logoutPersonalMutation = useLogoutPersonal("teacher");
   const loginPath = useAccountLoginPath(meQuery.data?.accountKind, "/t/login");
   const navigate = useNavigate();
+  const onLoggedOut = () => navigate(loginPath, { replace: true });
+  const logoutTeacherMutation = useLogoutTeacher(onLoggedOut);
+  const logoutPersonalMutation = useLogoutPersonal("teacher", onLoggedOut);
   const settingsNavigation = useSettingsNavigation();
   const [searchParams] = useSearchParams();
   if (meQuery.isPending) return <AuthScreenLoading text="正在加载设置…" />;
@@ -53,10 +56,7 @@ export function SettingsPage() {
     ? logoutPersonalMutation
     : logoutTeacherMutation;
   function handleLogout() {
-    const action = () =>
-      logoutMutation.mutate(undefined, {
-        onSuccess: () => navigate(loginPath, { replace: true }),
-      });
+    const action = () => logoutMutation.mutate();
     if (settingsNavigation) settingsNavigation.leave(action);
     else action();
   }
@@ -119,6 +119,17 @@ export function SettingsPage() {
         </div>
       )}
       <div hidden={activeSection !== "account"} className="space-y-7">
+        {activeSection === "account" && (
+          <DeviceSettingsSection
+            key={`teacher:${meQuery.data.id}`}
+            owner={{ type: "teacher", id: meQuery.data.id }}
+            accountKind={meQuery.data.accountKind}
+            {...(portalCapabilitiesOf("teacher", meQuery.data.accountKind)
+              .teacherAiConnections
+              ? { connectionSettingsHref: "/t/connect" }
+              : {})}
+          />
+        )}
         <section>
           <h2 className="text-lg font-semibold">教师账号</h2>
           <dl className="mt-4 divide-y divide-border rounded-xl border border-border bg-card px-6 text-sm">
