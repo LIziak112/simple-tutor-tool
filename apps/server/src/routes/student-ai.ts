@@ -58,6 +58,7 @@ import {
 import { listAttemptReviewTasks } from "../services/ai-companion/student-ai-attempt-review-list.ts";
 import { attemptReviewPublicViewOf } from "../services/ai-companion/student-ai-attempt-review-public.ts";
 import { createAiBatchReviewTasks } from "../services/ai-companion/student-ai-batch.ts";
+import { requireAiInformedGate } from "../services/ai-companion/student-ai-informed.ts";
 import {
   type AiMaterialUploadPage,
   attachAiTaskMaterials,
@@ -83,6 +84,7 @@ import {
 } from "../services/ai-companion/student-ai-share.ts";
 import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
 import { createStudentMcpLiveFocusRoutes } from "./student-mcp-live-focus.ts";
+import { createStudentReviewV2Routes } from "./student-review-v2.ts";
 
 /**
  * 学生端 AI 伴学路由（SAI-08 快捷按钮、SAI-13 任务接口），由 student.ts 挂在
@@ -142,21 +144,6 @@ import { createStudentMcpLiveFocusRoutes } from "./student-mcp-live-focus.ts";
  * AI_TASK_LIMIT_REACHED、404 NOT_FOUND 同文案），中文消息即操作指引，
  * 不回显参考/路径/密钥。
  */
-
-/**
- * 首次知情门（三个任务创建入口共用，规则三已到：批量复盘 / 单题任务 /
- * 整体复盘）：无任何 active 连接 = 未跨过首次知情，403 且不落任务行
- * （不占配额，也不产必然发送失败的僵尸任务）。
- */
-function requireAiInformedGate(db: Db, studentId: string): void {
-  if (listStudentAiConnections(db, studentId).length === 0) {
-    throw new HttpError(
-      403,
-      "AI_SETUP_REQUIRED",
-      "还没有可用的 AI 连接，请先在设置中完成连接与首次知情确认",
-    );
-  }
-}
 
 /**
  * 解析按钮请求体：buttons 域校验失败 → AI_BUTTONS_INVALID，其余 → VALIDATION_ERROR。
@@ -302,6 +289,7 @@ export function createStudentAiRoutes(
   return (
     new Hono<StudentEnv>()
       .route("/", createStudentMcpLiveFocusRoutes(db))
+      .route("/", createStudentReviewV2Routes(db, hmacSecret))
       .get("/ai/quick-buttons", (c) => {
         return c.json({
           ok: true,

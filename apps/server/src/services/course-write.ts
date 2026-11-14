@@ -18,7 +18,12 @@ import { courseHasAttempts } from "./course-service";
 export function createCourse(
   db: Db,
   teacherId: string,
-  input: { title: string; description?: string | null | undefined },
+  input: {
+    title: string;
+    description?: string | null | undefined;
+    examType?: string | null | undefined;
+    reviewTemplateId?: string | null | undefined;
+  },
 ): CourseData {
   const count = db
     .select({ id: courses.id })
@@ -39,6 +44,8 @@ export function createCourse(
         title: input.title,
         order,
         description,
+        examType: input.examType || null,
+        reviewTemplateId: input.reviewTemplateId ?? null,
         createdAt: new Date().toISOString(),
       })
       .run();
@@ -81,6 +88,8 @@ export function createCourse(
     title: input.title,
     order,
     description,
+    examType: input.examType || null,
+    reviewTemplateId: input.reviewTemplateId ?? null,
     archived: false,
     archivedAt: null,
   };
@@ -107,6 +116,9 @@ export function updateCourse(
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
   }
   const patch: Partial<typeof courses.$inferInsert> = {};
+  if (input.examType !== undefined) patch.examType = input.examType || null;
+  if (input.reviewTemplateId !== undefined)
+    patch.reviewTemplateId = input.reviewTemplateId;
   const title = input.name ?? input.title;
   if (title !== undefined && title !== row.title) {
     patch.title = title;
@@ -129,6 +141,11 @@ export function updateCourse(
   return {
     id,
     title: patch.title ?? row.title,
+    examType: patch.examType !== undefined ? patch.examType : row.examType,
+    reviewTemplateId:
+      patch.reviewTemplateId !== undefined
+        ? patch.reviewTemplateId
+        : row.reviewTemplateId,
     order: row.order,
     description:
       patch.description !== undefined ? patch.description : row.description,

@@ -12,6 +12,7 @@ import {
   effectiveVerdictOfRow,
   unitGroupedRows,
 } from "./attempt-service";
+import { timeProjectionsOf } from "./attempt-time-projection";
 import { batchSerializeStudentAnswerOfRow } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -66,11 +67,16 @@ export const CSV_COLUMNS: readonly string[] = [
   "自动判定",
   "最终判定",
   "判定来源",
-  "用时（秒）",
+  "历史焦点用时（秒）",
   "提示数",
   "改答案次数",
   "教师评语",
   "手写笔迹链接",
+  "用时口径",
+  "活动账版本",
+  "活动用时（秒）",
+  "只看过（秒）",
+  "活动账状态",
 ];
 
 /**
@@ -240,6 +246,10 @@ export function exportCsv(
     .orderBy(asc(lastActivitySql), asc(attempts.id))
     .all();
 
+  const times = timeProjectionsOf(
+    db,
+    attemptRows.map(({ attempt }) => attempt.id),
+  );
   const lines: string[] = [CSV_COLUMNS.map(csvCell).join(",")];
   // 考点兜底表（快照缺失时按题目 id 从当前库关联；懒加载一次，正常数据不触发）
   let knowledgeFallback: Map<string, string[]> | null = null;
@@ -341,6 +351,7 @@ export function exportCsv(
             String(row.response.changeCount),
             row.response.teacherComment ?? "",
             inkUrl,
+            ...timeCsvCells(times.responseTime.get(row.response.id)),
           ]
             .map(csvCell)
             .join(","),
@@ -445,10 +456,27 @@ export function exportCsv(
           String(response.changeCount),
           response.teacherComment ?? "",
           inkUrl,
+          ...timeCsvCells(times.responseTime.get(response.id)),
         ];
         lines.push(cells.map(csvCell).join(","));
       }
     }
   }
   return lines.join("\r\n");
+}
+
+function timeCsvCells(
+  time: import("@tutor/contract").ResponseTime | undefined,
+): string[] {
+  if (!time) return ["", "", "", "", "unknown"];
+  if (time.metric === "legacy_focus")
+    return [time.metric, "", "", "", "历史焦点"];
+  const value = time.value;
+  return [
+    time.metric,
+    String(time.version),
+    value.activeSec === null ? "" : String(value.activeSec),
+    value.observedSec === null ? "" : String(value.observedSec),
+    value.state === "unknown" ? value.reason : "available",
+  ];
 }

@@ -186,7 +186,9 @@ export function InsightsOverviewPage() {
                 <p className="text-xs text-muted-foreground">统计窗口内</p>
               </div>
               <div className="flex min-h-24 flex-col justify-center gap-1 rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">离线作答占比</p>
+                <p className="text-xs text-muted-foreground">
+                  历史焦点离线占比
+                </p>
                 <p className="text-2xl font-semibold">
                   {formatPercent(data.offline.offlineShare)}
                 </p>

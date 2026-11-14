@@ -7,7 +7,7 @@ import {
   ResultActivityLine,
 } from "./QuestionActivity";
 
-describe("题内活动用时呈现（口径 v1）", () => {
+describe("题内活动用时呈现", () => {
   it("formatActivitySec：秒 / 分秒 / 整分", () => {
     expect(formatActivitySec(0)).toBe("0 秒");
     expect(formatActivitySec(45)).toBe("45 秒");
@@ -58,7 +58,7 @@ describe("题内活动用时呈现（口径 v1）", () => {
       />,
     );
     const badge = screen.getByText("活动用时 1 分 1 秒");
-    expect(badge.getAttribute("title")).toContain("口径 v1");
+    expect(badge.getAttribute("title")).toContain("前台聚焦且有作答动作");
   });
 
   it("卷级一行：合计 / 只看过 / 未归属（多端）；无事件卷标无可用记录", () => {
@@ -76,7 +76,7 @@ describe("题内活动用时呈现（口径 v1）", () => {
       />,
     );
     expect(screen.getByTestId("result-activity").textContent).toBe(
-      "题内活动合计 5 分钟 · 只看过 40 秒 · 未归属 25 秒（最多 2 端同开）（口径 v1）",
+      "题内活动合计 5 分钟 · 只看过 40 秒 · 未归属 25 秒（最多 2 端同开）",
     );
     rerender(
       <ResultActivityLine
@@ -92,7 +92,7 @@ describe("题内活动用时呈现（口径 v1）", () => {
       />,
     );
     expect(screen.getByTestId("result-activity").textContent).toBe(
-      "题内活动合计 2 分钟（口径 v1）",
+      "题内活动合计 2 分钟",
     );
     rerender(<ResultActivityLine activity={undefined} />);
     expect(screen.getByTestId("result-activity").textContent).toBe(

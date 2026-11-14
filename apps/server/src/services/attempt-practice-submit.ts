@@ -24,6 +24,7 @@ import {
   revisionStale,
 } from "./attempt-submit-revisions.ts";
 import { attemptSummaryOf } from "./attempt-summary.ts";
+import { sealResponseTimeWithin } from "./attempt-time-seal";
 import { assertAttemptNotTimedOut } from "./attempt-timing";
 import {
   recordQuestionSubmitEvent,
@@ -51,6 +52,7 @@ export function commitPracticeQuestion(
     origin?: PracticeSubmissionOrigin;
     settlement?: boolean;
     activeSecByQuestion?: Readonly<Record<string, number>>;
+    deferTimeSeal?: boolean;
   } = {},
 ) {
   const nowIso = new Date(now).toISOString();
@@ -232,6 +234,8 @@ export function commitPracticeQuestion(
         // 事务内复核已拦截同进程并发；防御多进程竞态的后到者按已提交语义收敛
         throw questionAlreadySubmitted();
       }
+      if (!options.deferTimeSeal)
+        sealResponseTimeWithin(db, attemptId, [row.id], nowIso);
       if (evidenceRow !== null) {
         tx.insert(submissionEvidence)
           .values({

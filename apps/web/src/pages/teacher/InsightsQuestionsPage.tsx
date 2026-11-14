@@ -93,9 +93,26 @@ function QuestionRow({
             <span className="text-muted-foreground">—</span>
           )}
         </td>
-        <td className="px-3 py-1.5 text-xs">{formatActiveSec(row.avgSec)}</td>
         <td className="px-3 py-1.5 text-xs">
-          {formatActiveSec(row.medianSec)}
+          {row.timeCohorts
+            ? row.timeCohorts.map((t) => (
+                <div key={t.metric}>
+                  {t.metric === "legacy_focus" ? "历史焦点" : "活动"}{" "}
+                  {formatActiveSec(t.avgSec)}（{t.knownCount}/
+                  {t.knownCount + t.unknownCount}）
+                </div>
+              ))
+            : formatActiveSec(row.avgSec)}
+        </td>
+        <td className="px-3 py-1.5 text-xs">
+          {row.timeCohorts
+            ? row.timeCohorts.map((t) => (
+                <div key={t.metric}>
+                  {t.metric === "legacy_focus" ? "历史焦点" : "活动"}{" "}
+                  {formatActiveSec(t.medianSec)}
+                </div>
+              ))
+            : formatActiveSec(row.medianSec)}
         </td>
         <td className="px-3 py-1.5">
           {row.anomalyCount > 0 ? (

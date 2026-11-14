@@ -22,6 +22,7 @@ import {
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { QUESTION_TYPE_LABELS } from "@/features/attempt/answer-format";
+import { responseTimeLabel } from "@/features/attempt/attempt-time-label";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import { useTeacherCourses } from "@/features/courses/course-queries";
 import {
@@ -87,6 +88,12 @@ const ANOMALY_REASON_LABELS: Record<"slow" | "hints", string> = {
 
 /** 一张异常题卡片（点击跳作答详情） */
 function AnomalyCard({ item }: { item: AnalyticsAnomalyQuestion }) {
+  const median =
+    item.timeMedianSec !== undefined
+      ? item.timeMedianSec
+      : item.time?.metric === "question_activity_sealed"
+        ? null
+        : item.medianSec;
   return (
     <li className="rounded-xl border border-border bg-card p-4">
       <p className="flex flex-wrap items-center gap-2">
@@ -116,10 +123,10 @@ function AnomalyCard({ item }: { item: AnalyticsAnomalyQuestion }) {
       </p>
       <RichMarkdown source={item.stemMd} className="mt-2 text-sm" />
       <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>用时 {formatActiveSec(item.activeSec)}</span>
-        {item.medianSec !== null && (
+        <span>{responseTimeLabel(item.time)}</span>
+        {median !== null && (
           <span>
-            全域中位数 {formatActiveSec(item.medianSec)}
+            全域中位数 {formatActiveSec(median)}
             {item.multipleOfMedian !== null &&
               `（约 ${item.multipleOfMedian} 倍）`}
           </span>
@@ -719,14 +726,14 @@ export function StudentHomePage() {
             aria-label="离线作答"
             className={`${SECTION_TARGET_CLASS} flex flex-col gap-1 rounded-xl border border-border bg-card p-4`}
           >
-            <h2 className="text-sm font-semibold">离线作答占比</h2>
+            <h2 className="text-sm font-semibold">历史焦点离线占比</h2>
             <p className="text-2xl font-semibold">
               {formatPercent(data.offline.offlineShare)}
             </p>
             <p className="text-xs text-muted-foreground">
-              离线 {Math.round(data.offline.offlineSecTotal / 60)} 分钟 / 有效{" "}
-              {Math.round(data.offline.activeSecTotal / 60)} 分钟（按设备联网
-              状态标记，统计窗口内的已交卷作答）
+              离线 {Math.round(data.offline.offlineSecTotal / 60)} 分钟 /
+              历史焦点 {Math.round(data.offline.activeSecTotal / 60)}{" "}
+              分钟（按设备联网 状态标记，统计窗口内的已交卷作答）
             </p>
           </section>
 

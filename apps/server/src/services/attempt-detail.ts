@@ -41,12 +41,16 @@ import {
 import { scoreSummaryOf } from "./attempt-score-summary.ts";
 import { studentSettlementProgress } from "./attempt-settlement-progress.ts";
 import { attemptSummaryOf } from "./attempt-summary.ts";
+import { attemptTimeEstimateOf } from "./attempt-time-estimate";
+import { attemptTimeOf, timeProjectionsOf } from "./attempt-time-projection";
 import { attemptTimingOf } from "./attempt-timing";
 import { openedHintEcho } from "./hint-service";
 import { pendingMarkCount } from "./pending-mark";
 import { answerReleaseProjection } from "./practice-workflow-service";
 import { attemptWorkflowView } from "./practice-workflow-wiring";
 import { attemptActivityProjection } from "./question-activity";
+import { reviewEvidenceReader } from "./review-evidence.ts";
+import { reviewPresentationOf } from "./review-presentation.ts";
 import { answerOf, snapshotOfRow } from "./snapshot";
 import { unitTimeQuotasOf } from "./unit-time-quota";
 
@@ -239,6 +243,8 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   // 服务端按当前教师/作业规则重算，不改写已选模式；无答案秘密）
   const workflowView = attemptWorkflowView(db, attempt);
   return {
+    timeEstimate: attemptTimeEstimateOf(db, attempt.id),
+    time: attemptTimeOf(db, attempt.id),
     attempt: attemptSummaryOf(attempt),
     title: meta.title,
     courseName: meta.courseName,
@@ -314,14 +320,24 @@ export function buildResultData(
   // 逐题条目与分组同批组装（groupedSnapshotRows；快照优先取预加载）；QM-13
   // matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
   const materialSlots = materialSlotOrderOf(db, attempt.id);
+  const evidenceOf = reviewEvidenceReader(db, attempt.id, attempt.studentId);
   const resultQuestions: AttemptResultQuestion[] = [];
+  const times = timeProjectionsOf(db, [attempt.id]);
   const unitGroups = groupedSnapshotRows(
     db,
     attempt,
     (row, snapshot) => {
-      const item = releaseAwareQuestion(
-        resultQuestionOf(row, snapshot, { materialSlots, db }),
-      );
+      const item = releaseAwareQuestion({
+        ...resultQuestionOf(row, snapshot, {
+          materialSlots,
+          db,
+          time: times.responseTime.get(row.id),
+        }),
+        ...evidenceOf(
+          row.questionId,
+          (snapshot.materialRefs ?? []).map((r) => r.material),
+        ),
+      });
       resultQuestions.push(item);
       return item;
     },
@@ -372,6 +388,7 @@ export function buildResultData(
     : summaryProjection;
 
   return {
+    reviewPresentation: reviewPresentationOf(db, attempt, unitIds),
     attempt: released
       ? attemptProjection
       : { ...attemptProjection, scoreAuto: null },
@@ -389,6 +406,7 @@ export function buildResultData(
     ...(workflowView !== null
       ? { practiceWorkflow: workflowView.practiceWorkflow }
       : {}),
+    time: attemptTimeOf(db, attempt.id),
     ...attemptActivityProjection(db, attempt.id, attempt.submittedAt), // 题内活动用时 v1（无事件不带键；交卷时刻作截止锚点）
   };
 }

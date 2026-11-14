@@ -12,6 +12,7 @@ import { registerStudentAttemptReviewTools } from "./student-attempt-review-tool
 import { registerStudentLiveFocusTool } from "./student-live-focus-tool.ts";
 import { registerStudentMemoTools } from "./student-memo-tools";
 import { registerStudentPracticeTools } from "./student-practice-tools.ts";
+import { registerStudentReviewV2Tools } from "./student-review-v2-tools.ts";
 import { registerStudentWrongPracticeTools } from "./student-wrong-practice-tools.ts";
 import { AllowListMcpServer } from "./tool-allow-list";
 import { guard, jsonContent } from "./tool-result";
@@ -56,6 +57,11 @@ export const STUDENT_MCP_SERVER_VERSION = "2.0.0";
  * 只改这里与注册处；各断言方 import 本常量。
  */
 export const STUDENT_MCP_TOOL_NAMES = [
+  "create_review_run_v2",
+  "list_review_runs_v2",
+  "claim_review_part_v2",
+  "renew_review_part_lease_v2",
+  "submit_review_part_v2",
   "claim_ai_task",
   "claim_attempt_review",
   "create_wrong_practice",
@@ -123,6 +129,7 @@ export function registerStudentTools(
 
   registerStudentAiTaskTools(server, deps);
   registerStudentAttemptReviewTools(server, deps);
+  registerStudentReviewV2Tools(server, deps);
   registerStudentWrongPracticeTools(server, deps);
   registerStudentPracticeTools(server, {
     list: (input) => listStudentMcpPractices(db, studentId, input),

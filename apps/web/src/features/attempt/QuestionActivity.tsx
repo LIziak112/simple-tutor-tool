@@ -12,7 +12,7 @@ import type { AttemptActivity, QuestionActivity } from "@tutor/contract";
 
 /** 口径说明（title 提示 + 卷级行括注共用） */
 export const ACTIVITY_CALIBER_LABEL =
-  "口径 v1：前台聚焦且有作答动作的时段；页面隐藏、长时间无操作不计；多端同时作答不同题的重叠时段记未归属";
+  "前台聚焦且有作答动作的时段；页面隐藏、长时间无操作不计；多端同时作答不同题的重叠时段记未归属";
 
 /** 秒 → 「X 分 Y 秒」/「Y 秒」/「X 分钟」（整分省秒；0 → 「0 秒」） */
 export function formatActivitySec(sec: number): string {
@@ -87,7 +87,6 @@ export function ResultActivityLine({
       className="text-sm leading-relaxed text-muted-foreground"
     >
       {parts.join(" · ")}
-      <span className="text-xs">（口径 v1）</span>
     </p>
   );
 }

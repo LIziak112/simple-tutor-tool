@@ -31,6 +31,7 @@ import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "@/features/attempt/AttemptEditorContext";
+import { AttemptElapsedTime } from "@/features/attempt/AttemptElapsedTime";
 import type { GroupContextSegment } from "@/features/attempt/attempt-context-view";
 import { LessonResultLinks } from "@/features/attempt/LessonResultLinks";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
@@ -674,6 +675,12 @@ function LessonAnswerInner({
                 讲练 · 第 {data.attempt.attemptNo} 次
               </span>
               <span aria-live="polite">{session.saveStatus}</span>
+              <AttemptElapsedTime
+                attemptId={attemptId}
+                time={data.time}
+                initialEstimate={data.timeEstimate}
+                timed={false}
+              />
             </>
           }
           toc={<LessonOutlineTrigger outline={outline} />}
