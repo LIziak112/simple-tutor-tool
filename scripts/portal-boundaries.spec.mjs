@@ -245,3 +245,37 @@ test("JSX 结束标签、自闭合、斜杠文本与注释里的路径不误报"
 </section>`);
   assert.deepEqual(check(source).violations, []);
 });
+
+// 字符串和正则字面量不能跨行。JSX 文本里落单的引号、开头的斜杠会被认成字面量起点；
+// 读到行尾还没闭合就退回去按标点处理，错位不带到下一行。
+test("JSX 文本里落单的引号不让下一行的门户路径漏检", () => {
+  has(jsx(`<p>It's fine</p>\n<a href="/s/home">去</a>`), "PORTAL_ROUTE");
+  has(jsx(`<p>5" 屏幕</p>\n<Link to="/t/library">库</Link>`), "PORTAL_ROUTE");
+});
+test("JSX 文本以斜杠开头不让下一行的门户路径漏检", () =>
+  has(
+    jsx(`<p>\n/ 共 {total} 题\n<Link to="/s/home">回</Link>\n</p>`),
+    "PORTAL_ROUTE",
+  ));
+test("跨行的 JSX 属性值与斜杠文本不误报，也不产生正则记号", () => {
+  const source = jsx(`<p className="text-sm\n  text-muted">\n/ 100\n</p>`);
+  assert.deepEqual(check(source).violations, []);
+  assert.deepEqual(
+    tokensOf(source).filter((t) => t.kind === "regex"),
+    [],
+  );
+});
+test("跨行的 JSX 属性值仍是一个字符串，同一行后面的门户路径照常检查", () => {
+  const source = jsx(
+    `<a className="text-sm\n  underline" href="/s/home">去</a>`,
+  );
+  has(source, "PORTAL_ROUTE");
+  assert.deepEqual(
+    tokensOf(source)
+      .filter((t) => t.kind === "string")
+      .map((t) => t.value),
+    ["text-sm\n  underline", "/s/home"],
+  );
+});
+test("反斜杠续行的字符串仍按一个字符串检查", () =>
+  has('const href = "/s/\\\nhome";', "PORTAL_ROUTE"));
