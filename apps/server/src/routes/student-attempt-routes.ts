@@ -1,26 +1,54 @@
 import {
+  attemptActivateRequestSchema,
   attemptAnswerSaveRequestSchema,
   attemptContextDataSchema,
+  attemptFlagRequestSchema,
+  attemptOpenedQuerySchema,
+  hintOpenRequestSchema,
   studentPaperDataSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
 import type { StudentEnv } from "../auth/require-student";
 import type { Db } from "../db/client.ts";
-import { parseJsonBody } from "../lib/http-error.ts";
+import { parseJsonBody, parseJsonValue } from "../lib/http-error.ts";
+import {
+  activateAttempt,
+  getOpenedAttempt,
+} from "../services/attempt-activation.ts";
 import { studentAttemptContext } from "../services/attempt-context.ts";
 import {
   getStudentAttemptPaper,
   requireUsableAttempt,
   saveDraftAnswer,
+  setStudentFlag,
 } from "../services/attempt-service.ts";
+import { openHint } from "../services/hint-service.ts";
 import { respondAttemptDetail } from "./student-attempt-detail.ts";
 import { createStudentLearningContextRoutes } from "./student-learning-context";
 import { createStudentSettlementRoutes } from "./student-settlements.ts";
 
-/** 作答详情、冻结上下文、公开试卷和草稿保存的契约出口。 */
+/** 作答详情、冻结上下文、公开试卷，以及草稿保存、标记、提示这几条带冻结凭据写入的契约出口。 */
 export function createStudentAttemptRoutes(db: Db) {
   return (
     new Hono<StudentEnv>()
+      .get("/attempts/opened", (c) =>
+        c.json({
+          ok: true,
+          data: getOpenedAttempt(
+            db,
+            c.var.student.id,
+            parseJsonValue(c.req.query(), attemptOpenedQuerySchema),
+          ),
+        }),
+      )
+      .post("/attempts/:id/activate", async (c) => {
+        const input = await parseJsonBody(c, attemptActivateRequestSchema);
+        c.header("Cache-Control", "private, no-store");
+        return c.json({
+          ok: true,
+          data: activateAttempt(db, c.var.student.id, c.req.param("id"), input),
+        });
+      })
       .route("/", createStudentLearningContextRoutes(db))
       .route("/", createStudentSettlementRoutes(db))
       .put("/attempts/:id/answers/:questionId", async (c) => {
@@ -33,6 +61,36 @@ export function createStudentAttemptRoutes(db: Db) {
             c.req.param("id"),
             c.req.param("questionId"),
             body.answer,
+            body,
+          ),
+        });
+      })
+      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
+      .put("/attempts/:id/flags/:questionId", async (c) => {
+        const body = await parseJsonBody(c, attemptFlagRequestSchema);
+        return c.json({
+          ok: true,
+          data: setStudentFlag(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            body.flag,
+            body,
+          ),
+        });
+      })
+      // T2.11：分步提示——按需下发被请求的那一条并记录（hint_open 事件 + 已解锁集合）
+      .post("/attempts/:id/hints", async (c) => {
+        const body = await parseJsonBody(c, hintOpenRequestSchema);
+        return c.json({
+          ok: true,
+          data: openHint(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            body.questionId,
+            body.index,
             body,
           ),
         });

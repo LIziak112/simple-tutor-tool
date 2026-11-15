@@ -526,6 +526,20 @@
       "when": 1794660090836,
       "tag": "0074_pale_sebastian_shaw",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "6",
+      "when": 1794682479945,
+      "tag": "0075_hard_zodiak",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "6",
+      "when": 1794682968969,
+      "tag": "0076_attempt_activation_guards",
+      "breakpoints": true
     }
   ]
 }

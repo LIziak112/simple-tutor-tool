@@ -1,6 +1,7 @@
 import {
   type AttemptContextData,
   type AttemptMaterialRevisions,
+  type AttemptWriteProof,
   attemptContextDataSchema,
   attemptMaterialRevisionsSchema,
   type HintOpenData,
@@ -49,8 +50,12 @@ export function createPracticeMaterialsClient(
     attemptId: string,
     questionId: string,
     index: number,
+    proof?: AttemptWriteProof,
   ): Promise<HintOpenData> {
-    const args = { param: { id: attemptId }, json: { questionId, index } };
+    const args = {
+      param: { id: attemptId },
+      json: { questionId, index, ...proof },
+    };
     return callApi(() => api.api.student.attempts[":id"].hints.$post(args));
   }
   return {

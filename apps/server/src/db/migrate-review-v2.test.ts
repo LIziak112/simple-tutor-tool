@@ -18,12 +18,24 @@ it("追加v2三表保留所有旧行/索引/触发器，重复迁移零写入", 
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != '__drizzle_migrations' ORDER BY name",
       )
       .all() as { name: string }[];
+    const columns = new Map(
+      tables.map(({ name }) => [
+        name,
+        (
+          db.$client.prepare(`PRAGMA table_info("${name}")`).all() as {
+            name: string;
+          }[]
+        )
+          .map((row) => `"${row.name}"`)
+          .join(","),
+      ]),
+    );
     const read = () =>
       tables.map(({ name }) => [
         name,
         db.$client
           .prepare(
-            `SELECT rowid,* FROM "${name.replaceAll('"', '""')}" ORDER BY rowid`,
+            `SELECT rowid,${columns.get(name)} FROM "${name.replaceAll('"', '""')}" ORDER BY rowid`,
           )
           .all(),
       ]);

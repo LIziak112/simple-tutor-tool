@@ -42,6 +42,7 @@ import {
   strokesBottomLogical,
 } from "@/features/notes/paper-geometry";
 import { useNoteRecord } from "@/features/notes/use-note-record";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import { useObservedCssWidth } from "@/lib/use-observed-css-width";
 
 /** 宽度观察未就绪（jsdom/首帧）的纸高回退（暂定：与 InkPad 初始高同量级） */
@@ -99,6 +100,7 @@ export function useNoteEditor({
   phase,
   active,
 }: UseNoteEditorOptions): NoteEditorHandle {
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
   const view = useNoteRecord(attemptId, questionId, phase);
   const process = useQuestionProcessContext();
 
@@ -213,14 +215,19 @@ export function useNoteEditor({
           finish,
         );
       }
-      lastWriteVersionRef.current = writeNoteDoc(session, scopeRef.current, {
-        version: 1,
-        ink: inkDoc.data,
-        paperHeightLogical: logical,
-        background,
-      });
+      lastWriteVersionRef.current = writeNoteDoc(
+        session,
+        scopeRef.current,
+        {
+          version: 1,
+          ink: inkDoc.data,
+          paperHeightLogical: logical,
+          background,
+        },
+        expectedFrozenAt,
+      );
     },
-    [session, process],
+    [session, process, expectedFrozenAt],
   );
 
   // 外部正文变化 → 载入引擎（服务端播种/冲突裁决后）。比对版本令牌

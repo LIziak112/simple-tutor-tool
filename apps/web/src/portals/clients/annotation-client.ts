@@ -88,6 +88,11 @@ export function createAnnotationClient(
   ): Promise<AnnotationReceipt> {
     const form = new FormData();
     const F = ANNOTATION_FORM_FIELDS;
+    if (meta.expectedFrozenAt !== undefined)
+      form.append(
+        F.expectedFrozenAt,
+        meta.expectedFrozenAt === null ? "null" : meta.expectedFrozenAt,
+      );
     form.append(F.body, body, "annotation.json.gz");
     if (meta.resetVersion !== undefined)
       form.append(F.resetVersion, String(meta.resetVersion));

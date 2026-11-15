@@ -5,7 +5,12 @@ import type {
   PracticeWorkflowUpdateRequest,
 } from "@tutor/contract";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  prepareLocalAttempt,
+  reopenMissingAttempt,
+} from "@/features/persistence/attempt-reopen";
 import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
+import { useLocalAttemptActivation } from "@/features/persistence/use-local-attempt-activation";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 import {
   studentAssignmentsKey,
@@ -101,7 +106,8 @@ export function isAttemptUnavailable(error: unknown): boolean {
 export type TimedAttemptDetail = AttemptDetailData & { clockAnchor?: number };
 
 export function useAttemptDetail(attemptId: string | undefined) {
-  const { fetchAttemptApi } = usePortalClients();
+  const clients = usePortalClients();
+  const { fetchAttemptApi } = clients;
 
   const queryClient = useQueryClient();
   const paused = useSyncExternalStore(
@@ -114,7 +120,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
     },
     [attemptId],
   );
-  return useQuery({
+  const query = useQuery({
     queryKey: studentAttemptKey(attemptId ?? "pending"),
     queryFn: async ({ signal }) => {
       const previous = queryClient.getQueryData<TimedAttemptDetail>(
@@ -123,9 +129,10 @@ export function useAttemptDetail(attemptId: string | undefined) {
       // 暂停期间不出站；已在途的详情也不能覆盖末题阅读现场。
       if (previous && detailPollingPaused.has(attemptId ?? "")) return previous;
       try {
-        const next = await (previous === undefined
+        const loaded = await (previous === undefined
           ? fetchAttemptApi(attemptId ?? "", signal)
           : fetchAttemptApi(attemptId ?? "", signal, previous));
+        const next = await prepareLocalAttempt(clients, loaded);
         if (previous && detailPollingPaused.has(attemptId ?? ""))
           return previous;
         if ("answersReleased" in next && next.releaseCheckedAt !== undefined)
@@ -155,7 +162,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
           !isAttemptUnavailable(error)
         )
           return previous;
-        throw error;
+        return reopenMissingAttempt(clients, attemptId ?? "", error);
       }
     },
     structuralSharing: shareAttemptDetail,
@@ -178,6 +185,8 @@ export function useAttemptDetail(attemptId: string | undefined) {
         ? 10_000
         : false,
   });
+  useLocalAttemptActivation(query.data?.attempt);
+  return query;
 }
 
 /** 单元落地信息（开始练习/继续作答/再做一次与历次记录列表的数据源） */

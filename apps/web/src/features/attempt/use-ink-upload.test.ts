@@ -2,6 +2,11 @@ import type { InkDoc } from "@tutor/contract";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
+import {
   INK_UPLOAD_DEBOUNCE_MS,
   type InkSyncResult,
   type InkUploadHooks,
@@ -74,6 +79,7 @@ function setup(hooks?: InkUploadHooks) {
 }
 
 beforeEach(() => {
+  installDraftBackend(memoryBackend());
   putMock.mockReset();
   putMock.mockResolvedValue({
     questionId: "q1",
@@ -102,6 +108,25 @@ describe("isInkDocEmpty", () => {
 });
 
 describe("防抖上传", () => {
+  it("重试沿用正文创建时token，即使共享目录或另一稿绑定已更新", async () => {
+    const old = "2026-11-14T00:00:00.000Z";
+    const newer = "2026-11-14T00:00:00.001Z";
+    const doc = docWith(1);
+    draftStore.saveInk("att-1", "q1", doc, old);
+    putMock.mockRejectedValueOnce(new Error("响应丢失"));
+    const state = setup();
+    act(() => state.current.controller.resync(doc));
+    await act(async () => {
+      expect(await state.current.controller.flush()).toBe(false);
+    });
+    draftStore.saveInk("att-1", "q1", doc, newer);
+    await act(async () => {
+      expect(await state.current.controller.flush()).toBe(true);
+    });
+    expect(putMock).toHaveBeenCalledTimes(2);
+    expect(putMock.mock.calls[0]?.[4]).toMatchObject({ expectedFrozenAt: old });
+    expect(putMock.mock.calls[1]?.[4]).toMatchObject({ expectedFrozenAt: old });
+  });
   it("重试复用上传标识和字节，成功后下一稿使用新服务端基线", async () => {
     putMock.mockRejectedValueOnce(new Error("回执丢失"));
     putMock.mockResolvedValue({

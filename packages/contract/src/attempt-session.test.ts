@@ -1,5 +1,53 @@
 import { describe, expect, it } from "vitest";
-import { attemptSettlementSchema } from "./attempt-session.ts";
+import {
+  attemptActivateRequestSchema,
+  attemptPhaseOf,
+  attemptSettlementSchema,
+  isRecordableAttempt,
+} from "./attempt-session.ts";
+
+describe("作答会话阶段", () => {
+  it("旧缓存缺少新增列时保持原进行中语义，只有显式 null 才表示 opened", () => {
+    expect(attemptPhaseOf({ status: "draft" })).toBe("active");
+    expect(isRecordableAttempt({ status: "draft" })).toBe(true);
+  });
+  it.each([
+    ["draft", null, null, "opened", false],
+    ["draft", "2026-11-01T00:00:00.000Z", null, "active", true],
+    ["submitted", null, null, "finished", true],
+    ["graded", null, null, "finished", true],
+    [
+      "draft",
+      "2026-11-01T00:00:00.000Z",
+      "2026-11-02T00:00:00.000Z",
+      "abandoned",
+      false,
+    ],
+  ] as const)(
+    "%s / %s / %s → %s",
+    (status, activatedAt, abandonedAt, phase, recordable) => {
+      const row = { status, activatedAt, abandonedAt };
+      expect(attemptPhaseOf(row)).toBe(phase);
+      expect(isRecordableAttempt(row)).toBe(recordable);
+    },
+  );
+  it("显式激活必须声明看到的冻结版本，null 也是精确版本", () => {
+    expect(
+      attemptActivateRequestSchema.parse({ expectedFrozenAt: null }),
+    ).toEqual({ expectedFrozenAt: null });
+    expect(attemptActivateRequestSchema.safeParse({}).success).toBe(false);
+    expect(
+      attemptActivateRequestSchema.safeParse({ expectedFrozenAt: "旧版" })
+        .success,
+    ).toBe(false);
+    expect(
+      attemptActivateRequestSchema.safeParse({
+        expectedFrozenAt: null,
+        answers: [],
+      }).success,
+    ).toBe(false);
+  });
+});
 
 const final = {
   seq: 1,

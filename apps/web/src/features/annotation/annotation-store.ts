@@ -31,7 +31,6 @@ import type {
 } from "@tutor/contract";
 import {
   ANNOTATION_BASE_PNG_MAX_BYTES,
-  annotationBaseRefSchema,
   annotationDocSchema,
   annotationSurfaceLayoutCore,
   annotationSurfaceLayoutSchema,
@@ -54,6 +53,7 @@ import {
   recoverAnnotationCache,
 } from "./annotation-base-persistence";
 import { annotationByteBackend } from "./annotation-byte-backend";
+import { freshRecord, reviveRecord } from "./annotation-record-shape";
 import { deriveAnnotationServerState } from "./annotation-server-state";
 
 export type { AnnotationStoreBackend } from "./annotation-base-persistence";
@@ -170,6 +170,7 @@ export function parseAnnotationKey(
 
 /** 待传版本描述：与正文同一记录原子写；重试复用同一 mutationId（幂等重放） */
 export interface AnnotationPendingVersion {
+  expectedFrozenAt?: string | null;
   mutationId: string;
   doc: AnnotationDoc;
 }
@@ -237,107 +238,6 @@ export interface AnnotationLocalRecord {
   editedAt: number;
   /** 正文版本令牌（record.doc 整体替换时 +1；守卫比对用，同 note-store） */
   docVersion: number;
-}
-
-function freshRecord(): AnnotationLocalRecord {
-  return {
-    localBase: null,
-    doc: { version: 1, baseWidth: 0, baseHeight: 0, strokes: [] },
-    pending: null,
-    baseRevision: 0,
-    annotationId: null,
-    sealedAt: null,
-    base: null,
-    baseDisabledReason: null,
-    conflict: null,
-    retained: null,
-    denied: null,
-    local: "saved",
-    localError: null,
-    editedAt: 0,
-    docVersion: 0,
-  };
-}
-
-/** 读取旧记录的防御性归一（缺字段补默认；非空坏形必须保留并报错）。
- *  localBase 不在此处装配（需异步取底图键），恒置 null 由调用方回填。 */
-function reviveRecord(
-  raw: unknown,
-): { record: AnnotationLocalRecord; rawLocalBase: unknown } | null {
-  if (typeof raw !== "object" || raw === null)
-    throw new Error("本机标画记录损坏，原记录已保留，请重试");
-  const r = raw as Partial<AnnotationLocalRecord>;
-  const doc = r.doc;
-  if (!doc) throw new Error("本机圈画正文缺失，原记录已保留，请重试");
-  const emptySentinel =
-    doc?.version === 1 &&
-    doc.baseWidth === 0 &&
-    doc.baseHeight === 0 &&
-    Array.isArray(doc.strokes) &&
-    doc.strokes.length === 0 &&
-    doc.deleted === undefined &&
-    doc.anchors === undefined;
-  if (!emptySentinel && !annotationDocSchema.safeParse(doc).success)
-    throw new Error(
-      "本机圈画正文版本未知或内容损坏，原记录已保留，请更新后重试",
-    );
-  if (
-    r.pending != null &&
-    (typeof r.pending.mutationId !== "string" ||
-      !annotationDocSchema.safeParse(r.pending.doc).success)
-  )
-    throw new Error(
-      "本机待传圈画版本未知或内容损坏，原记录已保留，请更新后重试",
-    );
-  if (r.base != null && !annotationBaseRefSchema.safeParse(r.base).success)
-    throw new Error(
-      "本机圈画底图引用版本未知或内容损坏，原记录已保留，请更新后重试",
-    );
-  return {
-    record: {
-      ...freshRecord(),
-      localBase: null,
-      resetVersion: typeof r.resetVersion === "number" ? r.resetVersion : 0,
-      doc,
-      pending: r.pending ?? null,
-      baseRevision: typeof r.baseRevision === "number" ? r.baseRevision : 0,
-      annotationId: typeof r.annotationId === "string" ? r.annotationId : null,
-      sealedAt: typeof r.sealedAt === "string" ? r.sealedAt : null,
-      base: r.base ?? null,
-      baseDisabledReason:
-        typeof r.baseDisabledReason === "string" ? r.baseDisabledReason : null,
-      conflict:
-        r.conflict == null
-          ? null
-          : {
-              // 旧记录无 kind 的缺省推导：current 非空→revision（对齐重传）、
-              // 空→mutation（重铸重传）——完整保留旧裁决行为；确是 layout 冲突的
-              // 旧记录重撞一次后即带类别落库，自愈到新出口。
-              kind:
-                r.conflict.kind === "revision" ||
-                r.conflict.kind === "mutation" ||
-                r.conflict.kind === "layout"
-                  ? r.conflict.kind
-                  : r.conflict.current != null
-                    ? "revision"
-                    : "mutation",
-              reason:
-                typeof r.conflict.reason === "string" ? r.conflict.reason : "",
-              current: r.conflict.current ?? null,
-            },
-      retained:
-        r.retained && typeof r.retained.reason === "string"
-          ? { reason: r.retained.reason }
-          : null,
-      denied: r.denied ?? null,
-      editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
-      docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
-      // 持久副本恒归一化（存在于 IDB 即已落盘）
-      local: "saved",
-      localError: null,
-    },
-    rawLocalBase: (raw as { localBase?: unknown }).localBase,
-  };
 }
 
 /**
@@ -786,6 +686,7 @@ export function writeAnnotationDoc(
   scope: AnnotationScope,
   doc: AnnotationDoc,
   mode?: "sealed-finalization",
+  expectedFrozenAt?: string | null,
 ): number {
   const key = annotationKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
@@ -793,7 +694,15 @@ export function writeAnnotationDoc(
       throw new Error("本题圈画已封存，仅供查看");
     record.doc = doc;
     record.docVersion += 1;
-    record.pending = { mutationId: randomUuid(), doc };
+    const token =
+      expectedFrozenAt !== undefined
+        ? expectedFrozenAt
+        : record.pending?.expectedFrozenAt;
+    record.pending = {
+      mutationId: randomUuid(),
+      doc,
+      ...(token !== undefined ? { expectedFrozenAt: token } : {}),
+    };
     record.editedAt = Date.now();
     if (record.sealedAt !== null) {
       // 封存 GET 可在一笔开始后到达；已收采样只保留本机，不再写已封存云稿。
@@ -834,6 +743,7 @@ export async function writeLocalAnnotationBase(
   base: NonNullable<AnnotationLocalRecord["localBase"]>,
   doc: AnnotationDoc,
   downloaded?: { boundBaseId: string },
+  expectedFrozenAt?: string | null,
 ): Promise<void> {
   const layout = annotationSurfaceLayoutSchema.parse(base.layout);
   annotationDocSchema.parse(doc);
@@ -898,7 +808,11 @@ export async function writeLocalAnnotationBase(
     record.doc = doc;
     record.docVersion += 1;
     if (!emptyAnnotationDoc(doc) && record.pending === null) {
-      record.pending = { mutationId: randomUuid(), doc };
+      record.pending = {
+        mutationId: randomUuid(),
+        doc,
+        ...(expectedFrozenAt !== undefined ? { expectedFrozenAt } : {}),
+      };
       record.editedAt = Date.now();
     }
   });
@@ -1262,6 +1176,7 @@ export async function resolveAnnotationConflictKeepLocal(
       }
     } else if (record.pending !== null) {
       record.pending = {
+        ...record.pending,
         mutationId: randomUuid(),
         doc: record.pending.doc,
       };

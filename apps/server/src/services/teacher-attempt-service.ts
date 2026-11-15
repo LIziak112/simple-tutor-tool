@@ -45,6 +45,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { hasUsableQuestionSnapshotSql } from "./attempt-final-outcome.ts";
+import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import {
   assertFrozenAnswerShape,
   attemptQuestionRows,
@@ -353,7 +354,7 @@ export function listTeacherAttempts(
   const where = and(
     eq(students.teacherId, teacherId),
     // 作废卷（2026-10 讲练随时重开）不进教师作答列表（行保留审计）
-    isNull(attempts.abandonedAt),
+    recordableAttemptWhere(),
     ...filters,
   );
   const totalRow = db
@@ -436,7 +437,7 @@ export function listTeacherAttempts(
  */
 export function teacherVisibleResponsesWhere(includeUnsubmitted = false) {
   return [
-    isNull(attempts.abandonedAt),
+    recordableAttemptWhere(),
     isNotNull(responses.questionSnapshotJson),
     ...(includeUnsubmitted
       ? []
@@ -896,7 +897,7 @@ export function studentActivitySummaries(
       last: sql<string>`max(coalesce(${attempts.submittedAt}, ${attempts.startedAt}))`,
     })
     .from(attempts)
-    .where(and(inArray(attempts.studentId, ids), isNull(attempts.abandonedAt)))
+    .where(and(inArray(attempts.studentId, ids), recordableAttemptWhere()))
     .groupBy(attempts.studentId)
     .all()) {
     const entry = map.get(row.studentId);
@@ -909,7 +910,7 @@ export function studentActivitySummaries(
     .where(
       and(
         inArray(attempts.studentId, ids),
-        isNull(attempts.abandonedAt),
+        recordableAttemptWhere(),
         eq(attempts.status, "draft"),
         eq(attempts.sourceType, "lesson"),
       ),

@@ -127,10 +127,23 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       const progressCard = progressPage.getByRole("link", {
         name: `继续作答：${unitName} · 第 1 次（进行中）`,
       });
+      await expect(progressCard).toHaveCount(0);
+      // 只打开不入账；标不会属于实质动作，但仍是0题答案进度。
+      const first = studentPage.locator('article[aria-label="第 1 题"]');
+      const flagged = studentPage.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().includes("/flags/"),
+      );
+      await first.getByRole("button", { name: "第 1 题更多" }).click();
+      await studentPage
+        .getByRole("menuitem", { name: "标记不会（进错题本）", exact: true })
+        .click();
+      expect((await flagged).ok()).toBe(true);
+      await progressPage.reload();
       await expect(
         progressCard.getByText("已做 0 / 2 题", { exact: true }),
       ).toBeVisible();
-      const first = studentPage.locator('article[aria-label="第 1 题"]');
       await first
         .getByRole("radio", { name: "对", exact: true })
         .locator("xpath=ancestor::label[1]")

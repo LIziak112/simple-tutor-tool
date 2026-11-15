@@ -72,6 +72,10 @@ describe("完成矩阵进行中进度计数（M4-D3）", () => {
         feedbackMode: "per_question",
       },
     );
+    db.update(attempts)
+      .set({ activatedAt: SEED_NOW })
+      .where(eq(attempts.id, reopened.id))
+      .run();
     const firstRow = db
       .select({ id: responses.id })
       .from(responses)

@@ -1,3 +1,4 @@
+import { recordableCourseAttempts } from "./attempt-recordability.ts";
 import { courseHasAttempts } from "./course-attempts.ts";
 
 export { courseHasAttempts } from "./course-attempts.ts";
@@ -1376,19 +1377,9 @@ export function getCourseProgress(
 
   // 课程练习作答（该课程全部成员的全部 course 作答；一对一量级内存聚合足够）
   const memberIds = new Set(members.map((member) => member.studentId));
-  const courseAttempts = db
-    .select()
-    .from(attempts)
-    .where(
-      and(
-        eq(attempts.courseId, courseId),
-        eq(attempts.sourceType, "course"),
-        isNull(attempts.abandonedAt),
-      ),
-    )
-    .orderBy(asc(attempts.attemptNo))
-    .all()
-    .filter((row) => memberIds.has(row.studentId));
+  const courseAttempts = recordableCourseAttempts(db, courseId).filter((row) =>
+    memberIds.has(row.studentId),
+  );
 
   // 待批题数（D4 共享谓词：finalCorrect IS NULL，按 attempt 聚合；draft 恒 0）
   const pendingByAttempt = pendingMarkCounts(db, courseAttempts);

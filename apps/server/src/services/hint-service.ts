@@ -1,4 +1,8 @@
-import type { HintOpenData, HintOpenedEntry } from "@tutor/contract";
+import type {
+  AttemptWriteProof,
+  HintOpenData,
+  HintOpenedEntry,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -8,6 +12,11 @@ import {
   responses,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import {
+  assertAttemptWriteProof,
+  assertAttemptWriteVersion,
+  touchAttemptActivity,
+} from "./attempt-activity.ts";
 import { attemptTeacherId, requireUsableAttempt } from "./attempt-service";
 import { recordHintOpenEvent } from "./event-service";
 import { snapshotOfRow } from "./snapshot";
@@ -162,6 +171,7 @@ export function openHint(
   attemptId: string,
   questionId: string,
   index: number,
+  proof?: AttemptWriteProof,
 ): HintOpenData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   // 三查合一：成员校验 + 提示来源 + 解锁回写目标行一次取出（行在建卷冻结时
@@ -187,14 +197,17 @@ export function openHint(
     ? opened
     : [...opened, index].sort((a, b) => a - b);
   const hintsUsed = nextOpened.length; // 去重口径：同条重复请求不涨
-  db.update(responses)
-    .set({ hintsUsed, hintsOpenedJson: JSON.stringify(nextOpened) })
-    .where(eq(responses.id, row.id))
-    .run();
-
-  // 服务端直记 hint_open（每次打开都记；payload 只含 index，不含提示内容；
-  // studentId 取 attempt 行——T4.0a D8，会话学生与 attempt 归属一致）
-  recordHintOpenEvent(db, attempt.studentId, attemptId, questionId, index);
+  db.transaction((tx) => {
+    assertAttemptWriteVersion(tx, attempt);
+    assertAttemptWriteProof(attempt, proof);
+    tx.update(responses)
+      .set({ hintsUsed, hintsOpenedJson: JSON.stringify(nextOpened) })
+      .where(eq(responses.id, row.id))
+      .run();
+    if (!opened.includes(index))
+      touchAttemptActivity(tx, attemptId, new Date().toISOString());
+    recordHintOpenEvent(db, attempt.studentId, attemptId, questionId, index);
+  });
 
   return {
     questionId,

@@ -9,12 +9,17 @@ import type {
   SelfReviewData,
   SelfReviewRequest,
 } from "@tutor/contract";
+import {
+  assertDraftEpoch,
+  protectOpenedDraft,
+} from "@/features/persistence/attempt-local-session";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
 import { callApi } from "@/lib/api-response";
 import type { HttpRuntime } from "./http-runtime";
 import type { ClientServices } from "./service-types";
 export function createLessonClient(
   http: HttpRuntime,
-  _deps: () => ClientServices,
+  deps: () => ClientServices,
 ) {
   const { api } = http;
   function fetchLessonLandingApi(
@@ -29,10 +34,24 @@ export function createLessonClient(
       api.api.student.lectures[":id"].lesson.landing.$get(args),
     );
   }
-  function startLessonAttemptApi(
+  async function startLessonAttemptApi(
     lectureId: string,
     courseId?: string | undefined,
   ): Promise<LessonStartData> {
+    const epoch = getDraftSessionEpoch();
+    const clients = deps();
+    const opened = await clients.fetchOpenedAttemptApi({
+      sourceType: "lesson",
+      lectureId,
+      ...(courseId ? { courseId } : {}),
+    });
+    assertDraftEpoch(epoch);
+    await protectOpenedDraft(
+      opened.attempt,
+      clients.activateAttemptApi,
+      clients.fetchAttemptApi,
+    );
+    assertDraftEpoch(epoch);
     const args = {
       param: { id: lectureId },
       ...(courseId !== undefined ? { query: { courseId } } : {}),

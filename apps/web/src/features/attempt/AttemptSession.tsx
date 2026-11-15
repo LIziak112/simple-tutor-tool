@@ -34,14 +34,11 @@ import {
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptForcedMounts } from "@/features/attempt/use-attempt-forced-mounts";
-import {
-  EnabledCapabilitiesProvider,
-  toEnabledCapabilities,
-} from "@/features/capability/enabled-capabilities";
 import { useKeyboardBindings } from "@/features/keyboard/keyboard-binding-store";
 import { useKeyboardDevice } from "@/features/keyboard/keyboard-device";
 import { useLearningContextPublisher } from "@/features/learning-context/use-learning-context-publisher";
 import { catchUpNotes } from "@/features/notes/note-sync";
+import { AttemptSessionScope } from "@/features/persistence/AttemptSnapshotScope";
 import {
   attemptMaterialsEditable,
   recoverAttemptMaterials,
@@ -59,7 +56,6 @@ import {
   QuestionProcessSyncNotice,
   useQuestionProcess,
 } from "@/features/question-process/session";
-import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useAiCompareActive } from "@/features/student-ai/ai-companion-layout";
@@ -83,6 +79,7 @@ import {
   useAttemptContext,
   useUpdateAttemptWorkflow,
 } from "./attempt-queries";
+import { attemptQuestionViewOf } from "./attempt-question-view";
 import { useGroupMaterialLayout } from "./group-material-layout-store";
 import { LazyMountWindow } from "./lazy-mount-window";
 import { PracticeQuestionFooter } from "./PracticeQuestionSubmit";
@@ -120,6 +117,7 @@ import {
 const ATTEMPT_LAZY_MOUNT_THRESHOLD = 20;
 
 import { Button } from "@/components/ui/button";
+import { useStudentFlags } from "./use-student-flags";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 是否结果视图（submitted/graded） */
@@ -156,11 +154,8 @@ export function AttemptSession({
    * 由 AnswerView 的交卷成功回调写入、结果视图顶部横幅呈现。
    */
   const [annotationSealWarning, setAnnotationSealWarning] = useState(false);
-  // T7.7：教师辅助能力启用集随卷下发（草稿/结果两视图同口径；详解内 steps
-  // 的揭晓渲染同样遵循开关）。页面挂载期取值——教师改配置后学生刷新生效。
-  const capabilities = toEnabledCapabilities(data.enabledCapabilities);
   return (
-    <EnabledCapabilitiesProvider value={capabilities}>
+    <AttemptSessionScope data={data}>
       {isResultDetail(data) ? (
         <AttemptResultLoader
           key={data.attempt.id}
@@ -183,7 +178,7 @@ export function AttemptSession({
           </CoordinatedAnnotationProvider>
         </AttemptEditorProvider>
       )}
-    </EnabledCapabilitiesProvider>
+    </AttemptSessionScope>
   );
 }
 
@@ -200,13 +195,13 @@ function AnswerView({
   /** 交卷成功后的标注 seal 失败回调（非阻断警示——AttemptSession 顶态） */
   onAnnotationSealFailed: () => void;
 }) {
-  const { setStudentFlagApi } = usePortalClients();
-
   const editor = useAttemptEditor(null);
   // 模块 2 限时测试：服务端时钟；到时（grace/locked）锁编辑、停自动提交，只留交卷
   const phase = useAttemptPhase(data.timing, data.clockAnchor);
   const timeUp = phase !== null && phase !== "running";
   const savedOnly = phase === "locked";
+  const { flatQuestions, questionIds, showUnitHeaders, questionRevisions } =
+    useMemo(() => attemptQuestionViewOf(data.units), [data.units]);
   /** 手写题的笔迹上传 controller（mount 注册、unmount 注销；交卷前逐题 flush，
    *  草稿同步循环也会逐题 sync——先声明再传给 useDraftSync） */
   const inkControllers = useRef(new Map<string, InkUploadController>());
@@ -239,6 +234,7 @@ function AnswerView({
     flushQuestionLocal,
   } = useAttemptAnswers(attemptId, draftSync.recoveredDrafts, draftSync, {
     writesLocked: savedOnly,
+    questionRevisions,
     // 保存生效点：聚焦切到该题 + answer_change 事件（from=上次上报值）
     onAnswerCommitted: (questionId, answer) => {
       attemptEvents.noteInteraction(questionId);
@@ -274,19 +270,6 @@ function AnswerView({
   // 反馈节奏切换（M5-D3）：PATCH CAS + 详情失效；禁用只按服务端投影
   const feedbackUpdate = useUpdateAttemptWorkflow(attemptId);
 
-  // T2A.7：题目按单元分组下发；答题页平铺渲染、题号全卷连续（累计 index）。
-  // 多单元时渲染节标题（单元标题），单单元不显示节头（避免与课程练习标题重复）。
-  // 派生数组 useMemo（效率复审 #10）：confirmSubmit/openSubmitDialog 的
-  // useCallback 依赖因此稳定（原先每渲染新数组零收益地失效缓存）
-  const flatQuestions = useMemo(
-    () => data.units.flatMap((unit) => unit.questions),
-    [data.units],
-  );
-  const showUnitHeaders = data.units.length > 1;
-  const questionIds = useMemo(
-    () => flatQuestions.map((question) => question.id),
-    [flatQuestions],
-  );
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
   const processReady =
@@ -445,28 +428,9 @@ function AnswerView({
   });
   const { flags: flaggedQuestions, toggle: toggleFlag } =
     useWorkspaceFlags(attemptId);
-  // #6980-4：服务端「不会」标记（draft 限定，交卷后只读）。乐观更新、失败
-  // 回滚——标记只影响错题本归档口径，不阻塞作答与提交
-  const [studentFlags, setStudentFlags] = useState<ReadonlySet<string>>(
-    () => new Set(Object.keys(data.studentFlags ?? {})),
-  );
-  const toggleUnsure = useCallback(
-    (questionId: string) => {
-      const next = new Set(studentFlags);
-      const flag: "unsure" | null = next.has(questionId) ? null : "unsure";
-      if (flag === null) next.delete(questionId);
-      else next.add(questionId);
-      setStudentFlags(next);
-      setStudentFlagApi(attemptId, questionId, flag).catch(() => {
-        setStudentFlags((previous) => {
-          const rollback = new Set(previous);
-          if (flag === null) rollback.add(questionId);
-          else rollback.delete(questionId);
-          return rollback;
-        });
-      });
-    },
-    [attemptId, studentFlags, setStudentFlagApi],
+  const { studentFlags, toggleUnsure } = useStudentFlags(
+    data.attempt,
+    data.studentFlags,
   );
   const [formalInkPresence, setFormalInkPresence] = useState<
     ReadonlyMap<string, boolean>

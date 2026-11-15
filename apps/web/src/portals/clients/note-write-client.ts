@@ -25,6 +25,11 @@ export function createNoteWriteClient(
     form.append("body", body, "body.json.gz");
     form.append("baseRevision", String(meta.baseRevision));
     form.append("mutationId", meta.mutationId);
+    if (meta.expectedFrozenAt !== undefined)
+      form.append(
+        "expectedFrozenAt",
+        meta.expectedFrozenAt === null ? "null" : meta.expectedFrozenAt,
+      );
     // T6R.15：phase 可选新字段（契约缺省 scratch）——不传即不发该字段，
     // 服务端按缺省处理，旧链路 wire 形态零变化；订正/补充稿同步（T6R.15
     // 前端单）传入时如实上送

@@ -24,6 +24,7 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { recordableAttemptWhere } from "../services/attempt-recordability.ts";
 import { timeProjectionsOf } from "../services/attempt-time-projection";
 import {
   currentSelfReviewWhere,
@@ -179,7 +180,7 @@ export function attemptExtrasOf(
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    .where(and(inArray(responses.attemptId, ids), isNull(attempts.abandonedAt)))
+    .where(and(inArray(responses.attemptId, ids), recordableAttemptWhere()))
     .groupBy(responses.attemptId)
     .all();
   const reviewIds = new Set(

@@ -1,0 +1,1 @@
+ALTER TABLE `attempts` ADD `activated_at` text;

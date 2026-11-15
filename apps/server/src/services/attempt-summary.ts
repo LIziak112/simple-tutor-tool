@@ -1,5 +1,6 @@
 import {
   type AttemptStartData,
+  attemptPhaseOf,
   attemptStartDataSchema,
   wrongPracticeScopeSchema,
   wrongScopeLabelOf,
@@ -36,6 +37,9 @@ export function attemptSummaryOf(row: Attempt): AttemptStartData {
     attemptNo: row.attemptNo,
     status: row.status,
     startedAt: row.startedAt,
+    activatedAt: row.activatedAt,
+    phase: attemptPhaseOf(row),
+    frozenAt: row.frozenAt,
     submittedAt: row.submittedAt,
     scoreAuto: row.scoreAuto,
     // 模块 2 限时测试：时长 / 截止随摘要下发（记录页、结果页显示「限时 N 分钟」）

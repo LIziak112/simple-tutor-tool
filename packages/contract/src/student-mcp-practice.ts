@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { attemptQuestionPublicSchema } from "./attempt.ts";
+import { attemptSessionFields } from "./attempt-session.ts";
 import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import { attemptSourceSchema, attemptStatusSchema } from "./attempt-summary.ts";
 import { questionTypeSchema } from "./content.ts";
@@ -61,6 +62,7 @@ export const studentMcpPracticeListDataSchema = z.strictObject({
       title: z.string(),
       sourceType: attemptSourceSchema,
       status: attemptStatusSchema,
+      ...attemptSessionFields,
       startedAt: z.string().min(1),
       submittedAt: z.string().nullable(),
       answerProgress: attemptAnswerProgressSchema.nullable(),
@@ -77,6 +79,7 @@ export const studentMcpPracticeDataSchema = z.strictObject({
   practiceId: z.uuid(),
   title: z.string(),
   status: attemptStatusSchema,
+  ...attemptSessionFields,
   sourceType: attemptSourceSchema,
   practiceWorkflow: practiceWorkflowSchema.nullable(),
   questions: z.array(
@@ -128,6 +131,7 @@ export const studentMcpPracticeQuestionDataSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     practiceId: z.uuid(),
+    ...attemptSessionFields,
     questionNo: z.number().int().positive(),
     questionCount: z.number().int().positive(),
     question: attemptQuestionPublicSchema.strict(),

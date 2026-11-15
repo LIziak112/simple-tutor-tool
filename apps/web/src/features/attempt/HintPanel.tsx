@@ -3,6 +3,7 @@ import { Lightbulb, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import { useQuestionProcessContext } from "@/features/question-process/session";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 
@@ -92,6 +93,7 @@ export function HintPanel({
   onUnlocked: (entry: HintOpenedEntry) => void;
 }) {
   const { openAttemptHintApi } = usePortalClients();
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
 
   const process = useQuestionProcessContext();
   const onVisible = useCallback(
@@ -119,7 +121,11 @@ export function HintPanel({
       index: nextIndex,
     });
     try {
-      const data = await openAttemptHintApi(attemptId, questionId, nextIndex);
+      const data = await (expectedFrozenAt === undefined
+        ? openAttemptHintApi(attemptId, questionId, nextIndex)
+        : openAttemptHintApi(attemptId, questionId, nextIndex, {
+            expectedFrozenAt,
+          }));
       if (process) {
         process.event(questionId, {
           kind: "hint",

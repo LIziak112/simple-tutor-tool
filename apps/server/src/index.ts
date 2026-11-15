@@ -11,6 +11,10 @@ import { normalizeBuildVersion } from "./lib/request-diagnostics";
 import { handleServerError, installCrashHandlers } from "./lib/startup-errors";
 import { startStudentAiWorker } from "./services/ai-companion/student-ai-worker";
 import { purgeExpiredAttemptBatchSubmissions } from "./services/attempt-batch-submission";
+import {
+  openedAttemptPurgeOptionsOf,
+  purgeOpenedAttempts,
+} from "./services/attempt-opened-purge";
 import { startBackupScheduler } from "./services/backup-service";
 import { purgeExpiredQuestionProcesses } from "./services/question-process";
 
@@ -69,6 +73,7 @@ const stopStudentAiWorker = startStudentAiWorker({
 
 function purgeExpiredStudentData(): void {
   for (const purge of [
+    () => purgeOpenedAttempts(db, openedAttemptPurgeOptionsOf(process.env)),
     purgeExpiredQuestionProcesses,
     purgeExpiredAttemptBatchSubmissions,
   ]) {

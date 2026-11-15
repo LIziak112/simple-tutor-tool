@@ -15,6 +15,7 @@ import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
@@ -436,7 +437,19 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
     const paperJsonBody = await paper.json();
     assertNoLeak(paperJsonBody);
     assertNoStemLeak(paperJsonBody);
-    // 我的记录：wrong 草稿一直可见（永不失权——无课程归属）
+    // 未激活暂存卷隐藏；本机材料首次动作显式激活后，wrong卷仍永不失权。
+    const openedRecords = await env.app.request(
+      "/api/student/records?sourceType=wrong",
+      { headers: { cookie: env.aCookie } },
+    );
+    expect(
+      (
+        (await openedRecords.json()) as {
+          data: { records: { attemptId: string }[] };
+        }
+      ).data.records.map((row) => row.attemptId),
+    ).not.toContain(summary.id);
+    activateTestAttempt(env.db, summary.id);
     const records = await env.app.request(
       "/api/student/records?sourceType=wrong",
       { headers: { cookie: env.aCookie } },
