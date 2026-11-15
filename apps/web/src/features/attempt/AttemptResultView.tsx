@@ -152,7 +152,7 @@ export function AttemptResultView({
   });
   // QM-08：只读题面与作答共用 /attempts/:id/context 冻结投影经 groupSegmentsOfUnit
   // 解释组段；失败 / legacy 卷按 undefined → 全部 solo 段，回看零变化
-  const contextQuery = useAttemptContext(attempt.id);
+  const contextQuery = useAttemptContext(attempt.id, attempt.frozenAt);
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
   // T6R.11：原稿查看面板的轮次标注（重练同题后回看历史，可分辨第几轮）

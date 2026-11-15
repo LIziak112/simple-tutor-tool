@@ -517,11 +517,14 @@ it.each(["list", "single"] as const)(
       fireEvent.click(nextChoice);
       expect(nextChoice).toBeChecked();
       expect(screen.getByText("等待提交")).toBeVisible();
+      // 存答随带这道题的冻结行号：卷重冻过时服务端凭它认出这是本稿的答案
       await waitFor(() =>
-        expect(saveAttemptAnswerApi).toHaveBeenCalledWith(ATTEMPT_ID, "q2", {
-          kind: "choice",
-          index: 1,
-        }),
+        expect(saveAttemptAnswerApi).toHaveBeenCalledWith(
+          ATTEMPT_ID,
+          "q2",
+          { kind: "choice", index: 1 },
+          { questionRevisionId: "rev-q2" },
+        ),
       );
     }
     await waitFor(() =>

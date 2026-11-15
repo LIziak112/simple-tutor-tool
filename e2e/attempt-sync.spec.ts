@@ -90,6 +90,9 @@ for (const changed of [false, true]) {
           });
         }
         const response = await route.fetch();
+        // 页面轮询详情带条件请求头，没变化时服务端回 304、没有正文：页面沿用
+        // 上一份（就是下面改写过的那份），这里原样放行
+        if (response.status() === 304) return route.fulfill({ response });
         const body = (await response.json()) as { data: AttemptDraftData };
         original = {
           ...body.data,
@@ -147,7 +150,8 @@ for (const changed of [false, true]) {
       const answer = page
         .locator('article[aria-label="第 1 题"]')
         .getByRole("radio", { name: "对", exact: true });
-      await answer.click();
+      // 单选框本身是视觉隐藏的，点它所在的选项行（与其它作答用例同一写法）
+      await answer.locator("xpath=ancestor::label[1]").click();
       await expect(answer).toBeChecked();
       await page.evaluate(async (id) => {
         const moduleUrl = "/src/features/persistence/draft-store.ts";
@@ -156,6 +160,22 @@ for (const changed of [false, true]) {
         };
         await draftStore.flush(id);
       }, oldId);
+      // 材料版本由页面的上下文查询取到后补记进本机目录（不挡题面首帧）；记下
+      // 之后，卷被清除时才认得出新卷的材料与旧稿版本一致
+      await expect
+        .poll(() =>
+          page.evaluate(async (id) => {
+            const moduleUrl =
+              "/src/features/persistence/attempt-session-catalog.ts";
+            const { readLocalAttemptSessions } = (await import(moduleUrl)) as {
+              readLocalAttemptSessions(): Promise<
+                Record<string, { materials?: string[] }>
+              >;
+            };
+            return (await readLocalAttemptSessions())[id]?.materials;
+          }, oldId),
+        )
+        .toEqual([]);
       cleared = true;
       await page.reload();
       await page.waitForURL(`**/s/attempts/${nextId}`);

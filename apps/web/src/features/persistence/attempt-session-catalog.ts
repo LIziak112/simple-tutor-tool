@@ -12,7 +12,8 @@ export interface LocalAttemptSession {
   attempt: AttemptSummary;
   questions: Record<string, number | null>;
   questionRevisions?: Record<string, string>;
-  materials?: string[];
+  /** 冻结的材料版本（`材料号|版本`）；缺省或 undefined = 还不知道（清除恢复时不猜） */
+  materials?: string[] | undefined;
   migratedTo?: string;
   notice?: string;
   preservedAttemptId?: string;
@@ -78,6 +79,41 @@ export async function saveLocalAttemptSession(
     >;
     if (epoch !== getDraftSessionEpoch()) return;
     await store.set(key, { ...current, [value.attempt.id]: value });
+  };
+  const task = tail.then(write, write);
+  tail = task.catch(() => {});
+  await task;
+}
+/**
+ * 补记这份卷冻结的材料版本（`材料号|版本`）。卷被清除后要把本机稿搬到重开的
+ * 新卷时，靠它核对材料有没有变。只在目录里这份卷仍是同一冻结版本时写入：
+ * 别的标签页可能已经把它更新成重冻后的新版，旧版的材料号不能盖上去。
+ */
+export async function recordLocalAttemptMaterials(
+  attemptId: string,
+  frozenAt: string | null | undefined,
+  materials: string[],
+): Promise<void> {
+  const key = keyOf();
+  const epoch = getDraftSessionEpoch();
+  if (!key) return;
+  const store = backend();
+  const apply = (raw: unknown) => {
+    const current = (raw ?? {}) as Record<string, LocalAttemptSession>;
+    const entry = current[attemptId];
+    if (!entry || (entry.attempt.frozenAt ?? null) !== (frozenAt ?? null))
+      return current;
+    return { ...current, [attemptId]: { ...entry, materials } };
+  };
+  const write = async () => {
+    if (epoch !== getDraftSessionEpoch()) return;
+    if (store.update) {
+      await store.update(key, apply);
+      return;
+    }
+    const current = await store.get(key);
+    if (epoch !== getDraftSessionEpoch()) return;
+    await store.set(key, apply(current));
   };
   const task = tail.then(write, write);
   tail = task.catch(() => {});

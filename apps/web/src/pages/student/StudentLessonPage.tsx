@@ -602,7 +602,7 @@ function LessonAnswerInner({
     contextError,
     contextRetry,
     contextFetching,
-  } = useLessonGroupAnchors(attemptId, order);
+  } = useLessonGroupAnchors(attemptId, order, data.attempt.frozenAt);
   const questionIds = useMemo(
     () => data.questions.map((question) => question.id),
     [data.questions],
@@ -801,7 +801,7 @@ function LessonCompletedView({
     contextError,
     contextRetry,
     contextFetching,
-  } = useLessonGroupAnchors(attemptId, order);
+  } = useLessonGroupAnchors(attemptId, order, data.attempt.frozenAt);
   const capabilities = useMemo(
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],

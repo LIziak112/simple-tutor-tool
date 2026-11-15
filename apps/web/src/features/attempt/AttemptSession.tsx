@@ -357,7 +357,7 @@ function AnswerView({
   );
   // QM-08：冻结上下文（材料/组快照）——共享材料渲染数据源；错误非阻断（题面
   // 不依赖本载荷），就地提示 + 重试
-  const contextQuery = useAttemptContext(attemptId);
+  const contextQuery = useAttemptContext(attemptId, data.attempt.frozenAt);
   /** AI 侧栏对照激活 → 组段呈现回退上下排布（与题卡草稿「自动」布局同款信号） */
   const compareActive = useAiCompareActive();
   /** 「查看材料」reveal 信号（组 id / 题级材料的题 id → 递增计数；锚点滚入恢复） */

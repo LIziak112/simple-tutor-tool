@@ -12,6 +12,7 @@ import {
   hasLocalAttachments,
   readLocalAttemptAttachments,
 } from "./attempt-local-attachments";
+import { activatedLegacy, attemptRefrozen } from "./attempt-refrozen";
 import {
   type LocalAttemptSession,
   readLocalAttemptSessions,
@@ -58,10 +59,10 @@ export function hasLocalMaterialWork(
 export function draftSnapshotConflict(
   record: AttemptDraftRecord | null,
   attempt: AttemptSummary,
+  legacyUnverified = false,
 ): boolean {
   if (!record) return false;
-  const refrozen =
-    attempt.frozenAt != null && attempt.frozenAt !== attempt.startedAt;
+  const refrozen = attemptRefrozen(attempt, legacyUnverified);
   return [
     { docs: record.inks, bindings: record.inkSnapshotBindings },
     {
@@ -81,13 +82,30 @@ export function draftSnapshotConflict(
 function unprovenAnswers(
   record: AttemptDraftRecord | null,
   attempt: AttemptSummary,
+  legacyUnverified: boolean,
 ): boolean {
   return (
     record !== null &&
-    attempt.frozenAt != null &&
-    attempt.frozenAt !== attempt.startedAt &&
+    attemptRefrozen(attempt, legacyUnverified) &&
     unsyncedAnswerIds(record).some(
       (id) => !record.answerQuestionRevisions?.[id],
+    )
+  );
+}
+/**
+ * 本机答案记着作答时的题行。和目录里这份卷现在的题行对不上，就是按旧题面写的
+ * ——另一个标签页已经看到重冻并更新了目录，这个标签页的学生还在旧题面上作答。
+ * 必须在激活之前拦下：否则新题面的空卷会凭旧题面上的动作入账。
+ */
+function answersOnOtherRevisions(
+  record: AttemptDraftRecord | null,
+  known: LocalAttemptSession,
+): boolean {
+  const current = known.questionRevisions;
+  return (
+    current !== undefined &&
+    Object.entries(record?.answerQuestionRevisions ?? {}).some(
+      ([id, revision]) => current[id] !== revision,
     )
   );
 }
@@ -103,11 +121,16 @@ export class LocalAttemptSnapshotConflictError extends Error {
     this.name = "LocalAttemptSnapshotConflictError";
   }
 }
-/** 预检已验证卷归属，才允许读取旧键；必须先保护原快照再调用start。 */
+/**
+ * 预检已验证卷归属，才允许读取旧键；必须先保护原快照再调用start。
+ * `legacyUnverified` 只有手里有详情的调用方给得出（见 attemptRefrozen）；开卷前
+ * 的预检只会遇到未激活的卷，用不到它。
+ */
 export async function protectOpenedDraft(
   attempt: AttemptSummary | null,
   activate: (id: string, request: AttemptActivateRequest) => Promise<unknown>,
   readOriginal?: (id: string) => Promise<AttemptDetailData>,
+  legacyUnverified = false,
 ): Promise<void> {
   if (attempt?.status !== "draft") return;
   // 旧缓存缺新列按共享协议属于历史已激活卷，不对它臆造重冻事实。
@@ -125,14 +148,17 @@ export async function protectOpenedDraft(
       known &&
       (known.quarantined ||
         known.attempt.frozenAt !== attempt.frozenAt ||
-        unprovenAnswers(record, attempt) ||
-        draftSnapshotConflict(record, attempt) ||
-        attachmentsSnapshotConflict(attachments, attempt))
+        answersOnOtherRevisions(record, known) ||
+        unprovenAnswers(record, attempt, legacyUnverified) ||
+        draftSnapshotConflict(record, attempt, legacyUnverified) ||
+        attachmentsSnapshotConflict(attachments, attempt, legacyUnverified))
     )
       throw new LocalAttemptSnapshotConflictError(attempt.id);
     if (!known) {
-      let original = false;
+      // 已激活的遗留卷：这台设备在有目录之前做过它，题面没有变过，稿子照常用
+      let original = activatedLegacy(attempt, legacyUnverified);
       if (
+        !original &&
         attempt.frozenAt != null &&
         attempt.frozenAt === attempt.startedAt &&
         readOriginal
@@ -164,6 +190,7 @@ export async function protectOpenedDraft(
 /** 同id重新冻结后，旧标签页的本机稿也不能自动套进新版。 */
 export async function assertLocalAttemptSnapshot(
   next: LocalAttemptSession,
+  legacyUnverified = false,
 ): Promise<void> {
   const epoch = getDraftSessionEpoch();
   const known = (await readLocalAttemptSessions())[next.attempt.id];
@@ -182,9 +209,9 @@ export async function assertLocalAttemptSnapshot(
   const attachments = await readLocalAttemptAttachments(next.attempt.id);
   assertDraftEpoch(epoch);
   if (
-    unprovenAnswers(record, next.attempt) ||
-    draftSnapshotConflict(record, next.attempt) ||
-    attachmentsSnapshotConflict(attachments, next.attempt)
+    unprovenAnswers(record, next.attempt, legacyUnverified) ||
+    draftSnapshotConflict(record, next.attempt, legacyUnverified) ||
+    attachmentsSnapshotConflict(attachments, next.attempt, legacyUnverified)
   )
     throw new LocalAttemptSnapshotConflictError(next.attempt.id);
   if (!known.quarantined && known.attempt.frozenAt === next.attempt.frozenAt)

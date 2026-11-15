@@ -277,9 +277,24 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await studentPage.getByRole("button", { name: "开始新一次" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
       const discardedUrl = studentPage.url();
+      // 新开的卷没动过不入账，落地页不把它当进行中的卷；答一题之后才是
+      const thirdSaved = studentPage.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().includes("/answers/"),
+      );
+      await studentPage
+        .locator('article[aria-label="第 1 题"]')
+        .getByRole("radio", { name: "对", exact: true })
+        .locator("xpath=ancestor::label[1]")
+        .click();
+      expect((await thirdSaved).ok()).toBe(true);
       await studentPage
         .getByRole("button", { name: "返回", exact: true })
         .click();
+      await expect(
+        studentPage.getByRole("button", { name: "查看第 3 次记录" }),
+      ).toBeVisible();
       await studentPage.getByRole("button", { name: "清空并重新作答" }).click();
       await studentPage.getByRole("button", { name: "确认清空并重开" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
@@ -288,10 +303,13 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await studentPage
         .getByRole("button", { name: "返回", exact: true })
         .click();
-      await expect(
-        studentPage.getByRole("button", { name: "查看第 3 次记录" }),
-      ).toHaveCount(0);
-      for (const round of [1, 2, 4]) {
+      // 作废的第 3 次不再出现；第 4 次刚打开、还没动笔，同样不在历次记录里
+      for (const round of [3, 4]) {
+        await expect(
+          studentPage.getByRole("button", { name: `查看第 ${round} 次记录` }),
+        ).toHaveCount(0);
+      }
+      for (const round of [1, 2]) {
         await expect(
           studentPage.getByRole("button", { name: `查看第 ${round} 次记录` }),
         ).toBeVisible();

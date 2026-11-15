@@ -9,8 +9,9 @@ import {
   prepareLocalAttempt,
   reopenMissingAttempt,
 } from "@/features/persistence/attempt-reopen";
+import { recordLocalAttemptMaterials } from "@/features/persistence/attempt-session-catalog";
 import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
-import { useLocalAttemptActivation } from "@/features/persistence/use-local-attempt-activation";
+import { useAttemptSessionEffects } from "@/features/persistence/use-attempt-session-effects";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 import {
   studentAssignmentsKey,
@@ -39,21 +40,35 @@ export const studentAttemptKey = (attemptId: string) =>
  * 冻结上下文（材料/组快照投影）查询 key：挂在 attempt key 前缀下（交卷等
  * 失效详情时一并失效；数据本身随卷冻结不可变，重取幂等）。
  */
-export const studentAttemptContextKey = (attemptId: string) =>
-  ["student", "attempt", attemptId, "context"] as const;
+export const studentAttemptContextKey = (
+  attemptId: string,
+  frozenAt?: string | null,
+) => ["student", "attempt", attemptId, "context", frozenAt ?? null] as const;
 
 /**
  * 冻结上下文（QM-08 前端消费）：材料/组共享渲染的数据源。快照随卷冻结
  * 不可变——staleTime ∞、不随焦点重取；错误（网络/409 坏快照）**非阻断**：
  * 题面渲染不依赖本载荷，调用方就地提示 + 重试。legacy 卷（无 QM 快照）
  * 返回空 materials/groups，渲染零变化。
+ *
+ * `frozenAt` 进查询键：没动过的卷再次进入时可能按新题目重冻（卷号不变、冻结
+ * 时刻前进），旧版的材料和题组不能从缓存里接着用。取到后把材料版本补记进本机
+ * 会话目录（卷被清除后恢复本机稿要核对它），不等它、失败也不影响题面。
  */
-export function useAttemptContext(attemptId: string) {
+export function useAttemptContext(attemptId: string, frozenAt?: string | null) {
   const { fetchAttemptContextApi } = usePortalClients();
 
   return useQuery({
-    queryKey: studentAttemptContextKey(attemptId),
-    queryFn: () => fetchAttemptContextApi(attemptId),
+    queryKey: studentAttemptContextKey(attemptId, frozenAt),
+    queryFn: async () => {
+      const context = await fetchAttemptContextApi(attemptId);
+      void recordLocalAttemptMaterials(
+        attemptId,
+        frozenAt,
+        context.materials.map((m) => `${m.id}|${m.sourceVersion}`),
+      ).catch(() => {});
+      return context;
+    },
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: Number.POSITIVE_INFINITY,
     refetchOnWindowFocus: false,
@@ -162,7 +177,12 @@ export function useAttemptDetail(attemptId: string | undefined) {
           !isAttemptUnavailable(error)
         )
           return previous;
-        return reopenMissingAttempt(clients, attemptId ?? "", error);
+        return reopenMissingAttempt(
+          clients,
+          attemptId ?? "",
+          error,
+          workflowStartOptions(),
+        );
       }
     },
     structuralSharing: shareAttemptDetail,
@@ -185,7 +205,8 @@ export function useAttemptDetail(attemptId: string | undefined) {
         ? 10_000
         : false,
   });
-  useLocalAttemptActivation(query.data?.attempt);
+  // 不在这里读 query.data：见 useCachedAttempt 的说明
+  useAttemptSessionEffects(studentAttemptKey(attemptId ?? "pending"));
   return query;
 }
 

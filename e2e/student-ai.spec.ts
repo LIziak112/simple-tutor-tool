@@ -691,8 +691,11 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", { tag: ["@ai"] }, 
       await expect(page.getByText("连接已保存").first()).toBeVisible();
 
       // —— ④ 回到原题（?from= 回跳入口）再求助 ——
+      // 这份卷到这里还没动过笔（未激活），作业在列表里仍是「未开始」：回的是这份
+      // 已经确认的卷（/s/attempts/<卷号>），不经作业入口再出一次「开始作业」。
+      // 动过笔的卷照旧回作业页（单测 ai-settings-return.test.ts）
       await page.getByRole("link", { name: "返回原题" }).click();
-      await page.waitForURL("**/s/assignments/**");
+      await page.waitForURL("**/s/attempts/**");
       await q1.waitFor({ state: "visible" });
       // 题卡 DOM 身份标记（整页导航后重打）：后续等待回信的轮询窗口内
       // 题卡不得重挂（expando 属性验证）
