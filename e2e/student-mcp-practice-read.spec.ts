@@ -6,6 +6,9 @@ import {
   connectMcpClientViaHttp,
 } from "../apps/server/src/test/mcp-test-utils.ts";
 import {
+  attemptSettlementResultSchema,
+  memoListDataSchema,
+  memoSchema,
   studentMcpPracticeDataSchema,
   studentMcpPracticeListDataSchema,
   studentMcpPracticeQuestionDataSchema,
@@ -68,7 +71,7 @@ async function preparePractice(
 
 for (const kind of ["class", "personal"] as const) {
   test.describe(`A1 ${kind} MCP公开读取`, { tag: ["@mcp"] }, () => {
-    test("本人公开读取→确认后原提交/重放；token域与隐藏来源拒绝", async ({
+    test("本人公开读取→确认提交反馈/分批/随笔往返；token域与隐藏来源拒绝", async ({
       request,
       browser,
     }) => {
@@ -126,6 +129,25 @@ for (const kind of ["class", "personal"] as const) {
         await expect(
           page.getByRole("article", { name: "第 1 题", exact: true }),
         ).toBeVisible();
+        // 题卡原始随笔是首个实质动作；Agent后续只新增关联条目，不改原文。
+        await page
+          .getByRole("button", { name: "第 1 题更多", exact: true })
+          .click();
+        await page
+          .getByRole("menuitem", { name: "记随笔", exact: true })
+          .click();
+        const memoDialog = page.getByRole("dialog", { name: "随手记" });
+        await memoDialog.getByLabel("随笔内容").fill(`原始MCP随笔${suffix}`);
+        await memoDialog.getByRole("button", { name: "保存" }).click();
+        await expect(memoDialog).toBeHidden();
+        await expect
+          .poll(async () => {
+            const response = await learner.get("/api/student/memos");
+            return memoListDataSchema
+              .parse(((await response.json()) as { data: unknown }).data)
+              .memos.some((memo) => memo.text === `原始MCP随笔${suffix}`);
+          })
+          .toBe(true);
         const created = await learner.post("/api/student/ai/connections", {
           data: { channel: "mcp" },
         });
@@ -162,9 +184,10 @@ for (const kind of ["class", "personal"] as const) {
           "practice-public-read-e2e",
         );
         const names = (await client.listTools()).tools.map((tool) => tool.name);
-        expect(STUDENT_MCP_TOOL_NAMES).toHaveLength(25);
+        expect(STUDENT_MCP_TOOL_NAMES).toContain("student_settle_practice");
         // 个人端合法组合本人教师工具；班级学生端只开放学生工具清单。
-        if (kind === "class") expect(names).toHaveLength(25);
+        if (kind === "class")
+          expect(names).toHaveLength(STUDENT_MCP_TOOL_NAMES.length);
         expect(new Set(names).size).toBe(names.length);
         expect(names).toEqual(
           expect.arrayContaining([
@@ -251,8 +274,102 @@ for (const kind of ["class", "personal"] as const) {
           progress: { submittedCount: 1, totalCount: 2 },
           nextQuestion: { questionNo: 2 },
         });
-        expect(JSON.stringify(enhanced.data)).not.toMatch(
-          /"answers"|solutionMd|teacherComment|autoCorrect|finalCorrect/,
+        expect(enhanced.data.feedback).toMatchObject({
+          status: "released",
+          question: {
+            questionId: first.questionId,
+            solutionMd: expect.stringContaining("公开读取私有解析哨兵"),
+            teacherComment: null,
+            teacherMark: null,
+            finalCorrect: null,
+          },
+        });
+        const feedback = await learner.get(
+          `/api/student/attempts/${practiceId}/questions/${encodeURIComponent(first.questionId)}/feedback`,
+        );
+        expect(
+          ((await feedback.json()) as { data: { feedback: unknown } }).data
+            .feedback,
+        ).toEqual(enhanced.data.feedback);
+        const settlementRequest = {
+          practiceId,
+          workflowVersion: parameters.workflowVersion,
+          workflowRevision: parameters.workflowRevision,
+          mutationId: randomUUID(),
+          questions: [],
+        };
+        const settled = await callToolJson(
+          client,
+          "student_settle_practice",
+          settlementRequest,
+        );
+        expect(settled.isError).toBe(false);
+        const batch = attemptSettlementResultSchema.parse(settled.data);
+        expect(batch.settlement).toMatchObject({
+          seq: 1,
+          kind: "partial",
+          questionCount: 1,
+        });
+        expect(batch.questions.map((item) => item.questionId)).toEqual([
+          first.questionId,
+        ]);
+        expect(Object.keys(batch.questionNos)).toEqual([first.questionId]);
+        expect(
+          await callToolJson(
+            client,
+            "student_settle_practice",
+            settlementRequest,
+          ),
+        ).toEqual(settled);
+        const original = memoListDataSchema
+          .parse(
+            (await callToolJson(client, "list_my_memos", { courseId })).data,
+          )
+          .memos.find((memo) => memo.text === `原始MCP随笔${suffix}`);
+        if (!original?.context || !original.seq)
+          throw new Error("原始随笔缺完整来源或序号");
+        const memoRequest = {
+          operationId: randomUUID(),
+          parentMemoSeq: original.seq,
+          context: original.context,
+          text: `Agent整理稿${suffix}`,
+        };
+        const added = await callToolJson(client, "add_memo", memoRequest);
+        expect(added.isError).toBe(false);
+        const derived = memoSchema.parse(added.data);
+        expect(derived.context?.content).toEqual(original.context.content);
+        expect(derived.context?.session?.questionRevisionId).toBe(
+          first.questionRevisionId,
+        );
+        expect(derived.deviceId).toBeTruthy();
+        expect(await callToolJson(client, "add_memo", memoRequest)).toEqual(
+          added,
+        );
+        const learn = kind === "personal" ? "/p/learn" : "/s";
+        await page.goto(`${learn}/memos?seq=${original.seq}`);
+        const parentCard = page
+          .locator("article")
+          .filter({ hasText: `原始MCP随笔${suffix}` });
+        await expect(parentCard).toBeVisible();
+        await parentCard
+          .getByRole("link", { name: `查看 #${original.seq} 的关联条目` })
+          .click();
+        const childCard = page
+          .locator("article")
+          .filter({ hasText: `Agent整理稿${suffix}` });
+        await expect(childCard).toBeVisible();
+        await expect(
+          childCard.getByText(/MCP 连接 · [a-f0-9]{8}/),
+        ).toBeVisible();
+        await expect(
+          childCard.getByRole("link", { name: `关联原随笔 #${original.seq}` }),
+        ).toHaveAttribute("href", `${learn}/memos?seq=${original.seq}`);
+        await childCard.getByRole("button", { name: /查看来源/ }).click();
+        await expect(
+          childCard.getByRole("link", { name: /第\s*1\s*题/ }),
+        ).toHaveAttribute(
+          "href",
+          `${learn}/attempts/${practiceId}?q=${encodeURIComponent(first.questionId)}`,
         );
         const reread = await callToolJson(client, "get_practice_question", {
           practiceId,

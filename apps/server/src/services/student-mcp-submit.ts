@@ -8,11 +8,11 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { attempts, responses } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { sqliteAiPolicyConfigSource } from "./ai-companion/ai-policy-config-source.ts";
-import { resolveAttemptQuestionAiPolicy } from "./ai-companion/teaching-policy-service.ts";
 import { commitPracticeQuestion } from "./attempt-practice-submit.ts";
+import { getPracticeQuestionFeedback } from "./attempt-question-feedback.ts";
 import { frozenRowsInDisplayOrder } from "./attempt-rows.ts";
 import { practiceRequestDigestOf } from "./practice-submit-intent.ts";
+import { requireStudentMcpQuestionPolicy } from "./student-mcp-policy.ts";
 import { assertStudentMcpFrozenMembers } from "./student-mcp-practice-paper.ts";
 
 /** 请求内容确定的 UUID；不读取新草稿/证据头，不把响应版本或设备加入旧摘要。 */
@@ -65,6 +65,14 @@ export function submitStudentMcpQuestion(
     mcpSubmissionMutationId(
       practiceRequestDigestOf(input.practiceId, questionId, request),
     );
+  // v2 会读取本题授权反馈，重试也须重验当前权限与 AI 设置。
+  if (input.responseVersion === 2)
+    requireStudentMcpQuestionPolicy(
+      db,
+      studentId,
+      input.practiceId,
+      questionId,
+    );
   commitPracticeQuestion(
     db,
     studentId,
@@ -75,20 +83,12 @@ export function submitStudentMcpQuestion(
     {
       origin: { channel: "mcp", connectionId },
       beforeFirstSubmission: () => {
-        const policy = resolveAttemptQuestionAiPolicy(
+        const policy = requireStudentMcpQuestionPolicy(
           db,
           studentId,
           input.practiceId,
           questionId,
-          sqliteAiPolicyConfigSource,
-          { frozenOnly: true },
         );
-        if (!policy.resolution.usable)
-          throw new HttpError(
-            403,
-            "AI_POLICY_DISABLED",
-            "当前教学模式下本题暂不能由AI提交",
-          );
         assertStudentMcpFrozenMembers(db, input.practiceId);
         if (input.questionNo !== undefined) {
           const ordered = frozenRowsInDisplayOrder(db, policy.attempt);
@@ -103,7 +103,7 @@ export function submitStudentMcpQuestion(
     },
   );
   if (input.responseVersion !== 2) return { success: true };
-  // 只读提交事实；不读取秘密快照/当前AI题面，不让权限收紧破坏成功重放。
+  // 事实沿已提交行投影；反馈复用 HTTP 当前公布规则，绝不缓存旧秘密。
   const attempt = db
     .select()
     .from(attempts)
@@ -135,6 +135,13 @@ export function submitStudentMcpQuestion(
     submittedAt: row.submittedAt,
     submissionMutationId: request.submissionMutationId,
     settlementSeq: row.settlementSeq,
+    feedback: getPracticeQuestionFeedback(
+      db,
+      studentId,
+      input.practiceId,
+      questionId,
+      now,
+    ).feedback,
     progress: {
       submittedCount: ordered.filter((item) => item.submittedAt !== null)
         .length,

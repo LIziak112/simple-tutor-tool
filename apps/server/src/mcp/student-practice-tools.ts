@@ -103,7 +103,7 @@ export function registerStudentPracticeTools(
     "get_practice_question",
     {
       description:
-        "按题目id或本卷题序读取本人一道题的公开题面、冻结材料、本人已保存答案与规范上下文；两种定位都给时必须一致。参考答案、解析和未解锁提示不在本工具授权内。返回可用时的真实工作流/题目/答案版本和已保存笔记证据参数；学生确认题号、答案与冻结稿件后，另生成submissionMutationId调用原提交工具，同一次重试保留全部参数。服务端无法确认浏览器无未上传稿，绝不默认缺稿提交。图片原始字节合计上限4MiB，超限可传includeImages=false显式仅文字；本工具不创建任务、租约、事件或设备。",
+        "按题目id或本卷题序读取本人一道题的公开题面、冻结材料、本人已保存答案与规范上下文；两种定位都给时必须一致。参考答案、解析和未解锁提示不在本工具授权内。返回可用时的真实工作流/题目/答案版本和已保存笔记证据参数；submission用于逐题提交，settlement用于允许的分批提交（含自选交卷后反馈节奏）；学生确认题号、答案与冻结稿件后，另生成submissionMutationId调用原提交工具，同一次重试保留全部参数。服务端无法确认浏览器无未上传稿，绝不默认缺稿提交。图片原始字节合计上限4MiB，超限可传includeImages=false显式仅文字；本工具不创建任务、租约、事件或设备。",
       inputSchema: studentMcpPracticeQuestionReadInputSchema,
       annotations: {
         readOnlyHint: true,

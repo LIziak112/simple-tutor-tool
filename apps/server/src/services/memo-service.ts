@@ -344,6 +344,7 @@ export function createAgentMemo(
   studentId: string,
   input: MemoAgentCreate,
   now: Date = new Date(),
+  deviceId?: string,
 ): Memo {
   assertMemoMetadataBudget(input);
   const digest = memoOperationDigest(input);
@@ -381,6 +382,16 @@ export function createAgentMemo(
       studentId,
       clientId: input.operationId ?? crypto.randomUUID(),
       agentRequestDigest: digest,
+      ...(input.context === undefined
+        ? {}
+        : {
+            // 来源的内容/session/view保留；实际记录设备来自服务端鉴权连接。
+            context:
+              deviceId === undefined
+                ? input.context
+                : { ...input.context, deviceId },
+          }),
+      ...(deviceId === undefined ? {} : { deviceId }),
       ...(input.parentMemoSeq === undefined
         ? {}
         : { parentMemoSeq: input.parentMemoSeq }),

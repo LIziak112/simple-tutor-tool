@@ -3,8 +3,14 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv
 import { studentMcpPracticeQuestionDataSchema } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
-import { aiTeacherSettings, events, responses } from "../db/schema.ts";
+import {
+  aiTeacherSettings,
+  events,
+  responses,
+  teachers,
+} from "../db/schema.ts";
 import { TEST_TEACHER_ID } from "../db/test-utils.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { callToolJson } from "../test/mcp-test-utils.ts";
 import { studentPracticeReadEnv } from "../test/student-mcp-practice-fixtures.ts";
 
@@ -34,7 +40,7 @@ async function prepared(env: Env, no = 1) {
 }
 const tool = "student_submit_practice_question";
 describe.each(["class", "personal"] as const)("%s MCP v2 提交", (kind) => {
-  it("省键提交与重放返回稳定提交事实，下一题无答案判定", async () => {
+  it("省键提交与重放返回稳定事实及本题合法反馈，下一题不含秘密", async () => {
     const env = await setup(kind);
     const params = await prepared(env);
     const { questionId: _, ...numbered } = params;
@@ -66,16 +72,23 @@ describe.each(["class", "personal"] as const)("%s MCP v2 提交", (kind) => {
     const replay = await callToolJson(env.client, tool, input);
     expect(replay).toEqual(first);
     expect(env.db.select().from(events).all()).toEqual(before);
-    const serialized = JSON.stringify(first.data);
-    for (const key of [
-      "answers",
-      "solutionMd",
-      "autoCorrect",
-      "finalCorrect",
-      "teacherMark",
-      "currentAnswer",
-    ])
-      expect(serialized).not.toContain(key);
+    expect(first.data.feedback).toMatchObject({
+      status: "released",
+      question: {
+        questionId: "q-1",
+        autoCorrect: true,
+        solutionMd: "解析",
+        teacherMark: null,
+        teacherComment: null,
+        finalCorrect: null,
+      },
+    });
+    assertNoLeak(first.data, { allow: ["answer", "answers", "solutionMd"] });
+    expect(first.data.nextQuestion).toEqual({
+      questionId: "q-2",
+      questionNo: 2,
+    });
+    expect(JSON.stringify(first.data.feedback)).not.toContain('"id":"q-2"');
   });
   it("id/no错配拒绝且零写入", async () => {
     const env = await setup(kind);
@@ -90,7 +103,7 @@ describe.each(["class", "personal"] as const)("%s MCP v2 提交", (kind) => {
     expect(result.data.error).toBe("QUESTION_LOCATOR_MISMATCH");
     expect(env.db.select().from(responses).all()).toEqual(before);
   });
-  it("AI关闭拒绝首写；旧成功重放仍返回事实", async () => {
+  it("AI作答中关闭不影响已完成题复盘，公布收紧后不重放秘密", async () => {
     const env = await setup(kind);
     const params = await prepared(env);
     const input = { ...params, responseVersion: 2 };
@@ -108,7 +121,22 @@ describe.each(["class", "personal"] as const)("%s MCP v2 提交", (kind) => {
         set: { defaultMode: "post_submit_only" },
       })
       .run();
+    const submitted = env.db.select().from(responses).all();
+    // 既有策略：该题完成后 open_study；作答中的下一题仍禁止 AI。
     expect((await callToolJson(env.client, tool, input)).isError).toBe(false);
+    env.db
+      .update(teachers)
+      .set({ practiceFeedbackPolicy: "after_attempt" })
+      .where(eq(teachers.id, TEST_TEACHER_ID))
+      .run();
+    const tightened = await callToolJson(env.client, tool, input);
+    expect(tightened).toMatchObject({
+      isError: false,
+      data: { feedback: { status: "restricted" } },
+    });
+    assertNoLeak(tightened.data);
+    expect(JSON.stringify(tightened.data.feedback)).not.toContain("解析");
+    expect(env.db.select().from(responses).all()).toEqual(submitted);
     const rows = env.db.select().from(responses).all();
     const next = rows.find((row) => row.questionId === "q-2");
     if (!next) throw new Error("缺题");
@@ -205,7 +233,7 @@ describe.each(["class", "personal"] as const)("%s MCP v2 提交", (kind) => {
     ])
       expect(validate(bad).valid).toBe(false);
   });
-  it("成功重放拒绝改题号，坏快照不阻断已持久提交事实", async () => {
+  it("成功重放拒绝改题号，坏快照不能返回已公布内容", async () => {
     const env = await setup(kind);
     const params = await prepared(env);
     const input = { ...params, responseVersion: 2, questionNo: 1 };
@@ -222,6 +250,6 @@ describe.each(["class", "personal"] as const)("%s MCP v2 提交", (kind) => {
       .set({ questionSnapshotJson: "{}" })
       .where(eq(responses.id, params.questionRevisionId))
       .run();
-    expect(await callToolJson(env.client, tool, input)).toEqual(first);
+    expect((await callToolJson(env.client, tool, input)).isError).toBe(true);
   });
 });

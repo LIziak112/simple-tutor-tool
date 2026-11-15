@@ -102,7 +102,13 @@ export function MemoList({ filter = {} }: { filter?: MemoListQuery }) {
       // 空态只在两边都空时显示；只有本机条目时不说「还没有随笔」
       return pending.length === 0 ? (
         <StudentEmptyState
-          title={filter.seq === undefined ? "还没有随笔" : "这条随笔当前不可用"}
+          title={
+            filter.parentMemoSeq !== undefined
+              ? "还没有关联条目"
+              : filter.seq === undefined
+                ? "还没有随笔"
+                : "这条随笔当前不可用"
+          }
           description="想法、疑问、易错点，随手记下来；联网后自动同步，Agent 也能读到。"
         />
       ) : null;
@@ -243,6 +249,14 @@ function MemoCard({
           </Link>
         ))}
       </div>
+      {memo.seq !== undefined && (
+        <Link
+          className="min-h-11 text-xs text-primary underline"
+          to={routes.learning(`memos?parentMemoSeq=${memo.seq}`)}
+        >
+          查看 #{memo.seq} 的关联条目
+        </Link>
+      )}
       <MemoSharing memo={memo} />
     </article>
   );

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   type AttemptPartialRequest,
   attemptSettlementResultSchema,
+  type PracticeSubmissionOrigin,
 } from "@tutor/contract";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -123,6 +124,10 @@ export function settleStudentAttempt(
   attemptId: string,
   req: AttemptPartialRequest,
   now = new Date(),
+  options: {
+    origin?: PracticeSubmissionOrigin;
+    beforeSettlement?: (existingSeq: number | null) => void;
+  } = {},
 ) {
   const digest = createHash("sha256")
     .update(
@@ -153,8 +158,10 @@ export function settleStudentAttempt(
       if (previous) {
         if (previous.requestDigest !== digest)
           conflict("同一提交标识的内容不一致，请重新确认");
+        options.beforeSettlement?.(previous.seq);
         return previous.seq;
       }
+      options.beforeSettlement?.(null);
       const view = attemptWorkflowView(db, attempt, now);
       if (!view?.practiceWorkflow.canSettlePartially)
         throw new HttpError(
@@ -189,6 +196,7 @@ export function settleStudentAttempt(
           },
           now,
           {
+            ...(options.origin === undefined ? {} : { origin: options.origin }),
             settlement: true,
             activeSecByQuestion: activity,
             deferTimeSeal: true,
