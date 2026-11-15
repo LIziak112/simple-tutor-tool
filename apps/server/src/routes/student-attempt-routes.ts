@@ -31,16 +31,15 @@ import { createStudentSettlementRoutes } from "./student-settlements.ts";
 export function createStudentAttemptRoutes(db: Db) {
   return (
     new Hono<StudentEnv>()
-      .get("/attempts/opened", (c) =>
-        c.json({
+      .get("/attempts/opened", (c) => {
+        const query = parseJsonValue(c.req.query(), attemptOpenedQuerySchema);
+        // 开卷前预检：答的是「此刻有没有未激活的卷」，不落任何缓存
+        c.header("Cache-Control", "private, no-store");
+        return c.json({
           ok: true,
-          data: getOpenedAttempt(
-            db,
-            c.var.student.id,
-            parseJsonValue(c.req.query(), attemptOpenedQuerySchema),
-          ),
-        }),
-      )
+          data: getOpenedAttempt(db, c.var.student.id, query),
+        });
+      })
       .post("/attempts/:id/activate", async (c) => {
         const input = await parseJsonBody(c, attemptActivateRequestSchema);
         c.header("Cache-Control", "private, no-store");

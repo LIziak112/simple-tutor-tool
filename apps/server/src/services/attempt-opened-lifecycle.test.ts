@@ -461,6 +461,53 @@ it("未激活卷从学生/教师记录、单元历次汇总隐藏，预检只读
   expect(body).toMatchObject({
     data: { attempt: { id: attempt.id, frozenAt: attempt.frozenAt } },
   });
+  expect(preflight.headers.get("cache-control")).toBe("private, no-store");
+  // 同班的另一名学生：预检看不到这份卷，拿卷号也激活不了
+  const classmate = makeStudent(env.db);
+  env.db
+    .insert(courseStudents)
+    .values({ courseId: env.courseId, studentId: classmate, joinedAt: now })
+    .run();
+  const classmateCookie = `tutor_student_session=${createStudentSession(env.db, classmate).token}`;
+  const foreign = await app.request(
+    `/api/student/attempts/opened?${new URLSearchParams(env.query)}`,
+    { headers: { cookie: classmateCookie } },
+  );
+  expect(foreign.status).toBe(200);
+  expect(await foreign.json()).toEqual({ ok: true, data: { attempt: null } });
+  const hijack = await app.request(
+    `/api/student/attempts/${attempt.id}/activate`,
+    {
+      method: "POST",
+      headers: { cookie: classmateCookie, "content-type": "application/json" },
+      body: JSON.stringify({ expectedFrozenAt: attempt.frozenAt }),
+    },
+  );
+  expect(hijack.status).toBe(403);
+  expect(env.row(attempt.id)?.activatedAt).toBeNull();
+  // 没选这门课的学生连预检都过不了；多余参数、缺参数一律 400
+  const outsider = `tutor_student_session=${createStudentSession(env.db, makeStudent(env.db)).token}`;
+  expect(
+    (
+      await app.request(
+        `/api/student/attempts/opened?${new URLSearchParams(env.query)}`,
+        { headers: { cookie: outsider } },
+      )
+    ).status,
+  ).toBeGreaterThanOrEqual(400);
+  for (const bad of [
+    { ...env.query, studentId: env.studentId },
+    { sourceType: "course", courseId: env.courseId },
+    { sourceType: "wrong" },
+  ])
+    expect(
+      (
+        await app.request(
+          `/api/student/attempts/opened?${new URLSearchParams(bad)}`,
+          { headers: { cookie } },
+        )
+      ).status,
+    ).toBe(400);
   const activated = await app.request(
     `/api/student/attempts/${attempt.id}/activate`,
     {
@@ -607,6 +654,62 @@ it("重冻中途失败恢复原卷快照，限时卷建即激活", () => {
   expect(timed).toMatchObject({
     phase: "active",
     activatedAt: timed.startedAt,
+  });
+});
+
+it("入口复用未激活卷时兑现本次所选限时：此刻起算并激活；已在计时的卷不改时钟", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-14T10:00:00.000Z"));
+  const env = fixture();
+  const first = env.start();
+  expect(first).toMatchObject({
+    phase: "opened",
+    timeLimitSec: null,
+    deadlineAt: null,
+  });
+  // 空卷不入账，入口页按「开始练习」给出限时选项：十分钟后选 30 分钟再进
+  vi.setSystemTime(new Date("2026-11-14T10:10:00.000Z"));
+  const timed = env.start(30);
+  expect(timed).toMatchObject({
+    id: first.id,
+    startedAt: first.startedAt,
+    frozenAt: first.frozenAt,
+    phase: "active",
+    activatedAt: "2026-11-14T10:10:00.000Z",
+    timeLimitSec: 1800,
+    deadlineAt: "2026-11-14T10:40:00.000Z",
+  });
+  expect(env.row(first.id)?.lastActivityAt).toBe("2026-11-14T10:10:00.000Z");
+  expect(env.refs(first.id)).toHaveLength(1);
+  // 已在计时：再带别的时长进来沿用原时钟
+  vi.setSystemTime(new Date("2026-11-14T10:20:00.000Z"));
+  expect(env.start(5)).toMatchObject({
+    id: first.id,
+    activatedAt: "2026-11-14T10:10:00.000Z",
+    timeLimitSec: 1800,
+    deadlineAt: "2026-11-14T10:40:00.000Z",
+  });
+
+  // 作业入口同理；不带限时再进，空卷保持未激活
+  const assigned = createAssignment(env.db, TEST_TEACHER_ID, {
+    unitIds: [env.unitId],
+    studentIds: [env.studentId],
+  }).assignments[0];
+  if (!assigned) throw new Error("作业未生成");
+  const plain = startAttempt(env.db, env.studentId, assigned.id);
+  expect(startAttempt(env.db, env.studentId, assigned.id)).toMatchObject({
+    id: plain.id,
+    phase: "opened",
+    timeLimitSec: null,
+  });
+  expect(
+    startAttempt(env.db, env.studentId, assigned.id, { timeLimitMinutes: 20 }),
+  ).toMatchObject({
+    id: plain.id,
+    phase: "active",
+    activatedAt: "2026-11-14T10:20:00.000Z",
+    timeLimitSec: 1200,
+    deadlineAt: "2026-11-14T10:40:00.000Z",
   });
 });
 

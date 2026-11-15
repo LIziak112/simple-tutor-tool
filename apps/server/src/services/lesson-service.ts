@@ -9,7 +9,7 @@ import type {
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
-import { isRecordableAttempt } from "@tutor/contract";
+import { attemptPhaseOf, isRecordableAttempt } from "@tutor/contract";
 // 学生端题干投影唯一入口在 attempt-service 的 studentFacingResultOf
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
 import { splitLessonBlocks } from "@tutor/md-dsl";
@@ -401,6 +401,8 @@ export function startLessonAttempt(
  *   拒绝），再开新卷；无任何 attempt 409（先开始一次）；
  * - 新卷 attemptNo = 最新一份 + 1、从空白开始（不预填上次答案与笔迹），
  *   重新按嵌入单元当前 live 题建卷冻结；courseId 取当前第一个可见课程；
+ * - 最新一份是未激活的空卷、请求带来的是落地页看得到的上一份卷号时，复用
+ *   这份空卷（它不入账，落地页拿不到它的卷号；不复用就会一直判为过期）；
  * - 建卷直记 attempt_start 事件（每份新卷一条）。
  */
 export function restartLessonAttempt(
@@ -417,16 +419,26 @@ export function restartLessonAttempt(
 
   const create = (store: Db) =>
     store.transaction((tx) => {
-      const latest = lessonAttemptsOf(tx, studentId, lectureId)[0];
+      const existing = lessonAttemptsOf(tx, studentId, lectureId);
+      const latest = existing[0];
       if (latest === undefined) {
         throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
       }
-      if (request && latest.id !== request.expectedAttemptId)
+      if (request && latest.id !== request.expectedAttemptId) {
+        // 未激活的空卷不入账，落地页只看得到它之前的那份；从落地页再点
+        // 「再做一次」带来的就是那份的卷号。空卷本身就是要的新卷：原样复用
+        // （题目有变则重冻），不作废、不新建、不空耗卷次。
+        if (
+          attemptPhaseOf(latest) === "opened" &&
+          existing.find(isRecordableAttempt)?.id === request.expectedAttemptId
+        )
+          return refreshOpenedAttempt(store, latest).id;
         throw new HttpError(
           409,
           "LESSON_RESTART_STALE",
           "讲练已在其他页面重新开始，请刷新后确认",
         );
+      }
       if (latest.status === "draft") {
         tx.update(attempts)
           .set({ abandonedAt: new Date().toISOString() })
