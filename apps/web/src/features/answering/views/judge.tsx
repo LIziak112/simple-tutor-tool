@@ -2,8 +2,8 @@ import type { AnswerOf } from "@tutor/contract";
 import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
+import { formatReferenceAnswers } from "@/features/answering/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { formatReferenceAnswers } from "../../attempt/answer-format";
 import { judgeDisplayStemOf } from "../prepare-question";
 import type {
   AnswerKindView,

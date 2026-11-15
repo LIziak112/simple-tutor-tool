@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AiPromptSettingsData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -7,6 +6,7 @@ import {
   fetchStudentAiPromptsApi,
   saveStudentAiPromptsApi,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { StudentAiPromptsSection } from "./StudentAiPromptsSection";
 
 /**

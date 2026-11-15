@@ -31,6 +31,7 @@ import {
   useSyncStudentCourses,
   useTeacherCourses,
 } from "@/features/courses/course-queries";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { AiPolicyOverrideField } from "@/features/student-ai/AiPolicyOverrideField";
 import {
   useCreateStudent,
@@ -39,7 +40,8 @@ import {
   useStudents,
   useUpdateStudent,
 } from "@/features/students/student-queries";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { copyText } from "@/lib/copy";
 import { formatRelativeTime } from "@/lib/time";
 
@@ -279,6 +281,8 @@ function StudentCard({
   onManageAiPolicy: () => void;
   onOneTime: (value: OneTimeValue) => void;
 }) {
+  const routes = usePortalRoutes();
+
   const updateMutation = useUpdateStudent();
   const resetPasswordMutation = useResetStudentPassword();
   const resetLinkMutation = useResetStudentLink();
@@ -306,7 +310,7 @@ function StudentCard({
       <div className="flex flex-wrap items-center gap-2">
         {/* T-PR1：学生名链接进学生主页 */}
         <Link
-          to={`/t/students/${student.id}`}
+          to={routes.management(`students/${student.id}`)}
           className="inline-flex min-h-11 min-w-11 items-center rounded text-base font-semibold outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
         >
           {student.displayName}

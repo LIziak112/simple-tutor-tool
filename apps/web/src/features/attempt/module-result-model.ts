@@ -3,8 +3,8 @@ import type {
   AttemptResultQuestion,
   AttemptResultUnit,
 } from "@tutor/contract";
+import { type ReviewGroupStats, reviewRetrainableOf } from "@tutor/contract";
 import { reviewQuestionState } from "./result-review-model";
-import { verdictBadgeDisplayOf } from "./self-review-display";
 
 /**
  * 按模块（单元）看结果（2026-11-09 个人学习迭代模块 7 第一刀）：行测整卷模考
@@ -35,10 +35,14 @@ export interface ModuleResultStats {
   unsureCorrect: number | null;
   /** 题内活动用时合计（秒）；卷无事件、或本模块无任何题有事件记录为 null */
   activeSec: number | null;
+  legacyTime?: boolean;
   observedSec: number;
   timeQuotaMinutes: number | null;
   /** 本模块可重练的题（已判定轮中：有效判定为错且已作答 / 教师已判 / 自评有记录，或标过不会） */
   wrongQuestionIds: string[];
+  correctRate?: number | null;
+  objectiveCount?: number;
+  rubricAverages?: ReviewGroupStats["rubricAverages"];
 }
 
 /**
@@ -47,31 +51,11 @@ export interface ModuleResultStats {
  * verdict 与 at 均非空）。读侧 selfReviewRecordOf 已把「verdict 非空而 at
  * 缺失」的脏行降级为 record=null，所以 record 非空即两者齐备。
  */
-function isJudged(question: AttemptResultQuestion): boolean {
-  return (
-    question.finalCorrect !== null ||
-    (question.selfReview?.record ?? null) !== null
-  );
-}
-
-/**
- * 与结果页「练习本卷错题」同一圈题口径（AttemptResultView wrongQuestionIds）。
- * #101-02：服务端重练组卷（startWrongPractice → latestJudgedResponsesByQuestion）
- * 只从已判定轮里取候选再套入本条件（enteredWrongBook），未判定的轮会被静默
- * 剔除——客户端先过同一道「已判定」门，免得标了「不会」却仍待判的主观题在
- * 按钮上有数、点开却 WRONG_PRACTICE_EMPTY。只看本卷这一轮：前几轮已入本的题
- * 这里算不出来，宁可少圈，不猜。
- */
 export function isRetrainable(question: AttemptResultQuestion): boolean {
-  if (!isJudged(question)) return false;
-  if (question.studentFlag === "unsure") return true;
-  const badge = verdictBadgeDisplayOf(question);
-  if (badge.verdict !== false) return false;
-  return (
-    question.answered ||
-    question.teacherMark !== null ||
-    (question.selfReview?.record?.verdict ?? null) !== null
-  );
+  return reviewRetrainableOf({
+    ...question,
+    selfReviewVerdict: question.selfReview?.record?.verdict ?? null,
+  });
 }
 
 export function moduleResultStatsOf(
@@ -101,7 +85,16 @@ export function moduleResultStatsOf(
       } else pending++;
       if (isRetrainable(question)) wrongQuestionIds.push(question.questionId);
     }
-    const entry = activity?.byQuestion[question.questionId];
+    const entry =
+      question.time?.metric === "question_activity_sealed"
+        ? question.time.value.state === "available"
+          ? question.time.value
+          : undefined
+        : question.time?.metric === "legacy_focus"
+          ? question.time.activeSec === null
+            ? undefined
+            : { activeSec: question.time.activeSec, observedSec: 0 }
+          : activity?.byQuestion[question.questionId];
     if (entry !== undefined) {
       hasActivity = true;
       activeSec += entry.activeSec;
@@ -109,6 +102,7 @@ export function moduleResultStatsOf(
     }
   }
   return {
+    legacyTime: unit.questions.some((q) => q.time?.metric === "legacy_focus"),
     unitId: unit.id,
     title: unit.title,
     total: unit.questions.length,
@@ -118,7 +112,17 @@ export function moduleResultStatsOf(
     wrong: released ? wrong : null,
     pending: released ? pending : null,
     unsureCorrect: released ? unsureCorrect : null,
-    activeSec: hasActivity ? activeSec : null,
+    activeSec:
+      hasActivity &&
+      unit.questions.every(
+        (q) =>
+          !q.time ||
+          (q.time.metric === "question_activity_sealed"
+            ? q.time.value.state === "available"
+            : q.time.activeSec !== null),
+      )
+        ? activeSec
+        : null,
     observedSec,
     timeQuotaMinutes: unit.timeQuotaMinutes ?? null,
     wrongQuestionIds,

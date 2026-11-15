@@ -15,6 +15,7 @@ import { useAnalyticsOverview } from "@/features/insights/analytics-queries";
 import { FocusCard } from "@/features/insights/FocusCard";
 import { InsightsMatrix } from "@/features/insights/InsightsMatrix";
 import { formatPercent } from "@/features/insights/insights-format";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatDueTime } from "@/lib/time";
 import { StatsViewSwitcher } from "./StatsViewSwitcher";
 
@@ -72,6 +73,8 @@ function OverviewError({
 }
 
 export function InsightsOverviewPage() {
+  const routes = usePortalRoutes();
+
   const [searchParams, setSearchParams] = useSearchParams();
   // URL query 是筛选的单一事实来源（与 /t/data 同模式）
   const state = useMemo(() => parseAnalyticsUrl(searchParams), [searchParams]);
@@ -107,7 +110,7 @@ export function InsightsOverviewPage() {
           <InsightsViewSwitcher view="overview" query={query} />
           {/* T4.4：导出给 AI 入口（/t/export 五步向导；侧边栏「导出」同指） */}
           <Button variant="outline" className="min-h-11" asChild>
-            <Link to="/t/export">
+            <Link to={routes.management("export")}>
               <FileDown aria-hidden />
               导出给 AI
             </Link>
@@ -163,7 +166,7 @@ export function InsightsOverviewPage() {
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <Link
                 to={{
-                  pathname: "/t/data/pending",
+                  pathname: routes.management("data/pending"),
                   search:
                     state.courseId !== null
                       ? `?courseId=${encodeURIComponent(state.courseId)}`
@@ -186,7 +189,9 @@ export function InsightsOverviewPage() {
                 <p className="text-xs text-muted-foreground">统计窗口内</p>
               </div>
               <div className="flex min-h-24 flex-col justify-center gap-1 rounded-xl border border-border bg-card p-4">
-                <p className="text-xs text-muted-foreground">离线作答占比</p>
+                <p className="text-xs text-muted-foreground">
+                  历史焦点离线占比
+                </p>
                 <p className="text-2xl font-semibold">
                   {formatPercent(data.offline.offlineShare)}
                 </p>

@@ -12,16 +12,18 @@ import {
 import * as noteSync from "@/features/notes/note-sync";
 import { DOC_A, headOf } from "@/features/notes/note-test-utils";
 import {
+  attemptMaterialsEditable,
+  getAttemptRecoveryState,
+  recoverAttemptMaterials,
+} from "@/features/persistence/attempt-material-recovery";
+import { bindServiceLease } from "@/features/runtime/service-leases";
+import {
   fetchAnnotationViewApi,
   fetchAttemptMaterialRevisionsApi,
   fetchStudentNoteDocumentApi,
   fetchStudentNoteHeadsApi,
 } from "@/lib/api";
-import {
-  attemptMaterialsEditable,
-  getAttemptRecoveryState,
-  recoverAttemptMaterials,
-} from "./attempt-material-recovery";
+import { testClientServices } from "@/test/portal-fixture";
 
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
@@ -49,6 +51,7 @@ it("已核对本机基线的页面遇到断网仍可编辑，首次读取失败�
 });
 afterEach(() => vi.restoreAllMocks());
 function prepare() {
+  bindServiceLease(session, testClientServices);
   vi.spyOn(noteSync, "currentNoteSession").mockReturnValue(session);
   vi.spyOn(annotationSync, "currentAnnotationSession").mockReturnValue(session);
   installNoteBackend(memoryNoteBackend());

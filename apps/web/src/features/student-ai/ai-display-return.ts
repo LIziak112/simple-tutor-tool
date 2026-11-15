@@ -1,9 +1,13 @@
+import type { PortalRoutes } from "@/features/runtime/portal-runtime";
 import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 
 /** 只返回本站支持助教的学生学习页面，未知查询参数与外部地址不沿用。 */
-export function aiDisplayReturnTo(source: string | null): string | null {
+export function aiDisplayReturnTo(
+  routes: PortalRoutes,
+  source: string | null,
+): string | null {
   if (
-    !source?.startsWith("/s/") ||
+    !source?.startsWith(routes.learning("/")) ||
     source.includes("\\") ||
     Array.from(source).some((character) => character.charCodeAt(0) < 32)
   )
@@ -11,9 +15,12 @@ export function aiDisplayReturnTo(source: string | null): string | null {
   const url = new URL(source, location.origin);
   if (
     url.origin !== location.origin ||
-    !/^\/s\/(?:assignments\/[^/]+|attempts\/[^/]+|lectures\/[^/]+\/lesson(?:\/run)?)$/.test(
-      url.pathname,
-    )
+    !routes
+      .learningPattern(
+        "(?:assignments\\/[^/]+|attempts\\/[^/]+|lectures\\/[^/]+\\/lesson(?:\\/run)?)$",
+        "",
+      )
+      .test(url.pathname)
   )
     return null;
   const allowed = new URLSearchParams();
@@ -28,7 +35,7 @@ export function aiDisplayReturnTo(source: string | null): string | null {
   }
   // 作业列表来源复用已有筛选清洗，其他来源参数不接收任意嵌套路径。
   const returnTo = url.searchParams.get("returnTo");
-  const listTarget = assignmentsReturnTarget(returnTo);
+  const listTarget = assignmentsReturnTarget(routes, returnTo);
   if (listTarget) allowed.set("returnTo", listTarget);
   return `${url.pathname}${allowed.size ? `?${allowed}` : ""}`;
 }

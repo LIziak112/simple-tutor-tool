@@ -1,10 +1,20 @@
-import { act, renderHook } from "@testing-library/react";
 import type { StudentAnswer } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
+import {
+  DRAFT_SYNC_INTERVAL_MS,
+  useDraftSync,
+} from "@/features/persistence/use-draft-sync";
+import type {
+  InkSyncResult,
+  InkUploadController,
+} from "@/features/persistence/use-ink-upload";
 import { saveAttemptAnswerApi } from "@/lib/api";
-import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
-import { DRAFT_SYNC_INTERVAL_MS, useDraftSync } from "./use-draft-sync";
-import type { InkSyncResult, InkUploadController } from "./use-ink-upload";
+import { act, renderHook } from "@/test/render-with-portal";
 
 /**
  * 草稿同步引擎测试（T2.9）：10 秒定时 / visibilitychange / 断网不 PUT /

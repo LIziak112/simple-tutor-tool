@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
 import type {
   AttemptContextGroup,
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@/test/render-with-portal";
 import { MaterialPanel } from "./MaterialPanel";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { QuestionPlaceholderDirective } from "./directives/Question";
 import { QuestionViewProvider } from "./directives/question-view";
 import { RichMarkdown } from "./RichMarkdown";

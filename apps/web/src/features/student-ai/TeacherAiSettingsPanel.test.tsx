@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AiPromptSettingsData,
   AiTeacherSettingsData,
@@ -13,6 +12,7 @@ import {
   saveTeacherAiPromptsApi,
   saveTeacherAiSettingsApi,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { TeacherAiSettingsPanel } from "./TeacherAiSettingsPanel";
 
 vi.mock("@/lib/api", async (importOriginal) => ({

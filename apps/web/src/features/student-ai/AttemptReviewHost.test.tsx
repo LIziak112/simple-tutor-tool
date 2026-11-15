@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AiAttemptReviewDetailData,
   AiAttemptReviewPreviewData,
@@ -28,9 +20,17 @@ import {
   listStudentAiAttemptReviewsApi,
   postStudentAiAttemptReviewActionApi,
 } from "@/lib/api";
+import { fetchStudentAiAttemptReviewDetailApi } from "@/lib/review-queue-legacy-api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { AttemptReviewHost } from "./AttemptReviewHost";
 import { AttemptReviewTopBarEntry } from "./AttemptReviewTopBarEntry";
-import { fetchStudentAiAttemptReviewDetailApi } from "./attempt-review-api";
 import { attemptReviewListKey } from "./attempt-review-entry";
 import {
   ATTEMPT_REVIEW_LAYER_STATE,
@@ -48,7 +48,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     createStudentAiBatchReviewApi: vi.fn(),
   };
 });
-vi.mock("./attempt-review-api", () => ({
+vi.mock("@/lib/review-queue-legacy-api", () => ({
   fetchStudentAiAttemptReviewDetailApi: vi.fn(),
 }));
 

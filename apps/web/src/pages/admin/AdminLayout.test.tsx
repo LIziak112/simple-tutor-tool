@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { TeacherInfo } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchTeacherMe } from "@/lib/api";
+import { fireEvent, render, screen, within } from "@/test/render-with-portal";
 import AdminLayout from "./AdminLayout";
 
 /**

@@ -30,6 +30,7 @@ import {
 } from "../services/note-service";
 import { createContentRoutes } from "./content";
 import { createCourseRoutes } from "./courses";
+import { createTeacherDeviceRoutes } from "./devices";
 import { createImportRoutes } from "./import";
 import { createTeacherInkProfileRoutes } from "./ink-profiles";
 import { createLibraryRoutes } from "./library";
@@ -43,6 +44,7 @@ import { createTeacherAttemptRoutes } from "./teacher-attempts";
 import { createTeacherBackupRoutes } from "./teacher-backup";
 import { createTeacherExportRoutes } from "./teacher-export";
 import { createTeacherMediaRoutes } from "./teacher-media";
+import { createTeacherMemoRoutes } from "./teacher-memos";
 import { createTeacherReportRoutes } from "./teacher-reports";
 import { createTeacherSettingsRoutes } from "./teacher-settings";
 import { createStudentTeacherRoutes } from "./teacher-students";
@@ -113,6 +115,8 @@ export function createTeacherRoutes(
     new Hono<TeacherEnv>()
       .use("*", requireTeacher)
       .route("/", createTeacherInkProfileRoutes(db))
+      .route("/", createTeacherMemoRoutes(db, dataDir))
+      .route("/", createTeacherDeviceRoutes(db))
       .get("/me", (c) => {
         return c.json({
           ok: true,

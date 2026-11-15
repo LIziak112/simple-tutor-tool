@@ -1,9 +1,9 @@
-import { render } from "@testing-library/react";
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { toBlob } from "html-to-image";
 import { afterEach, expect, it, vi } from "vitest";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { collectFontEmbedCss } from "@/features/notes/rasterize-utils";
+import { render } from "@/test/render-with-portal";
 import {
   awaitQuestionSurfaceReady,
   renderQuestionBaseImage,

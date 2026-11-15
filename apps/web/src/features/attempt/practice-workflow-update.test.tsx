@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AttemptWorkflowUpdateData,
   PracticeWorkflow,
 } from "@tutor/contract";
 import { beforeEach, expect, it, vi } from "vitest";
 import { ApiError, updateAttemptWorkflowApi } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { studentAttemptKey, useUpdateAttemptWorkflow } from "./attempt-queries";
 import { PracticeModeDialog } from "./PracticeWorkspace";
 import { workflowOf } from "./practice-test-fixtures";

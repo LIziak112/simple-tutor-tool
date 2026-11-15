@@ -8,4 +8,5 @@ if ! command -v node >/dev/null 2>&1; then
   echo "pre-commit：找不到 node（需要 Node >= 24）。请在装有 Node 的终端里提交；临时绕过用 git commit --no-verify（CI 仍会检查）。" >&2
   exit 1
 fi
-exec node scripts/file-size-guard.mjs check --staged
+node scripts/file-size-guard.mjs check --staged || exit $?
+exec node scripts/portal-boundaries.mjs

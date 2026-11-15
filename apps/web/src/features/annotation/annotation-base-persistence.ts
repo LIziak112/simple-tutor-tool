@@ -3,7 +3,7 @@ import {
   type AnnotationDoc,
   annotationPngFingerprint,
 } from "@tutor/contract";
-import { digestOf } from "@/features/attempt/draft-merge";
+import { digestOf } from "@/features/persistence/draft-merge";
 import type { KVAtomicBackend, KVStoreBackend } from "@/lib/kv-backend";
 import type { AnnotationLocalRecord } from "./annotation-store";
 

@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchStudentMe, loginStudentApi } from "@/lib/api";
+import { act, fireEvent, screen, waitFor } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLoginPage from "./StudentLoginPage";
 
@@ -17,9 +17,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     loginStudentApi: vi.fn(),
     fetchStudentMe: vi.fn(),
-    fetchStudentAssignmentsApi: vi.fn(),
-    fetchStudentCoursesApi: vi.fn(),
-    fetchStudentLecturesApi: vi.fn(),
+    fetchStudentAssignmentsApi: vi.fn(async () => ({ assignments: [] })),
+    fetchStudentCoursesApi: vi.fn(async () => ({ courses: [] })),
+    fetchStudentLecturesApi: vi.fn(async () => ({ lectures: [] })),
   };
 });
 
@@ -35,9 +35,9 @@ const STUDENT: StudentMeData = {
   accountKind: "class",
 };
 
-function renderPage() {
+function renderPage(initialPath = "/s/login") {
   return renderWithStudentRoutes({
-    initialPath: "/s/login",
+    initialPath,
     routePath: "/s/login",
     element: <StudentLoginPage />,
   });
@@ -125,4 +125,40 @@ describe("StudentLoginPage", () => {
       expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
     });
   });
+});
+
+it("已有学生会话仍直接进首页，不消费登录表单的回跳", async () => {
+  mockedMe.mockResolvedValue(STUDENT);
+  renderPage("/s/login?returnTo=%2Fs%2Frecords");
+  await waitFor(() =>
+    expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页"),
+  );
+});
+
+it("密码应用取消后即使B的me成功也不能走旧登录自动导航", async () => {
+  let release: (data: StudentMeData) => void = () => {};
+  mockedLogin.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const view = renderPage();
+  fireEvent.change(await screen.findByLabelText("登录名"), {
+    target: { value: "张三" },
+  });
+  fireEvent.change(screen.getByLabelText("密码"), {
+    target: { value: "1234abcd" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录" }));
+  await waitFor(() => expect(mockedLogin).toHaveBeenCalled());
+  await act(async () => {
+    view.client.setQueryData(["student", "me"], { ...STUDENT, id: "new-b" });
+    release(STUDENT);
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("账号状态已变化");
+  expect(screen.queryByTestId(view.stubTestId)).not.toBeInTheDocument();
+  expect(view.client.getQueryData<{ id: string }>(["student", "me"])?.id).toBe(
+    "new-b",
+  );
 });

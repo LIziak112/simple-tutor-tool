@@ -56,9 +56,9 @@ import {
   NOTE_PAPER_HEIGHT_DEFAULT,
   noteDocSchema,
 } from "@tutor/contract";
-import { digestOf } from "@/features/attempt/draft-merge";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import { worstImageState } from "@/features/notes/note-image-state";
+import { digestOf } from "@/features/persistence/draft-merge";
 import {
   idbKVBackend,
   type KVStoreBackend,

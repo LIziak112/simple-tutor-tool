@@ -1,10 +1,8 @@
 import { Download } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  downloadTeacherExportCsv,
-  type TeacherExportCsvParams,
-} from "@/lib/api";
+import type { TeacherExportCsvParams } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 「导出 CSV」按钮（T3.4，D13）：数据页与详情页共用。
@@ -18,6 +16,8 @@ export function ExportCsvButton({
 }: {
   params: TeacherExportCsvParams;
 }) {
+  const { downloadTeacherExportCsv } = usePortalClients();
+
   const [busy, setBusy] = useState(false);
 
   async function handleExport(): Promise<void> {

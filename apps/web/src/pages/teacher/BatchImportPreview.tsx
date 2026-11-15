@@ -33,17 +33,18 @@ import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { buildFixPrompt } from "@/features/content/error-prompt";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
+import { MarkdownEditor } from "@/features/content/MarkdownEditor";
 import { useClipboardCopy } from "@/features/content/use-clipboard";
 import { libraryInvalidations } from "@/features/library/library-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { commitImport, previewImportBatch } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { randomUuid } from "@/lib/uuid";
 import type {
   ImportMediaSummary,
   ImportOptions,
   PickedFile,
 } from "./ImportPage";
-import { MarkdownEditor } from "./MarkdownEditor";
 import { ImportMediaSummaryCard, StatsBar } from "./SingleImportPreview";
 
 /**
@@ -91,6 +92,8 @@ export function BatchImportPreview({
   mediaSummary = null,
   onBack,
 }: BatchImportPreviewProps) {
+  const { previewImportBatch, commitImport } = usePortalClients();
+
   // batchId 在本组件生命周期内保持不变（重新预览不换批次，服务端按它聚合留档）
   const [batchId] = useState(() => randomUuid());
   const [data, setData] = useState<ImportPreviewBatchData | null>(null);
@@ -127,7 +130,7 @@ export function BatchImportPreview({
     } finally {
       setPending(false);
     }
-  }, [autoSubdir, files, options.folderId]);
+  }, [autoSubdir, files, options.folderId, previewImportBatch]);
 
   // 进入即预览
   useEffect(() => {

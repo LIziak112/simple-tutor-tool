@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { DraftStatusBar } from "./DraftStatusBar";
 
 /** 顶栏草稿状态三态渲染（T2.9）：保存中… / 已保存 HH:mm / 离线，已存本机 */

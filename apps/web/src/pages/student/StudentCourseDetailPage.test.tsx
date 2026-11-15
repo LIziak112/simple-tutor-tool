@@ -1,7 +1,7 @@
-import { fireEvent, screen } from "@testing-library/react";
 import type { StudentCourseDetailData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchStudentCourseApi } from "@/lib/api";
+import { fireEvent, screen } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentCourseDetailPage from "./StudentCourseDetailPage";
 

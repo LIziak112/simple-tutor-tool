@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, renderHook } from "@/test/render-with-portal";
 import { usePaperPosition } from "./use-paper-position";
 
 afterEach(() => vi.restoreAllMocks());

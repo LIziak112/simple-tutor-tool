@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
 import type { StudentRecordRow } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { RecordCard } from "./records-views";
 
 /**
@@ -152,7 +152,7 @@ it.each([0, 2])(
   },
 );
 
-it("有通用已做进度时不重复展示旧已提交计数", () => {
+it("已做与已提交分别显示，避免混淆尚未提交的答案", () => {
   renderRow(
     rowFixture({
       answerProgress: { answeredCount: 3, totalCount: 6 },
@@ -161,5 +161,5 @@ it("有通用已做进度时不重复展示旧已提交计数", () => {
     }),
   );
   expect(screen.getByText("已做 3 / 6 题")).toBeVisible();
-  expect(screen.queryByText(/已提交/)).toBeNull();
+  expect(screen.getByText("已提交 1/6 题")).toBeVisible();
 });

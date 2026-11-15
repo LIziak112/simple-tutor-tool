@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
 import type {
   AttemptContextGroup,
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { LessonGroupBlock } from "./LessonGroupBlock";
 
 /**

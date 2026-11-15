@@ -25,14 +25,26 @@ export async function connectMcpClientViaApp(
   token: string,
   clientName: string,
 ): Promise<Client> {
-  const client = new Client({ name: clientName, version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`http://localhost${path}`),
-    {
-      requestInit: { headers: { authorization: `Bearer ${token}` } },
-      fetch: fetchViaApp(app),
-    },
+  return connectMcpClientViaHttp(
+    `http://localhost${path}`,
+    token,
+    clientName,
+    fetchViaApp(app),
   );
+}
+
+/** 同一SDK连接样板也供E2E直连真实HTTP服务器，不手抄JSON-RPC协议校验。 */
+export async function connectMcpClientViaHttp(
+  url: string,
+  token: string,
+  clientName: string,
+  fetch?: FetchLike,
+): Promise<Client> {
+  const client = new Client({ name: clientName, version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(url), {
+    requestInit: { headers: { authorization: `Bearer ${token}` } },
+    ...(fetch === undefined ? {} : { fetch }),
+  });
   // SDK 可选回调属性在 exactOptionalPropertyTypes 下与 Transport 接口形态有
   // 出入（教师 mcp.test.ts 同款单层收窄；运行时无误）
   await client.connect(

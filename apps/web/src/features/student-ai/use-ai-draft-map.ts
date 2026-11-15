@@ -6,7 +6,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { getDraftSessionEpoch } from "@/features/attempt/draft-store";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
 
 /** 角色内存只保存输入：页面内同步更新，切设置后恢复；退出清student缓存。 */
 export function useAiDraftMap<Value>(

@@ -11,8 +11,10 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { StudentPracticePreferenceSection } from "@/features/attempt/StudentPracticePreferenceSection";
 import { useStudentMe } from "@/features/auth/student-auth";
+import { DeviceSettingsSection } from "@/features/devices/DeviceSettingsSection";
 import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
 import { KeyboardBindingsSection } from "@/features/keyboard/KeyboardBindingsSection";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { aiDisplayReturnTo } from "@/features/student-ai/ai-display-return";
 import { StudentAiDisplaySection } from "@/features/student-ai/StudentAiDisplaySection";
 import { StudentAiPromptsSection } from "@/features/student-ai/StudentAiPromptsSection";
@@ -20,9 +22,11 @@ import { StudentQuickButtonsSection } from "@/features/student-ai/StudentQuickBu
 
 /** 学生个人设置；账号守卫和配置绑定由学生布局负责。 */
 export default function StudentSettingsPage() {
+  const routes = usePortalRoutes();
+
   const { data: student } = useStudentMe();
   const [params] = useSearchParams();
-  const from = aiDisplayReturnTo(params.get("from"));
+  const from = aiDisplayReturnTo(routes, params.get("from"));
   const { hash } = useLocation();
   useEffect(() => {
     if (hash === "#ai-display")
@@ -84,7 +88,7 @@ export default function StudentSettingsPage() {
         </h2>
         <div className="divide-y divide-border rounded-xl border border-border bg-card">
           <Link
-            to="/s/settings/ink-feel"
+            to={routes.learning("settings/ink-feel")}
             className="flex min-h-11 items-center gap-4 rounded-xl p-5 sm:p-6 outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <span
@@ -118,7 +122,7 @@ export default function StudentSettingsPage() {
           <KeyboardBindingsSection key={student?.id} />
 
           <Link
-            to="/s/settings/ai"
+            to={routes.learning("settings/ai")}
             className="flex min-h-11 items-center gap-4 rounded-xl p-5 sm:p-6 outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <span
@@ -140,6 +144,14 @@ export default function StudentSettingsPage() {
           </Link>
         </div>
       </section>
+      {student && (
+        <DeviceSettingsSection
+          key={`student:${student.id}`}
+          owner={{ type: "student", id: student.id }}
+          accountKind={student.accountKind}
+          connectionSettingsHref={routes.learning("settings/ai")}
+        />
+      )}
       <section aria-labelledby="student-ai-title" className="space-y-3">
         <h2
           id="student-ai-title"

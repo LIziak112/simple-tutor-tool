@@ -72,6 +72,13 @@ export const attemptSubmitRevisionSchema = z.object({
  * legacy_unverified 不在声明值域：那是升级遗留进行中稿的服务端降级标记
  * （T6R.3 恢复路径写入），不接受客户端声明。
  */
+const frozenEvidenceHeadSchema = z.object({
+  versionId: z.uuid(),
+  revision: z.number().int().min(1),
+});
+const { $schema: _frozenEvidenceMeta, ...frozenEvidenceHeadJson } =
+  z.toJSONSchema(frozenEvidenceHeadSchema, { io: "input" });
+
 export const submitEvidenceDeclarationSchema = z
   .object({
     questionId: z.string().min(1),
@@ -114,6 +121,25 @@ export const submitEvidenceDeclarationSchema = z
         message: `state='${decl.state}' 不得携带预期 revision`,
       });
     }
+  })
+  .meta({
+    anyOf: [
+      {
+        ...frozenEvidenceHeadJson,
+        properties: {
+          ...frozenEvidenceHeadJson.properties,
+          state: { const: "frozen" },
+        },
+      },
+      {
+        properties: { state: { enum: ["none", "missing"] } },
+        not: {
+          anyOf: Object.keys(frozenEvidenceHeadSchema.shape).map((key) => ({
+            required: [key],
+          })),
+        },
+      },
+    ],
   });
 
 /**

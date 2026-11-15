@@ -1,6 +1,6 @@
-import { renderHook } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderHook } from "@/test/render-with-portal";
 import { useDueCountdown } from "./use-due-countdown";
 
 describe("useDueCountdown", () => {

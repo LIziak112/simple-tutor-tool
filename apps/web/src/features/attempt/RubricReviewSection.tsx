@@ -11,15 +11,13 @@ import {
   rubricEffectiveOf,
   rubricMaxOf,
   rubricTotalOf,
+  studentReviewFact,
 } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  ApiError,
-  createStudentAiTaskApi,
-  fetchStudentAiStatusApi,
-} from "@/lib/api";
-import { saveRubricFinalApi, saveRubricSelfApi } from "@/lib/rubric-api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { randomUuid } from "@/lib/uuid";
 import { studentAiQueueSummaryKey } from "../student-ai/ai-queue-queries";
 import { RubricRatingForm } from "./RubricRatingForm";
@@ -74,8 +72,19 @@ export function RubricReviewSection({
   attemptId: string;
   question: AttemptResultQuestion;
 }) {
+  const {
+    saveRubricSelfApi,
+    saveRubricFinalApi,
+    fetchStudentAiStatusApi,
+    createStudentAiTaskApi,
+  } = usePortalClients();
+
   const client = useQueryClient();
-  const projected = question.rubricReview ?? null;
+  const projected = studentReviewFact(
+    question,
+    { id: "", title: "" },
+    true,
+  ).rubricReview;
   const [override, setOverride] = useState<RubricReview | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
   const [busy, setBusy] = useState(false);

@@ -24,9 +24,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { AiPolicyOverrideField } from "@/features/student-ai/AiPolicyOverrideField";
 import { useStudents } from "@/features/students/student-queries";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { localInputToUtcIso, utcIsoToLocalInput } from "@/lib/time";
 import { useAssignmentDetail, useUpdateAssignment } from "./assignment-queries";
 import { DiscardConfirmDialog } from "./DiscardConfirmDialog";
@@ -70,6 +72,8 @@ export function AssignmentEditDialog({
   assignment: TeacherAssignment;
   onClose: () => void;
 }) {
+  const routes = usePortalRoutes();
+
   const detailQuery = useAssignmentDetail(assignment.id);
   const studentsQuery = useStudents(false);
   const updateMutation = useUpdateAssignment();
@@ -494,7 +498,9 @@ export function AssignmentEditDialog({
                             触发勾选（label 对交互后代不转发激活行为） */}
                         {entry.attemptId !== null ? (
                           <Link
-                            to={`/t/data/attempts/${entry.attemptId}`}
+                            to={routes.management(
+                              `data/attempts/${entry.attemptId}`,
+                            )}
                             aria-label={`查看 ${entry.displayName} 的作答详情`}
                             className={`inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-xs underline-offset-2 outline-none transition-colors hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 ${ROSTER_STATUS_BADGE_CLASS[entry.status]}`}
                           >

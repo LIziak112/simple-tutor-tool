@@ -40,6 +40,15 @@ import {
   aiReplyCheckerManifestSchema,
   aiReplyCheckResultSchema,
 } from "../src/student-ai-reply-check.ts";
+import {
+  studentMcpPracticeDataSchema,
+  studentMcpPracticeListDataSchema,
+  studentMcpPracticeListInputSchema,
+  studentMcpPracticeQuestionDataSchema,
+  studentMcpPracticeQuestionReadInputSchema,
+  studentMcpPracticeReadInputSchema,
+  studentMcpPracticeSubmitParametersSchema,
+} from "../src/student-mcp-practice.ts";
 
 /** 根对象：把每个顶层契约收进一个属性，生成一份自包含（$defs 内部 $ref）的 schema */
 const contentContractSchema = z.object({
@@ -116,6 +125,158 @@ await writeSchema(
       batch: questionProcessBatchSchema,
       replay: questionProcessReadSchema,
       status: questionProcessStatusSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "learning-context.json",
+  "学习上下文契约",
+  z.toJSONSchema(
+    (await import("../src/learning-context.ts")).learningContextSchema,
+  ),
+);
+await writeSchema(
+  "attempt-session.json",
+  "作答结算事实契约",
+  z.toJSONSchema(
+    (await import("../src/attempt-session.ts")).attemptSettlementSchema,
+  ),
+);
+await writeSchema(
+  "device-api.json",
+  "设备登记契约",
+  z.toJSONSchema(
+    z.object({
+      register: (await import("../src/device-api.ts")).deviceRegisterSchema,
+      device: (await import("../src/device-api.ts")).deviceSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "learning-context-api.json",
+  "学习上下文只读接口",
+  z.toJSONSchema(
+    z.object({
+      request: (await import("../src/learning-context-api.ts"))
+        .learningContextRequestSchema,
+      response: (await import("../src/learning-context-api.ts"))
+        .learningContextOkSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "student-mcp-practice.json",
+  "学生MCP练习公开读取契约",
+  z.toJSONSchema(
+    z.object({
+      listInput: studentMcpPracticeListInputSchema,
+      listData: studentMcpPracticeListDataSchema,
+      practiceInput: studentMcpPracticeReadInputSchema,
+      practiceData: studentMcpPracticeDataSchema,
+      questionInput: studentMcpPracticeQuestionReadInputSchema,
+      questionData: studentMcpPracticeQuestionDataSchema,
+      submitParameters: studentMcpPracticeSubmitParametersSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "attempt-partial.json",
+  "分批提交与结果契约",
+  z.toJSONSchema(
+    z.object({
+      request: (await import("../src/attempt-partial.ts"))
+        .attemptPartialRequestSchema,
+      result: (await import("../src/attempt-partial.ts"))
+        .attemptSettlementResultSchema,
+      progress: (await import("../src/attempt-settlement-progress.ts"))
+        .attemptSettlementProgressSchema,
+    }),
+  ),
+);
+await writeSchema(
+  "student-mcp-submit.json",
+  "学生 MCP v2 提交契约",
+  z.toJSONSchema(
+    z.object({
+      input: (await import("../src/student-mcp-submit.ts"))
+        .studentMcpSubmitInputSchema,
+      receipt: (await import("../src/student-mcp-submit.ts"))
+        .studentMcpSubmitReceiptSchema,
+    }),
+    { io: "input" },
+  ),
+);
+
+const reviewV2 = await import("../src/attempt-review-v2.ts");
+await writeSchema(
+  "attempt-review-v2.json",
+  "范围复盘与分片报告v2契约",
+  z.toJSONSchema(
+    z.object({
+      create: reviewV2.reviewV2CreateSchema,
+      snapshot: reviewV2.reviewV2SnapshotSchema,
+      report: reviewV2.reviewV2ReportSchema,
+      run: reviewV2.reviewV2RunPublicSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "review-facts.json",
+  "结果事实与分组维度契约",
+  z.toJSONSchema(
+    z.object({
+      fact: (await import("../src/review-facts.ts")).reviewQuestionFactSchema,
+      dimension: (await import("../src/review-facts.ts"))
+        .reviewGroupDimensionSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "review-template.json",
+  "复盘模板与展示推荐契约",
+  z.toJSONSchema(
+    z.object({
+      template: (await import("../src/review-template.ts"))
+        .reviewTemplateSchema,
+      presentation: (await import("../src/review-template.ts"))
+        .reviewPresentationSchema,
+    }),
+  ),
+);
+
+const memoApi = await import("../src/memo-api.ts");
+const memoSharing = await import("../src/memo-sharing.ts");
+await writeSchema(
+  "memo-api.json",
+  "随笔读写、来源与分享契约",
+  z.toJSONSchema(
+    z.object({
+      memo: memoApi.memoSchema,
+      query: memoApi.memoListQuerySchema,
+      agentCreate: memoApi.memoAgentCreateSchema,
+      share: memoSharing.memoShareInputSchema,
+      shareState: memoSharing.memoShareStateSchema,
+      sharedMemo: memoSharing.sharedMemoSchema,
+      sourceTarget: memoSharing.memoSourceTargetSchema,
+    }),
+  ),
+);
+
+await writeSchema(
+  "student-mcp-current.json",
+  "学生 MCP 当前上下文契约",
+  z.toJSONSchema(
+    z.object({
+      input: (await import("../src/student-mcp-current.ts"))
+        .studentMcpCurrentInputSchema,
+      data: (await import("../src/student-mcp-current.ts"))
+        .studentMcpCurrentDataSchema,
     }),
   ),
 );

@@ -51,6 +51,8 @@ export const courseListQuerySchema = z.object({
  *   按钮用；只布置了作业、尚无作答的课程也为 true——删除会连带影响作业）。
  */
 export const courseSummarySchema = z.object({
+  examType: z.string().nullable().optional(),
+  reviewTemplateId: z.string().nullable().optional(),
   id: z.uuid(),
   /** 课程名（courses.title） */
   name: z.string().min(1),
@@ -136,6 +138,8 @@ export const courseMemberSchema = z.object({
 
 /** GET /api/teacher/courses/:id 响应 data（目录条目按 order 升序，成员按姓名排序） */
 export const courseDetailDataSchema = z.object({
+  examType: z.string().nullable().optional(),
+  reviewTemplateId: z.string().nullable().optional(),
   id: z.uuid(),
   name: z.string().min(1),
   description: z.string().nullable(),

@@ -3,6 +3,7 @@ import { AiAttemptReviewPanel } from "./AiAttemptReviewPanel";
 import { AttemptReviewReportReader } from "./AttemptReviewReportReader";
 import { ATTEMPT_REVIEW_PANEL_TARGET } from "./attempt-review-entry";
 import type { AttemptReviewOverlay } from "./attempt-review-overlay";
+import { ReviewV2Panel } from "./ReviewV2Panel";
 
 /**
  * 整卷复盘在结果页上的唯一承载：按地址参数 aiReview 打开发起 / 进度面板
@@ -12,7 +13,7 @@ import type { AttemptReviewOverlay } from "./attempt-review-overlay";
  * 关闭与浏览器后退怎么对齐，见 attempt-review-overlay.ts。
  */
 
-export function AttemptReviewHost({
+function LegacyAttemptReviewHost({
   attemptId,
   released,
   attemptLabel,
@@ -66,5 +67,28 @@ export function AttemptReviewHost({
       }}
       onOpenPanel={() => overlay.open(ATTEMPT_REVIEW_PANEL_TARGET)}
     />
+  );
+}
+
+/** 新范围复盘与旧报告并存，旧地址/关闭/证据定位流程保持原样。 */
+export function AttemptReviewHost(
+  props: Parameters<typeof LegacyAttemptReviewHost>[0] & {
+    units?: readonly { id: string; title: string }[];
+    profile?: "objective" | "essay";
+    showV2Entry?: boolean;
+  },
+) {
+  return (
+    <>
+      {props.showV2Entry !== false && (
+        <ReviewV2Panel
+          attemptId={props.attemptId}
+          released={props.released}
+          units={props.units ?? []}
+          profile={props.profile ?? "objective"}
+        />
+      )}
+      <LegacyAttemptReviewHost {...props} />
+    </>
   );
 }

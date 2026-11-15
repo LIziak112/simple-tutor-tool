@@ -3,7 +3,9 @@ import {
   annotationSurfaceLayoutCore,
 } from "@tutor/contract";
 import { withTimeout } from "@/features/notes/rasterize-utils";
-import { ApiError, postAnnotationBaseApi } from "@/lib/api";
+import { serviceLease } from "@/features/runtime/service-leases";
+import { ApiError } from "@/lib/api-response";
+
 import {
   type AnnotationLocalRecord,
   type AnnotationScope,
@@ -23,6 +25,7 @@ export async function prepareQuestionAnnotationContinuation(
   localBase: NonNullable<AnnotationLocalRecord["localBase"]>,
   signal?: AbortSignal,
 ): Promise<NonNullable<AnnotationLocalRecord["localBase"]>> {
+  const { postAnnotationBaseApi } = serviceLease(session);
   const guard = () => {
     if (signal?.aborted) throw new DOMException("续写已取消", "AbortError");
     if (currentAnnotationSession() !== session)

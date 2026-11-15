@@ -23,7 +23,7 @@ import {
  * 「第 1 次」、按作业、按学生）→ 进详情见逐题判定与手写缩略图（lightbox）与
  * 「回放」播放控件 → 待批队列评语 + 键盘 1 标对手写题 → 学生「我的记录」见
  * 「已批改」与得分 67（2/3，D2 分母 = 全部题）→ 结果视图见评语与最终判定 →
- * 教师经 API 下载 CSV（studentId 筛选）：BOM 首三字节 EF BB BF、19 列表头、
+ * 教师经 API 下载 CSV（studentId 筛选）：BOM 首三字节 EF BB BF、原19列及追加5列活动账表头、
  * 该学生 3 行、答错题「最终判定」为答错、手写题行判定来源「教师」+ 评语 +
  * 笔迹 PNG 绝对 URL（publicUrl 口径，且该 URL 可用教师会话真实取回 200）→
  * 学生错题本出现答错的判断题（正确答案「错」+ 详解折叠展开），答对题与批对
@@ -575,12 +575,19 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       // UTF-8 BOM：首三字节 EF BB BF（Excel 直接打开中文不乱码）
       expect([...csvBody.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
       const csvRows = parseCsv(new TextDecoder().decode(csvBody.subarray(3)));
-      // 表头行：19 列（D13 列清单；关键列逐名列出）
+      // 保留原19列顺序，追加5列封存活动账；关键列逐名核对。
       const header = csvRows[0];
       if (header === undefined) {
         throw new Error("CSV 缺少表头行");
       }
-      expect(header).toHaveLength(19);
+      expect(header).toHaveLength(24);
+      expect(header.slice(19)).toEqual([
+        "用时口径",
+        "活动账版本",
+        "活动用时（秒）",
+        "只看过（秒）",
+        "活动账状态",
+      ]);
       expect(header[0]).toBe("学生");
       expect(header.slice(10, 14)).toEqual([
         "学生答案",
@@ -593,6 +600,19 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       // 数据行：本 attempt 逐题 3 行（studentId 筛选下无他人数据）
       const dataRows = csvRows.slice(1);
       expect(dataRows).toHaveLength(3);
+      for (const row of dataRows) {
+        expect(row).toHaveLength(24);
+        expect(row.slice(19, 21)).toEqual(["question_activity_sealed", "1"]);
+        if (row[23] === "available") {
+          expect(row[21]).toMatch(/^\d+$/);
+          expect(row[22]).toMatch(/^\d+$/);
+        } else {
+          expect(row[23]).toMatch(
+            /^(no_client_evidence|clock_invalid|ledger_missing)$/,
+          );
+          expect(row.slice(21, 23)).toEqual(["", ""]);
+        }
+      }
       const rowOf = (no: number): string[] => {
         const row = dataRows.find((cells) => cells[6] === String(no));
         if (row === undefined) {

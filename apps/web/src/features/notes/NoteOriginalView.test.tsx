@@ -1,10 +1,3 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type { NoteDoc, NoteHeadData } from "@tutor/contract";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +9,14 @@ import {
   imageMetaOf,
   SCOPE,
 } from "@/features/notes/note-test-utils";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import { NoteOriginalView } from "./NoteOriginalView";
 
 /**
@@ -373,7 +374,7 @@ describe("派生图状态：正文待图 / 缺图 + 重建", () => {
     recoverMock.mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));
     await waitFor(() => {
-      expect(recoverMock).toHaveBeenCalledWith({
+      expect(recoverMock).toHaveBeenCalledWith(testClientServices, {
         role: "student",
         versionId: EVIDENCE_VERSION_ID,
       });
@@ -527,7 +528,7 @@ describe("教师角色分派", () => {
     recoverMock.mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));
     await waitFor(() => {
-      expect(recoverMock).toHaveBeenCalledWith({
+      expect(recoverMock).toHaveBeenCalledWith(testClientServices, {
         role: "teacher",
         versionId: EVIDENCE_VERSION_ID,
       });

@@ -1,11 +1,4 @@
 import { onlineManager } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AttemptDraftData,
   AttemptResultData,
@@ -23,17 +16,17 @@ import {
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
 import {
-  assertLoadedDraftsForPwaUpdate,
-  draftStore,
-  installDraftBackend,
-  memoryBackend,
-} from "@/features/attempt/draft-store";
-import {
   installNoteBackend,
   memoryNoteBackend,
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import { noteHeadsMockResponse } from "@/features/notes/note-test-utils";
+import {
+  assertLoadedDraftsForPwaUpdate,
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import {
   ApiError,
   fetchAttemptApi,
@@ -49,6 +42,14 @@ import {
 } from "@/lib/api";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { resetNoteHeadBatchForTest } from "@/lib/note-head-batch";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAssignmentAttemptPage from "./StudentAssignmentAttemptPage";
 
@@ -352,8 +353,8 @@ beforeEach(() => {
   installNoteBackend(memoryNoteBackend());
   installAnnotationBackend(memoryAnnotationBackend());
   const session = { origin: "https://page.test", studentId: "student-page" };
-  bindNoteSession(session);
-  bindAnnotationSession(session);
+  bindNoteSession(session, testClientServices);
+  bindAnnotationSession(session, testClientServices);
   resetNoteHeadBatchForTest();
   mockedStart.mockReset();
   mockedAssignments.mockReset();

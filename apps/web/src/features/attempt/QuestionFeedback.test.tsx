@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
 import type { AttemptResultQuestion, PracticeWorkflow } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
+import { render, screen, within } from "@/test/render-with-portal";
 import {
   practiceFeedbackRestrictedCopy,
   practiceUnreadableFeedbackCopy,

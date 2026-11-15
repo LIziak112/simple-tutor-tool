@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HANDWRITTEN_TYPES } from "@/features/answering/answer-format";
 import {
   MemoQuickCaptureButton,
   MemoQuickCaptureDialog,
@@ -18,7 +19,6 @@ import {
   AiQueueSheet,
   AiQueueTrigger,
 } from "@/features/student-ai/AiQueueButton";
-import { HANDWRITTEN_TYPES } from "./answer-format";
 import { verdictBadgeDisplayOf } from "./self-review-display";
 
 /**
@@ -116,7 +116,7 @@ export function ResultAiActions({
           批量复盘
         </Button>
         <AiQueueTrigger onClick={() => setOpen("queue")} />
-        <MemoQuickCaptureButton />
+        <MemoQuickCaptureButton unanchored />
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -191,7 +191,11 @@ export function ResultAiActions({
         open={open === "queue"}
         onOpenChange={close}
       />
-      <MemoQuickCaptureDialog open={open === "memo"} onOpenChange={close} />
+      <MemoQuickCaptureDialog
+        source={{ anchor: { kind: "none" } }}
+        open={open === "memo"}
+        onOpenChange={close}
+      />
     </>
   );
 }

@@ -1490,7 +1490,10 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
       ],
     );
     expect(submitted.status).toBe(200);
-    expect(responseRowOf(env.db, attemptId, Q.choice)).toEqual(saved);
+    expect(responseRowOf(env.db, attemptId, Q.choice)).toEqual({
+      ...saved,
+      settlementSeq: 1,
+    });
     expect(
       env.db
         .select()

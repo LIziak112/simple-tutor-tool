@@ -5,15 +5,15 @@ import {
 } from "@/features/annotation/annotation-store";
 import { currentAnnotationSession } from "@/features/annotation/annotation-sync";
 import { exportQuestionAnnotationImage } from "@/features/annotation/export-question-annotation";
+import { currentNoteSession } from "@/features/notes/note-sync";
 import {
   attemptMaterialsEditable,
   getAttemptRecoveryState,
-} from "@/features/attempt/attempt-material-recovery";
+} from "@/features/persistence/attempt-material-recovery";
 import {
   draftStore,
   getDraftSessionEpoch,
-} from "@/features/attempt/draft-store";
-import { currentNoteSession } from "@/features/notes/note-sync";
+} from "@/features/persistence/draft-store";
 import {
   createOngoingQuestionImages,
   loadImage,

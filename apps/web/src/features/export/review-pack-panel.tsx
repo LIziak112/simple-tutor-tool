@@ -13,12 +13,9 @@ import {
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ExportReviewImageSection } from "@/features/notes/ExportReviewImageSection";
-import {
-  downloadAttachmentApi,
-  downloadReviewPackApi,
-  fetchReviewPackPreviewApi,
-  type ReviewPackRole,
-} from "@/lib/api";
+import type { ReviewPackRole } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { copyText } from "@/lib/copy";
 import { REVIEW_PACK_KIND_LABELS } from "./review-pack-kinds";
 
@@ -62,6 +59,12 @@ export function ReviewPackPanel({
   /** 结果页闭合入口与同组工具并排。 */
   compact?: boolean;
 }) {
+  const {
+    fetchReviewPackPreviewApi,
+    downloadReviewPackApi,
+    downloadAttachmentApi,
+  } = usePortalClients();
+
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<ReviewPackPreviewData | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -107,7 +110,7 @@ export function ReviewPackPanel({
         setPreviewLoading(false);
       }
     }
-  }, [viewer, attemptId, questionId]);
+  }, [viewer, attemptId, questionId, fetchReviewPackPreviewApi]);
 
   const handleOpen = useCallback(() => {
     const next = !open;
@@ -138,7 +141,7 @@ export function ReviewPackPanel({
     } finally {
       setZipLoading(false);
     }
-  }, [viewer, attemptId, questionId]);
+  }, [viewer, attemptId, questionId, downloadReviewPackApi]);
 
   const handleCopyText = useCallback(async () => {
     if (preview === null) return;
@@ -177,7 +180,7 @@ ${preview.questionMd}`;
         }));
       }
     },
-    [],
+    [downloadAttachmentApi],
   );
 
   return (

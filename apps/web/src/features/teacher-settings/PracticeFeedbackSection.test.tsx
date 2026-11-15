@@ -1,16 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  fetchPracticeFeedbackSettings,
+  savePracticeFeedbackSettings,
+} from "@/lib/api";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  fetchPracticeFeedbackSettings,
-  savePracticeFeedbackSettings,
-} from "@/lib/api";
+} from "@/test/render-with-portal";
 import { PracticeFeedbackSection } from "./PracticeFeedbackSection";
 
 /**

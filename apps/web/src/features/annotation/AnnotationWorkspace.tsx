@@ -20,12 +20,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
-import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
-import { studentAnnotationBasePngUrl } from "@/lib/api";
+import { prepareAnnotationForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
+
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { blocksInBaseDomain } from "./annotation-anchor";
 import {
@@ -59,9 +60,12 @@ export interface AnnotationWorkspaceBase {
 
 /** 契约底图引用 → 工作台底图（ready 且像素宽高非空才可用）。downloadUrl 缺失时按 attemptId 直构学生直出路由（与服务端同源单源）。 */
 export function annotationWorkspaceBaseOf(
+  clients: ApiServices,
   ref: AnnotationBaseRef,
   attemptId: string,
 ): AnnotationWorkspaceBase | null {
+  const { studentAnnotationBasePngUrl } = clients;
+
   if (
     ref.state !== "ready" ||
     ref.pixelWidth === null ||

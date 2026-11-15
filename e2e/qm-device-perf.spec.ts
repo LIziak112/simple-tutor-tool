@@ -535,7 +535,14 @@ test.describe("QM 设备布局 × 性能采样 × 控制器状态（细项 3/5/6
       await page.getByRole("button", { name: "交卷", exact: true }).click();
       await page.getByRole("button", { name: "确认交卷" }).first().click();
       await expect(page.getByText(/批改结果/)).toBeVisible({ timeout: 10_000 });
-      // 结果回看：题级材料区同口径可见
+      // 材料模板默认复用集中阅读区；切回客观题模板仍可从逐题材料锚回看。
+      await expect(
+        page.getByRole("region", { name: "材料对照阅读" }),
+      ).toBeVisible();
+      await expect(page.getByText("给定资料一").first()).toBeVisible();
+      await page
+        .getByLabel("复盘模板", { exact: true })
+        .selectOption("objective");
       await expect(page.getByLabel("本题材料").first()).toBeVisible();
       await expect(page.getByText("给定资料一").first()).toBeVisible();
       await context.close();

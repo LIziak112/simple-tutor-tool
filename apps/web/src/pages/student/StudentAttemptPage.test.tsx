@@ -1,11 +1,4 @@
 import { onlineManager } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { AttemptDraftData, AttemptResultData } from "@tutor/contract";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +16,13 @@ import {
   sealCorrectionApi,
   startWrongPracticeApi,
 } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAttemptPage from "./StudentAttemptPage";
 

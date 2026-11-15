@@ -11,7 +11,8 @@ import {
   questionProcessBatchSchema,
   type StudentAnswer,
 } from "@tutor/contract";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import type { KVStoreBackend } from "@/lib/kv-backend";
 import { randomUuid } from "@/lib/uuid";
 

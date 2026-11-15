@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { forwardRef, type ReactNode } from "react";
 import { expect, it, vi } from "vitest";
-import { AttemptEditorProvider } from "./AttemptEditorContext";
+import { AttemptEditorProvider } from "@/features/answering/AttemptEditorContext";
+import { render } from "@/test/render-with-portal";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 
 const probe = vi.hoisted(() => ({ questions: [] as AttemptQuestionPublic[] }));

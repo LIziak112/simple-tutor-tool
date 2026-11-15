@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AiQueueSummaryData,
   AiTaskDetailData,
@@ -24,6 +23,8 @@ import {
   openStudentAiReplyApi,
   studentAiTaskActionApi,
 } from "@/lib/api";
+import { testPortalRoutes } from "@/test/portal-fixture";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 
 /**
  * SAI-23 全局队列先测（B12 批次先测四组）：
@@ -49,7 +50,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 // 整卷复盘段不是本文件的关注点：恒返回空列表（分组呈现见 ai-queue-groups.test）
-vi.mock("@/features/student-ai/attempt-review-api", () => ({
+vi.mock("@/lib/review-queue-legacy-api", () => ({
   listStudentAiAttemptReviewQueueApi: vi.fn(async () => ({
     tasks: [],
     nextCursor: null,
@@ -440,29 +441,43 @@ function withinText(element: HTMLElement | undefined, label: string): boolean {
 
 describe("SAI-23 队列导航", () => {
   it("aiFrom 白名单：接受 /s/ 同源路径（含筛选 query），拒绝外链与非学生端路径", () => {
-    expect(aiQueueReturnTarget("/s/assignments?status=pending&page=2")).toBe(
-      "/s/assignments?status=pending&page=2",
-    );
-    expect(aiQueueReturnTarget("/s/attempts/abc?x=1")).toBe(
+    expect(
+      aiQueueReturnTarget(
+        testPortalRoutes,
+        "/s/assignments?status=pending&page=2",
+      ),
+    ).toBe("/s/assignments?status=pending&page=2");
+    expect(aiQueueReturnTarget(testPortalRoutes, "/s/attempts/abc?x=1")).toBe(
       "/s/attempts/abc?x=1",
     );
-    expect(aiQueueReturnTarget("//evil.example")).toBeNull();
-    expect(aiQueueReturnTarget("https://evil.example/s/home")).toBeNull();
-    expect(aiQueueReturnTarget("/t/settings")).toBeNull();
-    expect(aiQueueReturnTarget(null)).toBeNull();
+    expect(aiQueueReturnTarget(testPortalRoutes, "//evil.example")).toBeNull();
+    expect(
+      aiQueueReturnTarget(testPortalRoutes, "https://evil.example/s/home"),
+    ).toBeNull();
+    expect(aiQueueReturnTarget(testPortalRoutes, "/t/settings")).toBeNull();
+    expect(aiQueueReturnTarget(testPortalRoutes, null)).toBeNull();
   });
 
   it("旧卷同 questionId 不跳新卷：course/wrong 按任务自身 attemptId 直达旧卷", () => {
     const task = queueTask({ attemptId: OLD_ATTEMPT_ID });
-    expect(aiQueueTargetOf(task, originOf({ sourceType: "course" }))).toBe(
-      `/s/attempts/${OLD_ATTEMPT_ID}`,
-    );
     expect(
-      aiQueueTargetOf(task, originOf({ sourceType: "wrong", title: null })),
+      aiQueueTargetOf(
+        testPortalRoutes,
+        task,
+        originOf({ sourceType: "course" }),
+      ),
+    ).toBe(`/s/attempts/${OLD_ATTEMPT_ID}`);
+    expect(
+      aiQueueTargetOf(
+        testPortalRoutes,
+        task,
+        originOf({ sourceType: "wrong", title: null }),
+      ),
     ).toBe(`/s/attempts/${OLD_ATTEMPT_ID}`);
     // 队列回题统一按任务自身 attempt 直达，避免重新开卷或落到错误题目
     expect(
       aiQueueTargetOf(
+        testPortalRoutes,
         task,
         originOf({
           sourceType: "assignment",
@@ -472,6 +487,7 @@ describe("SAI-23 队列导航", () => {
     ).toBe(`/s/attempts/${OLD_ATTEMPT_ID}`);
     expect(
       aiQueueTargetOf(
+        testPortalRoutes,
         task,
         originOf({
           sourceType: "lesson",
@@ -482,11 +498,12 @@ describe("SAI-23 队列导航", () => {
     // 缺导航键 → null（呈现不可访问说明而非坏链接）
     expect(
       aiQueueTargetOf(
+        testPortalRoutes,
         { ...task, attemptId: "" },
         originOf({ sourceType: "assignment", assignmentId: null }),
       ),
     ).toBeNull();
-    expect(aiQueueTargetOf(task, undefined)).toBeNull();
+    expect(aiQueueTargetOf(testPortalRoutes, task, undefined)).toBeNull();
   });
 
   it("点任务携带完整来源位置（含筛选 query）导航到原作答", async () => {

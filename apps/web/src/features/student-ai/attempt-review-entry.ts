@@ -3,10 +3,8 @@ import type {
   AiAttemptReviewCounts,
   AiAttemptReviewTaskPublic,
 } from "@tutor/contract";
-import {
-  fetchStudentAiAttemptReviewPreviewApi,
-  listStudentAiAttemptReviewsApi,
-} from "@/lib/api";
+import type { PortalRoutes } from "@/features/runtime/portal-runtime";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 整卷复盘入口的状态模型（结果页顶栏、提示条、讲练完成页共用，单一出处）。
@@ -68,13 +66,14 @@ export function attemptReviewTargetOf(raw: string | null): string | null {
  * from：来源位置（站内 /s/ 路径），目标页据此提供「返回原页面」。
  */
 export function attemptReviewHref(
+  routes: PortalRoutes,
   attemptId: string,
   target: string,
   from?: string,
 ): string {
   const params = new URLSearchParams({ [ATTEMPT_REVIEW_PARAM]: target });
   if (from !== undefined) params.set("aiFrom", from);
-  return `/s/attempts/${encodeURIComponent(attemptId)}?${params}`;
+  return routes.learning(`attempts/${encodeURIComponent(attemptId)}?${params}`);
 }
 
 /** 等待领取 / 处理中——入口要跟着它刷新 */
@@ -183,6 +182,8 @@ export function attemptReviewEntryViewOf(
 
 /** 入口与进度面板共用列表；在途任务每 15 秒刷新，页面隐藏时暂停。 */
 export function useAttemptReviewTasks(attemptId: string, enabled: boolean) {
+  const { listStudentAiAttemptReviewsApi } = usePortalClients();
+
   return useQuery({
     queryKey: attemptReviewListKey(attemptId),
     queryFn: () => listStudentAiAttemptReviewsApi(attemptId),
@@ -205,6 +206,8 @@ export function useAttemptReviewEntry(
   attemptId: string,
   released: boolean,
 ): AttemptReviewEntryState {
+  const { fetchStudentAiAttemptReviewPreviewApi } = usePortalClients();
+
   const tasksQuery = useAttemptReviewTasks(attemptId, released);
   const task =
     tasksQuery.data === undefined

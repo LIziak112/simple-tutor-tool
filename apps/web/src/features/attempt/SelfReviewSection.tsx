@@ -10,7 +10,9 @@ import {
 } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ApiError, saveSelfReviewApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { randomUuid } from "@/lib/uuid";
 
 /**
@@ -56,6 +58,8 @@ export function SelfReviewSection({
   attemptId: string;
   question: AttemptResultQuestion;
 }) {
+  const { saveSelfReviewApi } = usePortalClients();
+
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -24,14 +24,13 @@ import {
   annotationSurfaceLayoutCore,
 } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
 import {
-  ApiError,
-  fetchAnnotationViewApi,
-  postAnnotationBaseApi,
-  postAnnotationBaseImageApi,
-  putAnnotationDocApi,
-  studentAnnotationBasePngUrl,
-} from "@/lib/api";
+  bindServiceLease,
+  serviceLease,
+} from "@/features/runtime/service-leases";
+import { ApiError } from "@/lib/api-response";
+
 import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 import {
   type AnnotationConflictKind,
@@ -180,7 +179,7 @@ function keyInSession(
   if (parsed === null || !sameSession(currentSession, parsed.session)) {
     return null;
   }
-  return parsed;
+  return { ...parsed, session: currentSession };
 }
 
 // ---------- 上传执行 ----------
@@ -280,6 +279,14 @@ async function runUpload(
   scope: AnnotationScope,
   epoch: number,
 ): Promise<void> {
+  const {
+    postAnnotationBaseApi,
+    postAnnotationBaseImageApi,
+    studentAnnotationBasePngUrl,
+    putAnnotationDocApi,
+    fetchAnnotationViewApi,
+  } = serviceLease(session);
+
   const resetVersion = peekAnnotationRecord(session, scope)?.resetVersion ?? 0;
   const stale = () =>
     epoch !== sessionEpoch ||
@@ -342,7 +349,9 @@ async function runUpload(
               "服务器已有另一布局，保留本机稿并查看原标画",
               409,
             );
-          let image: Awaited<ReturnType<typeof postAnnotationBaseImageApi>>;
+          let image: Awaited<
+            ReturnType<ApiServices["postAnnotationBaseImageApi"]>
+          >;
           try {
             image = await postAnnotationBaseImageApi(
               scope.attemptId,
@@ -636,8 +645,17 @@ function teardownSession(): void {
 }
 
 /** 绑定会话（与 bindNoteSession 同构；重复绑定 no-op，切换即旧会话失效） */
-export function bindAnnotationSession(session: AnnotationSessionRef): void {
-  if (currentSession !== null && sameSession(currentSession, session)) return;
+export function bindAnnotationSession(
+  session: AnnotationSessionRef,
+  clients: ApiServices,
+): void {
+  bindServiceLease(session, clients);
+  if (
+    currentSession !== null &&
+    sameSession(currentSession, session) &&
+    serviceLease(currentSession) === clients
+  )
+    return;
   teardownSession();
   currentSession = session;
   unsubscribeStore = subscribeAnnotationStore(handleRecordChanged);
@@ -727,19 +745,18 @@ export async function resolveAnnotationConflictKeepLocalAndUpload(
 async function downloadCloudBasePng(
   attemptId: string,
   baseId: string,
+  clients: ApiServices,
 ): Promise<Blob> {
-  let response: Response;
   try {
-    response = await fetch(studentAnnotationBasePngUrl(attemptId, baseId), {
-      signal: AbortSignal.timeout(15_000),
-    });
+    return await clients.readPrivateBlob(
+      clients.studentAnnotationBasePngUrl(attemptId, baseId),
+      AbortSignal.timeout(15_000),
+    );
   } catch (err) {
     throw new Error(
       `云端底图下载失败，请重试（${err instanceof Error ? err.message : "网络异常"}）`,
     );
   }
-  if (!response.ok) throw new Error("云端底图下载失败，请重试");
-  return await response.blob();
 }
 
 /**
@@ -752,6 +769,8 @@ export async function resolveAnnotationConflictKeepCloud(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
 ): Promise<void> {
+  const { fetchAnnotationViewApi } = serviceLease(session);
+
   const record = peekAnnotationRecord(session, scope);
   if (record === null || (record.conflict === null && record.retained === null))
     return;
@@ -766,7 +785,11 @@ export async function resolveAnnotationConflictKeepCloud(
   if (!view.doc) throw new Error("云端标画正文不可读取，请重试");
   const cloudLayout = view.base?.layout;
   if (view.base?.state === "ready" && cloudLayout !== undefined) {
-    const png = await downloadCloudBasePng(scope.attemptId, view.base.baseId);
+    const png = await downloadCloudBasePng(
+      scope.attemptId,
+      view.base.baseId,
+      serviceLease(session),
+    );
     if (!sameSessionSafe(session))
       throw new Error("账号已切换，请重新进入作答页");
     // 内容校验前移到采用云端正文之前：坏 PNG（反代改写类型/截断/超限）在

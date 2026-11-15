@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
 
 it("点击分节原地展开，首节默认展开，全文链接定义与公式保留", () => {

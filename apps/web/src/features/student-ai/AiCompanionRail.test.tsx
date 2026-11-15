@@ -1,4 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { AiConnectionListData } from "@tutor/contract";
+import { useRef, useState } from "react";
+import { MemoryRouter } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchStudentAiConnectionsApi } from "@/lib/api";
 import {
   act,
   fireEvent,
@@ -6,12 +11,7 @@ import {
   screen,
   waitFor,
   within,
-} from "@testing-library/react";
-import type { AiConnectionListData } from "@tutor/contract";
-import { useRef, useState } from "react";
-import { MemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchStudentAiConnectionsApi } from "@/lib/api";
+} from "@/test/render-with-portal";
 import { stubElementWidth } from "@/test/stub-element-width";
 import { AiCompanionRail, AiCompanionTrigger } from "./AiCompanionRail";
 import {

@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AiContextSnapshot,
   AiTaskTeacher,
@@ -14,6 +13,7 @@ import {
   fetchTeacherAiTaskDetailApi,
   fetchTeacherAttemptAiRecordsApi,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { AiHelpQuestionSection } from "./AiHelpRecords";
 
 /**

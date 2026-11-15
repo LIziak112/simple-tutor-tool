@@ -1,7 +1,7 @@
-import { screen } from "@testing-library/react";
 import type { StudentLectureListData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchStudentLecturesApi } from "@/lib/api";
+import { screen } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLecturesPage from "./StudentLecturesPage";
 

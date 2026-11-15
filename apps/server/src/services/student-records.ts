@@ -22,6 +22,7 @@ import {
 } from "../db/schema";
 import { attemptAnswersPublished } from "./answer-publication.ts";
 import { assignmentReleaseByIds } from "./attempt-service";
+import { timeProjectionsOf } from "./attempt-time-projection";
 import { requireVisibleCourseUnit } from "./course-service";
 import {
   pendingMarkCounts,
@@ -31,6 +32,7 @@ import {
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { recordAnswerProgress } from "./record-answer-progress";
 import { attemptResultCounts } from "./result-counts";
+import { settlementCountsOf } from "./settlement-counts.ts";
 import { studentTeacherIdOf } from "./student-course-service";
 import { sourceOf } from "./teacher-attempt-service";
 
@@ -224,6 +226,10 @@ export function listStudentRecords(
   // 查询，500 id 一块，与待批数同款模式）；协议判定走 practiceProtocolOf 单一谓词
   const v1Rows = rows.filter((row) => practiceProtocolOf(row) === "v1");
   const progressByAttempt = practiceSubmittedCounts(db, v1Rows);
+  const settlementCounts = settlementCountsOf(
+    db,
+    rows.map((row) => row.id),
+  );
   const assignmentIds = [
     ...new Set(
       rows
@@ -238,6 +244,10 @@ export function listStudentRecords(
   ];
   const assignmentById = assignmentReleaseByIds(db, assignmentIds);
 
+  const times = timeProjectionsOf(
+    db,
+    rows.map((r) => r.id),
+  );
   const records: StudentRecordRow[] = rows.map((attempt) => {
     // 公布 gate（T2A.8/D10）：只有 assignment 来源的已交卷记录可能受限；
     // course 恒交卷即公布，draft 无结果可公布（answersReleased=true，显示进行中）
@@ -256,6 +266,7 @@ export function listStudentRecords(
     const progress = progressByAttempt.get(attempt.id);
     return {
       ...sourceOf(db, attempt, teacherId ?? ""),
+      time: times.aggregate(attempt.id),
       attemptId: attempt.id,
       status: attempt.status,
       // D2 展示口径 scoreFinal ?? scoreAuto；未公布置 null（显示「待公布」）
@@ -271,6 +282,7 @@ export function listStudentRecords(
         ? (pendingSelfReviewByAttempt.get(attempt.id) ?? 0)
         : null,
       answersReleased: released,
+      settlementCount: settlementCounts.get(attempt.id) ?? 0,
       lastActivityAt: attempt.lastActivityAt,
       startedAt: attempt.startedAt,
       submittedAt: attempt.submittedAt,

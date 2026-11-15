@@ -7,12 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sqliteAiPolicyConfigSource } from "../services/ai-companion/ai-policy-config-source.ts";
 import { createDb } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
-import {
-  aiPolicyOverrides,
-  aiTeacherSettings,
-  courses,
-  students,
-} from "./schema";
+import { aiPolicyOverrides, aiTeacherSettings, students } from "./schema";
 import { createTestDb, makeMigrationsFolderUpTo } from "./test-utils.ts";
 
 let dir: string;
@@ -117,17 +112,13 @@ describe("T6R.2 迁移：空库与带存量库", () => {
       })
       .run();
     const courseId = randomUUID();
-    db.insert(courses)
-      .values({
-        id: courseId,
-        teacherId,
-        title: "初一上",
-        order: 0,
-        archivedAt: null,
-        description: null,
-        createdAt: now,
-      })
-      .run();
+    // 课程也按边界库的旧列造数据；当前 Drizzle 模型会带上 0069 的新推荐列。
+    db.$client
+      .prepare(
+        `INSERT INTO courses (id, teacher_id, title, "order", archived_at, description, created_at)
+         VALUES (?, ?, '初一上', 0, NULL, NULL, ?)`,
+      )
+      .run(courseId, teacherId, now);
     const unitId = "unit-练习四";
     // 单元行同走原生 SQL（T7.8，同 teachers/attempts 惯例）：边界库的 units 表
     // 还没有 0029 新增的 teaching_pack_json 列

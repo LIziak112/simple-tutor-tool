@@ -1,3 +1,17 @@
+import {
+  WRONG_DAYS_LABELS,
+  WRONG_DAYS_OPTIONS,
+  WRONG_MIN_LABELS,
+  WRONG_MIN_OPTIONS,
+  wrongDaysLabel,
+  wrongMinLabel,
+} from "@/features/student/wrong-filter-labels";
+
+export {
+  wrongDaysLabel,
+  wrongMinLabel,
+} from "@/features/student/wrong-filter-labels";
+
 import type { WrongQuestionCard } from "@tutor/contract";
 import { optionsPublicStructureOf } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
@@ -20,17 +34,18 @@ import { Link } from "react-router";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import {
+  formatReferenceAnswers,
+  QUESTION_TYPE_BADGE_CLASS,
+  QUESTION_TYPE_LABELS,
+} from "@/features/answering/answer-format";
+import {
   OptionComparisonList,
   optionCorrectOf,
 } from "@/features/answering/views/choice";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
-import {
-  formatReferenceAnswers,
-  QUESTION_TYPE_BADGE_CLASS,
-  QUESTION_TYPE_LABELS,
-} from "@/features/attempt/answer-format";
 import { InlineMarkdown } from "@/features/markdown/InlineMarkdown";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { DISPLAY_TZ, formatCnTime } from "@/lib/time";
 import { recordTitleOf } from "./records-views";
 
@@ -74,42 +89,23 @@ export type WrongGroupMode = "unit" | "time" | "knowledge";
  * lastAt，Asia/Shanghai 自然日）。WRONG_DAYS_OPTIONS 只是 datalist 建议档位，
  * 1–3650 内任意整数都合法。
  */
-const WRONG_DAYS_OPTIONS = [7, 30, 90] as const;
+
 /** 预设时间档位词表（datalist 建议与 chip 标签单源；自定义值动态生成标签） */
-const WRONG_DAYS_LABELS: Record<(typeof WRONG_DAYS_OPTIONS)[number], string> = {
-  7: "最近 7 天",
-  30: "最近 30 天",
-  90: "最近 90 天",
-};
+
 export type WrongDaysFilter = number;
 
 /** 时间筛选标签：预设档位用词表，自定义值动态生成 */
-export function wrongDaysLabel(days: number): string {
-  return (
-    WRONG_DAYS_LABELS[days as (typeof WRONG_DAYS_OPTIONS)[number]] ??
-    `最近 ${days} 天`
-  );
-}
 
 /**
  * 错次筛选（wrongCount ≥ N；2026-10 实测反馈起支持自由输入 1–99）：
  * WRONG_MIN_OPTIONS 只是 datalist 建议档位。
  */
-const WRONG_MIN_OPTIONS = [2, 3] as const;
+
 /** 预设错次档位词表（datalist 建议与 chip 标签单源） */
-const WRONG_MIN_LABELS: Record<(typeof WRONG_MIN_OPTIONS)[number], string> = {
-  2: "错 2 次及以上",
-  3: "错 3 次及以上",
-};
+
 export type WrongMinFilter = number;
 
 /** 错次筛选标签：预设档位用词表，自定义值动态生成 */
-export function wrongMinLabel(min: number): string {
-  return (
-    WRONG_MIN_LABELS[min as (typeof WRONG_MIN_OPTIONS)[number]] ??
-    `错 ${min} 次及以上`
-  );
-}
 
 /** [min, max] 内整数控件共用的解析（空/非法/越界回 null） */
 function parseBoundedInt(
@@ -539,6 +535,8 @@ function FirstCorrectMark({ firstCorrect }: { firstCorrect: boolean }) {
  * 规则。
  */
 function RoundsHistory({ question }: { question: WrongQuestionCard }) {
+  const routes = usePortalRoutes();
+
   return (
     <section
       aria-label="轮次史"
@@ -551,7 +549,7 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
         {question.rounds.map((round, index) => (
           <li key={round.attemptId}>
             <Link
-              to={`/s/attempts/${round.attemptId}`}
+              to={routes.learning(`attempts/${round.attemptId}`)}
               aria-label={`查看第 ${index + 1} 轮作答：${round.sourceTitle}`}
               title="查看这一次的作答"
               className="-mx-2 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"

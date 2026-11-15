@@ -25,11 +25,14 @@ import {
   SESSION_A,
   SESSION_B,
 } from "@/features/notes/note-test-utils";
-import { installDraftBackend, memoryBackend } from "./draft-store";
+import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import {
   prepareAnnotationForPwaUpdate,
   prepareNoteForPwaUpdate,
-} from "./pwa-draft-safety";
+} from "@/features/persistence/pwa-draft-safety";
 
 const syncState = vi.hoisted(() => ({
   notes: null as NoteSessionRef | null,

@@ -7,14 +7,15 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   type AttemptEditor,
   useAttemptEditorStore,
-} from "@/features/attempt/AttemptEditorContext";
+} from "@/features/answering/AttemptEditorContext";
 import {
   parseNoteKey,
   peekNoteRecord,
   subscribeNoteStore,
 } from "@/features/notes/note-store";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
-import { createEventQueue, type EventQueueApi } from "@/lib/event-queue";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import type { EventQueueApi } from "@/lib/event-queue-core";
 
 /**
  * 答题页学习痕迹埋点（T2.10，§5.5；T4.0b 交互/手写增强）：
@@ -134,6 +135,7 @@ export function useAttemptEvents(
   attemptId: string,
   process?: { current: QuestionProcessRecorder | null },
 ): AttemptEventsApi {
+  const { createEventQueue } = usePortalClients();
   const queueRef = useRef<EventQueueApi | null>(null);
   /** 当前已上报 question_focus 的题（null=尚未聚焦） */
   const focusedRef = useRef<string | null>(null);
@@ -242,7 +244,7 @@ export function useAttemptEvents(
       queue.dispose();
       queueRef.current = null;
     };
-  }, [attemptId, flushInkEdits, process]);
+  }, [attemptId, flushInkEdits, process, createEventQueue]);
 
   // 视口观察：question_view（每题首次进视口）+ 聚焦题的视口兜底切换。
   // jsdom 等无 IntersectionObserver 的环境自动降级（聚焦只靠交互）。

@@ -1,3 +1,5 @@
+import type { NoteRole } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 /**
  * 按版本 id 取正文并确定性渲染的共享视图核（T6R.15 单3，D 裁决「抽共享
  * 而非复制」路径）：从 NoteOriginalView 抽出「fetchNoteDocumentApi →
@@ -21,8 +23,6 @@ import {
   type RenderedNotePage,
   renderNoteImages,
 } from "@/features/notes/render-note";
-import type { NoteRole } from "@/lib/api";
-import { fetchNoteDocumentApi } from "@/lib/note-endpoints";
 
 /** 正文阶段（单一判别联合：一次 set 完成迁移，无中间组合态） */
 export type NoteVersionBodyPhase =
@@ -63,6 +63,8 @@ export interface NoteVersionBodyHandle {
 }
 
 export function useNoteVersionBody(viewer: NoteRole): NoteVersionBodyHandle {
+  const { fetchNoteDocumentApi } = usePortalClients();
+
   const [phase, setPhase] = useState<NoteVersionBodyPhase>({ kind: "closed" });
   /** 加载代际：卸载/收起/重开后迟到的异步结果不再落地 */
   const epochRef = useRef(0);
@@ -141,7 +143,7 @@ export function useNoteVersionBody(viewer: NoteRole): NoteVersionBodyHandle {
         throw err;
       }
     },
-    [viewer, revokeUrls, landReady],
+    [viewer, revokeUrls, landReady, fetchNoteDocumentApi],
   );
 
   const closeBody = useCallback(() => {

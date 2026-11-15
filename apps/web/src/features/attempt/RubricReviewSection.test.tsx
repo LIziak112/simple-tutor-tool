@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AttemptResultQuestion, RubricReview } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createStudentAiTaskApi, fetchStudentAiStatusApi } from "@/lib/api";
 import { saveRubricFinalApi, saveRubricSelfApi } from "@/lib/rubric-api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { RubricReviewSection } from "./RubricReviewSection";
 import { RUBRIC_PENDING_POLL_MS } from "./rubric-review-model";
 

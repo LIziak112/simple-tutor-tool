@@ -16,6 +16,7 @@ import { LessonBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { catalogTreeRows } from "@/features/courses/catalog-tree";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { lessonHref } from "./lesson-navigation";
 
 type View = {
@@ -33,6 +34,8 @@ export function StudentCourseCatalog({
   course: StudentCourseDetailData;
   renderStatus: (item: StudentCourseItem) => ReactNode;
 }) {
+  const routes = usePortalRoutes();
+
   const cache = useQueryClient();
   const key = useMemo(
     () => ["student", "course-catalog-view", course.id],
@@ -240,10 +243,14 @@ export function StudentCourseCatalog({
                     }
                     to={
                       item.kind === "unit"
-                        ? `/s/courses/${course.id}/units/${item.refId}`
+                        ? routes.learning(
+                            `courses/${course.id}/units/${item.refId}`,
+                          )
                         : item.docKind === "lesson"
-                          ? lessonHref(String(item.refId), course.id)
-                          : `/s/lectures/${item.refId}?courseId=${course.id}`
+                          ? lessonHref(routes, String(item.refId), course.id)
+                          : routes.learning(
+                              `lectures/${item.refId}?courseId=${course.id}`,
+                            )
                     }
                     className="group flex min-h-16 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                   >

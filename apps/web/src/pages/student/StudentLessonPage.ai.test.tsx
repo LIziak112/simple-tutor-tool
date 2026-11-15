@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AttemptQuestionPublic,
   AttemptResultQuestion,
@@ -17,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   installDraftBackend,
   memoryBackend,
-} from "@/features/attempt/draft-store";
+} from "@/features/persistence/draft-store";
 import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
 import {
   createStudentAiTaskApi,
@@ -29,6 +22,13 @@ import {
   startLessonAttemptApi,
   submitLessonQuestionApi,
 } from "@/lib/api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import StudentLessonPage from "./StudentLessonPage";
 
 // 重 UI 流程文件（平均用例 >3.5s）：本机常驻负载会让墙钟在安静窗口间漂移 ±40%，

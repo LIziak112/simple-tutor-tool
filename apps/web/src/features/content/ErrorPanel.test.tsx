@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { LintIssue } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { ErrorPanel } from "./ErrorPanel";
 import { buildFixPrompt } from "./error-prompt";
 

@@ -9,10 +9,10 @@ import {
 /**
  * 随笔表（2026-11-10，个人学习迭代模块 5 第一步：随笔记录端）。
  * 一行 = 学习者本人随手记的一条：文字 / 语音 / 图片 / 手写（kind）。原始随笔
- * 不可变——只插入、只软删（deletedAt），没有 update 路径；整理稿（第二步）是
- * 另起的派生对象，不改本表。媒体本体内容寻址存 blobs/memos/<sha256>.<ext>，
+ * 不可变——只插入、只软删（deletedAt），没有 update 路径；整理稿是带 parentMemoSeq 的
+ * 新条目，不覆盖原文。媒体本体内容寻址存 blobs/memos/<sha256>.<ext>，
  * 多行可共享一个 blob（与资料附件 / ::image 媒体同款，纳入 blobs/ 整目录备份）。
- * 默认仅本人：没有任何教师侧投影；可见性列留到「分享给教师」那一步再加。
+ * 默认仅本人；memo_shares 显式逐条授权当前归属教师。
  */
 export const memos = sqliteTable(
   "memos",
@@ -23,6 +23,15 @@ export const memos = sqliteTable(
     studentId: text("student_id").notNull(),
     /** 客户端生成的幂等键（UUID）；(student_id, client_id) 唯一——离线补传重复只落一行 */
     clientId: text("client_id").notNull(),
+    /** 本人递增序号；结构迁移后由启动回填补齐历史值。 */
+    seq: integer("seq"),
+    parentMemoSeq: integer("parent_memo_seq"),
+    /** Agent原请求规范化摘要；不对外投影。 */
+    agentRequestDigest: text("agent_request_digest"),
+    /** 版本化内容与会话坐标 JSON；无法可靠恢复的旧锚保持 NULL。 */
+    contextJson: text("context_json"),
+    /** 本人已登记设备；历史设备类型不能反推设备身份。 */
+    deviceId: text("device_id"),
     /** 形态：text / voice / image / ink（契约 memoKindSchema） */
     kind: text("kind").$type<"text" | "voice" | "image" | "ink">().notNull(),
     /** 文字随笔正文；媒体随笔的可选说明；无则 NULL */
@@ -55,6 +64,7 @@ export const memos = sqliteTable(
     deletedAt: text("deleted_at"),
   },
   (table) => [
+    uniqueIndex("memos_student_seq_uk").on(table.studentId, table.seq),
     uniqueIndex("memos_student_client_uk").on(table.studentId, table.clientId),
     index("memos_student_recorded_idx").on(
       table.studentId,
@@ -71,3 +81,11 @@ export const memos = sqliteTable(
     ),
   ],
 );
+
+/** 逐条授权；归属改变、归档和软删都会即时阻止读取。 */
+export const memoShares = sqliteTable("memo_shares", {
+  memoId: text("memo_id").primaryKey(),
+  studentId: text("student_id").notNull(),
+  teacherId: text("teacher_id").notNull(),
+  createdAt: text("created_at").notNull(),
+});

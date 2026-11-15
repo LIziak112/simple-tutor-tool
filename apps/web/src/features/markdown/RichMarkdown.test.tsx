@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import {
   DirectiveContainerHost,
   DirectiveLeafHost,

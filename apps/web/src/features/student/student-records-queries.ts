@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  fetchStudentRecordsApi,
-  fetchStudentWrongQuestionsApi,
-  type StudentRecordsParams,
-  type WrongQuestionsParams,
-} from "@/lib/api";
+import type {
+  StudentRecordsParams,
+  WrongQuestionsParams,
+} from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 学生端「我的记录」与错题本数据查询（T3.5，D10/D11）：
@@ -22,6 +21,8 @@ export const studentRecordsKey = (params: StudentRecordsParams) =>
 
 /** 我的记录（D10：本人全部作答倒序索引 + 筛选 + 分页） */
 export function useStudentRecords(params: StudentRecordsParams) {
+  const { fetchStudentRecordsApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentRecordsKey(params),
     queryFn: () => fetchStudentRecordsApi(params),
@@ -43,6 +44,8 @@ export const studentWrongQuestionsKey = (params: WrongQuestionsParams) =>
  * 只消费全量形态。
  */
 export function useStudentWrongQuestions(params: WrongQuestionsParams) {
+  const { fetchStudentWrongQuestionsApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentWrongQuestionsKey(params),
     queryFn: () => fetchStudentWrongQuestionsApi(params),

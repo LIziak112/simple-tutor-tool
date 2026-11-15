@@ -37,6 +37,8 @@ import {
   resultQuestionOf,
   studentFacingResultOf,
 } from "./attempt-service";
+import { attemptTimeEstimateOf } from "./attempt-time-estimate";
+import { timeProjectionsOf } from "./attempt-time-projection";
 import { createOnce } from "./create-receipt";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
@@ -226,6 +228,7 @@ function buildLessonStartData(
 
   // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
   const materialSlots = materialSlotOrderOf(db, attempt.id);
+  const times = timeProjectionsOf(db, [attempt.id]);
   const questions: AttemptQuestionPublic[] = [];
   const drafts: Record<string, StudentAnswer> = {};
   const draftRevisions: Record<string, number> = {};
@@ -256,10 +259,16 @@ function buildLessonStartData(
     // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
     // 含 [[答案]] 标记的原文不下发）
     released[row.questionId] = studentFacingResultOf(
-      resultQuestionOf(row, snapshot, { materialSlots }),
+      resultQuestionOf(row, snapshot, {
+        materialSlots,
+        db,
+        time: times.responseTime.get(row.id),
+      }),
     );
   }
   return {
+    time: times.aggregate(attempt.id),
+    timeEstimate: attemptTimeEstimateOf(db, attempt.id),
     lecture: {
       id: lecture.id,
       title: lecture.title,

@@ -1,5 +1,6 @@
 import {
   attemptEventBatchRequestSchema,
+  DEVICE_ID_HEADER,
   lectureEventBatchRequestSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
@@ -25,7 +26,7 @@ function deliver<T>(receive: () => T): T {
 export function createStudentEventRoutes(db: Db) {
   return new Hono<StudentEnv>()
     .post("/attempts/:id/events", async (c) => {
-      const { events, viewId } = await parseJsonBody(
+      const { events, viewId, deviceId } = await parseJsonBody(
         c,
         attemptEventBatchRequestSchema,
       );
@@ -37,18 +38,29 @@ export function createStudentEventRoutes(db: Db) {
           c.req.param("id"),
           events,
           viewId,
+          undefined,
+          deviceId ?? c.req.header(DEVICE_ID_HEADER),
         ),
       });
     })
     .post("/events", async (c) => {
-      const { events } = await parseJsonBody(c, lectureEventBatchRequestSchema);
+      const { events, deviceId } = await parseJsonBody(
+        c,
+        lectureEventBatchRequestSchema,
+      );
       return c.json({
         ok: true,
-        data: appendLectureEvents(db, c.var.student.id, events),
+        data: appendLectureEvents(
+          db,
+          c.var.student.id,
+          events,
+          undefined,
+          deviceId ?? c.req.header(DEVICE_ID_HEADER),
+        ),
       });
     })
     .post("/attempts/:id/events/deliver", async (c) => {
-      const { events, viewId, delivery } = await parseJsonBody(
+      const { events, viewId, delivery, deviceId } = await parseJsonBody(
         c,
         attemptEventBatchRequestSchema,
       );
@@ -68,12 +80,13 @@ export function createStudentEventRoutes(db: Db) {
             events,
             viewId,
             delivery,
+            deviceId ?? c.req.header(DEVICE_ID_HEADER),
           ),
         ),
       });
     })
     .post("/events/deliver", async (c) => {
-      const { events, delivery } = await parseJsonBody(
+      const { events, delivery, deviceId } = await parseJsonBody(
         c,
         lectureEventBatchRequestSchema,
       );
@@ -86,7 +99,13 @@ export function createStudentEventRoutes(db: Db) {
       return c.json({
         ok: true,
         data: deliver(() =>
-          appendLectureEvents(db, c.var.student.id, events, delivery),
+          appendLectureEvents(
+            db,
+            c.var.student.id,
+            events,
+            delivery,
+            deviceId ?? c.req.header(DEVICE_ID_HEADER),
+          ),
         ),
       });
     });

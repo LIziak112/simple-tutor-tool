@@ -48,6 +48,14 @@ interface CurrentFocus {
 export function computePerQuestionActiveSec(
   events: readonly TimelineEvent[],
 ): Record<string, number> {
+  return replayFocusTimeline(events).activeSecByQuestion;
+}
+
+/** 同一回放额外标出未闭合的焦点题，历史补账不得猜测其结束时刻。 */
+export function replayFocusTimeline(events: readonly TimelineEvent[]): {
+  activeSecByQuestion: Record<string, number>;
+  openQuestionId: string | null;
+} {
   const ordered = [...events].sort((a, b) => a.clientTs - b.clientTs);
   /** 每题累计毫秒总账（跨段保留；输出前统一取整） */
   const totalMs: Record<string, number> = {};
@@ -103,15 +111,17 @@ export function computePerQuestionActiveSec(
       }
       case "submit": {
         settle(event.clientTs); // 规则 6：结算并停止处理后续事件
-        return roundAll(totalMs);
+        return { activeSecByQuestion: roundAll(totalMs), openQuestionId: null };
       }
       default:
         break; // attempt_start/question_view/answer_change/未知类型：不参与计时
     }
   }
   // 规则 7：序列结束仍聚焦 → 计到最后一个事件时刻（hidden 中则保持已结算值）
+  const openQuestionId =
+    current !== null && current.resumedAt !== null ? current.questionId : null;
   if (current !== null && lastTs !== null) settle(lastTs);
-  return roundAll(totalMs);
+  return { activeSecByQuestion: roundAll(totalMs), openQuestionId };
 }
 
 /** 毫秒总账 → 秒（规则 8：整题累计后一次性四舍五入） */

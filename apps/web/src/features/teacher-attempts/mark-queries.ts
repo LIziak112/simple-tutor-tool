@@ -6,14 +6,11 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { MarkRequest, MarkResponseData } from "@tutor/contract";
-import {
-  fetchPendingMarksApi,
-  markResponseApi,
-  type PendingMarkListParams,
-} from "@/lib/api";
+import type { PendingMarkListParams } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /** 队列筛选参数形态（界面层；透传自 lib/api） */
-export type { PendingMarkListParams } from "@/lib/api";
+export type { PendingMarkListParams } from "@/features/runtime/client-types";
 
 /**
  * 批注与待批队列的 TanStack Query 封装（T3.2b，D3/D4）：
@@ -31,6 +28,8 @@ export const pendingMarksKey = (params: PendingMarkListParams) =>
 
 /** 待批队列（D4；submittedAt 升序；三态由页面接 isPending/isError） */
 export function usePendingMarks(params: PendingMarkListParams) {
+  const { fetchPendingMarksApi } = usePortalClients();
+
   return useQuery({
     queryKey: pendingMarksKey(params),
     queryFn: () => fetchPendingMarksApi(params),
@@ -71,6 +70,8 @@ export function useMarkResponse(): UseMutationResult<
   Error,
   MarkMutationVariables
 > {
+  const { markResponseApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation<MarkResponseData, Error, MarkMutationVariables>({
     mutationFn: ({ responseId, mark, comment }) =>

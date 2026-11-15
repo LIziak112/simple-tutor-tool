@@ -1,10 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import {
   QuestionDslContext,
   QuestionRenderContext,
 } from "@/features/answering/question-render-context";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { FoldDirective, StepDirective, StepsDirective } from "./Steps";
 
 it("题内 v4 固定展示公开折叠与步骤，题外交互不变", () => {

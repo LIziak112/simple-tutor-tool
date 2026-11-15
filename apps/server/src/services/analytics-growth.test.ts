@@ -1,10 +1,17 @@
 import { createHash } from "node:crypto";
+import { rmSync } from "node:fs";
 import { analyticsQuerySchema } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { expect, it, vi } from "vitest";
-import type { Db } from "../db/client";
-import { responses } from "../db/schema";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils";
+import { createDb, type Db } from "../db/client";
+import { runMigrations } from "../db/migrate";
+import { responses, teachers } from "../db/schema";
+import {
+  createTestDb,
+  makeMigrationsFolderUpTo,
+  TEST_TEACHER_ID,
+} from "../db/test-utils";
 import { snapshotJsonOf } from "../test/evidence-fixtures";
 import {
   getAnalyticsOverview,
@@ -19,6 +26,29 @@ const STUDENT_COUNT = 60;
 const WEEKS = 52;
 const QUESTIONS = 20;
 const MEASURE_LATENCY = process.env.OWNCLASS_MEASURE_ANALYTICS === "1";
+
+/** 原始 active_sec 夹具是迁移前的历史数据，不能在新卷中伪造活动账。 */
+function createHistoricalDb(): Db {
+  const db = createDb(":memory:");
+  const folder = makeMigrationsFolderUpTo("0068_attempt_settlement_guards");
+  try {
+    migrate(db, { migrationsFolder: folder });
+    db.insert(teachers)
+      .values({
+        id: TEST_TEACHER_ID,
+        loginName: "teacher",
+        isAdmin: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      })
+      .run();
+    return db;
+  } catch (error) {
+    db.$client.close();
+    throw error;
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
 
 /** 一年每生每周两卷，每卷 20 题，题库复用同一套题。 */
 function seedYear(db: Db): void {
@@ -192,9 +222,10 @@ function measure<T>(db: Db, read: () => T) {
 }
 
 it("一年夹具量测学情读取量、课程条目批取与统计一致性", () => {
-  const db = createTestDb();
+  const db = createHistoricalDb();
   try {
     seedYear(db);
+    runMigrations(db);
     const all = analyticsQuerySchema.parse({ days: "all" });
     const recent = analyticsQuerySchema.parse({
       days: 30,
@@ -262,7 +293,7 @@ it("一年夹具量测学情读取量、课程条目批取与统计一致性", (
 }, 30_000);
 
 it("教师域中位数含重做及窗外样本，偶数取中间两值，写入后即重算", () => {
-  const db = createTestDb();
+  const db = createHistoricalDb();
   try {
     const client = db.$client;
     client
@@ -289,6 +320,7 @@ it("教师域中位数含重做及窗外样本，偶数取中间两值，写入�
       attempt.run(id, student, source, no, status, date, date);
       response.run(id, id, questionId, snapshot, sec);
     }
+    runMigrations(db);
     const read = () =>
       getAnalyticsStudent(
         db,

@@ -1,5 +1,6 @@
 import type { AiAttemptReviewTaskPublic } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
+import { testPortalRoutes } from "@/test/portal-fixture";
 import {
   ATTEMPT_REVIEW_PANEL_TARGET,
   attemptReviewEntryStateOf,
@@ -153,16 +154,25 @@ describe("整卷复盘入口状态", () => {
 
 describe("整卷复盘地址", () => {
   it("同一份报告只有一个地址：结果页 + aiReview=<任务 id>", () => {
-    expect(attemptReviewHref(ATTEMPT_ID, TASK_ID)).toBe(
+    expect(attemptReviewHref(testPortalRoutes, ATTEMPT_ID, TASK_ID)).toBe(
       `/s/attempts/${ATTEMPT_ID}?aiReview=${TASK_ID}`,
     );
-    expect(attemptReviewHref(ATTEMPT_ID, ATTEMPT_REVIEW_PANEL_TARGET)).toBe(
-      `/s/attempts/${ATTEMPT_ID}?aiReview=panel`,
-    );
+    expect(
+      attemptReviewHref(
+        testPortalRoutes,
+        ATTEMPT_ID,
+        ATTEMPT_REVIEW_PANEL_TARGET,
+      ),
+    ).toBe(`/s/attempts/${ATTEMPT_ID}?aiReview=panel`);
   });
 
   it("从别处进入时携带来源位置，目标页可「返回原页面」", () => {
-    const href = attemptReviewHref(ATTEMPT_ID, TASK_ID, "/s/home?tab=records");
+    const href = attemptReviewHref(
+      testPortalRoutes,
+      ATTEMPT_ID,
+      TASK_ID,
+      "/s/home?tab=records",
+    );
     const url = new URL(href, "https://student.invalid");
     expect(url.pathname).toBe(`/s/attempts/${ATTEMPT_ID}`);
     expect(url.searchParams.get("aiReview")).toBe(TASK_ID);

@@ -5,13 +5,12 @@ import { Button } from "@/components/ui/button";
 import {
   attemptRoundLabel,
   isAnswered,
-} from "@/features/attempt/answer-format";
+} from "@/features/answering/answer-format";
+import { attemptTimeLabel } from "@/features/attempt/attempt-time-label";
 import { formatResultCounts } from "@/features/attempt/result-counts";
 import { QuestionProcessPlayer } from "@/features/question-process/QuestionProcessPlayer";
-import {
-  AttemptDetailQuestionCard,
-  formatActiveSec,
-} from "@/features/teacher-attempts/AttemptDetailQuestionCard";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
+import { AttemptDetailQuestionCard } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { AttemptReplay } from "@/features/teacher-attempts/AttemptReplay";
 import {
   AttemptStatusBadge,
@@ -19,7 +18,8 @@ import {
 } from "@/features/teacher-attempts/attempt-views";
 import { ExportCsvButton } from "@/features/teacher-attempts/ExportCsvButton";
 import { useTeacherAttemptDetail } from "@/features/teacher-attempts/teacher-attempt-queries";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { formatCnTime } from "@/lib/time";
 
 /**
@@ -39,6 +39,8 @@ import { formatCnTime } from "@/lib/time";
 
 /** 返回数据页：站内到达时回退一步（保留筛选 URL）；直接打开（刷新/书签）则去 /t/data */
 function BackToDataButton() {
+  const routes = usePortalRoutes();
+
   const navigate = useNavigate();
   const location = useLocation();
   const canGoBack = location.key !== "default";
@@ -46,7 +48,9 @@ function BackToDataButton() {
     <Button
       variant="outline"
       className="min-h-11"
-      onClick={() => (canGoBack ? navigate(-1) : void navigate("/t/data"))}
+      onClick={() =>
+        canGoBack ? navigate(-1) : void navigate(routes.management("data"))
+      }
     >
       <ArrowLeft aria-hidden />
       返回数据页
@@ -207,7 +211,7 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
           {data.submittedAt !== null && (
             <span>交卷：{formatCnTime(data.submittedAt)}</span>
           )}
-          <span>用时 {formatActiveSec(data.activeSec)}</span>
+          <span>{attemptTimeLabel(data.time)}</span>
         </p>
         <DetailSummary data={data} answeredCount={answeredCount} />
       </header>

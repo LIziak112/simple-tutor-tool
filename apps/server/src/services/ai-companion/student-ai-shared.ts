@@ -6,7 +6,11 @@ import {
 } from "@tutor/contract";
 import { and, eq, gte, inArray, lt, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
-import { aiAttemptReviewTasks, aiTasks } from "../../db/schema.ts";
+import {
+  aiAttemptReviewTasks,
+  aiTasks,
+  reviewV2Tasks,
+} from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 
 /**
@@ -86,7 +90,7 @@ export function assertStudentAiTaskQuota(
 ): void {
   const window = beijingDayWindowOf(now);
   const countOf = (
-    table: typeof aiTasks | typeof aiAttemptReviewTasks,
+    table: typeof aiTasks | typeof aiAttemptReviewTasks | typeof reviewV2Tasks,
     activeCondition: SQL,
   ) =>
     asDb(db)
@@ -108,8 +112,12 @@ export function assertStudentAiTaskQuota(
     aiAttemptReviewTasks,
     inArray(aiAttemptReviewTasks.status, ["created", "claimed"]),
   );
+  const scoped = countOf(
+    reviewV2Tasks,
+    inArray(reviewV2Tasks.status, ["created", "claimed", "blocked"]),
+  );
   if (
-    (single?.pending ?? 0) + (overall?.pending ?? 0) >=
+    (single?.pending ?? 0) + (overall?.pending ?? 0) + (scoped?.pending ?? 0) >=
     AI_TASK_PENDING_PER_STUDENT
   ) {
     throw new HttpError(
@@ -119,7 +127,7 @@ export function assertStudentAiTaskQuota(
     );
   }
   if (
-    (single?.daily ?? 0) + (overall?.daily ?? 0) >=
+    (single?.daily ?? 0) + (overall?.daily ?? 0) + (scoped?.daily ?? 0) >=
     AI_TASK_DAILY_PER_STUDENT
   ) {
     throw new HttpError(

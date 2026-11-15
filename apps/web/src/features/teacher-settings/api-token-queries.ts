@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchApiToken, resetApiToken } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * API Token 的查询封装（T4.6，纯消费接口；设置页「AI 连接（API Token）」区数据源）：
@@ -13,6 +13,8 @@ export const apiTokenKey = ["teacher", "api-token"] as const;
 
 /** 查看当前 API Token（未生成为 null） */
 export function useApiToken() {
+  const { fetchApiToken } = usePortalClients();
+
   return useQuery({
     queryKey: apiTokenKey,
     queryFn: fetchApiToken,
@@ -22,6 +24,8 @@ export function useApiToken() {
 
 /** 生成 / 重置 API Token（返回新 token；旧 token 立即失效） */
 export function useResetApiToken() {
+  const { resetApiToken } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: resetApiToken,

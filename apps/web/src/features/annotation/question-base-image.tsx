@@ -15,8 +15,8 @@ import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { toBlob } from "html-to-image";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { QuestionRenderContext } from "@/features/answering/question-render-context";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
   collectFontEmbedCss,
   pngBlobHasMagic,

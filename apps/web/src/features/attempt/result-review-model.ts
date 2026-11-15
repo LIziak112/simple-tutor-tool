@@ -1,5 +1,4 @@
-import type { AttemptResultQuestion } from "@tutor/contract";
-import { verdictBadgeDisplayOf } from "./self-review-display";
+import { type AttemptResultQuestion, studentReviewFact } from "@tutor/contract";
 
 export type ReviewScope = "all" | "wrong" | "unanswered" | "pending";
 export const REVIEW_SCOPE_LABELS: Record<ReviewScope, string> = {
@@ -21,7 +20,8 @@ export function reviewQuestionState(
   released: boolean,
 ) {
   return {
-    verdict: released ? verdictBadgeDisplayOf(question).verdict : null,
+    verdict: studentReviewFact(question, { id: "", title: "" }, released)
+      .verdict,
     // #6980-3（审查修复 P1-4）：未做口径统一服务端落库的 answered，与题卡
     // 灰显、错题本入本同一事实——不再按 answer === null 现算（空结构答案
     // 曾出现「题卡未做、汇总已答」的同页分裂）

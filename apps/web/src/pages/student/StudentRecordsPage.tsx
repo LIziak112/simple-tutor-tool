@@ -2,6 +2,7 @@ import { History, SearchX, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   DEFAULT_STUDENT_RECORDS_URL_STATE,
   hasActiveRecordsFilters,
@@ -60,6 +61,8 @@ function RecordsSkeleton() {
 
 /** 空态（区分「还没有作答」与「当前筛选为空」） */
 function RecordsEmpty({ filtered }: { filtered: boolean }) {
+  const routes = usePortalRoutes();
+
   return filtered ? (
     <StudentEmptyState
       icon={<SearchX />}
@@ -72,7 +75,9 @@ function RecordsEmpty({ filtered }: { filtered: boolean }) {
       title="还没有作答记录"
       description="做过的作业和课程练习（包括进行中的）都会汇总在这里，先去首页看看有什么待完成的作业吧。"
       action={
-        <StudentSectionLink to="/s/home">回首页看作业</StudentSectionLink>
+        <StudentSectionLink to={routes.learning("home")}>
+          回首页看作业
+        </StudentSectionLink>
       }
     />
   );

@@ -14,16 +14,16 @@ import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
-import { ApiError, sealAttemptAnnotationsApi } from "@/lib/api";
-import { requestErrorMessage } from "@/lib/api-response";
-import { withRequestDeadline } from "@/lib/request-deadline";
-import { useSubmitAttempt } from "./attempt-queries";
 import {
   draftStore,
   getDraftPersistenceState,
   getDraftSessionEpoch,
-} from "./draft-store";
-import type { InkUploadController } from "./use-ink-upload";
+} from "@/features/persistence/draft-store";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError, requestErrorMessage } from "@/lib/api-response";
+import { withRequestDeadline } from "@/lib/request-deadline";
+import { useSubmitAttempt } from "./attempt-queries";
 import type {
   EvidenceConfirmContext,
   EvidenceConfirmOutcome,
@@ -52,6 +52,10 @@ export function useAttemptSubmitFlow({
   events: { finalizeSubmit: () => Promise<void>; confirmSubmit: () => void };
   onAnnotationSealFailed: () => void;
 }) {
+  const clients = usePortalClients();
+
+  const { sealAttemptAnnotationsApi } = usePortalClients();
+
   const [inkFlushError, setInkFlushError] = useState(false);
   const submitAbortedRef = useRef(false);
   const flowGeneration = useRef(0);
@@ -105,7 +109,13 @@ export function useAttemptSubmitFlow({
       void sealAttemptAnnotationsApi(attemptId).catch(onAnnotationSealFailed);
       return { kind: "submitted" };
     },
-    [attemptId, onAnnotationSealFailed, questionIds, submit],
+    [
+      attemptId,
+      onAnnotationSealFailed,
+      questionIds,
+      submit,
+      sealAttemptAnnotationsApi,
+    ],
   );
 
   /**
@@ -173,7 +183,7 @@ export function useAttemptSubmitFlow({
                 revision.expectedAnswerRevision ??
                 0,
             }));
-            return prepareSubmitEvidence({
+            return prepareSubmitEvidence(clients, {
               attemptId,
               questionIds,
               signal,
@@ -249,6 +259,7 @@ export function useAttemptSubmitFlow({
       send,
       submit.verificationRequired,
       syncDraft,
+      clients,
     ],
   );
   const submitError = submit.isError

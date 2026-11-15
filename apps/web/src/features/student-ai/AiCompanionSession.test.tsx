@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type {
   AttemptQuestionPublic,
   StudentQuickButtonsData,
@@ -20,6 +13,13 @@ import {
   fetchStudentQuickButtonsApi,
   listStudentAiTasksApi,
 } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import {
   AiCompanionComposer,
   AiCompanionQuickButtons,

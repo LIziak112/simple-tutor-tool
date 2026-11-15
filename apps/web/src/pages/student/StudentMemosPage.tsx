@@ -17,6 +17,8 @@ export function StudentMemosPage() {
   const kind: MemoKind | undefined = kindParsed.success
     ? kindParsed.data
     : undefined;
+  const rawSeq = Number(params.get("seq"));
+  const seq = Number.isSafeInteger(rawSeq) && rawSeq > 0 ? rawSeq : undefined;
   const tag = params.get("tag") ?? undefined;
 
   function setKind(next: MemoKind | undefined): void {
@@ -31,7 +33,7 @@ export function StudentMemosPage() {
       <StudentPageHeader
         icon={<NotebookPen />}
         title="随笔"
-        description="想法、疑问、易错点随手记；任何设备、离线也行。只有你自己和你授权的 Agent 能看到。"
+        description="想法、疑问、易错点随手记；任何设备、离线也行。默认仅本人和授权的 Agent 可见；你可以逐条分享给自己的教师。"
       />
       <section
         aria-label="记一条"
@@ -80,8 +82,24 @@ export function StudentMemosPage() {
             </button>
           </p>
         )}
+        {seq !== undefined && (
+          <p>
+            只看随笔 #{seq}{" "}
+            <button
+              type="button"
+              onClick={() => {
+                const copy = new URLSearchParams(params);
+                copy.delete("seq");
+                setParams(copy);
+              }}
+            >
+              显示全部
+            </button>
+          </p>
+        )}
         <MemoList
           filter={{
+            ...(seq === undefined ? {} : { seq }),
             ...(kind === undefined ? {} : { kind }),
             ...(tag === undefined ? {} : { tag }),
           }}

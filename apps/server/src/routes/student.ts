@@ -114,7 +114,6 @@ import {
 import { listStudentRecords } from "../services/student-records";
 import { changeStudentPassword } from "../services/student-service";
 import { listWrongQuestions } from "../services/wrong-questions";
-import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
@@ -122,7 +121,7 @@ import { createStudentAttemptRoutes } from "./student-attempt-routes.ts";
 import { createStudentBatchSubmissionRoutes } from "./student-batch-submission.ts";
 import { createStudentCreateRoutes } from "./student-create";
 import { createStudentEventRoutes } from "./student-event-routes";
-import { createStudentMemoRoutes } from "./student-memos";
+import { createStudentPersonalRoutes } from "./student-personal";
 import { createStudentRubricRoutes } from "./student-rubric";
 
 /**
@@ -265,11 +264,10 @@ export function createStudentRoutes(
         "/",
         createStudentQuestionProcessRoutes(db, questionProcessEnabled),
       )
-      .route("/", createStudentInkProfileRoutes(db))
       .route("/", createStudentAiRoutes(db, dataDir, publicUrl))
       .route("/", createStudentRubricRoutes(db))
       .route("/", createStudentAttachmentRoutes(db, dataDir))
-      .route("/", createStudentMemoRoutes(db, dataDir))
+      .route("/", createStudentPersonalRoutes(db, dataDir))
       .route("/", createStudentBatchSubmissionRoutes(db))
       .route("/", createStudentAttemptRoutes(db))
       .get("/me", (c) => {

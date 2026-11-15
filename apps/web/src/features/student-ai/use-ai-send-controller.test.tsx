@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import type {
   AiTaskPublic,
   AttemptQuestionPublic,
@@ -20,6 +19,7 @@ import {
   revokeStudentAiShareTicketsApi,
   uploadStudentAiTaskMaterialsApi,
 } from "@/lib/api";
+import { act, renderHook, waitFor } from "@/test/render-with-portal";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
 import { connectedAiStatus } from "./student-ai-test-utils";
 import {

@@ -17,9 +17,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { CHANNEL_LABEL } from "@/features/student-ai/ai-channel-label";
 import { AI_INHERITABLE_MODE_LABELS } from "@/features/student-ai/ai-policy-text";
-import { teacherAiTaskMaterialPngUrl } from "@/lib/api";
+
 import { type AiHelpLabelKind, aiHelpLabelOf } from "./ai-help-label";
 import {
   useTeacherAiTaskDetail,
@@ -118,6 +119,8 @@ function AiTaskMaterialImage({
   taskId: string;
   material: AiTeacherTaskDetailData["task"]["materials"][number];
 }) {
+  const { teacherAiTaskMaterialPngUrl } = usePortalClients();
+
   const [broken, setBroken] = useState(false);
   if (material.state !== "ready" || broken) {
     return (

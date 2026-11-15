@@ -17,6 +17,7 @@ import {
   useStudentReports,
 } from "@/features/insights/report-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatCnTime } from "@/lib/time";
 
 /**
@@ -122,6 +123,8 @@ function ReportRow({
 }
 
 export function StudentReportsSection({ studentId }: { studentId: string }) {
+  const routes = usePortalRoutes();
+
   const reportsQuery = useStudentReports(studentId);
   const deleteMutation = useDeleteReport(studentId);
   const [pendingDelete, setPendingDelete] = useState<ReportSummary | null>(
@@ -176,7 +179,7 @@ export function StudentReportsSection({ studentId }: { studentId: string }) {
               连接 AI（MCP）后，AI 基于这名学生的学情数据写出的诊断与建议
               报告会保存在这里（连接方法见
               <Link
-                to="/t/connect"
+                to={routes.management("connect")}
                 className="rounded font-medium text-primary outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 连接 AI

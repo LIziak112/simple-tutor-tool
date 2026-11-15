@@ -4,7 +4,11 @@ import { Table2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatResultCounts } from "@/features/attempt/result-counts";
-import { fetchCourseProgressApi } from "@/lib/api";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+
 import { formatCnTime } from "@/lib/time";
 
 /**
@@ -27,6 +31,10 @@ function statusLabel(status: string): string {
 }
 
 export function CourseProgressTab({ courseId }: { courseId: string }) {
+  const routes = usePortalRoutes();
+
+  const { fetchCourseProgressApi } = usePortalClients();
+
   const progressQuery = useQuery({
     queryKey: progressKey(courseId),
     queryFn: () => fetchCourseProgressApi(courseId),
@@ -155,7 +163,9 @@ export function CourseProgressTab({ courseId }: { courseId: string }) {
                             {cell.history.map((h) => (
                               <li key={h.attemptId}>
                                 <Link
-                                  to={`/t/data/attempts/${h.attemptId}`}
+                                  to={routes.management(
+                                    `data/attempts/${h.attemptId}`,
+                                  )}
                                   aria-label={`查看 ${member.displayName} 在 ${unit.title} 的第 ${h.attemptNo} 次作答`}
                                   className="-mx-1 flex min-h-11 items-center rounded-md px-1 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
                                 >

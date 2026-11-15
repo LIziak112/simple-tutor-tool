@@ -76,6 +76,33 @@ describe("decideE2e 选测决策", () => {
     expect(smokeOnly.specs).toEqual([...SMOKE_SPECS]);
   });
 
+  it("门户 spec 单独变动 → 直跑门户回归并保留冒烟", () => {
+    const decision = decideE2e(["e2e/portal-navigation.spec.ts"]);
+    expect(decision.mode).toBe("specs");
+    expect(decision.specs).toEqual([
+      ...SMOKE_SPECS,
+      "e2e/portal-navigation.spec.ts",
+    ]);
+  });
+
+  it("认证守卫源码变动的标签筛选覆盖门户回归", () => {
+    const decision = decideE2e(["apps/web/src/features/auth/PortalGuard.tsx"]);
+    expect(decision.mode).toBe("grep");
+    expect(decision.tags[0]).toBe("@smoke");
+    const grep = new RegExp(decision.tags.join("|"));
+    expect(
+      SPEC_TAGS["portal-navigation.spec.ts"].some((tag) => grep.test(tag)),
+    ).toBe(true);
+  });
+
+  it("门户首页源码变动仍按共享页面全量，保留门户回归", () => {
+    const path = "apps/web/src/pages/HomePage.tsx";
+    expect(decideE2e([path])).toEqual({
+      mode: "full",
+      reason: expect.stringContaining(path),
+    });
+  });
+
   it("spec 与功能面源码同时变动 → 标签并集（grep 档）", () => {
     const decision = decideE2e([
       "e2e/mcp-smoke.spec.ts",

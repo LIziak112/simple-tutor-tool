@@ -416,8 +416,9 @@ const HOST_STANDALONE_INPUT_NARROW: readonly BaselineEntry[] = [
  * §11.2 要求 AST 判别而不能裸文本匹配的原因之一。
  * 出处如实说明（§6.3 D 只点名 PracticeQuestionSubmit 与
  * LessonQuestionCard 两文件，非四文件）：PracticeQuestionSubmit ×2、
- * LessonQuestionCard ×2 直接对应 §6.3 D 在册分支；AttemptSession
- * notePrep 是 §9.3.7 轻量守护校准记载的对话框态；
+ * LessonQuestionCard ×2 直接对应 §6.3 D 在册分支；AttemptSessionDialogs
+ * notePrep 是 §9.3.7 轻量守护校准记载的对话框态，随 session-front 纯重构
+ * 从 AttemptSession 搬至弹层组件，原片段与次数不变；
  * use-submit-evidence-confirm ×3 是该状态机经 8ec59d5b「证据确认状态机
  * 单源」从 PracticeQuestionSubmit 抽出的单源落点（决策记录此前无此
  * 文件名），执行时逐条亲核为 idle/preparing/choice/error 对话框态联合
@@ -425,7 +426,7 @@ const HOST_STANDALONE_INPUT_NARROW: readonly BaselineEntry[] = [
  */
 const DIALOG_STATE_NARROW: readonly BaselineEntry[] = [
   {
-    file: "apps/web/src/features/attempt/AttemptSession.tsx",
+    file: "apps/web/src/features/attempt/AttemptSessionDialogs.tsx",
     snippet: 'notePrep.kind === "choice"',
     count: 1,
   },

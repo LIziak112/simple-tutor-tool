@@ -18,7 +18,9 @@ import {
   useLibraryLectures,
   useLibraryUnits,
 } from "@/features/library/library-queries";
-import { ApiError } from "@/lib/api";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { catalogTreeRows } from "./catalog-tree";
 
 /**
@@ -53,6 +55,8 @@ export function AddFromLibrarySheet({
   initialParentId?: string | null;
   onClose: () => void;
 }) {
+  const routes = usePortalRoutes();
+
   const [parentId, setParentId] = useState(initialParentId ?? "");
   const [tab, setTab] = useState<"lectures" | "units">("lectures");
   const [folderId, setFolderId] = useState<string | "all">("all");
@@ -223,7 +227,9 @@ export function AddFromLibrarySheet({
           )}
           <Link
             className="inline-flex min-h-11 items-center text-sm text-primary underline"
-            to={`/t/import?courseId=${courseId}${parentId ? `&parentId=${parentId}` : ""}`}
+            to={routes.management(
+              `import?courseId=${courseId}${parentId ? `&parentId=${parentId}` : ""}`,
+            )}
           >
             改为导入文件到这里
           </Link>

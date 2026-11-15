@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   LectureDetail,
   QuestionDetail,
@@ -13,6 +12,7 @@ import {
   updateLecture,
   updateQuestion,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { LectureEditSheet, QuestionEditSheet } from "./ContentEditSheet";
 
 /**
@@ -36,7 +36,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-vi.mock("@/pages/teacher/MarkdownEditor", () => ({
+vi.mock("@/features/content/MarkdownEditor", () => ({
   MarkdownEditor: ({
     value,
     onChange,

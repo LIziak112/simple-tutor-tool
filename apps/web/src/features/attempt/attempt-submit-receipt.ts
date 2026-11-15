@@ -4,8 +4,10 @@ import {
   attemptDetailDataSchema,
 } from "@tutor/contract";
 import { useSyncExternalStore } from "react";
-import { ApiError, fetchAttemptApi, submitAttemptApi } from "@/lib/api";
-import { getDraftSessionEpoch } from "./draft-store";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
+import { ApiError } from "@/lib/api-response";
 
 const uncertain = new Map<string, number>();
 const listeners = new Set<() => void>();
@@ -34,6 +36,8 @@ function validateReceipt(data: AttemptDetailData, attemptId: string): void {
 }
 
 export function useAttemptSubmitReceipt(attemptId: string) {
+  const { submitAttemptApi, fetchAttemptApi } = usePortalClients();
+
   const epoch = getDraftSessionEpoch();
   const verificationRequired = useSyncExternalStore(
     subscribe,
@@ -65,7 +69,7 @@ export function useAttemptSubmitReceipt(attemptId: string) {
         setUncertain(attemptId, epoch);
       }
     }
-    let detail: Awaited<ReturnType<typeof fetchAttemptApi>>;
+    let detail: Awaited<ReturnType<ApiServices["fetchAttemptApi"]>>;
     try {
       detail = await fetchAttemptApi(attemptId);
       validateReceipt(detail, attemptId);

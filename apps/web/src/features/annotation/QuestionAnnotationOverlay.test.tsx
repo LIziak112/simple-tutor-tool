@@ -1,10 +1,3 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type {
   AnnotationDoc,
   AnnotationSurfaceLayout,
@@ -17,10 +10,18 @@ import {
   AttemptEditorNotice,
   AttemptEditorProvider,
   useAttemptEditor,
-} from "@/features/attempt/AttemptEditorContext";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+} from "@/features/answering/AttemptEditorContext";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
 import { preparePwaUpdate } from "@/lib/pwa-update-safety";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import {
   annotationKeyOf,
   applyAnnotationView,
@@ -198,7 +199,7 @@ beforeEach(async () => {
   resetAnnotationSession();
   resetAnnotationStoreForTest();
   installAnnotationBackend(memoryAnnotationBackend());
-  bindAnnotationSession(session);
+  bindAnnotationSession(session, testClientServices);
   vi.clearAllMocks();
   engine.finish.mockReset();
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:annotation-test");

@@ -4,7 +4,11 @@ import { formatAttachmentBytes } from "@tutor/contract";
 import { FileText, RotateCcw, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { listAttachmentsApi } from "@/lib/attachment-api";
+import {
+  usePortalClients,
+  usePortalRuntime,
+} from "@/features/runtime/portal-runtime";
+
 import { AttachmentList, VISIBILITY_LABEL } from "./AttachmentList";
 import { type UploadItem, uploadStatusText } from "./attachment-upload-queue";
 import {
@@ -28,6 +32,9 @@ export const attachmentsKey = (courseId: string) =>
   ["attachments", courseId] as const;
 
 export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
+  const runtime = usePortalRuntime();
+  const { listAttachmentsApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const listQuery = useQuery({
     queryKey: attachmentsKey(courseId),
@@ -47,17 +54,22 @@ export function CourseAttachmentsTab({ courseId }: { courseId: string }) {
   // 上传成功 → 刷新那门课的列表（按条目的 courseId，哪怕完成的是别的课程的文件）；
   // 没有页签在听时完成的，挂载时补刷一次
   useEffect(() => {
-    if (takeStaleAttachmentCourse(courseId)) void invalidate();
-    return onAttachmentUploadCompleted((item) => {
+    if (takeStaleAttachmentCourse(runtime, courseId)) void invalidate();
+    return onAttachmentUploadCompleted(runtime, (item) => {
       void queryClient.invalidateQueries({
         queryKey: attachmentsKey(item.courseId),
       });
     });
-  }, [courseId, invalidate, queryClient]);
+  }, [courseId, invalidate, queryClient, runtime]);
 
   const onFilesChosen = (files: FileList | null) => {
     if (files === null || files.length === 0) return;
-    enqueueAttachmentUploads(Array.from(files), courseId, defaultVisibility);
+    enqueueAttachmentUploads(
+      runtime,
+      Array.from(files),
+      courseId,
+      defaultVisibility,
+    );
     if (inputRef.current !== null) inputRef.current.value = "";
   };
 

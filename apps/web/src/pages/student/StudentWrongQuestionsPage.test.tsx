@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type {
   AttemptStartData,
   StudentCourseListData,
@@ -30,6 +23,13 @@ import {
   fetchStudentWrongQuestionsApi,
   startWrongPracticeApi,
 } from "@/lib/api";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import StudentWrongQuestionsPage from "./StudentWrongQuestionsPage";
 
 /**

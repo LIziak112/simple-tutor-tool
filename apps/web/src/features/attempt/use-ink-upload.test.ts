@@ -1,4 +1,3 @@
-import { renderHook } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +7,8 @@ import {
   type InkUploadHooks,
   isInkDocEmpty,
   useInkUpload,
-} from "./use-ink-upload";
+} from "@/features/persistence/use-ink-upload";
+import { renderHook } from "@/test/render-with-portal";
 
 /**
  * 笔迹上传状态机测试（T2.8）：防抖上传、交卷 flush、失败重试语义。

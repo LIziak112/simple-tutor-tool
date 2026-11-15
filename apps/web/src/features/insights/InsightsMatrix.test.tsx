@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
 import type { AnalyticsMatrix } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { InsightsMatrix } from "./InsightsMatrix";
 
 /**

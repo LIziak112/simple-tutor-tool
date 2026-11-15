@@ -23,6 +23,7 @@ import {
   SESSION_A,
   SESSION_B,
 } from "@/features/notes/note-test-utils";
+import { testClientServices } from "@/test/portal-fixture";
 
 /**
  * 会话同步队列（T6R.8，方案 §6.2）测试：2s 防抖+10s 最大等待、单文档单
@@ -123,7 +124,7 @@ beforeEach(() => {
   installNoteBackend(backend);
   resetNoteSession();
   putMock.mockReset();
-  bindNoteSession(SESSION_A);
+  bindNoteSession(SESSION_A, testClientServices);
 });
 
 afterEach(() => {
@@ -281,7 +282,7 @@ describe("note-sync：重试、退避与幂等", () => {
     // 模拟重进：同一后端重装（清内存缓存，数据仍在），重绑会话触发扫描
     resetNoteSession();
     installNoteBackend(backend);
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     expect(putMock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
@@ -494,7 +495,7 @@ describe("note-sync：账号切换与登出隔离", () => {
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     const signal = callOf(0).signal;
     // 切到账号 B：立即失效旧会话
-    bindNoteSession(SESSION_B);
+    bindNoteSession(SESSION_B, testClientServices);
     expect(signal?.aborted).toBe(true); // 中止在途
     hang.resolve(receiptOf(1)); // A 的迟到回执
     await vi.advanceTimersByTimeAsync(60_000);
@@ -646,7 +647,7 @@ describe("note-sync：分诊矩阵（复审⑧⑪）——服务端错误码全�
       installNoteBackend(memoryNoteBackend());
       resetNoteSession();
       putMock.mockReset().mockRejectedValue(c.err());
-      bindNoteSession(SESSION_A);
+      bindNoteSession(SESSION_A, testClientServices);
       writeNoteDoc(SESSION_A, SCOPE, DOC_A);
       await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
       const record = peekNoteRecord(SESSION_A, SCOPE);
@@ -678,7 +679,7 @@ describe("retryNoteUpload（T6R.9 denied(access) 手动重试入口）", () => {
       new ApiError("FORBIDDEN", "已无权限访问该练习", 403),
     );
     putMock.mockResolvedValueOnce(receiptOf(2));
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
@@ -694,7 +695,7 @@ describe("retryNoteUpload（T6R.9 denied(access) 手动重试入口）", () => {
   });
 
   it("无 access 终态时幂等：不触发上传（重复点击安全）", async () => {
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     const calls = putMock.mock.calls.length;

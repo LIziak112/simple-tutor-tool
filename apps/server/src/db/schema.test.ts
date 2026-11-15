@@ -253,9 +253,10 @@ describe("teachers / sessions 表读写", () => {
       accountKind: "class",
       personalStudentId: null,
     });
+    // 插入时省略设备引用，读回应明确为默认 NULL，其余字段逐项保持一致。
     expect(
       db.select().from(sessions).where(eq(sessions.id, session.id)).get(),
-    ).toEqual(session);
+    ).toEqual({ ...session, deviceId: null });
     db.$client.close();
   });
 
@@ -520,6 +521,7 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
     expect(row?.questionVersion).toBe(0);
     expect(row?.hintsUsed).toBe(0);
     expect(row?.changeCount).toBe(0);
+    expect(row?.settlementSeq).toBeNull(); // 省略结算引用时默认尚未归属。
     expect(row?.autoCorrect).toBe(true); // 布尔模式按 0/1 映射
 
     // 同 (attemptId, questionId) 第二行 → 违反唯一索引

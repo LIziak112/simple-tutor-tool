@@ -1,14 +1,18 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EnabledCapabilitiesProvider } from "@/features/capability/enabled-capabilities";
+import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import {
   QuestionProcessContext,
   readProcessSurfaces,
 } from "@/features/question-process/session";
 import { memoryKVBackend } from "@/lib/kv-backend";
-import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { HandwrittenControls } from "./HandwrittenControls";
 
 /**

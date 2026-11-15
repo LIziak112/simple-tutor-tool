@@ -1,7 +1,7 @@
 import dayjs from "dayjs";
 import { Ban, Check, CloudOff, LoaderCircle } from "lucide-react";
+import type { DraftSaveStatus } from "@/features/persistence/use-draft-sync";
 import { DISPLAY_TZ } from "@/lib/time";
-import type { DraftSaveStatus } from "./use-draft-sync";
 
 /**
  * 顶栏草稿状态（T2.9 三态）：

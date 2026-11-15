@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { NoteDoc } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { denseStroke, docOf } from "@/features/notes/note-fixtures";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { NoteVersionView } from "./NoteVersionView";
 
 /**

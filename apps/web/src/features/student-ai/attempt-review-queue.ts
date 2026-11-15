@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiAttemptReviewAction } from "@tutor/contract";
-import { postStudentAiAttemptReviewActionApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
-import { listStudentAiAttemptReviewQueueApi } from "./attempt-review-api";
+
 import {
   attemptReviewListKey,
   attemptReviewPreviewKey,
@@ -18,6 +19,8 @@ export function useAttemptReviewQueue(
   archived: "exclude" | "only",
   attemptId?: string,
 ) {
+  const { listStudentAiAttemptReviewQueueApi } = usePortalClients();
+
   return useQuery({
     queryKey: [...attemptReviewQueueKey, archived, attemptId],
     queryFn: () => listStudentAiAttemptReviewQueueApi(archived, attemptId),
@@ -27,6 +30,8 @@ export function useAttemptReviewQueue(
 
 /** 列表上的取消 / 重试 / 归档：成功后列表、角标与对应结果页入口一起刷新 */
 export function useAttemptReviewQueueAction() {
+  const { postStudentAiAttemptReviewActionApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: {

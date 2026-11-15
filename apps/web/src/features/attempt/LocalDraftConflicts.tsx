@@ -1,15 +1,15 @@
 import { useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
+import { formatStudentAnswer } from "@/features/answering/answer-format";
 import { InkReplay } from "@/features/ink/replay/InkReplay";
 import { parseInkReplayData } from "@/features/ink/replay/model";
-import { formatStudentAnswer } from "./answer-format";
-import { digestOf } from "./draft-merge";
-import type { LocalDraftConflict } from "./draft-persistence";
+import { digestOf } from "@/features/persistence/draft-merge";
+import type { LocalDraftConflict } from "@/features/persistence/draft-persistence";
 import {
   draftStore,
   getDraftSessionEpoch,
   subscribeDraftPersistence,
-} from "./draft-store";
+} from "@/features/persistence/draft-store";
 
 function VersionPreview({ version }: { version: LocalDraftConflict }) {
   if (version.kind === "answer")

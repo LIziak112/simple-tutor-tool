@@ -1,11 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  fetchTeacherAttemptDetailApi,
-  fetchTeacherAttemptReplayApi,
-  fetchTeacherAttemptsApi,
-  fetchTeacherInkStrokesApi,
-  type TeacherAttemptListParams,
-} from "@/lib/api";
+import type { TeacherAttemptListParams } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 教师端作答数据的 TanStack Query 封装（T3.1，/t/data 与详情页共用）：
@@ -24,6 +19,8 @@ export const teacherAttemptsKey = (params: TeacherAttemptListParams) =>
 
 /** 作答卡片列表（D6：筛选 + 分页；三态由页面接 isPending/isError） */
 export function useTeacherAttempts(params: TeacherAttemptListParams) {
+  const { fetchTeacherAttemptsApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherAttemptsKey(params),
     queryFn: () => fetchTeacherAttemptsApi(params),
@@ -38,6 +35,8 @@ export const teacherAttemptDetailKey = (attemptId: string) =>
 
 /** 作答详情（D7 全字段；draft 亦可用。attemptId 为空（路由未就绪）不查） */
 export function useTeacherAttemptDetail(attemptId: string | undefined) {
+  const { fetchTeacherAttemptDetailApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherAttemptDetailKey(attemptId ?? "pending"),
     queryFn: () => fetchTeacherAttemptDetailApi(attemptId ?? ""),
@@ -56,6 +55,8 @@ export const teacherInkReplayKey = (inkId: string) =>
  * 数据不重试：404（文件缺失）/损坏等失败情形按 D12 直接走 PNG 快照降级。
  */
 export function useTeacherInkReplay(inkId: string | undefined) {
+  const { fetchTeacherInkStrokesApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherInkReplayKey(inkId ?? "pending"),
     queryFn: () => fetchTeacherInkStrokesApi(inkId ?? ""),
@@ -76,6 +77,8 @@ export const teacherAttemptReplayKey = (attemptId: string) =>
  * 不自动刷新（与详情页同「刷新才更新」口径）。
  */
 export function useTeacherAttemptReplay(attemptId: string | undefined) {
+  const { fetchTeacherAttemptReplayApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherAttemptReplayKey(attemptId ?? "pending"),
     queryFn: () => fetchTeacherAttemptReplayApi(attemptId ?? ""),

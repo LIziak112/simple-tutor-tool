@@ -1,6 +1,6 @@
 import type { AnswerOf, ReferenceOf } from "@tutor/contract";
 import type { ReactNode } from "react";
-import type { QuestionCompletion } from "../attempt/question-completion";
+import type { QuestionCompletion } from "@/features/answering/question-completion";
 import type { PreparedQuestion } from "./prepare-question";
 
 /**

@@ -1,5 +1,6 @@
 import type { AssignmentStatus, StudentAssignment } from "@tutor/contract";
 import dayjs from "dayjs";
+import type { PortalRoutes } from "@/features/runtime/portal-runtime";
 import { DISPLAY_TZ } from "@/lib/time";
 
 /** 页面筛选状态，不参与 API 数据契约。 */
@@ -122,20 +123,27 @@ export function assignmentListPage(
 }
 
 /** 只允许完整作业列表作为来源，过滤外站与未知查询字段。 */
-export function assignmentsReturnTarget(raw: string | null): string | null {
-  if (!raw || !/^\/s\/assignments(?:[?#]|$)/.test(raw) || raw.includes("\\"))
+export function assignmentsReturnTarget(
+  routes: PortalRoutes,
+  raw: string | null,
+): string | null {
+  if (
+    !raw ||
+    !routes.learningPattern("assignments(?:[?#]|$)", "").test(raw) ||
+    raw.includes("\\")
+  )
     return null;
   try {
     const url = new URL(raw, "https://student.invalid");
     if (
       url.origin !== "https://student.invalid" ||
-      url.pathname !== "/s/assignments"
+      url.pathname !== routes.learning("assignments")
     )
       return null;
     const query = assignmentListQuery(
       parseAssignmentListUrl(url.searchParams),
     ).toString();
-    return `/s/assignments${query ? `?${query}` : ""}`;
+    return routes.learning(`assignments${query ? `?${query}` : ""}`);
   } catch {
     return null;
   }

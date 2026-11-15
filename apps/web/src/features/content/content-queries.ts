@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchContentTree } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 内容树查询（T1.11 教师端内容页）：
@@ -9,6 +9,8 @@ export const contentTreeKey = ["teacher", "content-tree"] as const;
 
 /** 课程 → 讲义/单元 → 题目摘要树（三态齐全由页面接 isPending/isError） */
 export function useContentTree() {
+  const { fetchContentTree } = usePortalClients();
+
   return useQuery({
     queryKey: contentTreeKey,
     queryFn: fetchContentTree,

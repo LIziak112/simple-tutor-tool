@@ -17,7 +17,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
-import { useTeacherAssignments } from "@/features/assignments/assignment-queries";
 import {
   attemptRoundLabel,
   formatReferenceAnswers,
@@ -25,12 +24,14 @@ import {
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-} from "@/features/attempt/answer-format";
+} from "@/features/answering/answer-format";
+import { useTeacherAssignments } from "@/features/assignments/assignment-queries";
+import { responseTimeLabel } from "@/features/attempt/attempt-time-label";
 import { useTeacherCourses } from "@/features/courses/course-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { useStudents } from "@/features/students/student-queries";
-import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { sourceContextOf } from "@/features/teacher-attempts/attempt-views";
 import { InkLightbox } from "@/features/teacher-attempts/InkLightbox";
 import {
@@ -417,7 +418,7 @@ function PendingCard({
 
       {/* 学习行为统计 */}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-        <span>用时 {formatActiveSec(card.activeSec)}</span>
+        <span>{responseTimeLabel(card.time)}</span>
         <span className="flex items-center gap-1">
           <Lightbulb aria-hidden className="size-3.5" />
           提示 {card.hintsUsed} 次
@@ -487,6 +488,8 @@ function PendingCard({
 }
 
 export function PendingMarkQueuePage() {
+  const routes = usePortalRoutes();
+
   const [searchParams, setSearchParams] = useSearchParams();
   const courseId = searchParams.get("courseId");
   const assignmentId = searchParams.get("assignmentId");
@@ -749,7 +752,7 @@ export function PendingMarkQueuePage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" className="min-h-11" asChild>
-            <Link to="/t/data">返回数据页</Link>
+            <Link to={routes.management("data")}>返回数据页</Link>
           </Button>
           <Button
             variant="outline"
@@ -865,7 +868,7 @@ export function PendingMarkQueuePage() {
                 {undoState !== null && "；如需改回，可按 U 撤销上一题。"}
               </p>
               <Button variant="outline" className="min-h-11" asChild>
-                <Link to="/t/data">去数据页核对</Link>
+                <Link to={routes.management("data")}>去数据页核对</Link>
               </Button>
             </div>
           )

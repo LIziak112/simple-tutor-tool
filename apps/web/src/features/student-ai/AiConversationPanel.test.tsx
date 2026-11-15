@@ -4,7 +4,6 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type {
   AiTaskDetailData,
   AiTaskPublic,
@@ -22,6 +21,13 @@ import {
   listStudentAiTasksApi,
   openStudentAiReplyApi,
 } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@/test/render-with-portal";
 import { AiConversationPanel } from "./AiConversationPanel";
 import { connectedAiStatus } from "./student-ai-test-utils";
 import {

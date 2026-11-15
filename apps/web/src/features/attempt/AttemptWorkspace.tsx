@@ -1,4 +1,8 @@
 import { type ReactNode, useEffect, useRef } from "react";
+import {
+  type HostLease,
+  LearningHostContext,
+} from "@/features/learning-context/learning-context-store";
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import { QuestionProcessContext } from "@/features/question-process/session";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
@@ -6,9 +10,11 @@ import { useStudentWorkspace } from "@/features/student/student-workspace-layout
 export function AttemptWorkspace({
   children,
   process = null,
+  learningLease = null,
 }: {
   children: ReactNode;
   process?: QuestionProcessRecorder | null;
+  learningLease?: HostLease | null;
 }) {
   useStudentWorkspace();
   const root = useRef<HTMLDivElement>(null);
@@ -120,7 +126,9 @@ export function AttemptWorkspace({
       className="group/workspace flex min-w-0 flex-col gap-4 pb-[calc(var(--attempt-footer-height,64px)+24px)]"
     >
       <QuestionProcessContext.Provider value={process}>
-        {children}
+        <LearningHostContext value={learningLease}>
+          {children}
+        </LearningHostContext>
       </QuestionProcessContext.Provider>
     </div>
   );

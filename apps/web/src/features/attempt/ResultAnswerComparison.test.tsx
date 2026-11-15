@@ -1,6 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
 import type { AttemptResultQuestion } from "@tutor/contract";
 import { expect, it } from "vitest";
+import { render, screen, within } from "@/test/render-with-portal";
 import { ResultAnswerComparison } from "./ResultAnswerComparison";
 
 const question: Pick<AttemptResultQuestion, "snapshot" | "answer" | "answers"> =

@@ -9,22 +9,26 @@ import {
   MEMO_KIND_LABEL,
   memoMediaUrl,
 } from "@tutor/contract";
-import { Bot, CloudOff, Loader2, MapPin, Trash2 } from "lucide-react";
+import { Bot, CloudOff, Loader2, Trash2 } from "lucide-react";
 import { useEffect } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
 import {
   StudentEmptyState,
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
-import { deleteMemoApi, listMemosApi } from "@/lib/memo-api";
-import { formatRelativeTime } from "@/lib/time";
+
 import {
-  MEMO_DEVICE_LABEL,
-  memoAnchorHref,
-  memoAnchorLabel,
-} from "./memo-format";
+  MemoDeviceName,
+  MemoSharing,
+  MemoSource,
+  MemoTime,
+} from "./MemoMetadata";
 import {
   discardMemoOutboxItem,
   type MemoOutboxItem,
@@ -43,6 +47,8 @@ export const MEMO_LIST_KEY = ["student", "memos"] as const;
  * 当时的题 / 讲义）、标签、时间、设备、Agent 转记标识与删除。
  */
 export function MemoList({ filter = {} }: { filter?: MemoListQuery }) {
+  const { listMemosApi, deleteMemoApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const outbox = useMemoOutbox();
   const query = useInfiniteQuery({
@@ -59,6 +65,9 @@ export function MemoList({ filter = {} }: { filter?: MemoListQuery }) {
     () =>
       onMemoSynced(() => {
         void queryClient.invalidateQueries({ queryKey: MEMO_LIST_KEY });
+        void queryClient.invalidateQueries({
+          queryKey: ["student", "memo-tags"],
+        });
       }),
     [queryClient],
   );
@@ -68,6 +77,8 @@ export function MemoList({ filter = {} }: { filter?: MemoListQuery }) {
   });
 
   const matchesFilter = (item: MemoOutboxItem): boolean =>
+    filter.seq === undefined &&
+    filter.parentMemoSeq === undefined &&
     (filter.kind === undefined || item.kind === filter.kind) &&
     (filter.tag === undefined || item.tags.includes(filter.tag));
   const pending = outbox.filter(matchesFilter);
@@ -91,7 +102,7 @@ export function MemoList({ filter = {} }: { filter?: MemoListQuery }) {
       // 空态只在两边都空时显示；只有本机条目时不说「还没有随笔」
       return pending.length === 0 ? (
         <StudentEmptyState
-          title="还没有随笔"
+          title={filter.seq === undefined ? "还没有随笔" : "这条随笔当前不可用"}
           description="想法、疑问、易错点，随手记下来；联网后自动同步，Agent 也能读到。"
         />
       ) : null;
@@ -158,8 +169,8 @@ function MemoCard({
   deleting: boolean;
   onDelete: () => void;
 }) {
-  const anchorLabel = memoAnchorLabel(memo.anchor);
-  const anchorHref = memoAnchorHref(memo.anchor);
+  const routes = usePortalRoutes();
+
   const mediaUrl = memoMediaUrl(memo.id);
   return (
     <article className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3">
@@ -171,10 +182,9 @@ function MemoCard({
             Agent 转记
           </span>
         )}
-        <time dateTime={memo.recordedAt}>
-          {formatRelativeTime(memo.recordedAt)}
-        </time>
-        <span>· {MEMO_DEVICE_LABEL[memo.device]}</span>
+        <span>{memo.seq === undefined ? "序号暂不可用" : `#${memo.seq}`}</span>
+        <MemoTime recordedAt={memo.recordedAt} />
+        <MemoDeviceName memo={memo} />
         {memo.media?.durationSec != null && (
           <span>· {formatMemoDuration(memo.media.durationSec)}</span>
         )}
@@ -213,30 +223,27 @@ function MemoCard({
           {memo.text}
         </p>
       )}
-      {(anchorLabel !== null || memo.tags.length > 0) && (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {anchorLabel !== null &&
-            (anchorHref !== null ? (
-              <Link
-                to={anchorHref}
-                className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
-              >
-                <MapPin aria-hidden className="size-3" />
-                {anchorLabel}
-              </Link>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-muted-foreground">
-                <MapPin aria-hidden className="size-3" />
-                {anchorLabel}
-              </span>
-            ))}
-          {memo.tags.map((tag) => (
-            <span key={tag} className="rounded-full bg-muted px-2 py-0.5">
-              #{tag}
-            </span>
-          ))}
-        </div>
+      <MemoSource memo={memo} />
+      {memo.parentMemoSeq != null && (
+        <Link
+          className="min-h-11 text-xs underline"
+          to={routes.learning(`memos?seq=${memo.parentMemoSeq}`)}
+        >
+          关联原随笔 #{memo.parentMemoSeq}
+        </Link>
       )}
+      <div className="flex flex-wrap gap-1">
+        {memo.tags.map((tag) => (
+          <Link
+            to={routes.learning(`memos?tag=${encodeURIComponent(tag)}`)}
+            key={tag}
+            className="rounded bg-muted px-2 py-1 text-xs"
+          >
+            #{tag}
+          </Link>
+        ))}
+      </div>
+      <MemoSharing memo={memo} />
     </article>
   );
 }
@@ -258,9 +265,8 @@ function PendingMemoCard({ item }: { item: MemoOutboxItem }) {
           <CloudOff aria-hidden className="size-3" />
           {failed ? "上传失败" : "待补传（联网后自动）"}
         </span>
-        <time dateTime={item.recordedAt}>
-          {formatRelativeTime(item.recordedAt)}
-        </time>
+        <span>尚未编号</span>
+        <MemoTime recordedAt={item.recordedAt} />
         <span className="flex-1" />
         {failed && (
           // 失败后由本人决定：原地重试（服务端规则可能已放宽 / 误判）或丢弃；44px 触控面

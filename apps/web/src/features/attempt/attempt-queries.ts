@@ -1,34 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  AttemptAnswerSaveData,
   AttemptDetailData,
   CourseAttemptStartOptions,
   PracticeWorkflowUpdateRequest,
-  StudentAnswer,
 } from "@tutor/contract";
-import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import {
   studentAssignmentsKey,
   studentCourseKey,
   studentCoursesKey,
 } from "@/features/student/student-queries";
+import { ApiError } from "@/lib/api-response";
 import {
-  ApiError,
   AttemptDetailReadTimeoutError,
-  fetchAttemptApi,
-  fetchAttemptContextApi,
-  fetchStudentUnitLandingApi,
-  saveAttemptAnswerApi,
-  startAttemptApi,
-  startCourseAttemptApi,
-  updateAttemptWorkflowApi,
-} from "@/lib/api";
-import { shareAttemptDetail } from "@/lib/attempt-detail-read";
-import { randomUuid } from "@/lib/uuid";
+  shareAttemptDetail,
+} from "@/lib/attempt-detail-read";
 import { useAttemptSubmitReceipt } from "./attempt-submit-receipt";
-import { digestOf } from "./draft-merge";
-import { draftStore, getDraftSessionEpoch } from "./draft-store";
 import { getPracticePreference } from "./practice-preference-store";
 
 /**
@@ -55,6 +44,8 @@ export const studentAttemptContextKey = (attemptId: string) =>
  * 返回空 materials/groups，渲染零变化。
  */
 export function useAttemptContext(attemptId: string) {
+  const { fetchAttemptContextApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentAttemptContextKey(attemptId),
     queryFn: () => fetchAttemptContextApi(attemptId),
@@ -110,6 +101,8 @@ export function isAttemptUnavailable(error: unknown): boolean {
 export type TimedAttemptDetail = AttemptDetailData & { clockAnchor?: number };
 
 export function useAttemptDetail(attemptId: string | undefined) {
+  const { fetchAttemptApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const paused = useSyncExternalStore(
     subscribeDetailPolling,
@@ -189,6 +182,8 @@ export function useAttemptDetail(attemptId: string | undefined) {
 
 /** 单元落地信息（开始练习/继续作答/再做一次与历次记录列表的数据源） */
 export function useStudentUnitLanding(courseId: string, unitId: string) {
+  const { fetchStudentUnitLandingApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentUnitLandingKey(courseId, unitId),
     queryFn: () => fetchStudentUnitLandingApi(courseId, unitId),
@@ -212,6 +207,8 @@ export const workflowStartOptions = () => {
 
 /** 创建/取回 attempt（作业来源入口；返回摘要含 status 决定走答题还是结果视图） */
 export function useStartAttempt(assignmentId: string) {
+  const { startAttemptApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     // mutationFn 执行时才读偏好（点击时刻），不在模块顶层求值
@@ -232,6 +229,8 @@ export function useStartAttempt(assignmentId: string) {
  * 服务端投影（canChangeFeedback/allowedFeedbackModes），客户端不预判授权。
  */
 export function useUpdateAttemptWorkflow(attemptId: string) {
+  const { updateAttemptWorkflowApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const [staleNotice, setStaleNotice] = useState<string | null>(null);
   const mutation = useMutation({
@@ -278,6 +277,8 @@ export function useUpdateAttemptWorkflow(attemptId: string) {
  * 节奏时传 {...workflowStartOptions(), feedbackMode: 所选}（显式选择恒最高）。
  */
 export function useStartCourseAttempt(courseId: string, unitId: string) {
+  const { startCourseAttemptApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (options: CourseAttemptStartOptions | undefined) =>
@@ -378,76 +379,4 @@ export function useSubmitAttempt(attemptId: string, onConfirmed?: () => void) {
  * 高频触发（每次作答/每个防抖窗）时 mutation 栈会堆积无意义的历史条目）。
  * 失败由调用方捕获并置「保存失败」提示；重试靠学生继续作答或刷新页面。
  */
-const answerSaveTails = new Map<string, Promise<void>>();
-export function saveDraftAnswer(
-  attemptId: string,
-  questionId: string,
-  answer: StudentAnswer,
-): Promise<AttemptAnswerSaveData> {
-  const epoch = getDraftSessionEpoch();
-  const mutationId =
-    draftStore.answerMutationId(attemptId, questionId) ?? randomUuid();
-  const key = JSON.stringify([epoch, attemptId, questionId]);
-  const prior = answerSaveTails.get(key) ?? Promise.resolve();
-  const task = prior.then(async () => {
-    if (epoch !== getDraftSessionEpoch())
-      throw new Error("作答会话已切换，旧答案未上传");
-    await draftStore.flush(attemptId);
-    const record = await draftStore.loadDraft(attemptId, { strictRead: true });
-    if (epoch !== getDraftSessionEpoch())
-      throw new Error("作答会话已切换，旧答案未上传");
-    if (
-      record?.answerConflicts?.[questionId] ||
-      record?.localConflicts?.some(
-        (entry) => entry.kind === "answer" && entry.key === questionId,
-      )
-    )
-      throw new Error("本题答案有同步冲突，请先选择保留哪一份");
-    const latest = record?.answers[questionId];
-    if (
-      (latest !== undefined ||
-        record?.answerMutationIds?.[questionId] !== undefined) &&
-      digestOf(latest) !== digestOf(answer)
-    )
-      throw new Error("本题已有较新的本机答案，旧答案未上传");
-    const baseRevision = record?.answerRevisions?.[questionId];
-    try {
-      const receipt = await (baseRevision === undefined
-        ? saveAttemptAnswerApi(attemptId, questionId, answer)
-        : saveAttemptAnswerApi(attemptId, questionId, answer, {
-            baseRevision,
-            mutationId,
-          }));
-      if (epoch !== getDraftSessionEpoch()) return receipt;
-      await draftStore.markAnswerSynced(
-        attemptId,
-        questionId,
-        answer,
-        receipt.revision,
-      );
-      return receipt;
-    } catch (cause) {
-      if (
-        epoch === getDraftSessionEpoch() &&
-        cause instanceof ApiError &&
-        cause.code === "ANSWER_REVISION_CONFLICT"
-      ) {
-        const current = attemptAnswerConflictCurrentSchema.safeParse(
-          cause.extra?._current,
-        );
-        if (current.success)
-          draftStore.setAnswerConflict(attemptId, questionId, current.data);
-      }
-      throw cause;
-    }
-  });
-  const tail = task.then(
-    () => undefined,
-    () => undefined,
-  );
-  answerSaveTails.set(key, tail);
-  void tail.then(() => {
-    if (answerSaveTails.get(key) === tail) answerSaveTails.delete(key);
-  });
-  return task;
-}
+export { saveDraftAnswer } from "@/features/persistence/save-draft-answer";

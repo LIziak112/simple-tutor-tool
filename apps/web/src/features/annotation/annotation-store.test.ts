@@ -7,7 +7,7 @@ import type {
   AnnotationViewData,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { digestOf } from "@/features/attempt/draft-merge";
+import { digestOf } from "@/features/persistence/draft-merge";
 import {
   type AnnotationSessionRef,
   adoptCloudAnnotationBase,

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { testPortalRoutes } from "@/test/portal-fixture";
 import {
   clearLearningFocus,
   getLearningFocus,
@@ -22,7 +23,9 @@ describe("memo-format", () => {
       label: "第 3 题",
     };
     expect(memoAnchorLabel(question)).toBe("第 3 题");
-    expect(memoAnchorHref(question)).toBe("/s/attempts/a1?q=q%203");
+    expect(memoAnchorHref(testPortalRoutes, question)).toBe(
+      "/s/attempts/a1?q=q%203",
+    );
     const lecture = {
       kind: "lecture" as const,
       lectureId: "l1",
@@ -30,9 +33,9 @@ describe("memo-format", () => {
       label: "第二讲",
     };
     expect(memoAnchorLabel(lecture)).toBe("第二讲");
-    expect(memoAnchorHref(lecture)).toBe("/s/lectures/l1");
+    expect(memoAnchorHref(testPortalRoutes, lecture)).toBe("/s/lectures/l1");
     expect(memoAnchorLabel({ kind: "none" })).toBeNull();
-    expect(memoAnchorHref({ kind: "none" })).toBeNull();
+    expect(memoAnchorHref(testPortalRoutes, { kind: "none" })).toBeNull();
   });
 
   it("标签输入按逗号 / 空格 / 顿号切分并去重", () => {

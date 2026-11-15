@@ -1,12 +1,12 @@
+import { describe, expect, it, vi } from "vitest";
+import { fetchStudentAiShareAccessStatusApi } from "@/lib/api";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { fetchStudentAiShareAccessStatusApi } from "@/lib/api";
+} from "@/test/render-with-portal";
 import { AiLinkShareBox } from "./AiLinkShareBox";
 import type { AiLinkShareState } from "./use-ai-send-controller";
 

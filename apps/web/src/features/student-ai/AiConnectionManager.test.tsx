@@ -1,12 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import {
   type AiConnectionListData,
   aiConnectionPatchRequestSchema,
 } from "@tutor/contract";
@@ -20,6 +13,13 @@ import {
   testStudentAiConnectionApi,
 } from "@/lib/api";
 import { copyText } from "@/lib/copy";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { AiConnectionManager } from "./AiConnectionManager";
 
 /**

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchSpecFile } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
 
 /**
  * DSL 规范文档查询（T1.13"AI 出题助手"）：
@@ -16,7 +17,9 @@ export interface SpecDocs {
 
 export const specDocsKey = ["public", "spec-docs"] as const;
 
-async function fetchSpecDocs(): Promise<SpecDocs> {
+async function fetchSpecDocs(clients: ApiServices): Promise<SpecDocs> {
+  const { fetchSpecFile } = clients;
+
   const [rules, example, prompt] = await Promise.all([
     fetchSpecFile("rules.md"),
     fetchSpecFile("example.md"),
@@ -30,9 +33,10 @@ async function fetchSpecDocs(): Promise<SpecDocs> {
  * 三态齐全由面板接 isPending/isError 展示。
  */
 export function useSpecDocs(enabled: boolean) {
+  const clients = usePortalClients();
   return useQuery({
     queryKey: specDocsKey,
-    queryFn: fetchSpecDocs,
+    queryFn: () => fetchSpecDocs(clients),
     enabled,
     staleTime: 10 * 60_000,
     retry: 1,

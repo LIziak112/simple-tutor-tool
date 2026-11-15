@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { formatDueTime } from "@/lib/time";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { SubmitConfirmDialog } from "./SubmitConfirmDialog";
 
 /** 交卷确认弹层测试（T2.6）：未答数量提示与确认/继续作答回调。 */
