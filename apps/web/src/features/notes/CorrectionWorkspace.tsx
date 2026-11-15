@@ -1,3 +1,4 @@
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 /**
  * 订正工作台（2026-10 订正重构）：结果页「订正」直达的全屏重做空间——
  * 「按照最初做题那样重新做一遍」：
@@ -56,12 +57,12 @@ import {
   AttemptEditorNotice,
   AttemptEditorProvider,
   useAttemptEditor,
-} from "@/features/attempt/AttemptEditorContext";
+} from "@/features/answering/AttemptEditorContext";
 import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-} from "@/features/attempt/answer-format";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+} from "@/features/answering/answer-format";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import {
   effectiveNoteLayout,
@@ -75,7 +76,7 @@ import {
 import { getNoteRecord } from "@/features/notes/note-store";
 import { catchUpNotes } from "@/features/notes/note-sync";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
-import { sealCorrectionApi } from "@/lib/api";
+
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 
 /** 反思输入按契约上限截断（jsdom 程序赋值绕过 maxLength，双保险） */
@@ -125,6 +126,8 @@ function CorrectionWorkspaceInner({
   onClose,
   onSealed,
 }: CorrectionWorkspaceProps) {
+  const { sealCorrectionApi } = usePortalClients();
+
   const session = useNoteSessionRef();
 
   // ---- 圈画（与做题同款：QuestionAnnotationOverlay 原位直接在原题上落墨） ----
@@ -312,7 +315,15 @@ function CorrectionWorkspaceInner({
     } finally {
       setSealing(false);
     }
-  }, [session, attemptId, questionId, stuckAt, errorCause, onSealed]);
+  }, [
+    session,
+    attemptId,
+    questionId,
+    stuckAt,
+    errorCause,
+    onSealed,
+    sealCorrectionApi,
+  ]);
 
   const correctionName =
     roundLabel !== null

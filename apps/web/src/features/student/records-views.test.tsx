@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
 import type { StudentRecordRow } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { RecordCard } from "./records-views";
 
 /**
@@ -46,6 +46,13 @@ function renderRow(row: StudentRecordRow) {
 }
 
 describe("记录卡片进行中进度（M4-D3）", () => {
+  it("已入账的材料圈画等0题作答仍可继续，不由前端按题数隐藏", () => {
+    renderRow(
+      rowFixture({ answerProgress: { answeredCount: 0, totalCount: 3 } }),
+    );
+    expect(screen.getByRole("link", { name: /继续作答/ })).toBeVisible();
+    expect(screen.getByText("已做 0 / 3 题")).toBeInTheDocument();
+  });
   it("draft 且携带 n/N（v1 卷）显示「已提交 1/3 题」", () => {
     renderRow(
       rowFixture({ practiceSubmittedCount: 1, practiceQuestionCount: 3 }),
@@ -152,7 +159,7 @@ it.each([0, 2])(
   },
 );
 
-it("有通用已做进度时不重复展示旧已提交计数", () => {
+it("已做与已提交分别显示，避免混淆尚未提交的答案", () => {
   renderRow(
     rowFixture({
       answerProgress: { answeredCount: 3, totalCount: 6 },
@@ -161,5 +168,5 @@ it("有通用已做进度时不重复展示旧已提交计数", () => {
     }),
   );
   expect(screen.getByText("已做 3 / 6 题")).toBeVisible();
-  expect(screen.queryByText(/已提交/)).toBeNull();
+  expect(screen.getByText("已提交 1/6 题")).toBeVisible();
 });

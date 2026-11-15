@@ -27,7 +27,8 @@ import {
   useDeleteSharedFile,
   useSharedFiles,
 } from "@/features/shared/shared-queries";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { formatCnTime, formatRelativeTime } from "@/lib/time";
 
 /**

@@ -1,10 +1,10 @@
-import { render } from "@testing-library/react";
 import {
   analyzeLectureStructure,
   parseDocument,
   processor,
 } from "@tutor/md-dsl";
 import { describe, expect, it } from "vitest";
+import { render } from "@/test/render-with-portal";
 import { allSampleDocs } from "../../../../../test-support/dsl-samples.ts";
 import { extractOutline } from "./outline";
 import { RichMarkdown } from "./RichMarkdown";

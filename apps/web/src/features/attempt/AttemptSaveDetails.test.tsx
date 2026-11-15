@@ -1,14 +1,18 @@
+import { type ComponentProps, useState } from "react";
+import { expect, it, vi } from "vitest";
+import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { type ComponentProps, useState } from "react";
-import { expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import { AttemptSaveDetails } from "./AttemptSaveDetails";
-import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
 
 function DetailsHarness(
   props: Omit<

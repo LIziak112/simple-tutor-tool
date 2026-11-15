@@ -15,12 +15,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
 import {
   type AttemptSaveDetail,
   readAttemptSaveDetails,
   subscribeAttemptSaveChanges,
 } from "./use-attempt-save-status";
-import type { InkUploadController } from "./use-ink-upload";
 
 interface DetailsProps {
   attemptId: string;

@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
 import type {
   QuestionAnswers,
   QuestionPublic,
   StudentAnswer,
 } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
-import type { QuestionCompletion } from "../attempt/question-completion";
+import type { QuestionCompletion } from "@/features/answering/question-completion";
+import { fireEvent, render, screen, within } from "@/test/render-with-portal";
 import {
   answerKindViews,
   dispatchComparison,

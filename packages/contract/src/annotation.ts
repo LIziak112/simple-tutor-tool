@@ -1,6 +1,7 @@
 import type { ZodIssue } from "zod";
 import { z } from "zod";
 import { questionRevisionIdSchema } from "./attempt.ts";
+import { attemptWriteProofFields } from "./attempt-session.ts";
 import {
   inkDeletedStrokeSchema,
   inkDuplicateStrokeIds,
@@ -464,6 +465,7 @@ export const annotationBaseCreateRequestSchema = z.strictObject({
  *   作答上（服务层门槛）。
  */
 export const annotationUploadMetaSchema = z.object({
+  ...attemptWriteProofFields,
   resetVersion: annotationResetVersionSchema.optional(),
   protocolVersion: z
     .union([
@@ -801,6 +803,7 @@ export type AnnotationBaseImageMeta = z.infer<
  * 客户端共用这一张表。body 为文件字段，其余三项为字符串字段。
  */
 export const ANNOTATION_FORM_FIELDS = {
+  expectedFrozenAt: "expectedFrozenAt",
   resetVersion: "resetVersion",
   protocolVersion: "protocolVersion",
   body: "body",

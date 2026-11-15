@@ -1,6 +1,7 @@
 import { runtimeEpochOf } from "./runtime-epoch.ts";
 
 export { runtimeEpochOf } from "./runtime-epoch.ts";
+export { firstQuestionOf, hasAssistantReply } from "./student-ai-reply.ts";
 
 import { randomUUID } from "node:crypto";
 import type {
@@ -10,6 +11,7 @@ import type {
   AiFactType,
   AiMessage,
   AiTaskAction,
+  AiTaskCreateRequest,
   AiTaskOriginSummary,
   AiTaskPublic,
   AiTaskPurpose,
@@ -49,6 +51,11 @@ import {
   aiTasks,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import {
+  assertAttemptWriteProof,
+  assertAttemptWriteVersion,
+  touchAttemptActivity,
+} from "../attempt-activity.ts";
 import { resolveNowDate } from "../export-service.ts";
 import { learningRecordMaterialRefs } from "../learning-record-service.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
@@ -66,6 +73,9 @@ import {
 import { aiTaskOriginSummariesOf } from "./student-ai-origin-summary.ts";
 import {
   checkedReplyOf,
+  firstQuestionOf,
+  firstStudentMessageRow,
+  hasAssistantReply,
   insertAssistantReply,
   lastReplyReceipt,
   latestMessageAtOf,
@@ -118,11 +128,12 @@ export { AI_MCP_LEASE_MAX_TOTAL_MS };
 /** failed/uncertain 的显式重试次数上限（有界次数，绝不自动重发） */
 export const AI_TASK_MAX_RETRY_COUNT = 3;
 
-/** 重试退避基数：nextRunAt = 失败时刻 + base × 2^retryCount（封顶 MAX） */
-export const AI_TASK_RETRY_BACKOFF_BASE_MS = 30_000;
+export {
+  AI_TASK_RETRY_BACKOFF_BASE_MS,
+  AI_TASK_RETRY_BACKOFF_MAX_MS,
+} from "./student-ai-retry-policy.ts";
 
-/** 重试退避封顶（10 分钟） */
-export const AI_TASK_RETRY_BACKOFF_MAX_MS = 10 * 60 * 1000;
+import { retryBackoffMs } from "./student-ai-retry-policy.ts";
 
 /** FIFO 领取单次扫描候选上限（防策略全禁时全表扫描；领取数由调用方批次控制） */
 const CLAIM_SCAN_LIMIT = 50;
@@ -389,50 +400,13 @@ function contextVersionOf(
   ).slice(0, 24)}`;
 }
 
-/** 首条学生消息行（创建时插入；视图读取与 refresh 替换正文共用） */
-function firstStudentMessageRow(
-  db: Db | QueueTx,
-  taskId: string,
-): typeof aiMessages.$inferSelect | undefined {
-  return asDb(db)
-    .select()
-    .from(aiMessages)
-    .where(and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "student")))
-    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
-    .get();
-}
-
-/** 首条学生消息（任务问题正文；数据残缺是故障不是空问题） */
-export function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
-  const row = firstStudentMessageRow(db, taskId);
-  if (row === undefined) {
-    throw new HttpError(
-      500,
-      "AI_CONTEXT_BROKEN",
-      "任务缺少首条学生消息，数据不完整",
-    );
-  }
-  return row.contentMd;
-}
-
-export function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
-  return (
-    asDb(db)
-      .select({ id: aiMessages.id })
-      .from(aiMessages)
-      .where(
-        and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "assistant")),
-      )
-      .get() !== undefined
-  );
-}
-
 // ---------- 操作与语义 1：创建（幂等 + 配额） ----------
 
 export interface CreateAiTaskInput {
   readonly studentId: string;
   readonly attemptId: string;
   readonly questionId: string;
+  readonly questionRevisionId?: AiTaskCreateRequest["questionRevisionId"];
   /** 学生问题（首条消息正文；AI_QUESTION_MAX_CHARS 由路由层契约校验） */
   readonly question: string;
   readonly channel: AiChannel;
@@ -529,6 +503,13 @@ export function createAiTask(
   return db.transaction(
     (tx) => {
       // 配额（事务内计数，与插入串行）：
+      assertAttemptWriteVersion(tx, bundle.attempt);
+      assertAttemptWriteProof(
+        bundle.attempt,
+        undefined,
+        input.questionRevisionId,
+        bundle.responseId,
+      );
       // ① 同题进行中（pending + processing 桶；终态不占额）
       const activeStatuses: readonly AiTaskStatus[] = [
         ...AI_TASK_QUEUE_BUCKETS.pending,
@@ -614,6 +595,7 @@ export function createAiTask(
         modeAtSend: bundle.modeAtSend,
         promptHash: bundle.promptHash,
       });
+      touchAttemptActivity(tx, input.attemptId, now.iso);
       return { task: row, created: true };
     },
     { behavior: "immediate" },
@@ -1652,14 +1634,6 @@ export function markInappDispatchUncertain(
 }
 
 // ---------- 操作与语义 6：重试（有界次数 + nextRunAt 退避） ----------
-
-/** 退避毫秒：失败时 retryCount 越多重试等待越久（封顶 MAX） */
-function retryBackoffMs(retryCountAtFailure: number): number {
-  return Math.min(
-    AI_TASK_RETRY_BACKOFF_BASE_MS * 2 ** retryCountAtFailure,
-    AI_TASK_RETRY_BACKOFF_MAX_MS,
-  );
-}
 
 /**
  * 显式重试（failed/uncertain → created）：学生主动动作，绝不自动重发；

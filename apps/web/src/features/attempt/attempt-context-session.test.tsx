@@ -1,17 +1,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { AttemptContextData, AttemptDraftData } from "@tutor/contract";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { beforeEach, expect, it, vi } from "vitest";
+import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
+import { fetchAttemptApi, fetchAttemptContextApi } from "@/lib/api";
+import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
 import {
   fireEvent,
   render,
   screen,
   waitFor,
   within,
-} from "@testing-library/react";
-import type { AttemptContextData, AttemptDraftData } from "@tutor/contract";
-import { MemoryRouter, Route, Routes } from "react-router";
-import { beforeEach, expect, it, vi } from "vitest";
-import { fetchAttemptApi, fetchAttemptContextApi } from "@/lib/api";
-import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
-import { installDraftBackend, memoryBackend } from "./draft-store";
+} from "@/test/render-with-portal";
 import {
   bindPracticePreferenceAccount,
   savePracticePreference,

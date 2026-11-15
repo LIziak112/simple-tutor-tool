@@ -38,10 +38,19 @@ import { Input } from "@/components/ui/input";
 import { useTeacherAssignments } from "@/features/assignments/assignment-queries";
 import { DiscardConfirmDialog } from "@/features/assignments/DiscardConfirmDialog";
 import { useTeacherCourses } from "@/features/courses/course-queries";
+import {
+  GOAL_OPTIONS,
+  QUESTION_LEVEL_OPTIONS,
+} from "@/features/export/export-wizard-options";
+import { requestBuildErrorTextOf } from "@/features/export/request-build-error";
 import { useLibraryLectures } from "@/features/library/library-queries";
 import type { OutlineItem } from "@/features/markdown/outline";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
 import { useStudents } from "@/features/students/student-queries";
-import { downloadLearningPackApi } from "@/lib/api";
+
 import { useLearningPackPreview, useLectureOutline } from "./export-queries";
 
 /**
@@ -77,60 +86,17 @@ const DAYS_OPTIONS = [
 type DaysValue = (typeof DAYS_OPTIONS)[number]["value"];
 
 /** preview 缩略图直出白名单（闸门 F9）：downloadUrl 只信同源教师端 note-versions 端点 */
-const EVIDENCE_DOWNLOAD_URL_PREFIX = "/api/teacher/note-versions/";
 
 /** 缩略图渲染上限（闸门 F10）：超出提示下载数据包查看；标题计数仍用全长 */
 const EVIDENCE_THUMB_LIMIT = 60;
 
 /** buildRequest 组装失败的中文提示（闸门 F1③：ZodError 首条 issue；防原始
  * JSON 错误串直接怼给教师） */
-function requestBuildErrorTextOf(err: unknown): string {
-  if (err instanceof z.ZodError) {
-    return `请求组装失败：${err.issues[0]?.message ?? "参数不合法"}`;
-  }
-  return err instanceof Error ? err.message : "请求组装失败，请稍后重试";
-}
 
 /** 五模板卡片（标题用契约 LEARNING_PACK_GOAL_LABELS 单一来源；描述与
  * docs/dsl/学情分析提示词.md 的模板要点一致） */
-const GOAL_OPTIONS: ReadonlyArray<{
-  value: LearningPackGoal;
-  description: string;
-}> = [
-  {
-    value: "diagnose-weakness",
-    description:
-      "按考点归纳错误模式，区分「不会」与「失误」，输出按薄弱程度排序的诊断报告与改进点",
-  },
-  {
-    value: "lesson-prep",
-    description:
-      "针对错误最集中的知识点给出下节课讲解路线（分环节含时长）与课堂检查问题",
-  },
-  {
-    value: "variant-practice",
-    description:
-      "基于错题生成变式练习，输出内容 DSL v2 文档，可直接回到「导入」流程使用",
-  },
-  {
-    value: "period-summary",
-    description:
-      "面向家长的阶段性学习总结（教师审阅后转发），用数据说话并给家庭配合建议",
-  },
-  {
-    value: "per-question-review",
-    description:
-      "逐题核对图片与步骤、指出最早可确定错误、区分事实与假设、给最小提示与验证题（v2：需勾选证据附件）",
-  },
-];
 
 /** 题目三层选项（不含 / 递进三层；文案对齐 prompt 模板的数据说明） */
-const QUESTION_LEVEL_OPTIONS = [
-  { value: "none", label: "不包含题目" },
-  { value: "stem", label: "仅题干（题干中的答案标记会隐去）" },
-  { value: "answer", label: "题干 + 参考答案" },
-  { value: "solution", label: "题干 + 参考答案 + 解析" },
-] as const;
 
 function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -142,6 +108,10 @@ export function ExportWizard({
   /** 画像页入口带入的学生 id（第①步预勾选该生，D14 入口口径） */
   initialStudentId: string | null;
 }) {
+  const routes = usePortalRoutes();
+
+  const { downloadLearningPackApi } = usePortalClients();
+
   const navigate = useNavigate();
   const studentsQuery = useStudents(true);
   const coursesQuery = useTeacherCourses(false);
@@ -237,7 +207,7 @@ export function ExportWizard({
       setConfirmExit(true);
       return;
     }
-    navigate("/t/insights");
+    navigate(routes.management("insights"));
   }
 
   // ---------- 请求组装（与契约 learning-pack.ts 一一对应） ----------
@@ -577,7 +547,7 @@ export function ExportWizard({
           downloadError={downloadError}
           onRetryPreview={goToPreview}
           onDownload={() => void handleDownload()}
-          onFinish={() => navigate("/t/insights")}
+          onFinish={() => navigate(routes.management("insights"))}
         />
       )}
 
@@ -618,7 +588,7 @@ export function ExportWizard({
         <DiscardConfirmDialog
           description="离开后本次向导的范围、模块勾选与填写内容都会丢失。"
           onCancel={() => setConfirmExit(false)}
-          onDiscard={() => navigate("/t/insights")}
+          onDiscard={() => navigate(routes.management("insights"))}
         />
       )}
     </section>
@@ -1588,6 +1558,7 @@ function StepPreview({
   onDownload: () => void;
   onFinish: () => void;
 }) {
+  const { isEvidenceDownloadUrl } = usePortalClients();
   const data: LearningPackPreviewData | undefined = previewMutation.data;
   const overLimit = data?.overLimit === true;
   // 闸门 F10：缩略图只渲染前 60 项（清单计数仍用全长）
@@ -1706,9 +1677,7 @@ function StepPreview({
                     </div>
 
                     {img.state === "ready" &&
-                    img.downloadUrl?.startsWith(
-                      EVIDENCE_DOWNLOAD_URL_PREFIX,
-                    ) ? (
+                    isEvidenceDownloadUrl(img.downloadUrl) ? (
                       <div className="flex items-center gap-2">
                         <span className="text-muted-foreground">
                           {sizeTextOf(img.bytes)}

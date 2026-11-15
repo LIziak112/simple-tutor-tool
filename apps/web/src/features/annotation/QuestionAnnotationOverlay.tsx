@@ -10,10 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
-import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
-import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
-import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import {
   type InkToolboxState,
@@ -22,6 +19,10 @@ import {
 import { InkToolbar } from "@/features/ink/toolbar/InkToolbar.tsx";
 import { useRememberedToolbox } from "@/features/ink/toolbox-memory.ts";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
+import { attemptMaterialsEditable } from "@/features/persistence/attempt-material-recovery";
+import { prepareAnnotationForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import { useDraftSyncRecovery } from "@/features/persistence/use-draft-sync";
 import {
   processStrokes,
   readProcessSurfaces,
@@ -90,6 +91,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   const editor = useAttemptEditor(question.id);
   const recovery = useDraftSyncRecovery();
   const session = useAnnotationSessionRef();
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
   const record = useAnnotationRecord(attemptId, question.id, phase);
   const process = useQuestionProcessContext();
   const processRef = useRef(process);
@@ -595,6 +597,7 @@ export const QuestionAnnotationOverlay = forwardRef<
         { attemptId, questionId: question.id, phase },
         doc,
         sealedFinalization.current ? "sealed-finalization" : undefined,
+        expectedFrozenAt,
       );
       setHistory((value) => value + 1);
     });
@@ -618,6 +621,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     cloudBaseId,
     frozenReady,
     finishSurface,
+    expectedFrozenAt,
   ]);
   useEffect(() => {
     if (!mountedOnce) return;

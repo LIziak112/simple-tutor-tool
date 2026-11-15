@@ -1,9 +1,15 @@
+import { useEffect } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import {
   isAttemptUnavailable,
   useAttemptDetail,
 } from "@/features/attempt/attempt-queries";
+import { LocalAttemptSnapshotConflictError } from "@/features/persistence/attempt-local-session";
+import { LocalAttemptSnapshotConflictPanel } from "@/features/persistence/LocalAttemptArchive";
+import { LocalAttemptRecoveryNotice } from "@/features/persistence/use-local-attempt-activation";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
+import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   aiQueueReturnTarget,
@@ -14,7 +20,7 @@ import {
   StudentListSkeleton,
   StudentRefreshWarning,
 } from "@/features/student/student-ui";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * /s/attempts/:attemptId 通用答题页（T2A.6，D9 两种来源共用）：
@@ -24,18 +30,36 @@ import { ApiError } from "@/lib/api";
  * 不做无限重试；交卷后的返回目标按来源分派（课程练习回单元落地页）。
  */
 export default function StudentAttemptPage() {
+  const routes = usePortalRoutes();
+
   const { attemptId = "" } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const recordsTarget = recordsReturnTarget(searchParams.get("returnTo"));
+  const recordsTarget = recordsReturnTarget(
+    routes,
+    searchParams.get("returnTo"),
+  );
   // SAI-23 队列跳转来源（aiFrom 白名单独立于回看 returnTo）：优先级在其后——
   // 队列入口只在无回看上下文时改写返回目标
-  const queueTarget = aiQueueReturnTarget(searchParams.get("aiFrom"));
+  const queueTarget = aiQueueReturnTarget(routes, searchParams.get("aiFrom"));
   const detailQuery = useAttemptDetail(attemptId || undefined);
+  const recoveredId = detailQuery.data?.attempt.id;
+  useEffect(() => {
+    if (recoveredId && recoveredId !== attemptId)
+      void navigate(
+        {
+          pathname: routes.learning(`attempts/${recoveredId}`),
+          search: searchParams.toString(),
+        },
+        { replace: true },
+      );
+  }, [recoveredId, attemptId, navigate, routes, searchParams]);
   const denied = detailQuery.isError && isAttemptUnavailable(detailQuery.error);
   const abandoned =
     detailQuery.error instanceof ApiError &&
     detailQuery.error.code === "ATTEMPT_ABANDONED";
+  if (detailQuery.error instanceof LocalAttemptSnapshotConflictError)
+    return <LocalAttemptSnapshotConflictPanel error={detailQuery.error} />;
 
   if (detailQuery.data === undefined && detailQuery.fetchStatus === "paused") {
     return (
@@ -65,7 +89,7 @@ export default function StudentAttemptPage() {
               : "这份练习可能已被老师收回，或你已不在对应课程中。有疑问请联系老师。"}
           </p>
           <Link
-            to="/s/home"
+            to={routes.learning("home")}
             className="flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             返回首页
@@ -87,6 +111,10 @@ export default function StudentAttemptPage() {
   }
 
   const data = detailQuery.data;
+  const assignmentTarget =
+    data.attempt.sourceType === "assignment"
+      ? assignmentsReturnTarget(routes, searchParams.get("returnTo"))
+      : null;
   // 退出目标：课程练习回单元落地页（继续「再做一次/历次记录」动线）；错题重练
   // 回错题本（2026-10，交卷后能直接看到轮次史新增一轮与攻克状态）；讲练回讲练
   // 页（2026-10 讲练一体——恒可回看/再做一次，courseId 上下文随行）；作业回首页。
@@ -94,16 +122,19 @@ export default function StudentAttemptPage() {
   // 恒有值，仅在两者齐备时才构造单元落地页地址，否则回首页兜底。
   const exitTarget =
     data.attempt.sourceType === "wrong"
-      ? "/s/wrong"
+      ? routes.learning("wrong")
       : data.attempt.sourceType === "lesson" && data.attempt.lectureId !== null
-        ? lessonHref(data.attempt.lectureId, data.attempt.courseId)
+        ? lessonHref(routes, data.attempt.lectureId, data.attempt.courseId)
         : data.attempt.sourceType === "course" &&
             data.attempt.courseId !== null &&
             data.attempt.unitId !== null
-          ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
-          : "/s/home";
+          ? routes.learning(
+              `courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`,
+            )
+          : routes.learning("home");
   return (
     <>
+      <LocalAttemptRecoveryNotice attemptId={data.attempt.id} />
       {detailQuery.isError && (
         <StudentRefreshWarning
           title="练习信息刷新失败"
@@ -115,11 +146,17 @@ export default function StudentAttemptPage() {
         exitLabel={
           recordsTarget
             ? "返回我的记录"
-            : queueTarget
-              ? "返回原页面"
-              : undefined
+            : assignmentTarget
+              ? "返回作业列表"
+              : queueTarget
+                ? "返回原页面"
+                : undefined
         }
-        onExit={() => void navigate(recordsTarget ?? queueTarget ?? exitTarget)}
+        onExit={() =>
+          void navigate(
+            recordsTarget ?? assignmentTarget ?? queueTarget ?? exitTarget,
+          )
+        }
         onRefresh={() => void detailQuery.refetch()}
       />
     </>

@@ -1,13 +1,15 @@
-import { act, cleanup, renderHook } from "@testing-library/react";
-import type { Memo } from "@tutor/contract";
+import type { LearningContext, Memo } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { type KVStoreBackend, memoryKVBackend } from "@/lib/kv-backend";
+import { resolveLearningContext } from "@/lib/learning-source-legacy-api";
 import {
   createTextMemoApi,
   MemoNetworkError,
   uploadMemoMediaApi,
 } from "@/lib/memo-api";
+import { testClientServices } from "@/test/portal-fixture";
+import { act, cleanup, renderHook } from "@/test/render-with-portal";
 import {
   bindMemoOutboxAccount,
   discardMemoOutboxItem,
@@ -72,6 +74,11 @@ vi.mock("@/lib/memo-api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/learning-source-legacy-api", () => ({
+  resolveLearningContext: vi.fn(),
+}));
+const mockedResolve = vi.mocked(resolveLearningContext);
+
 const mockedText = vi.mocked(createTextMemoApi);
 const mockedMedia = vi.mocked(uploadMemoMediaApi);
 
@@ -107,6 +114,7 @@ beforeEach(() => {
   installMemoOutboxBackendForTest(backend);
   mockedText.mockReset();
   mockedMedia.mockReset();
+  mockedResolve.mockReset();
 });
 
 afterEach(() => {
@@ -120,7 +128,7 @@ describe("memo-outbox", () => {
     vi.stubGlobal("indexedDB", undefined);
     try {
       installMemoOutboxBackendForTest(null);
-      await bindMemoOutboxAccount("stu-a");
+      await bindMemoOutboxAccount("stu-a", testClientServices);
       mockedText.mockRejectedValueOnce(new MemoNetworkError());
       await expect(enqueueMemo(TEXT_INPUT)).rejects.toThrow("还没有存下来");
       expect(queueProbe().current).toHaveLength(0);
@@ -132,7 +140,7 @@ describe("memo-outbox", () => {
   it("在线限流后即使停留在同一页面也会继续补传", async () => {
     vi.useFakeTimers();
     try {
-      await bindMemoOutboxAccount("stu-a");
+      await bindMemoOutboxAccount("stu-a", testClientServices);
       mockedText
         .mockRejectedValueOnce(new ApiError("RATE_LIMITED", "请求太频繁", 429))
         .mockResolvedValueOnce(memoOf("第一条"));
@@ -148,7 +156,7 @@ describe("memo-outbox", () => {
   });
 
   it("在线：入队即上传成功，本机条目清掉，onMemoSynced 收到服务端那条", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     const synced: Memo[] = [];
     const off = onMemoSynced((memo) => synced.push(memo));
     mockedText.mockResolvedValueOnce(memoOf("第一条"));
@@ -166,7 +174,7 @@ describe("memo-outbox", () => {
   });
 
   it("离线：网络失败保留在本机；重新 bind 后按入队顺序补传且 clientId 不变", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockRejectedValue(new MemoNetworkError());
     const first = await enqueueMemo(TEXT_INPUT);
     const second = await enqueueMemo({ ...TEXT_INPUT, text: "第二条" });
@@ -177,7 +185,7 @@ describe("memo-outbox", () => {
     installMemoOutboxBackendForTest(backend);
     mockedText.mockReset();
     mockedText.mockImplementation(async (input) => memoOf(input.text));
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     await flushMemoOutbox();
     expect(mockedText.mock.calls.map((call) => call[0].clientId)).toEqual([
       first,
@@ -187,7 +195,7 @@ describe("memo-outbox", () => {
   });
 
   it("业务拒绝（4xx）标 failedMessage、不再自动重试、可丢弃；后面的条目继续传", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedMedia.mockRejectedValueOnce(
       new ApiError("MEMO_UNSUPPORTED_TYPE", "录音格式不受支持", 415),
     );
@@ -214,13 +222,13 @@ describe("memo-outbox", () => {
   });
 
   it("按账号隔离：甲的待传条目不会在乙登录后被上传", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockRejectedValue(new MemoNetworkError());
     await enqueueMemo(TEXT_INPUT);
     await flushMemoOutbox();
     mockedText.mockReset();
     mockedText.mockImplementation(async (input) => memoOf(input.text));
-    await bindMemoOutboxAccount("stu-b");
+    await bindMemoOutboxAccount("stu-b", testClientServices);
     await flushMemoOutbox();
     expect(mockedText).not.toHaveBeenCalled();
     expect(await backend.getAll('["memo-outbox","stu-a"')).toHaveLength(1);
@@ -238,7 +246,7 @@ describe("memo-outbox：暂态失败与重试（#104-05）", () => {
     ],
     ["响应异常（非 ApiError）", new Error("服务器响应异常（HTTP 502）")],
   ])("%s：不标失败、保留原样，下次触发继续补传", async (_label, err) => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockRejectedValue(err);
     const probe = queueProbe();
     await act(async () => {
@@ -263,7 +271,7 @@ describe("memo-outbox：暂态失败与重试（#104-05）", () => {
   });
 
   it("业务拒绝后 retryMemoOutboxItem：清掉失败标记并重新上传", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockRejectedValueOnce(
       new ApiError("VALIDATION_ERROR", "标签太多", 400),
     );
@@ -296,7 +304,7 @@ describe("memo-outbox：暂态失败与重试（#104-05）", () => {
   });
 
   it("同账号一轮补传在途时点重试：等这一轮结束后再来一轮，被重试那条真的重传", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     const probe = queueProbe();
     // X 先被业务拒绝；Y 的上传挂起（模拟大语音在传）
     let releaseY: (memo: Memo) => void = () => {};
@@ -351,7 +359,7 @@ describe("memo-outbox：暂态失败与重试（#104-05）", () => {
 
 describe("memo-outbox：重新保存复用 clientId", () => {
   it("enqueueMemo 带 clientId：本机键与上传请求都用它（响应丢失后重发命中幂等键）", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockImplementation(async (input) => memoOf(input.text));
     const clientId = "11111111-1111-4111-8111-111111111111";
     await act(async () => {
@@ -367,7 +375,7 @@ describe("memo-outbox：重新保存复用 clientId", () => {
 describe("memo-outbox：本机写入失败（#104-02）", () => {
   it("本机写不进、上传也失败：拒绝并说明，不留内存条目（避免恢复输入后重发成两条）", async () => {
     installMemoOutboxBackendForTest(brokenSetBackend(backend));
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockRejectedValue(new MemoNetworkError());
     const probe = queueProbe();
     await act(async () => {
@@ -380,7 +388,7 @@ describe("memo-outbox：本机写入失败（#104-02）", () => {
 
   it("本机写不进、上传被业务拒绝：拒绝信息带服务端说明", async () => {
     installMemoOutboxBackendForTest(brokenSetBackend(backend));
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockRejectedValue(
       new ApiError("VALIDATION_ERROR", "正文超过 5000 字", 400),
     );
@@ -389,7 +397,7 @@ describe("memo-outbox：本机写入失败（#104-02）", () => {
 
   it("本机写不进但上传成功：正常返回，onMemoSynced 收到那条", async () => {
     installMemoOutboxBackendForTest(brokenSetBackend(backend));
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockImplementation(async (input) => memoOf(input.text));
     const synced: Memo[] = [];
     const off = onMemoSynced((memo) => synced.push(memo));
@@ -414,14 +422,14 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
   it("本机写入挂起期间换账号：条目留在旧账号键下，不进新账号队列、不以新账号上传", async () => {
     const gated = gatedSetBackend(backend);
     installMemoOutboxBackendForTest(gated.backend);
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     mockedText.mockImplementation(async (input) => memoOf(input.text));
     const probe = queueProbe();
 
     let pending: Promise<string> | undefined;
     await act(async () => {
       pending = enqueueMemo(TEXT_INPUT);
-      await bindMemoOutboxAccount("stu-b");
+      await bindMemoOutboxAccount("stu-b", testClientServices);
       gated.release();
       await pending;
       await flushMemoOutbox();
@@ -433,7 +441,7 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
 
     // 甲再登录：那条出现并补传
     await act(async () => {
-      await bindMemoOutboxAccount("stu-a");
+      await bindMemoOutboxAccount("stu-a", testClientServices);
       await flushMemoOutbox();
     });
     expect(mockedText).toHaveBeenCalledTimes(1);
@@ -441,7 +449,7 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
   });
 
   it("补传在途时换账号：成功结果不通知、不动新队列，只清旧账号的本机键", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     let finishUpload: (memo: Memo) => void = () => {};
     mockedText.mockImplementationOnce(
       () =>
@@ -454,7 +462,7 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
     const probe = queueProbe();
     await act(async () => {
       await enqueueMemo(TEXT_INPUT); // 入队即触发补传，上传挂起
-      await bindMemoOutboxAccount("stu-b");
+      await bindMemoOutboxAccount("stu-b", testClientServices);
       finishUpload(memoOf("第一条"));
       await flushMemoOutbox();
     });
@@ -465,7 +473,7 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
   });
 
   it("补传在途时换账号：业务拒绝只标到旧账号的本机键，新账号队列不受影响", async () => {
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     let failUpload: (err: unknown) => void = () => {};
     mockedText.mockImplementationOnce(
       () =>
@@ -476,7 +484,7 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
     const probe = queueProbe();
     await act(async () => {
       await enqueueMemo(TEXT_INPUT);
-      await bindMemoOutboxAccount("stu-b");
+      await bindMemoOutboxAccount("stu-b", testClientServices);
       failUpload(new ApiError("VALIDATION_ERROR", "正文太长", 400));
       await flushMemoOutbox();
     });
@@ -490,14 +498,14 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
 
   it("旧账号补传在途时新账号 bind：新账号的本机条目在旧一轮结束后自动补传", async () => {
     // 乙先前离线留了一条
-    await bindMemoOutboxAccount("stu-b");
+    await bindMemoOutboxAccount("stu-b", testClientServices);
     mockedText.mockRejectedValue(new MemoNetworkError());
     await enqueueMemo({ ...TEXT_INPUT, text: "乙的离线条目" });
     await flushMemoOutbox();
     expect(await backend.getAll('["memo-outbox","stu-b"')).toHaveLength(1);
     mockedText.mockReset();
     // 甲登录并有一条上传挂起；此时切回乙
-    await bindMemoOutboxAccount("stu-a");
+    await bindMemoOutboxAccount("stu-a", testClientServices);
     let finishUpload: (memo: Memo) => void = () => {};
     mockedText.mockImplementationOnce(
       () =>
@@ -507,7 +515,7 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
     );
     await enqueueMemo({ ...TEXT_INPUT, text: "甲的在途条目" });
     mockedText.mockImplementation(async (input) => memoOf(input.text));
-    const rebind = bindMemoOutboxAccount("stu-b");
+    const rebind = bindMemoOutboxAccount("stu-b", testClientServices);
     finishUpload(memoOf("甲的在途条目"));
     await rebind;
     await flushMemoOutbox();
@@ -517,4 +525,196 @@ describe("memo-outbox：账号切换交错（#104-01）", () => {
     ]);
     expect(await backend.getAll('["memo-outbox","stu-b"')).toEqual([]);
   });
+});
+
+const sourceAttempt = crypto.randomUUID();
+const sourceRevision = crypto.randomUUID();
+const sourceReference = {
+  kind: "question" as const,
+  attemptId: sourceAttempt,
+  questionId: "q2",
+  surface: "attempt" as const,
+  expectedQuestionRevisionId: sourceRevision,
+};
+const sourceAnchor = {
+  kind: "question" as const,
+  attemptId: sourceAttempt,
+  questionId: "q2",
+  label: "第 2 题",
+};
+const canonicalSource: LearningContext = {
+  schemaVersion: 1,
+  content: {
+    courseId: null,
+    unitId: null,
+    lectureId: null,
+    sectionId: null,
+    questionId: "q2",
+    titles: { course: null, unit: null, lecture: null },
+  },
+  session: {
+    attemptId: sourceAttempt,
+    questionRevisionId: sourceRevision,
+    questionNo: 2,
+    questionCount: 2,
+    settlementSeq: null,
+  },
+  view: null,
+  deviceId: null,
+};
+
+it("来源canonical仍在网络等待时已经本机入队，回执使用原题/真实设备/打开view", async () => {
+  await bindMemoOutboxAccount("stu-a", testClientServices);
+  let resolve!: (context: LearningContext) => void;
+  mockedResolve.mockReturnValueOnce(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  const sourceView = {
+    surface: "attempt" as const,
+    layout: "list",
+    viewId: crypto.randomUUID(),
+  };
+  const deviceId = crypto.randomUUID();
+  mockedText.mockResolvedValueOnce(memoOf("第二题"));
+  const clientId = await enqueueMemo({
+    ...TEXT_INPUT,
+    text: "第二题",
+    anchor: sourceAnchor,
+    reference: sourceReference,
+    sourceDisplay: { questionNo: 2, questionCount: 2 },
+    sourceView,
+    deviceId,
+    sourcePrincipal: "stu-a",
+  });
+  expect(mockedText).not.toHaveBeenCalled();
+  expect(await backend.getAll('["memo-outbox","stu-a"')).toHaveLength(1);
+  resolve(canonicalSource);
+  await flushMemoOutbox();
+  expect(mockedText).toHaveBeenCalledWith(
+    expect.objectContaining({
+      clientId,
+      anchor: sourceAnchor,
+      context: { ...canonicalSource, view: sourceView, deviceId },
+      deviceId,
+    }),
+    "stu-a",
+  );
+});
+
+it("expected revision不符保留原稿/原reference并拒绝静默重绑", async () => {
+  await bindMemoOutboxAccount("stu-a", testClientServices);
+  mockedResolve.mockRejectedValueOnce(
+    new ApiError("LEARNING_CONTEXT_STALE", "题目来源已变化", 409),
+  );
+  const clientId = await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+  });
+  await flushMemoOutbox();
+  expect(mockedText).not.toHaveBeenCalled();
+  const stored = await backend.getAll('["memo-outbox","stu-a"');
+  expect(stored).toHaveLength(1);
+  expect(stored[0]?.[1]).toMatchObject({
+    clientId,
+    reference: sourceReference,
+    text: TEXT_INPUT.text,
+    failedMessage: "题目来源已变化",
+  });
+});
+
+it("已显示题序变化同样保留原稿，不能套新目录坐标", async () => {
+  await bindMemoOutboxAccount("stu-a", testClientServices);
+  mockedResolve.mockResolvedValueOnce(canonicalSource);
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+    sourceDisplay: { questionNo: 1, questionCount: 2 },
+  });
+  await flushMemoOutbox();
+  expect(mockedText).not.toHaveBeenCalled();
+  expect(queueProbe().current[0]?.failedMessage).toContain("题目来源已变化");
+});
+
+it("旧来源404只回退旧anchor，缺失context必须省略而非null", async () => {
+  await bindMemoOutboxAccount("stu-a", testClientServices);
+  mockedResolve.mockRejectedValueOnce(
+    new ApiError("LEARNING_CONTEXT_NOT_FOUND", "来源不存在或不可见", 404),
+  );
+  mockedText.mockResolvedValueOnce(memoOf("第一条"));
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+  });
+  await flushMemoOutbox();
+  const body = mockedText.mock.calls[0]?.[0];
+  expect(body?.anchor).toEqual(sourceAnchor);
+  expect(Object.hasOwn(body ?? {}, "context")).toBe(false);
+});
+
+it("旧账号canonical迟到时不发送新账号请求，不把来源放进新队列", async () => {
+  await bindMemoOutboxAccount("stu-a", testClientServices);
+  let resolve!: (context: LearningContext) => void;
+  mockedResolve.mockReturnValueOnce(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    anchor: sourceAnchor,
+    reference: sourceReference,
+    sourcePrincipal: "stu-a",
+  });
+  await bindMemoOutboxAccount("stu-b", testClientServices);
+  resolve(canonicalSource);
+  await flushMemoOutbox();
+  expect(mockedText).not.toHaveBeenCalled();
+  expect(await backend.getAll('["memo-outbox","stu-a"')).toHaveLength(1);
+  expect(await backend.getAll('["memo-outbox","stu-b"')).toEqual([]);
+  await expect(
+    enqueueMemo({ ...TEXT_INPUT, sourcePrincipal: "stu-a" }),
+  ).rejects.toThrow("账号已变化");
+});
+
+it("媒体补传携带入队时真实context，不借用当前阅读源", async () => {
+  await bindMemoOutboxAccount("stu-a", testClientServices);
+  const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+  mockedMedia.mockResolvedValueOnce(memoOf("图片"));
+  await enqueueMemo({
+    ...TEXT_INPUT,
+    kind: "image",
+    blob,
+    anchor: sourceAnchor,
+    context: canonicalSource,
+  });
+  await flushMemoOutbox();
+  expect(mockedResolve).not.toHaveBeenCalled();
+  expect(mockedMedia).toHaveBeenCalledWith(
+    blob,
+    expect.objectContaining({ anchor: sourceAnchor, context: canonicalSource }),
+    "stu-a",
+  );
+});
+it("A→B→A期间旧入队续体不能进入新A租约的内存队列", async () => {
+  const gated = gatedSetBackend(backend);
+  installMemoOutboxBackendForTest(gated.backend);
+  await bindMemoOutboxAccount("stu-a", testClientServices);
+  const probe = queueProbe();
+  const saving = enqueueMemo(TEXT_INPUT);
+  await act(async () => {
+    await bindMemoOutboxAccount("stu-b", { ...testClientServices });
+    await bindMemoOutboxAccount("stu-a", { ...testClientServices });
+    gated.release();
+    await saving;
+  });
+  expect(probe.current).toHaveLength(0);
+  expect(
+    await backend.getAll(JSON.stringify(["memo-outbox", "stu-a"]).slice(0, -1)),
+  ).toHaveLength(1);
+  expect(mockedText).not.toHaveBeenCalled();
 });

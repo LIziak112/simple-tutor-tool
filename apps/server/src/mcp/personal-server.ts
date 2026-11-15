@@ -71,6 +71,7 @@ export function createPersonalMcpServer(
     studentId: deps.studentId,
     connectionId: deps.connectionId,
     hmacSecret: deps.hmacSecret,
+    isAuthorized: deps.isAuthorized,
   });
   return server;
 }

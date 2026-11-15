@@ -14,7 +14,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import type { AnalyticsFetchParams } from "@/lib/api";
+import type { AnalyticsFetchParams } from "@/features/runtime/client-types";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 
 /**
  * 学情页筛选的 URL 状态与筛选条（T4.2，D3/D5）：
@@ -152,6 +153,8 @@ export function InsightsViewSwitcher({
   view: InsightsViewMode;
   query: string;
 }) {
+  const routes = usePortalRoutes();
+
   return (
     <fieldset className="flex flex-wrap gap-2">
       <legend className="mb-1 text-xs text-muted-foreground sm:sr-only">
@@ -168,7 +171,9 @@ export function InsightsViewSwitcher({
           <Link
             to={{
               pathname:
-                mode === "overview" ? "/t/insights" : "/t/insights/questions",
+                mode === "overview"
+                  ? routes.management("insights")
+                  : routes.management("insights/questions"),
               search: query,
             }}
           >

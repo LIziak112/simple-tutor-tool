@@ -9,12 +9,8 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  fetchStudentAiTaskApi,
-  followupStudentAiTaskApi,
-  listStudentAiTasksApi,
-  openStudentAiReplyApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { randomUuid } from "@/lib/uuid";
 import { AiReadingWorkspace } from "./AiReadingWorkspace";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
@@ -106,6 +102,8 @@ function ConversationMessages({
   updatedAt: string;
   onVisible: () => void;
 }) {
+  const { fetchStudentAiTaskApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["student", "ai-task-detail", taskId],
@@ -516,6 +514,12 @@ export function useAiConversationController(
   send: AiSendController,
   active = true,
 ) {
+  const {
+    listStudentAiTasksApi,
+    openStudentAiReplyApi,
+    followupStudentAiTaskApi,
+  } = usePortalClients();
+
   const queryClient = useQueryClient();
   const taskAction = useStudentAiQueueAction();
   const attemptId = send.attemptId;

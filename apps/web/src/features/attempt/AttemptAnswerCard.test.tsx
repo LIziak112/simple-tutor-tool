@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { type AnswerCardFilter, AttemptAnswerCard } from "./AttemptAnswerCard";
 import type { QuestionNavigationItem } from "./QuestionNavigator";
 

@@ -726,6 +726,11 @@
         "practice": {
           "type": "object",
           "properties": {
+            "reviewTemplateId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
             "layout": {
               "type": "string",
               "enum": [
@@ -1454,6 +1459,11 @@
             "practice": {
               "type": "object",
               "properties": {
+                "reviewTemplateId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
                 "layout": {
                   "type": "string",
                   "enum": [
@@ -1557,6 +1567,11 @@
               "practice": {
                 "type": "object",
                 "properties": {
+                  "reviewTemplateId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
                   "layout": {
                     "type": "string",
                     "enum": [

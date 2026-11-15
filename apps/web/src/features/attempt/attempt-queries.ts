@@ -1,34 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  AttemptAnswerSaveData,
   AttemptDetailData,
   CourseAttemptStartOptions,
   PracticeWorkflowUpdateRequest,
-  StudentAnswer,
 } from "@tutor/contract";
-import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  prepareLocalAttempt,
+  reopenMissingAttempt,
+} from "@/features/persistence/attempt-reopen";
+import { recordLocalAttemptMaterials } from "@/features/persistence/attempt-session-catalog";
+import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
+import { useAttemptSessionEffects } from "@/features/persistence/use-attempt-session-effects";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 import {
   studentAssignmentsKey,
   studentCourseKey,
   studentCoursesKey,
 } from "@/features/student/student-queries";
+import { ApiError } from "@/lib/api-response";
 import {
-  ApiError,
   AttemptDetailReadTimeoutError,
-  fetchAttemptApi,
-  fetchAttemptContextApi,
-  fetchStudentUnitLandingApi,
-  saveAttemptAnswerApi,
-  startAttemptApi,
-  startCourseAttemptApi,
-  updateAttemptWorkflowApi,
-} from "@/lib/api";
-import { shareAttemptDetail } from "@/lib/attempt-detail-read";
-import { randomUuid } from "@/lib/uuid";
+  shareAttemptDetail,
+} from "@/lib/attempt-detail-read";
 import { useAttemptSubmitReceipt } from "./attempt-submit-receipt";
-import { digestOf } from "./draft-merge";
-import { draftStore, getDraftSessionEpoch } from "./draft-store";
 import { getPracticePreference } from "./practice-preference-store";
 
 /**
@@ -45,19 +40,35 @@ export const studentAttemptKey = (attemptId: string) =>
  * 冻结上下文（材料/组快照投影）查询 key：挂在 attempt key 前缀下（交卷等
  * 失效详情时一并失效；数据本身随卷冻结不可变，重取幂等）。
  */
-export const studentAttemptContextKey = (attemptId: string) =>
-  ["student", "attempt", attemptId, "context"] as const;
+export const studentAttemptContextKey = (
+  attemptId: string,
+  frozenAt?: string | null,
+) => ["student", "attempt", attemptId, "context", frozenAt ?? null] as const;
 
 /**
  * 冻结上下文（QM-08 前端消费）：材料/组共享渲染的数据源。快照随卷冻结
  * 不可变——staleTime ∞、不随焦点重取；错误（网络/409 坏快照）**非阻断**：
  * 题面渲染不依赖本载荷，调用方就地提示 + 重试。legacy 卷（无 QM 快照）
  * 返回空 materials/groups，渲染零变化。
+ *
+ * `frozenAt` 进查询键：没动过的卷再次进入时可能按新题目重冻（卷号不变、冻结
+ * 时刻前进），旧版的材料和题组不能从缓存里接着用。取到后把材料版本补记进本机
+ * 会话目录（卷被清除后恢复本机稿要核对它），不等它、失败也不影响题面。
  */
-export function useAttemptContext(attemptId: string) {
+export function useAttemptContext(attemptId: string, frozenAt?: string | null) {
+  const { fetchAttemptContextApi } = usePortalClients();
+
   return useQuery({
-    queryKey: studentAttemptContextKey(attemptId),
-    queryFn: () => fetchAttemptContextApi(attemptId),
+    queryKey: studentAttemptContextKey(attemptId, frozenAt),
+    queryFn: async () => {
+      const context = await fetchAttemptContextApi(attemptId);
+      void recordLocalAttemptMaterials(
+        attemptId,
+        frozenAt,
+        context.materials.map((m) => `${m.id}|${m.sourceVersion}`),
+      ).catch(() => {});
+      return context;
+    },
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: Number.POSITIVE_INFINITY,
     refetchOnWindowFocus: false,
@@ -110,6 +121,9 @@ export function isAttemptUnavailable(error: unknown): boolean {
 export type TimedAttemptDetail = AttemptDetailData & { clockAnchor?: number };
 
 export function useAttemptDetail(attemptId: string | undefined) {
+  const clients = usePortalClients();
+  const { fetchAttemptApi } = clients;
+
   const queryClient = useQueryClient();
   const paused = useSyncExternalStore(
     subscribeDetailPolling,
@@ -121,7 +135,7 @@ export function useAttemptDetail(attemptId: string | undefined) {
     },
     [attemptId],
   );
-  return useQuery({
+  const query = useQuery({
     queryKey: studentAttemptKey(attemptId ?? "pending"),
     queryFn: async ({ signal }) => {
       const previous = queryClient.getQueryData<TimedAttemptDetail>(
@@ -130,9 +144,10 @@ export function useAttemptDetail(attemptId: string | undefined) {
       // 暂停期间不出站；已在途的详情也不能覆盖末题阅读现场。
       if (previous && detailPollingPaused.has(attemptId ?? "")) return previous;
       try {
-        const next = await (previous === undefined
+        const loaded = await (previous === undefined
           ? fetchAttemptApi(attemptId ?? "", signal)
           : fetchAttemptApi(attemptId ?? "", signal, previous));
+        const next = await prepareLocalAttempt(clients, loaded);
         if (previous && detailPollingPaused.has(attemptId ?? ""))
           return previous;
         if ("answersReleased" in next && next.releaseCheckedAt !== undefined)
@@ -162,7 +177,12 @@ export function useAttemptDetail(attemptId: string | undefined) {
           !isAttemptUnavailable(error)
         )
           return previous;
-        throw error;
+        return reopenMissingAttempt(
+          clients,
+          attemptId ?? "",
+          error,
+          workflowStartOptions(),
+        );
       }
     },
     structuralSharing: shareAttemptDetail,
@@ -185,10 +205,15 @@ export function useAttemptDetail(attemptId: string | undefined) {
         ? 10_000
         : false,
   });
+  // 不在这里读 query.data：见 useCachedAttempt 的说明
+  useAttemptSessionEffects(studentAttemptKey(attemptId ?? "pending"));
+  return query;
 }
 
 /** 单元落地信息（开始练习/继续作答/再做一次与历次记录列表的数据源） */
 export function useStudentUnitLanding(courseId: string, unitId: string) {
+  const { fetchStudentUnitLandingApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentUnitLandingKey(courseId, unitId),
     queryFn: () => fetchStudentUnitLandingApi(courseId, unitId),
@@ -212,6 +237,8 @@ export const workflowStartOptions = () => {
 
 /** 创建/取回 attempt（作业来源入口；返回摘要含 status 决定走答题还是结果视图） */
 export function useStartAttempt(assignmentId: string) {
+  const { startAttemptApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     // mutationFn 执行时才读偏好（点击时刻），不在模块顶层求值
@@ -232,6 +259,8 @@ export function useStartAttempt(assignmentId: string) {
  * 服务端投影（canChangeFeedback/allowedFeedbackModes），客户端不预判授权。
  */
 export function useUpdateAttemptWorkflow(attemptId: string) {
+  const { updateAttemptWorkflowApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const [staleNotice, setStaleNotice] = useState<string | null>(null);
   const mutation = useMutation({
@@ -278,6 +307,8 @@ export function useUpdateAttemptWorkflow(attemptId: string) {
  * 节奏时传 {...workflowStartOptions(), feedbackMode: 所选}（显式选择恒最高）。
  */
 export function useStartCourseAttempt(courseId: string, unitId: string) {
+  const { startCourseAttemptApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (options: CourseAttemptStartOptions | undefined) =>
@@ -378,76 +409,4 @@ export function useSubmitAttempt(attemptId: string, onConfirmed?: () => void) {
  * 高频触发（每次作答/每个防抖窗）时 mutation 栈会堆积无意义的历史条目）。
  * 失败由调用方捕获并置「保存失败」提示；重试靠学生继续作答或刷新页面。
  */
-const answerSaveTails = new Map<string, Promise<void>>();
-export function saveDraftAnswer(
-  attemptId: string,
-  questionId: string,
-  answer: StudentAnswer,
-): Promise<AttemptAnswerSaveData> {
-  const epoch = getDraftSessionEpoch();
-  const mutationId =
-    draftStore.answerMutationId(attemptId, questionId) ?? randomUuid();
-  const key = JSON.stringify([epoch, attemptId, questionId]);
-  const prior = answerSaveTails.get(key) ?? Promise.resolve();
-  const task = prior.then(async () => {
-    if (epoch !== getDraftSessionEpoch())
-      throw new Error("作答会话已切换，旧答案未上传");
-    await draftStore.flush(attemptId);
-    const record = await draftStore.loadDraft(attemptId, { strictRead: true });
-    if (epoch !== getDraftSessionEpoch())
-      throw new Error("作答会话已切换，旧答案未上传");
-    if (
-      record?.answerConflicts?.[questionId] ||
-      record?.localConflicts?.some(
-        (entry) => entry.kind === "answer" && entry.key === questionId,
-      )
-    )
-      throw new Error("本题答案有同步冲突，请先选择保留哪一份");
-    const latest = record?.answers[questionId];
-    if (
-      (latest !== undefined ||
-        record?.answerMutationIds?.[questionId] !== undefined) &&
-      digestOf(latest) !== digestOf(answer)
-    )
-      throw new Error("本题已有较新的本机答案，旧答案未上传");
-    const baseRevision = record?.answerRevisions?.[questionId];
-    try {
-      const receipt = await (baseRevision === undefined
-        ? saveAttemptAnswerApi(attemptId, questionId, answer)
-        : saveAttemptAnswerApi(attemptId, questionId, answer, {
-            baseRevision,
-            mutationId,
-          }));
-      if (epoch !== getDraftSessionEpoch()) return receipt;
-      await draftStore.markAnswerSynced(
-        attemptId,
-        questionId,
-        answer,
-        receipt.revision,
-      );
-      return receipt;
-    } catch (cause) {
-      if (
-        epoch === getDraftSessionEpoch() &&
-        cause instanceof ApiError &&
-        cause.code === "ANSWER_REVISION_CONFLICT"
-      ) {
-        const current = attemptAnswerConflictCurrentSchema.safeParse(
-          cause.extra?._current,
-        );
-        if (current.success)
-          draftStore.setAnswerConflict(attemptId, questionId, current.data);
-      }
-      throw cause;
-    }
-  });
-  const tail = task.then(
-    () => undefined,
-    () => undefined,
-  );
-  answerSaveTails.set(key, tail);
-  void tail.then(() => {
-    if (answerSaveTails.get(key) === tail) answerSaveTails.delete(key);
-  });
-  return task;
-}
+export { saveDraftAnswer } from "@/features/persistence/save-draft-answer";

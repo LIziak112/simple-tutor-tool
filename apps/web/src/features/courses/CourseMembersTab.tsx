@@ -16,10 +16,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useTeacherMe } from "@/features/auth/teacher-auth";
 import {
   useAddCourseMembers,
   useRemoveCourseMembers,
 } from "@/features/courses/course-queries";
+import { usePortalRuntime } from "@/features/runtime/portal-runtime";
 import { useStudents } from "@/features/students/student-queries";
 import { formatRelativeTime } from "@/lib/time";
 
@@ -212,6 +214,12 @@ function AddMembersDialog({
   memberIds: Set<string>;
   onClose: () => void;
 }) {
+  const me = useTeacherMe();
+  const { capabilitiesFor } = usePortalRuntime();
+  const capabilities = capabilitiesFor(
+    "teacher",
+    me.data?.accountKind ?? "personal",
+  );
   const studentsQuery = useStudents(false);
   const addMutation = useAddCourseMembers(courseId);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -296,9 +304,11 @@ function AddMembersDialog({
                     <span className="min-w-0 flex-1 truncate font-medium">
                       {student.displayName}
                     </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      登录名：{student.loginName}
-                    </span>
+                    {capabilities.showLoginName && (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        登录名：{student.loginName}
+                      </span>
+                    )}
                   </label>
                 </li>
               ))}

@@ -5,11 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { AiQueueSummaryData } from "@tutor/contract";
-import {
-  fetchStudentAiQueueSummaryApi,
-  listStudentAiQueueApi,
-  studentAiTaskActionApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * SAI-23 全局队列查询封装（B12）。查询键全部挂在 ["student", …] 下：学生
@@ -53,6 +49,8 @@ export function aiQueueBadgeOf(summary: AiQueueSummaryData): {
 
 /** 队列摘要（顶栏角标）。窗口聚焦不自动重取——队列更新由动作/轮询驱动 */
 export function useStudentAiQueueSummary() {
+  const { fetchStudentAiQueueSummaryApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentAiQueueSummaryKey,
     queryFn: fetchStudentAiQueueSummaryApi,
@@ -65,6 +63,8 @@ export function useStudentAiQueueSummary() {
  * 分组）。列表载荷只含展示与导航定位字段；对话正文在授权详情接口读取。
  */
 export function useStudentAiQueue(archived: "exclude" | "only") {
+  const { listStudentAiQueueApi } = usePortalClients();
+
   return useInfiniteQuery({
     queryKey: [...studentAiQueueKey, archived],
     queryFn: ({ pageParam }) =>
@@ -84,6 +84,8 @@ export function useStudentAiQueue(archived: "exclude" | "only") {
  * 派生），失败不清缓存（错误就地展示，列表保持原状可重试）。
  */
 export function useStudentAiQueueAction() {
+  const { studentAiTaskActionApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { taskId: string; action: AiQueueAction }) =>

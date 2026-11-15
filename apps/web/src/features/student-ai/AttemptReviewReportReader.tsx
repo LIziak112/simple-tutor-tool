@@ -9,10 +9,14 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { postStudentAiAttemptReviewActionApi } from "@/lib/api";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+
 import { formatCnTime } from "@/lib/time";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
-import { fetchStudentAiAttemptReviewDetailApi } from "./attempt-review-api";
+
 import {
   ATTEMPT_REVIEW_STATUS_LABEL,
   attemptReviewDetailKey,
@@ -225,6 +229,13 @@ export function AttemptReviewReportReader({
   /** 转去发起 / 进度面板（报告未生成、想重新发起或归档时） */
   readonly onOpenPanel: () => void;
 }) {
+  const routes = usePortalRoutes();
+
+  const {
+    fetchStudentAiAttemptReviewDetailApi,
+    postStudentAiAttemptReviewActionApi,
+  } = usePortalClients();
+
   const queryClient = useQueryClient();
   const detailQuery = useQuery({
     queryKey: attemptReviewDetailKey(taskId),
@@ -263,7 +274,13 @@ export function AttemptReviewReportReader({
         // 记已读失败不打断阅读：入口保持「未读」，下次打开再记
         markedTaskId.current = null;
       });
-  }, [unread, taskId, attemptId, queryClient]);
+  }, [
+    unread,
+    taskId,
+    attemptId,
+    queryClient,
+    postStudentAiAttemptReviewActionApi,
+  ]);
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
@@ -310,7 +327,9 @@ export function AttemptReviewReportReader({
                 这份报告属于另一次作答，不在当前这份作答结果里显示。
               </p>
               <Button asChild className="min-h-11">
-                <Link to={attemptReviewHref(detail.task.attemptId, taskId)}>
+                <Link
+                  to={attemptReviewHref(routes, detail.task.attemptId, taskId)}
+                >
                   前往对应的作答结果
                 </Link>
               </Button>

@@ -1,3 +1,4 @@
+import type { AttemptDraftData } from "@tutor/contract";
 import { type RefObject, useCallback, useEffect, useRef } from "react";
 import { useAnnotationSessionRef } from "@/features/annotation/use-annotation-record";
 import {
@@ -40,6 +41,32 @@ function readPosition(key: string | null): ReadingPosition | null {
   return null;
 }
 
+export function attemptReadingResume(data: AttemptDraftData) {
+  return data.settlementProgress === undefined
+    ? undefined
+    : {
+        nextQuestionId: data.settlementProgress.nextQuestionId,
+        submittedQuestionIds: (data.questionProgress ?? [])
+          .filter((row) => row.submittedAt !== null)
+          .map((row) => row.questionId),
+      };
+}
+
+export function resumeReadingPosition(
+  saved: ReadingPosition | null,
+  resume?: {
+    nextQuestionId: string | null;
+    submittedQuestionIds: readonly string[];
+  },
+): ReadingPosition | null {
+  if (resume === undefined) return saved;
+  if (saved !== null && !resume.submittedQuestionIds.includes(saved.questionId))
+    return saved;
+  return resume.nextQuestionId === null
+    ? null
+    : { questionId: resume.nextQuestionId, offset: 0 };
+}
+
 /** 等待布局稳定后恢复一次；用户先操作时让用户接管，绝不延迟抢滚动。 */
 export function useReadingPosition(
   attemptId: string,
@@ -55,8 +82,14 @@ export function useReadingPosition(
    * 布局平移不产生 scroll 事件，捕获只在版本变化后重跑一次（见下）。
    */
   cardMountVersion: number,
+  resume?: {
+    nextQuestionId: string | null;
+    submittedQuestionIds: readonly string[];
+  },
 ) {
   const session = useAnnotationSessionRef();
+  const resumeRef = useRef(resume);
+  resumeRef.current = resume;
   const captureRef = useRef<
     ((save: boolean, notifyCurrent?: boolean) => void) | null
   >(null);
@@ -72,7 +105,10 @@ export function useReadingPosition(
   useEffect(() => {
     if (interaction.current.attemptId !== attemptId)
       interaction.current = { attemptId, started: false };
-    let pending = interaction.current.started ? null : readPosition(key);
+    let pending =
+      interaction.current.started || key === null
+        ? null
+        : resumeReadingPosition(readPosition(key), resumeRef.current);
     let latest: ReadingPosition | null = null;
     let frame = 0;
     let saveTimer: ReturnType<typeof setTimeout> | undefined;

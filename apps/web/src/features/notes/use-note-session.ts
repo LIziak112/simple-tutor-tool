@@ -8,19 +8,24 @@
  */
 import type { StudentMeData } from "@tutor/contract";
 import { useEffect, useLayoutEffect } from "react";
-import { bindDraftSession } from "@/features/attempt/draft-store";
 import { bindNoteSession } from "@/features/notes/note-sync";
+import { bindDraftSession } from "@/features/persistence/draft-store";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 export function useBindNoteSession(me: StudentMeData | undefined): void {
+  const clients = usePortalClients();
   useLayoutEffect(() => {
     if (me !== undefined)
       bindDraftSession({ origin: window.location.origin, studentId: me.id });
   }, [me]);
   useEffect(() => {
     if (me === undefined) return;
-    bindNoteSession({
-      origin: window.location.origin,
-      studentId: me.id,
-    });
-  }, [me]);
+    bindNoteSession(
+      {
+        origin: window.location.origin,
+        studentId: me.id,
+      },
+      clients,
+    );
+  }, [me, clients]);
 }

@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AttemptDraftData,
   PracticeQuestionSubmitData,
@@ -15,6 +14,10 @@ import {
   resetKeyboardDeviceForTest,
 } from "@/features/keyboard/keyboard-device";
 import {
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
+import {
   fetchAttemptApi,
   fetchPracticeQuestionFeedbackApi,
   fetchStudentNoteHeadsApi,
@@ -22,7 +25,7 @@ import {
   submitPracticeQuestionApi,
 } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
-import { installDraftBackend, memoryBackend } from "./draft-store";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import {
   bindPracticePreferenceAccount,
   savePracticePreference,

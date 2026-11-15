@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   useBackupSnapshots,
   useDownloadBackup,
@@ -49,6 +50,8 @@ function formatBytes(bytes: number): string {
 }
 
 export function BackupSection() {
+  const routes = usePortalRoutes();
+
   const navigate = useNavigate();
   const snapshotsQuery = useBackupSnapshots();
   const downloadMutation = useDownloadBackup();
@@ -291,7 +294,9 @@ export function BackupSection() {
             <div>
               <Button
                 className="min-h-11 px-5"
-                onClick={() => navigate("/t/login", { replace: true })}
+                onClick={() =>
+                  navigate(routes.management("login"), { replace: true })
+                }
               >
                 <LogIn aria-hidden />
                 前往登录

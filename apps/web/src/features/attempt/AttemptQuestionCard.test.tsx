@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type {
   HintOpenedEntry,
   QuestionPublic,
@@ -20,6 +13,13 @@ import {
 } from "@/features/notes/note-layout";
 import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
 import { openAttemptHintApi } from "@/lib/api";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 
 /**

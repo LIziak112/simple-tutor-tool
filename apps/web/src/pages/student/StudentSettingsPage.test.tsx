@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
 import { DEFAULT_QUICK_BUTTONS } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
@@ -9,12 +8,21 @@ import {
   detectKeyboardDeviceForTest,
   resetKeyboardDeviceForTest,
 } from "@/features/keyboard/keyboard-device";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import StudentSettingsPage from "./StudentSettingsPage";
 
 vi.mock("@/features/auth/student-auth", () => ({
+  useClearStudentSession: () => vi.fn(),
   useStudentMe: () => ({
     data: { displayName: "张三", loginName: "zhangsan", id: "内部身份编号" },
   }),
+}));
+
+vi.mock("@/lib/device-api", () => ({
+  listDevicesApi: vi.fn(async () => ({
+    devices: [],
+    unassignedSessionCount: 0,
+  })),
 }));
 
 // 快捷按钮沿用真实控制器，以固定接口响应验证展开、收起与草稿保留。

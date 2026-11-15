@@ -6,8 +6,8 @@ import {
   getDraftSessionEpoch,
   installDraftBackend,
   memoryBackend,
-} from "./draft-store";
-import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
+} from "@/features/persistence/draft-store";
+import { prepareDraftForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
 
 beforeEach(() => installDraftBackend(memoryBackend()));
 

@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, renderHook } from "@/test/render-with-portal";
 import { PAPER_KEEPALIVE_MS, useRetainedPaper } from "./use-retained-paper";
 
 afterEach(() => vi.useRealTimers());

@@ -28,7 +28,6 @@ import {
   resolvePracticeQuestionFeedbackState,
   resolvePracticeWorkflow,
 } from "./practice-workflow-service";
-import type { Tx } from "./question-sync";
 import { studentTeacherIdOf } from "./student-course-service";
 
 /**
@@ -309,7 +308,7 @@ export function isPerQuestionV1Attempt(
  * 差异；作废卷 409。课程失权校验留在调用方（两路径检查时机不同）。
  */
 export function requireOwnActiveAttempt(
-  tx: Tx,
+  tx: Pick<Db, "select">,
   studentId: string,
   attemptId: string,
 ): Attempt {
@@ -357,10 +356,11 @@ export function attemptWorkflowView(
   db: Db,
   attempt: Attempt,
   now: Date | string = new Date(),
-  preloadedRows?: readonly Pick<
+  preloadedRows?: readonly (Pick<
     PracticeQuestionProgress,
     "questionId" | "submittedAt"
-  >[],
+  > &
+    Partial<Pick<typeof responses.$inferSelect, "settlementSeq">>)[],
 ): AttemptWorkflowView | null {
   // lesson 独立适配 + 历史旧协议卷：先于授权查询与 responses 聚合早退（历史卷
   // 不付无用查询；升级期线上绝大多数取卷命此）——协议形态统一走单一谓词，
@@ -380,6 +380,7 @@ export function attemptWorkflowView(
       .select({
         questionId: responses.questionId,
         submittedAt: responses.submittedAt,
+        settlementSeq: responses.settlementSeq,
       })
       .from(responses)
       .where(eq(responses.attemptId, attempt.id))
@@ -414,13 +415,28 @@ export function attemptWorkflowView(
     now,
   );
   return {
-    practiceWorkflow: workflow,
+    practiceWorkflow: {
+      ...workflow,
+      canSettlePartially:
+        attempt.status === "draft" &&
+        attempt.timeLimitSec === null &&
+        workflow.allowedFeedbackModes.includes("per_question"),
+      partialSettlementRestriction:
+        attempt.status !== "draft"
+          ? "attempt_finished"
+          : attempt.timeLimitSec !== null
+            ? "timed_attempt"
+            : !workflow.allowedFeedbackModes.includes("per_question")
+              ? "teacher_restricted"
+              : null,
+    },
     questionProgress: rows.map((row) => ({
       questionId: row.questionId,
       submittedAt: row.submittedAt,
       feedbackReadable:
         resolvePracticeQuestionFeedbackState({
           submitted: row.submittedAt !== null,
+          settled: row.settlementSeq != null,
           attemptSubmitted: attempt.status !== "draft",
           published,
           workflow,

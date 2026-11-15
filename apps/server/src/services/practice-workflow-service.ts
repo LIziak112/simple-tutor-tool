@@ -179,6 +179,8 @@ export type PracticeQuestionFeedbackState =
 export function resolvePracticeQuestionFeedbackState(input: {
   /** 本题 responses 行是否已提交 */
   submitted: boolean;
+  /** 服务端行已归入不可变结算；不代表整卷完成 */
+  settled?: boolean;
   /** 本卷是否已整卷收尾（attempts.status ≠ draft） */
   attemptSubmitted: boolean;
   /** 已收尾卷的公布 gate（assignment answersRelease / course·wrong 恒 true）；
@@ -199,7 +201,11 @@ export function resolvePracticeQuestionFeedbackState(input: {
   if (workflow === null) {
     return { status: "restricted", restrictionReason: "legacy_attempt" };
   }
-  if (workflow.canSubmitQuestion) {
+  if (
+    workflow.canSubmitQuestion ||
+    (input.settled === true &&
+      workflow.allowedFeedbackModes.includes("per_question"))
+  ) {
     return { status: "released" };
   }
   if (workflow.feedbackMode === "after_attempt") {

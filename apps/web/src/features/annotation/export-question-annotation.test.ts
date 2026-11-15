@@ -3,6 +3,8 @@ import type {
   AttemptQuestionPublic,
 } from "@tutor/contract";
 import { beforeEach, expect, it, vi } from "vitest";
+import { bindServiceLease } from "@/features/runtime/service-leases";
+import { testClientServices } from "@/test/portal-fixture";
 import { exportQuestionAnnotationImage } from "./export-question-annotation";
 
 const state = vi.hoisted(() => ({
@@ -28,7 +30,7 @@ vi.mock("./render-current-question", () => ({
 vi.mock("./question-annotation-base", () => ({
   prepareQuestionAnnotationBase: mocks.prepare,
 }));
-vi.mock("@/features/attempt/draft-store", () => ({
+vi.mock("@/features/persistence/draft-store", () => ({
   draftStore: { loadDraft: mocks.draft },
   getDraftSessionEpoch: () => state.epoch,
   getDraftPersistenceState: () => state.persistence,
@@ -102,6 +104,7 @@ const record = () => ({
 beforeEach(() => {
   vi.resetAllMocks();
   state.session = { origin: "test", studentId: "s" };
+  bindServiceLease(state.session, testClientServices);
   state.epoch = 1;
   state.persistence = "saved";
   mocks.record.mockResolvedValue(null);

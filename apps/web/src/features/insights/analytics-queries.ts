@@ -1,12 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  type AnalyticsFetchParams,
-  fetchAnalyticsOverviewApi,
-  fetchAnalyticsQuestionsApi,
-  fetchAnalyticsStudentApi,
-  fetchQuestionReviewApi,
-  type QuestionReviewParams,
-} from "@/lib/api";
+import type {
+  AnalyticsFetchParams,
+  QuestionReviewParams,
+} from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 学情三接口的 TanStack Query 封装（T4.2）：
@@ -21,6 +18,8 @@ export const analyticsOverviewKey = (params: AnalyticsFetchParams) =>
 
 /** 学情总览（三态由页面接 isPending/isError） */
 export function useAnalyticsOverview(params: AnalyticsFetchParams) {
+  const { fetchAnalyticsOverviewApi } = usePortalClients();
+
   return useQuery({
     queryKey: analyticsOverviewKey(params),
     queryFn: () => fetchAnalyticsOverviewApi(params),
@@ -40,6 +39,8 @@ export function useAnalyticsStudent(
   studentId: string | undefined,
   params: AnalyticsFetchParams,
 ) {
+  const { fetchAnalyticsStudentApi } = usePortalClients();
+
   return useQuery({
     queryKey: analyticsStudentKey(studentId ?? "pending", params),
     queryFn: () => fetchAnalyticsStudentApi(studentId ?? "", params),
@@ -55,6 +56,8 @@ export const analyticsQuestionsKey = (params: AnalyticsFetchParams) =>
 
 /** 题目视角（题目统计行按单元内题序稳定返回） */
 export function useAnalyticsQuestions(params: AnalyticsFetchParams) {
+  const { fetchAnalyticsQuestionsApi } = usePortalClients();
+
   return useQuery({
     queryKey: analyticsQuestionsKey(params),
     queryFn: () => fetchAnalyticsQuestionsApi(params),
@@ -74,6 +77,8 @@ export function useQuestionReview(
   studentId: string | undefined,
   params: QuestionReviewParams,
 ) {
+  const { fetchQuestionReviewApi } = usePortalClients();
+
   return useQuery({
     queryKey: questionReviewKey(studentId ?? "pending", params),
     queryFn: () => fetchQuestionReviewApi(studentId ?? "", params),

@@ -4,17 +4,7 @@ import type {
   AdminTeacherResetPasswordRequest,
   AdminTeacherUpdateRequest,
 } from "@tutor/contract";
-import {
-  createAdminTeacherApi,
-  disableAdminTeacherApi,
-  enableAdminTeacherApi,
-  fetchAdminOverview,
-  fetchAdminSettings,
-  fetchAdminTeachers,
-  resetAdminTeacherPasswordApi,
-  updateAdminSettingsApi,
-  updateAdminTeacherApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 管理端查询与写操作（T2B.6，D19/D20）。
@@ -29,6 +19,8 @@ export const adminTeachersKey = (status: "all" | "active" | "disabled") =>
 
 /** 教师列表（三态齐全由页面接 isPending/isError） */
 export function useAdminTeachers(status: "all" | "active" | "disabled") {
+  const { fetchAdminTeachers } = usePortalClients();
+
   return useQuery({
     queryKey: adminTeachersKey(status),
     queryFn: () => fetchAdminTeachers(status),
@@ -48,6 +40,8 @@ function useInvalidateAdmin() {
 
 /** 管理员创建教师（响应含一次性初始密码明文，由调用方弹窗展示，§4.4） */
 export function useCreateAdminTeacher() {
+  const { createAdminTeacherApi } = usePortalClients();
+
   const invalidate = useInvalidateAdmin();
   return useMutation({
     mutationFn: createAdminTeacherApi,
@@ -57,6 +51,8 @@ export function useCreateAdminTeacher() {
 
 /** 改登录名 / 授予撤销 isAdmin */
 export function useUpdateAdminTeacher() {
+  const { updateAdminTeacherApi } = usePortalClients();
+
   const invalidate = useInvalidateAdmin();
   return useMutation({
     mutationFn: ({
@@ -72,6 +68,8 @@ export function useUpdateAdminTeacher() {
 
 /** 禁用教师（确认弹层由页面先展示影响说明，§4.1） */
 export function useDisableAdminTeacher() {
+  const { disableAdminTeacherApi } = usePortalClients();
+
   const invalidate = useInvalidateAdmin();
   return useMutation({
     mutationFn: disableAdminTeacherApi,
@@ -81,6 +79,8 @@ export function useDisableAdminTeacher() {
 
 /** 启用教师 */
 export function useEnableAdminTeacher() {
+  const { enableAdminTeacherApi } = usePortalClients();
+
   const invalidate = useInvalidateAdmin();
   return useMutation({
     mutationFn: enableAdminTeacherApi,
@@ -90,6 +90,8 @@ export function useEnableAdminTeacher() {
 
 /** 重置教师密码（响应含一次性新密码明文） */
 export function useResetAdminTeacherPassword() {
+  const { resetAdminTeacherPasswordApi } = usePortalClients();
+
   const invalidate = useInvalidateAdmin();
   return useMutation({
     mutationFn: ({
@@ -105,6 +107,8 @@ export function useResetAdminTeacherPassword() {
 
 /** 注册开关当前状态（D8；概览页就地切换行也用它做乐观基础） */
 export function useAdminSettings() {
+  const { fetchAdminSettings } = usePortalClients();
+
   return useQuery({
     queryKey: ["admin", "settings"],
     queryFn: fetchAdminSettings,
@@ -115,6 +119,8 @@ export function useAdminSettings() {
 
 /** 切换注册开关 */
 export function useUpdateAdminSettings() {
+  const { updateAdminSettingsApi } = usePortalClients();
+
   const invalidate = useInvalidateAdmin();
   return useMutation({
     mutationFn: (request: AdminSettingsUpdateRequest) =>
@@ -125,6 +131,8 @@ export function useUpdateAdminSettings() {
 
 /** 概览聚合计数（D20：只读展示） */
 export function useAdminOverview() {
+  const { fetchAdminOverview } = usePortalClients();
+
   return useQuery({
     queryKey: ["admin", "overview"],
     queryFn: fetchAdminOverview,

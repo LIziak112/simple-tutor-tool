@@ -1,14 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SharedFileSummary } from "@tutor/contract";
-import {
-  deleteSharedFileApi,
-  fetchSharedFiles,
-  importSharedFile,
-  previewSharedFile,
-  publishLectureToSharedApi,
-  publishUnitToSharedApi,
-  type SharedImportRequest,
-} from "@/lib/api";
+import type { SharedImportRequest } from "@/features/runtime/client-types";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 共享页的 TanStack Query 封装（T2B.7，D15–D18）：
@@ -23,6 +16,8 @@ export const sharedListKey = ["teacher", "shared"] as const;
 
 /** 共享列表（D15 规模防线字段随响应返回，页面据此提示） */
 export function useSharedFiles() {
+  const { fetchSharedFiles } = usePortalClients();
+
   return useQuery({
     queryKey: sharedListKey,
     queryFn: fetchSharedFiles,
@@ -39,6 +34,8 @@ export function useSharedPreview(
   filename: string | null,
   folderId: string | null,
 ) {
+  const { previewSharedFile } = usePortalClients();
+
   return useQuery({
     queryKey: sharedPreviewKey(filename ?? "", folderId),
     queryFn: () =>
@@ -60,6 +57,8 @@ function useInvalidateAfterImport() {
 
 /** 导入共享文件进本人资源库（D17；422 LINT_ERROR 由抽屉分支展示） */
 export function useImportSharedFile() {
+  const { importSharedFile } = usePortalClients();
+
   const invalidate = useInvalidateAfterImport();
   return useMutation({
     mutationFn: (request: SharedImportRequest) => importSharedFile(request),
@@ -69,6 +68,8 @@ export function useImportSharedFile() {
 
 /** 删除共享文件（D18：服务端校验发布者；403 FORBIDDEN_SHARED_FILE 由页面提示） */
 export function useDeleteSharedFile() {
+  const { deleteSharedFileApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (file: SharedFileSummary) => deleteSharedFileApi(file.filename),
@@ -80,6 +81,8 @@ export function useDeleteSharedFile() {
 
 /** 发布单元到共享（确认弹层后调用；响应 filename 用于成功提示） */
 export function usePublishUnitToShared() {
+  const { publishUnitToSharedApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: publishUnitToSharedApi,
@@ -91,6 +94,8 @@ export function usePublishUnitToShared() {
 
 /** 发布讲义到共享 */
 export function usePublishLectureToShared() {
+  const { publishLectureToSharedApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: publishLectureToSharedApi,

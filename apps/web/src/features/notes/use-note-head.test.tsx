@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render } from "@testing-library/react";
 import type { NoteHeadData } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
@@ -21,6 +20,8 @@ import {
   applyNoteHeadSideEffects,
   useNoteHead,
 } from "@/features/notes/use-note-head";
+import { testClientServices } from "@/test/portal-fixture";
+import { act, render } from "@/test/render-with-portal";
 
 /**
  * useNoteHead（T6R.9）：答题页每题的笔记头拉取接线——head 应用进 store
@@ -115,7 +116,7 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
     renderHeadHook();
     // 初始（bind 前的渲染帧）不应发请求——bind 后由 enabled 触发
     await act(async () => {
-      bindNoteSession(SESSION_A);
+      bindNoteSession(SESSION_A, testClientServices);
     });
     await vi.waitFor(() => expect(headsMock).toHaveBeenCalled());
     await vi.waitFor(() => {
@@ -131,7 +132,7 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
       noteHeadsMockResponse({ [SCOPE.questionId]: revHead() }),
     );
     docMock.mockResolvedValue(SERVER_DOC);
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     renderHeadHook();
     await vi.waitFor(() => {
       expect(peekNoteRecord(SESSION_A, SCOPE)?.doc.ink.strokes.length).toBe(1);
@@ -146,7 +147,7 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
     headsMock.mockImplementation(
       noteHeadsMockResponse({ [SCOPE.questionId]: head1 }),
     );
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     // 先把本地记录对齐到 rev1（模拟上一轮已同步），再写新 pending：
     // 服务端仍停 rev1 —— 本地领先，无需拉正文
     await applyServerHead(SESSION_A, SCOPE, head1);
@@ -189,10 +190,10 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
       }),
     );
     docMock.mockResolvedValue(SERVER_DOC);
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     renderHeadHook();
     await vi.waitFor(() =>
-      expect(recoverMock).toHaveBeenCalledWith({
+      expect(recoverMock).toHaveBeenCalledWith(testClientServices, {
         role: "student",
         versionId: "33333333-3333-4333-8333-333333333301",
       }),
@@ -201,7 +202,7 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
 
   it("head 网络失败不抛穿（退避由 react-query 接住；本地稿不受影响）", async () => {
     headsMock.mockRejectedValue(new ApiError("UNAUTHORIZED", "未登录", 401));
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     writeNoteDoc(
       SESSION_A,
       SCOPE,
@@ -230,7 +231,7 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
       noteHeadsMockResponse({ [SCOPE.questionId]: head1 }),
     ); // p1-q2 的 head 即共享工厂的空态缺省
     docMock.mockResolvedValue(SERVER_DOC);
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     renderHeadHooks([
       [SCOPE.attemptId, SCOPE.questionId],
       [SCOPE.attemptId, "p1-q2"],
@@ -256,7 +257,7 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
 
   it("批量失败传播到全部题目的 query（ApiError 不重试，各题独立可重试）", async () => {
     headsMock.mockRejectedValue(new ApiError("FORBIDDEN", "无权访问", 403));
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     renderHeadHooks([
       [SCOPE.attemptId, SCOPE.questionId],
       [SCOPE.attemptId, "p1-q2"],

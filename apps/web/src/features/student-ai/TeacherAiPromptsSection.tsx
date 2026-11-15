@@ -8,7 +8,8 @@ import { ChevronDown, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import {
   teacherAiPromptsDraftKey,
   teacherAiPromptsKey,

@@ -35,12 +35,8 @@ import {
   SortableItem,
   SortableZone,
 } from "@/features/content/sortable";
-import {
-  createLibraryFolderApi,
-  deleteLibraryFolderApi,
-  renameLibraryFolderApi,
-  reorderLibraryFoldersApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { libraryFoldersKey } from "./library-queries";
 
 /**
@@ -83,6 +79,13 @@ export function FolderSidebar({
   totalCount,
   onActionError,
 }: FolderSidebarProps) {
+  const {
+    createLibraryFolderApi,
+    deleteLibraryFolderApi,
+    reorderLibraryFoldersApi,
+    renameLibraryFolderApi,
+  } = usePortalClients();
+
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<LibraryFolder | null>(null);

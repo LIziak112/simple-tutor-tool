@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 
 /**
  * 设置页未保存草稿注册表。同一分类下可有多个配置区（teaching 分类：
@@ -36,6 +37,8 @@ export function SettingsNavigationProvider({
 }: {
   children: ReactNode;
 }) {
+  const routes = usePortalRoutes();
+
   const navigate = useNavigate();
   const [drafts, setDrafts] = useState<
     Record<string, { dirty: boolean; discard: () => void }>
@@ -82,7 +85,7 @@ export function SettingsNavigationProvider({
           const url = new URL(link.href);
           if (
             url.origin !== window.location.origin ||
-            url.pathname === "/t/settings" ||
+            url.pathname === routes.management("settings") ||
             link.getAttribute("href")?.startsWith("#")
           )
             return;

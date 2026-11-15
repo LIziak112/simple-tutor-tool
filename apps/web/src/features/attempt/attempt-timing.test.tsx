@@ -1,8 +1,8 @@
-import { fireEvent, screen } from "@testing-library/react";
 import type { AttemptDraftData, AttemptTiming } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import { fetchAttemptApi } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
+import { fireEvent, screen } from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import { clockOf, formatRemaining, formatTimeLimit } from "./attempt-clock";
 

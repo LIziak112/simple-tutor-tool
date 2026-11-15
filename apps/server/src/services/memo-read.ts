@@ -6,13 +6,14 @@ import type {
   MemoMediaFormat,
 } from "@tutor/contract";
 import {
+  learningContextSchema,
   MEMO_ANCHOR_NONE,
   MEMO_MEDIA_CONTENT_TYPE,
   memoAnchorSchema,
   memoSchema,
   memoTagsSchema,
 } from "@tutor/contract";
-import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { memos } from "../db/schema";
 import { readFileBytes } from "../lib/blob-io";
@@ -37,6 +38,13 @@ export function toMemo(row: MemoRow): Memo {
   const tagsParsed = memoTagsSchema.safeParse(JSON.parse(row.tagsJson));
   return memoSchema.parse({
     id: row.id,
+    ...(row.seq === null ? {} : { seq: row.seq }),
+    context:
+      row.contextJson === null
+        ? null
+        : learningContextSchema.parse(JSON.parse(row.contextJson)),
+    deviceId: row.deviceId,
+    parentMemoSeq: row.parentMemoSeq,
     kind: row.kind,
     text: row.text,
     media:
@@ -82,6 +90,12 @@ export function listMemos(
   studentId: string,
   query: MemoListQuery,
 ): MemoListData {
+  if (
+    query.seqFrom !== undefined &&
+    query.seqTo !== undefined &&
+    query.seqFrom > query.seqTo
+  )
+    throw new HttpError(400, "VALIDATION_ERROR", "随笔序号范围无效");
   const limit = query.limit ?? DEFAULT_LIMIT;
   const cursor = parseCursor(query.cursor);
   const rows = db
@@ -91,6 +105,21 @@ export function listMemos(
       and(
         eq(memos.studentId, studentId),
         isNull(memos.deletedAt),
+        query.seq === undefined ? undefined : eq(memos.seq, query.seq),
+        query.seqFrom === undefined ? undefined : gte(memos.seq, query.seqFrom),
+        query.seqTo === undefined ? undefined : lte(memos.seq, query.seqTo),
+        query.courseId === undefined
+          ? undefined
+          : sql`json_extract(${memos.contextJson}, '$.content.courseId') = ${query.courseId}`,
+        query.unitId === undefined
+          ? undefined
+          : sql`json_extract(${memos.contextJson}, '$.content.unitId') = ${query.unitId}`,
+        query.parentMemoSeq === undefined
+          ? undefined
+          : eq(memos.parentMemoSeq, query.parentMemoSeq),
+        query.questionId === undefined
+          ? undefined
+          : sql`coalesce(json_extract(${memos.contextJson}, '$.content.questionId'), json_extract(${memos.anchorJson}, '$.questionId')) = ${query.questionId}`,
         query.kind === undefined ? undefined : eq(memos.kind, query.kind),
         query.tag === undefined
           ? undefined

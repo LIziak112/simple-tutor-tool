@@ -1,9 +1,9 @@
-import { fireEvent, render } from "@testing-library/react";
 import type {
   AttemptContextGroup,
   AttemptContextMaterial,
 } from "@tutor/contract";
 import { afterEach, expect, it, vi } from "vitest";
+import { fireEvent, render } from "@/test/render-with-portal";
 import { QuestionGroupAnchor } from "./QuestionGroupAnchor";
 
 const group: AttemptContextGroup = {

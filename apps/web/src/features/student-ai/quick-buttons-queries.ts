@@ -4,10 +4,7 @@ import type {
   StudentQuickButtonsData,
   StudentQuickButtonsPutRequest,
 } from "@tutor/contract";
-import {
-  fetchStudentQuickButtonsApi,
-  saveStudentQuickButtonsApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * SAI-08 学生快捷按钮查询封装（管理组件的数据源）。
@@ -28,6 +25,8 @@ export const studentQuickButtonsDraftKey = [
 
 /** 读本人快捷按钮整组（服务端无配置时返回契约默认四项） */
 export function useStudentQuickButtons() {
+  const { fetchStudentQuickButtonsApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentQuickButtonsKey,
     queryFn: fetchStudentQuickButtonsApi,
@@ -37,6 +36,8 @@ export function useStudentQuickButtons() {
 
 /** 整组保存（409 AI_SETTINGS_STALE 等错误由组件按 ApiError 分支处理） */
 export function useSaveStudentQuickButtons() {
+  const { saveStudentQuickButtonsApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   return useMutation({
     // 包一层丢弃 react-query 传入的 mutation 上下文（不进 API 函数签名）

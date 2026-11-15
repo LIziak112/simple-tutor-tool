@@ -171,3 +171,36 @@ describe("随笔契约（模块 5 第一步）", () => {
     expect(normalizeMemoTags(["x".repeat(21)])).toEqual([]);
   });
 });
+
+describe("随笔范围与Agent上下文", () => {
+  it("课程/单元/题及序号区间保留到查询，完整上下文不被丢弃", () => {
+    const query = {
+      courseId: "course",
+      unitId: "unit",
+      questionId: "q1",
+      seqFrom: 12,
+      seqTo: 19,
+      parentMemoSeq: 12,
+    };
+    expect(memoListQuerySchema.parse(query)).toEqual(query);
+    const context = {
+      schemaVersion: 1,
+      content: {
+        courseId: null,
+        unitId: null,
+        lectureId: null,
+        sectionId: null,
+        questionId: null,
+        titles: { course: null, unit: null, lecture: null },
+      },
+      session: null,
+      view: null,
+      deviceId: null,
+    };
+    expect(
+      memoAgentCreateSchema.parse({ text: "Agent转记", context }).context,
+    ).toEqual(context);
+    expect(memoListQuerySchema.safeParse({ seqFrom: 0 }).success).toBe(false);
+    expect(memoListQuerySchema.safeParse({ seqTo: -1 }).success).toBe(false);
+  });
+});

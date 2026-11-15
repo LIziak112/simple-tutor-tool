@@ -42,9 +42,11 @@ import {
   materialSlotOrderOf,
   structuresOfSnapshot,
 } from "../attempt-service.ts";
+import { timeProjectionsOf } from "../attempt-time-projection";
 import { resolveNowDate } from "../export-service.ts";
 import { snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
+import { FIELD_NOTES, globalNotesOf } from "./attempt-review-time-notes";
 import {
   ATTEMPT_REVIEW_PROMPT_HASH,
   ATTEMPT_REVIEW_PROMPT_MD,
@@ -202,28 +204,6 @@ interface AttemptReviewRange {
 }
 
 /** 全局边界说明（进预览 notes 与快照 notes） */
-function globalNotesOf(hasAnyInk: boolean): string[] {
-  const notes = [
-    "整体复盘为文字上下文：不包含题面图片、草稿与正式笔迹图像，不能分析书写过程。",
-    "作答用时只包含服务端记录的每题有效用时，缺失不代表 0。",
-    "一次练习不能代表长期能力掌握情况。",
-  ];
-  if (hasAnyInk) {
-    notes.push("本次练习存在正式笔迹：笔迹内容未包含在本任务中。");
-  }
-  return notes;
-}
-
-/** 发送字段说明（预览知情；学生确认的范围即这些字段） */
-const FIELD_NOTES: readonly string[] = [
-  "将随任务发送：每题题干与选项、知识点与难度、你的正式答案文本、参考答案与官方解析（按当前公布规则允许时）、判分状态与作答状态。",
-  "不会发送：草稿、教师批注、图片与正式笔迹图像、其他练习或其他学生的数据。",
-];
-
-/**
- * 整体任务的实时授权门：创建、领取、报告写回、详情和打开共用。
- * 账号及作答可用性复用逐题授权，交卷、公布及逐题策略任一不满足即拒绝。
- */
 function requireAttemptReviewAccess(
   db: Db | QueueTx,
   input: { studentId: string; attemptId: string },
@@ -310,6 +290,7 @@ function attemptReviewRangeOf(
     );
   }
 
+  const times = timeProjectionsOf(db, [attempt.id]);
   const questions: AiAttemptReviewQuestion[] = [];
   let hasAnyInk = false;
   for (const [index, row] of rows.entries()) {
@@ -397,6 +378,7 @@ function attemptReviewRangeOf(
       gradingState,
       displayStatus,
       hasFormalInk,
+      time: times.responseTime.get(row.id),
       activeSec: row.activeSec,
       notes,
     });
@@ -472,7 +454,7 @@ function snapshotJsonOf(
   },
 ): string {
   const snapshotData: AiAttemptReviewSnapshot = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     attemptId: input.attemptId,
     snapshotVersion: input.snapshotVersion,
     capturedAt: input.capturedAt,

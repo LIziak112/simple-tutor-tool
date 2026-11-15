@@ -13,6 +13,7 @@ import {
   createAnnotationToolbox,
   useCoordinatedAnnotation,
 } from "@/features/annotation/coordinated-annotation-context";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { toLogical, toLogicalPoint } from "@/features/ink/engine/normalize.ts";
 import {
   advancePointerMachine,
@@ -33,18 +34,18 @@ import {
   type AtramentReplayCanvas,
   createAtramentReplayCanvas,
 } from "@/features/ink/replay/draw.ts";
-import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
-import { useAttemptEditor } from "./AttemptEditorContext";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import {
   draftStore,
   getDraftSessionEpoch,
   type MaterialInkBaseMeta,
   subscribeLocalDraftChoice,
-} from "./draft-store";
+} from "@/features/persistence/draft-store";
+import { prepareDraftForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { useMaterialErase } from "./material-erase";
 import { useMaterialEraserRing } from "./material-eraser-ring";
 import { awaitMaterialSurfaceReady } from "./material-surface-ready";
-import { prepareDraftForPwaUpdate } from "./pwa-draft-safety";
 
 /** 无共享工具箱（单测、独立挂载）时用圈画缺省：红色细笔 */
 const FALLBACK_TOOLBOX = createAnnotationToolbox();
@@ -102,6 +103,7 @@ export function MaterialAnnotationOverlay({
   /** 本次手势的工具快照：一笔之内的采样都按落笔时的工具分派 */
   const liveGestureRef = useRef<InkGesture>({ kind: "none" });
   const storeKey = inkKey ?? materialId;
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
 
   const isAssociated =
     associatedQuestionIds === undefined ||
@@ -400,7 +402,7 @@ export function MaterialAnnotationOverlay({
         data: { width: INK_LOGICAL_WIDTH, strokes: nextStrokes },
         updatedAt: Date.now(),
       };
-      draftStore.saveMaterialInk(attemptId, storeKey, doc);
+      draftStore.saveMaterialInk(attemptId, storeKey, doc, expectedFrozenAt);
       if (nextStrokes.length === 0) {
         // 空稿无对齐负担：冻结基准随稿清除，下次首笔按当前列宽重冻
         draftStore.removeMaterialInkBase(attemptId, storeKey);
@@ -419,7 +421,7 @@ export function MaterialAnnotationOverlay({
       const base = frozenRef.current;
       if (base) draftStore.saveMaterialInkBase(attemptId, storeKey, base);
     },
-    [attemptId, storeKey],
+    [attemptId, storeKey, expectedFrozenAt],
   );
 
   const pointOf = useCallback(

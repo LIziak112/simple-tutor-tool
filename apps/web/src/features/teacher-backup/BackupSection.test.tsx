@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { BackupSnapshotList } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +8,7 @@ import {
   fetchBackupSnapshots,
   restoreBackupApi,
 } from "@/lib/api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 
 /**
  * 设置页「备份与恢复」区组件测试（T4.5 + Opus 实测③修复）：区块渲染

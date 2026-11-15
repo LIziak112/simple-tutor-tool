@@ -1,5 +1,6 @@
 import { BookOpen, ChevronRight, School } from "lucide-react";
 import { Link } from "react-router";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { useStudentCourses } from "@/features/student/student-queries";
 import {
   StudentCourseCard,
@@ -15,6 +16,8 @@ import {
  * 三态齐全；空态引导（未加入课程时说明去向）；「按讲义浏览」为讲义列表的二级入口。
  */
 export default function StudentCoursesPage() {
+  const routes = usePortalRoutes();
+
   const coursesQuery = useStudentCourses();
 
   return (
@@ -25,7 +28,7 @@ export default function StudentCoursesPage() {
         description="点进课程看讲义、做练习。"
         actions={
           <Link
-            to="/s/lectures"
+            to={routes.learning("lectures")}
             className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-medium text-primary outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <BookOpen aria-hidden className="size-4 shrink-0" />

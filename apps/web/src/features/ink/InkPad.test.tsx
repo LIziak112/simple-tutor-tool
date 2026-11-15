@@ -1,12 +1,12 @@
+import { act } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
   render,
   screen,
   within,
-} from "@testing-library/react";
-import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+} from "@/test/render-with-portal";
 import type {
   InkChangeReason,
   InkDoc,

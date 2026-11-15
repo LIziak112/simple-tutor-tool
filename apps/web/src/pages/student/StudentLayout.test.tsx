@@ -1,14 +1,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
-import { MemoryRouter, Route, Routes } from "react-router";
+import {
+  MemoryRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { ApiError, fetchStudentMe, logoutStudentApi } from "@/lib/api";
 import {
   checkPersonalSessionApi,
   logoutPersonalApi,
-} from "@/features/auth/personal-api";
-import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
-import { ApiError, fetchStudentMe, logoutStudentApi } from "@/lib/api";
+} from "@/lib/personal-session-legacy-api";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import StudentLayout from "./StudentLayout";
 
 /**
@@ -27,7 +33,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-vi.mock("@/features/auth/personal-api", () => ({
+vi.mock("@/lib/personal-session-legacy-api", () => ({
   checkPersonalSessionApi: vi.fn(),
   logoutPersonalApi: vi.fn(),
 }));
@@ -44,15 +50,25 @@ const STUDENT: StudentMeData = {
   accountKind: "class",
 };
 
-function renderLayout() {
+function PersonalDestination() {
+  const location = useLocation();
+  return (
+    <p data-testid="personal-destination">
+      {location.pathname + location.search + location.hash}
+    </p>
+  );
+}
+function renderLayout(entry = "/s/home") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/s/home"]}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
+          <Route path="/p/learn/*" element={<PersonalDestination />} />
           <Route path="/s" element={<StudentLayout />}>
+            <Route index element={<Navigate to="/s/home" replace />} />
             <Route
               path="settings"
               element={<p data-testid="route-stub">学生设置页</p>}
@@ -92,58 +108,22 @@ describe("StudentLayout · 个人账号（模块 0）", () => {
     accountKind: "personal",
   };
 
-  it("导航五分区（无「我的作业」）+ 「管理视角」检查另一侧会话", async () => {
+  it("个人账号旧首页进入独立学习门户", async () => {
     mockedMe.mockResolvedValue(PERSONAL);
     renderLayout();
-
-    expect(await screen.findByRole("link", { name: "首页" })).toHaveAttribute(
-      "href",
-      "/s/home",
+    expect(await screen.findByTestId("personal-destination")).toHaveTextContent(
+      "/p/learn/home",
     );
     expect(
-      screen.queryByRole("link", { name: "我的作业" }),
+      screen.queryByRole("navigation", { name: "学生端导航" }),
     ).not.toBeInTheDocument();
-    for (const [name, href] of [
-      ["课程", "/s/courses"],
-      ["错题本", "/s/wrong"],
-      ["我的记录", "/s/records"],
-      ["随笔", "/s/memos"],
-    ] as const) {
-      expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
-    }
-    vi.mocked(checkPersonalSessionApi).mockResolvedValue(null);
-    const [manage] = screen.getAllByRole("button", { name: "切换到管理视角" });
-    if (!manage) throw new Error("管理视角按钮缺失");
-    fireEvent.click(manage);
-    expect(await screen.findByText("个人登录页")).toBeVisible();
-    expect(checkPersonalSessionApi).toHaveBeenCalledWith("student");
   });
-
-  it("个人退出失败保留页面并能原地重试", async () => {
+  it("旧个人学习深链接保留查询和题目hash", async () => {
     mockedMe.mockResolvedValue(PERSONAL);
-    vi.mocked(logoutPersonalApi)
-      .mockRejectedValueOnce(new Error("退出失败，请重试"))
-      .mockResolvedValueOnce({ paired: true });
-    renderLayout();
-
-    const [logoutButton] = await screen.findAllByRole("button", {
-      name: /退出/,
-    });
-    if (!logoutButton) throw new Error("退出按钮缺失");
-    fireEvent.click(logoutButton);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "退出失败，请重试",
+    renderLayout("/s/home?course=c#q2");
+    expect(await screen.findByTestId("personal-destination")).toHaveTextContent(
+      "/p/learn/home?course=c#q2",
     );
-    expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
-    mockedMe.mockRejectedValueOnce(new ApiError("UNAUTHORIZED", "请登录", 401));
-    fireEvent.click(logoutButton);
-
-    await waitFor(() => {
-      expect(logoutPersonalApi).toHaveBeenCalledTimes(2);
-      expect(logoutPersonalApi).toHaveBeenCalledWith("student");
-      expect(mockedLogout).not.toHaveBeenCalled();
-      expect(screen.getByTestId("route-stub")).toHaveTextContent("个人登录页");
-    });
   });
 });
 
@@ -269,3 +249,12 @@ describe("StudentLayout", () => {
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
   });
 });
+
+for (const entry of ["/s", "/s/"])
+  it(`个人旧根${entry}经实际父布局和原index到个人首页`, async () => {
+    mockedMe.mockResolvedValue({ ...STUDENT, accountKind: "personal" });
+    renderLayout(entry);
+    expect(await screen.findByTestId("personal-destination")).toHaveTextContent(
+      "/p/learn/home",
+    );
+  });

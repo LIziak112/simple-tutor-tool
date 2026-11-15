@@ -1,3 +1,4 @@
+import type { NoteRole } from "@/features/runtime/client-types";
 /**
  * 任意笔记版本的只读查看组件（T6R.15 D）：按 versionId + viewer 直接渲染
  * 订正/补充稿等非原稿版本——与 NoteOriginalView（按证据行定位本次原稿）
@@ -23,7 +24,7 @@ import {
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import type { NoteRole } from "@/lib/api";
+
 import { formatCnTime } from "@/lib/time";
 import { useNoteVersionBody } from "./use-note-version-view";
 

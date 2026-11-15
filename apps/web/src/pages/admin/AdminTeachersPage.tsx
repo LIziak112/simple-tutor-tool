@@ -35,7 +35,8 @@ import {
   useUpdateAdminTeacher,
 } from "@/features/admin/admin-queries";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { copyText } from "@/lib/copy";
 import { formatCnTime } from "@/lib/time";
 

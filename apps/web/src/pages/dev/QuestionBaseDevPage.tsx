@@ -1,7 +1,7 @@
 import type { AttemptQuestionPublic, StudentAnswer } from "@tutor/contract";
 import { useEffect, useRef, useState } from "react";
 import { renderQuestionBaseImage } from "@/features/annotation/question-base-image";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import FrozenMaterialExperiment from "./test-support/FrozenMaterialExperiment";
 import FrozenSurfaceExperiment, {
   prototypeMatchingQuestion,

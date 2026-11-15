@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { recordsReturnTarget } from "./record-review-navigation";
 
 /** 只存列表定位ID，不保存答案；按学生和筛选分页隔离。 */
@@ -7,9 +8,11 @@ export function useRecordsReadingPosition(
   search: URLSearchParams,
   ready: boolean,
 ) {
+  const routes = usePortalRoutes();
+
   const session = useNoteSessionRef();
   const key = session
-    ? `records-reading:${JSON.stringify([session.origin, session.studentId, recordsReturnTarget(`/s/records?${search}`)])}`
+    ? `records-reading:${JSON.stringify([session.origin, session.studentId, recordsReturnTarget(routes, routes.learning(`records?${search}`))])}`
     : null;
   useEffect(() => {
     if (!ready || !key) return;

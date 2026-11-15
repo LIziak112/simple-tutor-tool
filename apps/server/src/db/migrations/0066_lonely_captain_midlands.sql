@@ -1,0 +1,1 @@
+ALTER TABLE `events` ADD `device_id` text;

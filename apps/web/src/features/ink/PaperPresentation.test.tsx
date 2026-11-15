@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { PaperPresentation } from "./PaperPresentation";
 
 it("仅全屏时挂载参考题面，收起时避免每题重复渲染公式与图片", () => {

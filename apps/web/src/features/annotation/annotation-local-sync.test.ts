@@ -3,6 +3,7 @@ import {
   annotationSurfaceLayoutSchema,
 } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { testClientServices } from "@/test/portal-fixture";
 
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
@@ -89,7 +90,7 @@ beforeEach(() => {
     hash: "b".repeat(64),
     savedAt: "now",
   });
-  bindAnnotationSession(session);
+  bindAnnotationSession(session, testClientServices);
 });
 afterEach(() => resetAnnotationSession());
 async function createLocal() {
@@ -431,7 +432,10 @@ it("首建迟到响应在账号切换后不写回或上传PNG", async () => {
   await createLocal();
   const flushing = flushAnnotationSync(scope.attemptId);
   await vi.waitFor(() => expect(release).toBeDefined());
-  bindAnnotationSession({ ...session, studentId: "student-b" });
+  bindAnnotationSession(
+    { ...session, studentId: "student-b" },
+    testClientServices,
+  );
   release?.();
   await flushing;
   expect(postAnnotationBaseImageApi).not.toHaveBeenCalled();

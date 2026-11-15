@@ -1,4 +1,5 @@
-import { devices, expect, test } from "@playwright/test";
+import { devices, expect, type Page, test } from "@playwright/test";
+import { studentRecordsOkSchema } from "../packages/contract/src/index.ts";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
@@ -136,6 +137,36 @@ const SECRET_MARKERS = [
   "错路题提示",
   "填空题提示",
 ] as const;
+
+/** 空卷先验证不入账，再做真实答案变更，原有续作/重开断言继续检验已激活卷。 */
+async function activateReopenedLesson(
+  page: Page,
+  courseId: string,
+  attemptNo: number,
+) {
+  const records = await page.request.get("/api/student/records");
+  expect(records.ok()).toBe(true);
+  const before = studentRecordsOkSchema.parse(await records.json());
+  expect(
+    before.data.records.some(
+      (row) =>
+        row.sourceType === "lesson" &&
+        row.courseId === courseId &&
+        row.attemptNo === attemptNo,
+    ),
+  ).toBe(false);
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().includes("/answers/"),
+  );
+  await page
+    .locator('article[aria-label="第 1 题"]')
+    .getByRole("radio", { name: "选项 B" })
+    .locator("xpath=ancestor::label[1]")
+    .click();
+  expect((await saved).ok()).toBe(true);
+}
 
 test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批改闭环 → 再做一次", {
   tag: ["@teacher", "@student"],
@@ -560,7 +591,8 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
         );
       }
 
-      // 记录：第 1 次已批改保留 + 第 2 次进行中并存（均带讲练徽章）
+      await activateReopenedLesson(studentPage, courseId, 2);
+      // 记录：第 1 次已批改保留 + 第 2 次已激活进行中并存（均带讲练徽章）
       await studentPage.goto("/s/records");
       await expect(
         studentPage.getByRole("link", {
@@ -603,7 +635,15 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await studentPage.goto(
         `/s/lectures/${lectureId}/lesson?courseId=${courseId}`,
       );
-      // 历次 = 第 1 次（已批）+ 第 3 次（新进行中）；作废的第 2 次不出现
+      // 第3次空卷不入账；先做真实动作再验证续作与已作废第2次消失。
+      await studentPage.goto(
+        `/s/lectures/${lectureId}/lesson/run?courseId=${courseId}`,
+      );
+      await activateReopenedLesson(studentPage, courseId, 3);
+      await studentPage.goto(
+        `/s/lectures/${lectureId}/lesson?courseId=${courseId}`,
+      );
+      // 历次 = 第 1 次（已批）+ 第 3 次（已激活进行中）；作废的第 2 次不出现
       await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
       await expect(
         studentPage.getByRole("button", { name: "继续作答第 3 次" }),

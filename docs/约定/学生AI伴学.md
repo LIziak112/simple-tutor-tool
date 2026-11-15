@@ -27,7 +27,7 @@
 - 教师督学只消费服务端事实记录：无 AI 求助记录不能证明独立完成；仅入队未外发是「作答中求助·未处理」，不等于已获得帮助。
 - 学生端 MCP 配置体验与教师 `/t/connect` 对齐：`/s/settings/ai` 提供完整 `mcpServers` 配置一键复制，两端共用 `apps/web/src/lib/mcp-config.ts` 生成（键名教师 `tutor`、学生 `tutor-student`，同一客户端并存不覆盖）；学生本人连接卡直接展示完整 MCP Token 与已代入 Token 的配置，刷新后仍可查看，不设显隐开关；Token 加密保存，认证沿用哈希。旧连接只有哈希时保持认证有效，明确提示手动重新生成一次后持续可见；不自动重置。API Key 继续只写不读，普通学生接口、AI 上下文与其他账号不返回凭据。
 - 错题组卷两工具（2026-10 错题本迭代）：`list_my_wrong_questions`（只读）与 `create_wrong_practice`（建卷）。列表只给组卷决策元数据 + studentStemMd 脱敏题干摘录——**不是受控 AI 出口**，不带答案/详解/本人答案文本（assertNoLeak 集合恒适用）；筛选谓词单源在服务层（sinceDays=北京自然日含今天，与学生端「最近 N 天」一致；offset 翻页兜住超 limit 上限的存量错题）。建卷走 wrong-practice 服务层（与页面 POST /wrong-practice 同一校验、同一快照冻结、同一静默剔除口径、同一新协议起点 workflowVersion=1），支持可选 operationId（先与学生确认，同一操作重试沿用标识；省略时每次建独立练习卷）；范围快照 kind=ai 随卷落库（AI 的 label 展示在卷标题）；kind=ai 范围只由 MCP 服务端构造，页面请求契约拒绝之并校验 selection 题数与实际提交一致。学生 token 域内数据（本人错题本聚合），他学生的错题 id 天然不在聚合被剔除；建出的卷走普通 wrong 卷机制（草稿、记录可见、交卷进教师批改队列），无新出站面。
-- 随笔三工具（2026-11-10，个人学习迭代模块 5 第一步）：`list_my_memos`（只读列表：文字正文 + 语音 / 图片 / 手写的元信息，不内联字节）、`add_memo`（Agent 代为转记一条文字随笔，source=agent、device=agent；语音转写、对话结论都从这里进，原随笔不改；锚只报 id，服务端核对本人可见后生成 label，不可见 404 不暴露存在性；非幂等，工具描述要求重试前先确认）、`get_memo_media`（按 id 取本人一条媒体：语音 SDK `audio` content、图片 / 手写 `image` content，超 8 MB 返回 `MEMO_MEDIA_TOO_LARGE` 附元信息）。全部走 memo-read / memo-service 既有服务层，studentId 只来自鉴权注入的 deps；随笔默认仅本人，教师 MCP 无对应工具。界面与存储约定见 docs/约定/界面与账号.md「随笔记录端」。
+- 随笔三工具（2026-11-10，个人学习迭代模块 5 第一步）：`list_my_memos`（只读列表：文字正文 + 语音 / 图片 / 手写的元信息，不内联字节）、`add_memo`（Agent 代为转记一条文字随笔，source=agent、device=agent；语音转写、对话结论都从这里进，原随笔不改；锚只报 id，服务端核对本人可见后生成 label，不可见 404 不暴露存在性；operationId可选，同操作重试保留此键与原输入；parentMemoSeq关联原条，完整context原样传入并重验来源，设备来自鉴权连接）、`get_memo_media`（按 id 取本人一条媒体：语音 SDK `audio` content、图片 / 手写 `image` content，超 8 MB 返回 `MEMO_MEDIA_TOO_LARGE` 附元信息）。全部走 memo-read / memo-service 既有服务层，studentId 只来自鉴权注入的 deps；随笔默认仅本人，教师 MCP 无对应工具。界面与存储约定见 docs/约定/界面与账号.md「随笔记录端」。
 - 权威文档：docs/学生端AI伴学/需求规格.md 与 docs/学生端AI伴学/技术实施方案.md（B00 已验收，D1–D10 已定案，后续批次不得另起一套）。
 
 - 本次练习整体复盘（2026-10-24，任务 1ef854c7）：与逐题批量复盘并行的**独立 MCP 任务类型**（契约 `student-ai-attempt-review.ts`，服务 `student-ai-attempt-review.ts`，表 `ai_attempt_review_tasks/results/facts`）。学生预览确认后创建一个 attempt 整体任务；可用门 = 已交卷 + 答案公布门 + 全部题当前策略裁决，任一不满足整卷统一拒绝（不借计数泄露对错）；范围/作答/判分/公布态参与 HMAC 预览版本锚，创建与领取不匹配即 409 重新预览（不静默发送新集合）；四桶互斥计数（作答态与判分态分离，无法核对的题按待批并单独计数，不假报未做）；整体快照为白名单内部视图（只进任务行与 MCP 领取视图，不进任何学生普通接口）；报告为 strict JSON + 证据题号归属复核，迟到/取消写回只记事实不覆盖；学生显式重试换新代次，旧报告保留；顶栏三计数由服务器聚合两类任务；报告不写回判分、错题本或学情评级；一次整体任务计一份配额（与逐题任务同事务合计），每 attempt 活动整体任务最多 1。逐题批量复盘、旧四 MCP 工具与页内/链接通道行为不变。
@@ -43,6 +43,15 @@
 - PR #121 复审修复：关闭阅读器时取消在途详情，重开（含离线恢复）须等本轮授权通过才展示正文。详情只从已授权的快照投影题目 ID，证据题按 ID 定位，历史卷题序变化不会跳错题。进度面板与顶栏共用 15 秒在途轮询。作业原入口的结果页也按作答 ID 原地打开同卷报告，求助记录的「本次练习」由服务端先按作答与归档状态筛选，再取最近 50 条。
 - 整卷复盘领取提示、MCP 提交工具和服务端写回复用同一个报告契约。结构校验失败会给出字段路径及约束（如版本常量和优先级允许值），不消耗有效租约。提示词版本参与范围锚，旧版本未领取任务须重新预览确认。
 
+## 练习公开读取（会话协议 2.2 A1）
+
+- 班级 `/mcp/student` 与个人 `/mcp/personal` 共用 `list_my_practices`、`get_practice`、`get_practice_question` 三个只读工具，学生工具名单由 `STUDENT_MCP_TOOL_NAMES` 管理（原 17 个保留，共 20 个）；个人端其他既有白名单工具继续保留。无参数 `get_current_context` 保持原四态协议。
+- 列表仅含本人既有记录的状态、进度与工作流元数据；仍沿用现有空草稿口径，不激活练习或宣称「可读/可提交」。目录和单题先经本人可用卷与当前 AI 策略；目录逐题检查，任一题受限则整次拒绝。单题只给指定题的学生公开投影、本题冻结材料闭包、本人已保存答案与规范上下文；参考答案、解析、隐藏提示、判定、教师私注、邻题答案都不进入普通读出口，任务领取的答案授权例外不适用。
+- 题序复用公开取卷序；讲练复用共享正文题序 helper，并检查实际来源课程的当前可见性。题目 id 与题序同时提供时须一致。目录和单题均先完成既有合法旧卷兼容读取，再校验整卷冻结成员的完整快照、题目身份和公开集合；坏、缺、错 id 或重复成员整卷拒绝，不改选健康题或返回替代提交参数。规范上下文使用共享 canonical projector，`view:null` 表示没有界面宿主，结算序号只来自实际行。
+- 64 KiB 限制完整响应的元数据投影，包括所有重复 id、上下文、提交准备参数/证据、材料 id/标题/类型和图片来源/MIME/字节数。只扣除已知题干、公开选项文本、材料正文和本人作答正文；选择编号、匹配/排序 id 仍计入，新增元字段默认累计。合法长 id 不截断，合法长阅读和 essay 正文不受此元数据限额。收图前预检，取得真实文件信息后在读取原始字节前再验，交付前精确复验。
+- `get_practice_question` 的 `submission.parameters` 是当前旧工具的只读准备数据，包含真实工作流/题目/答案版本和笔记证据。笔记事实取 `getStudentNoteHead` 的公开 `note.currentVersionId` 与 `note.revision`（数据库 `currentRevision` 仅内部映射），不伪造 `currentRevision` 字段，不将未知证据默认为 missing。服务端无法确认浏览器没有未上传稿，学生仍须核对题号、答案、稿件后另生成并保留 `submissionMutationId`，再调用原 `student_submit_practice_question`；旧工具仍返回 `{success:true}`。后续 v2 增强见下文；旧版成功壳仍保持兼容。
+- 图片只从本题已授权公开题干、全部公开选项（含 matching/ordering 的可见干扰项）与本题公开材料正文提取，不按答案标记筛选选项，私有答案/解析/提示和邻题中的图引用不扫描。默认附图，原始字节合计超过 4 MiB 整次拒绝（等于上限允许），可显式传 `includeImages:false` 仅读文字；异步读文件在短同步数据库事务外执行，交付前再检查当前凭据、AI 策略、来源上下文与整卷冻结成员完整性，撤权后不交付已准备内容。新工具错误不透传任意内部 extra。
+
 ## 个人账号的 MCP 端点（2026-11-09，模块 0）
 
 - 个人账号停用后，已有学习会话与个人 MCP Token 都拒绝访问，学习会话不再续期。
@@ -54,3 +63,39 @@
 - 三个受控 AI 出口（学生 MCP 领取视图 / 页内出站载荷 / 分享票据读端点）在原字段旁新增可选 `record`：以 `role:"ai"` 的 LearningRecord 为底——题面语义节点全量、三类书写材料的过程数据（笔画/擦除/停顿/时序覆盖）、时间线与判定面；答案与解析仍按任务快照的 missingNote 授权口径，教师私注/标记在契约层拒绝（P6）。
 - 压缩：点序列 RDP 简化（ε=坐标域宽×0.3%），单材料超 `AI_MAX_POINTS_PER_MATERIAL=6000` 再按笔均匀抽稀并置 `compacted:true`；保留每笔 id/startedAt/pointer 及局部橡皮切段的记号 cutFrom（见 `手写与同步.md`），anchors 按笔对应不受影响。图仍是附件（PNG），过程以结构化数据为准。
 - 版本钉住：任务创建把三类材料的 `(revision, hash)` 写进快照 `recordRefs` 并入 contextVersion 的 HMAC 输入——钉住内容变化即换任务上下文版本。分享页按 SAI-29 按键定点投影（identity 行 id 占位、timeline detail 去 taskId），投影后契约 parse fail-closed；笔画 id 与 anchors 保留。
+
+
+## 当前学习来源（2.3）
+
+作答、结果、讲练页面共用的 LearningContext 仓发布当前来源，AI Dock 只在打开时消费；已经绑定的求助题、材料、输入和在途任务继续沿原绑定，不随滚动重绑。MCP live focus 仅是该仓的心跳传输适配，每次从仓派生题目；继续由现有 opt-in / AI capability 的真实 generation 控制，后台/离线/旧 host/主体变化撤回旧 view。它不新增 MCP 工具或授予提交/结果权限。后续工具须在自身 Bearer、AI 与当前可见门之后消费共享 canonical projector，不能借历史 memo 的兼容吞错分支获得原题访问权。
+
+### 学生 MCP 提交 v2
+
+读取 `get_practice_question` 后仍须向学生复述题目和答案并取得确认，再调用 `student_submit_practice_question`。不传 `responseVersion` 时仍须提供 `submissionMutationId`，成功壳保持 `{success:true}`。
+
+显式传 `responseVersion:2` 可用 `questionNo` 定位，仍须原样携带读取时的工作流、冻结题目、答案版本与证据声明；同时提供 `questionId` 时两者必须一致。可省略幂等键，服务端从规范请求内容派生稳定 UUID；结果未知时重试原请求，不重新读取并替换草稿/证据版本。同显式键异内容返回冲突。
+
+v2 回执包含本题提交事实、实际结算序号、已提交进度、下一未提交题与 `feedback`。反馈直接复用网页的四态安全投影：只有当题按读取时刻规则已公布时才含对错、参考答案和解析；教师收紧后重放不返回旧秘密。v2 首次及重放均重验当前访问权和 AI 策略，事实不重写、事件不重复。既有 `post_submit_only` 在逐题完成后仍开放该题复盘；这不放开尚未完成的邻题。旧版工具继续返回 `{success:true}`。事件渠道与连接来自鉴权，不信客户端来源字段。
+
+`student_settle_practice` 使用网页相同的分批事务：先读题，用返回的 `settlement.parameters` 取得工作流、题目和答案版本及证据；向学生确认后，把各题的 questionId/questionRevisionId/expectedAnswerRevision/evidence 放入 questions，顶层提供 practiceId/workflowVersion/workflowRevision 和必填 UUID mutationId。它提交已保存答案，不接收临时答案；需要改答案时先在页面保存。相同操作保留全部输入与 mutationId，异内容同键拒绝。空 questions 仅结算此前逐题提交且未归批的题。回执只含本批结果和题序，最后一批自动交卷；其余题可续做。学生自选交卷后反馈仍可分批，教师限制、限时、旧协议和讲练不支持。所有实际批成员含此前未归批题都实时过 AI 门，成功重放再按当前公布规则投影。
+
+随笔闭环：`list_my_memos` 增加 courseId、unitId、questionId、seq/seqFrom/seqTo 与 parentMemoSeq 筛选，包含完整 context。Agent 以同一 context、parentMemoSeq、operationId 调 add_memo，坐标实时核对，原始条目不改。锚到练习里某道题时要带读题返回的 context：里面的题目版本就是这次写入的版本凭据。没动过的练习再次进入时可能按新题目重冻，这之后只给 anchor 的 add_memo 返回 409 `ATTEMPT_SNAPSHOT_CHANGED`；context 里的题目版本已不是这份练习现在的，来源坐标核对不过，返回 404 `MEMO_ANCHOR_NOT_FOUND`。两种情况都是重新读题再记。页面只看父序号时仍有“关联条目”入口，进入独立分页列表，保留来源回链和回原条入口。MCP 设备按鉴权 connectionId 登记，不接受客户端设备冒认；当前连接表没有名称字段，自动名为 `MCP 连接 · 短ID`，学生可在已有设备设置里改名，不读取或显示凭证配置。
+
+## 范围复盘与分节报告（v2）
+
+结果页的「范围复盘」可选整卷或单元；批次结果有「本批复盘」，讲练已提交题有「阶段复盘（至本题）」。阶段中存在未提交题时服务端拒绝创建，不默默跳过。范围由本人冻结行、当前课程可见性、公布门和逐题AI权限共同裁决；未公布的批外题不会进入快照。旧的v1任务、五段报告和原aiReview地址继续可读。
+
+v2快照带所选范围的材料正文、量表、自评、统一用时事实和缺失说明。笔迹只传存在性，没有图像时不得推断书写过程。客观题与长文报告使用不同的固定分节清单；外部报告视为不可信输入，服务端校验分节键/标题/顺序、字节预算和原卷证据题号，Markdown沿现有安全渲染链显示，不回写判分或错题本。
+
+大卷按冻结单元/结算边界分片，每片仍不超过30题和256KiB；单题无法容纳时明确报错，不截断。所有分片完成后才能领取汇总任务，汇总快照只有子报告，不重新附带原题或答案。每份子报告的UTF-8预算随分片数收敛，领取回执给出reportMaxBytes，为最终汇总预留空间；不能靠抬高原上下文常量换过关。
+
+学生或个人MCP在向本人确认范围与诉求后调用`create_review_run_v2`（固定mutationId重试）；`list_review_runs_v2`只列元数据，`claim_review_part_v2`指定领取分片，`renew_review_part_lease_v2`续租，`submit_review_part_v2`回写。领取回执中的generation、snapshotVersion、leaseToken必须原样回传，证据题号保留原卷显示序。相同代次和相同内容重放幂等；异内容、过期/取消或旧代次不能覆盖已有报告，迟到回信只追加审计事实。
+
+新任务图与创建幂等身份在同一IMMEDIATE事务落库，配额与既有AI任务统一计数，任一步失败全图回滚。每次预览/创建/领取/报告读取重验本人来源与当前权限；公布收紧后不返回旧报告正文，本人仍可取消排队。普通学生HTTP出口只给任务状态和经授权报告，不返回内部快照、租约或私有题库字段。真实样卷、物理设备与外部人工客户端验收仍单列，不用SDK自动化替代。
+### 当前上下文 v2（PR #172）
+
+`get_current_context({responseVersion:2})` 在旧求助队列状态外返回规范 LearningContext。唯一有效题位为 `current`；多个不同题位为 `candidates`，Agent 须请学生选择，不能替学生猜测。同题多视图去重；溢出返回 `overflow`，任一候选失权返回 `unavailable`。当前连接未启用实时定位时不读取页面焦点；无有效页面只返回明确标记的 `recent_practice` 或 `none`，不把最近练习说成当前题。
+
+每个候选重新检查本人、当前课程和 AI 策略，元数据按完整 JSON 执行 64KiB 上限；不含题面、参考答案、判定或作答正文，不自动创建或领取求助任务。无参数调用的旧四态协议保持兼容，未知版本和扩展输入拒绝。班级学生和个人端共用实现。
+
+Agent 用法：先读当前上下文；候选冲突先确认题位；用 `get_practice_question` 读冻结题面与提交参数，向学生展示题号和拟提交答案并取得确认，再调用 `submit_practice_question`，最后按回执的下一题继续。

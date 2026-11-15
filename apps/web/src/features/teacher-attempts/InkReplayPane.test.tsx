@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchTeacherInkStrokesApi } from "@/lib/api";
+import { cleanup, render, screen } from "@/test/render-with-portal";
 import { InkReplayPane } from "./InkReplayPane.tsx";
 
 /**

@@ -10,11 +10,6 @@ import { createAtramentSurface } from "@/features/ink/engine/atrament-adapter";
 import { InkStore } from "@/features/ink/engine/history";
 import type { ToolAwareSurface } from "@/features/ink/engine/surface";
 import {
-  deleteInkProfileApi,
-  fetchInkProfiles,
-  saveInkProfileApi,
-} from "@/features/ink/ink-profile-api";
-import {
   bindInkProfileAccount,
   clearInkProfileSelection,
   getInkProfileSelection,
@@ -25,7 +20,12 @@ import {
 } from "@/features/ink/ink-profile-store";
 import { createFeelSurface } from "@/features/ink/lab/feel-surface";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
-import { ApiError, fetchStudentMe, fetchTeacherMe } from "@/lib/api";
+import {
+  usePortalClients,
+  usePortalRoutes,
+} from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+import { resolveInkProfileAccount } from "@/portals/ink-profile-account";
 
 const control =
   "min-h-11 rounded-md border border-input bg-background px-3 text-sm";
@@ -65,7 +65,16 @@ export default function InkFeelPage({
 }: {
   embedded?: boolean;
 }) {
+  const {
+    fetchTeacherMe,
+    fetchStudentMe,
+    fetchInkProfiles,
+    saveInkProfileApi,
+    deleteInkProfileApi,
+  } = usePortalClients();
+
   const { pathname } = useLocation();
+  const routes = usePortalRoutes();
   const device = useInkProfileSelection();
   const [account, setAccount] = useState<InkProfileAccount | null>(null);
   const accountRef = useRef<InkProfileAccount | null>(null);
@@ -88,21 +97,10 @@ export default function InkFeelPage({
     let active = true;
     async function load() {
       try {
-        let a: InkProfileAccount;
-        if (pathname.startsWith("/t/")) {
-          a = { role: "teacher", id: (await fetchTeacherMe()).id };
-        } else {
-          try {
-            a = { role: "student", id: (await fetchStudentMe()).id };
-          } catch (e) {
-            if (
-              !(e instanceof ApiError && e.code === "UNAUTHORIZED") ||
-              pathname.startsWith("/s/")
-            )
-              throw e;
-            a = { role: "teacher", id: (await fetchTeacherMe()).id };
-          }
-        }
+        const a = await resolveInkProfileAccount(routes, pathname, {
+          fetchTeacherMe,
+          fetchStudentMe,
+        });
         if (!active) return;
         accountRef.current = a;
         setAccount(a);
@@ -131,7 +129,7 @@ export default function InkFeelPage({
       active = false;
       accountRef.current = null;
     };
-  }, [pathname]);
+  }, [pathname, fetchTeacherMe, fetchStudentMe, fetchInkProfiles, routes]);
   useEffect(() => {
     const before = (e: BeforeUnloadEvent) => {
       if (dirtyRef.current) {
@@ -262,10 +260,14 @@ export default function InkFeelPage({
       <header>
         {embedded && (
           <Link
-            to="/s/settings"
+            to={
+              account?.role === "teacher"
+                ? routes.management("settings")
+                : routes.learning("settings")
+            }
             className="mb-3 inline-flex min-h-11 items-center rounded-md text-sm text-muted-foreground outline-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
           >
-            ← 返回学生设置
+            ← 返回{account?.role === "teacher" ? "管理" : "学生"}设置
           </Link>
         )}
         <h1 className="text-2xl font-semibold">手写手感</h1>

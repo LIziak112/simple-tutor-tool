@@ -1,3 +1,5 @@
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
 /**
  * 草稿找回区（2026-10 订正重构，自 CorrectionSection 迁入草稿组）：
  * - 「找回草稿为补充稿」（D8）：evidence∈{missing,none,legacy_unverified}
@@ -32,8 +34,6 @@ import { getNoteRecord } from "@/features/notes/note-store";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
-import { ApiError } from "@/lib/api";
-import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 
 /** D8 找回入口的证据状态集合（原稿未固定族） */
 const RECOVERABLE_EVIDENCE: ReadonlySet<string> = new Set([
@@ -51,6 +51,8 @@ export function DraftRecoverySection({
   attemptId,
   questionId,
 }: DraftRecoverySectionProps) {
+  const { fetchNoteEvidenceApi } = usePortalClients();
+
   const session = useNoteSessionRef();
   const headKey = correctionHeadKey(
     session?.studentId ?? "standby",

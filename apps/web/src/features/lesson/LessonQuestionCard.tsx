@@ -6,7 +6,7 @@ import type {
 } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
-import { memo, type ReactNode, useState } from "react";
+import { memo, type ReactNode, useContext, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,15 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  QUESTION_TYPE_BADGE_CLASS,
+  QUESTION_TYPE_LABELS,
+} from "@/features/answering/answer-format";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import {
   ResultOptions,
   VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
-import {
-  QUESTION_TYPE_BADGE_CLASS,
-  QUESTION_TYPE_LABELS,
-} from "@/features/attempt/answer-format";
 import { ResultAnswerComparison } from "@/features/attempt/ResultAnswerComparison";
 import { SelfReviewSection } from "@/features/attempt/SelfReviewSection";
 import {
@@ -32,7 +32,10 @@ import {
   DraftProblemAlert,
 } from "@/features/attempt/SubmitConfirmDialog";
 import { verdictBadgeDisplayOf } from "@/features/attempt/self-review-display";
+import { LearningHostContext } from "@/features/learning-context/learning-context-store";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { QuestionMemoAction } from "@/features/memos/QuestionMemoCapture";
+import { ReviewV2Panel } from "@/features/student-ai/ReviewV2Panel";
 import type {
   LessonQuestionHandlers,
   LessonSubmitOutcome,
@@ -179,6 +182,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
   onCardElement,
   aiTrigger,
 }: LessonQuestionCardProps) {
+  const learningLease = useContext(LearningHostContext);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [phase, setPhase] = useState<RevealPhase>({ kind: "idle" });
 
@@ -232,6 +236,10 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
       <article
         ref={registerCard}
         data-question-id={question.id}
+        data-learning-attempt={attemptId}
+        data-learning-view={learningLease?.viewId}
+        data-learning-surface="lesson"
+        data-learning-revision={question.questionRevisionId}
         tabIndex={-1}
         aria-label={`第 ${index + 1} 题`}
         className={cn(
@@ -264,7 +272,16 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
           >
             {QUESTION_TYPE_LABELS[released.snapshot.type]}
           </span>
-          <div className="ml-auto">{aiTrigger}</div>
+          <div className="ml-auto">
+            {aiTrigger}
+            <QuestionMemoAction
+              standalone
+              attemptId={attemptId}
+              questionId={question.id}
+              surface="lesson"
+              questionRevisionId={question.questionRevisionId}
+            />
+          </div>
         </div>
         <RichMarkdown
           source={displayStemMd(released.snapshot)}
@@ -274,6 +291,12 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         <ResultAnswerComparison question={released} released />
         {/* QM-11：对照后挂自评动作（reference_self 行；教师判定时整块不渲染） */}
         <SelfReviewSection attemptId={attemptId} question={released} />
+        <ReviewV2Panel
+          attemptId={attemptId}
+          released
+          scope={{ kind: "lesson_stage", throughQuestionNo: index + 1 }}
+          label="阶段复盘（至本题）"
+        />
         {released.solutionMd !== null && (
           <div className="flex flex-col gap-2">
             <p className="text-sm font-medium">解析</p>
@@ -316,6 +339,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
       className="flex scroll-mt-24 flex-col gap-3 outline-none"
     >
       <AttemptQuestionCard
+        learningSurface="lesson"
         index={index}
         question={question}
         attemptId={attemptId}

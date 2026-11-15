@@ -1,4 +1,3 @@
-import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   installNoteBackend,
@@ -19,6 +18,8 @@ import {
   SESSION_B,
 } from "@/features/notes/note-test-utils";
 import { useNoteRecord } from "@/features/notes/use-note-record";
+import { testClientServices } from "@/test/portal-fixture";
+import { act, render } from "@/test/render-with-portal";
 
 /**
  * useNoteRecord 订阅测试（T6R.8）：未绑定会话 standby、写入→上传→回执的
@@ -73,7 +74,7 @@ describe("useNoteRecord（T6R.8）", () => {
 
   it("订阅写入→上传→回执：dirty→uploading→synced 重渲染；四维总览可见", async () => {
     const probe = renderHook();
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     expect(probe.current()).toBeNull(); // 记录尚未创建
     act(() => {
       writeNoteDoc(SESSION_A, SCOPE, DOC_A);
@@ -100,7 +101,7 @@ describe("useNoteRecord（T6R.8）", () => {
   });
 
   it("卸载后已授权作业仍完成（收起题卡/路由切换）", async () => {
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     act(() => {
       writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     });
@@ -116,11 +117,11 @@ describe("useNoteRecord（T6R.8）", () => {
   });
 
   it("切账号：新会话视图不读旧账号记录", async () => {
-    bindNoteSession(SESSION_A);
+    bindNoteSession(SESSION_A, testClientServices);
     act(() => {
       writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     });
-    bindNoteSession(SESSION_B);
+    bindNoteSession(SESSION_B, testClientServices);
     const probe = renderHook();
     expect(probe.current()).toBeNull(); // B 名下无记录（键前缀隔离）
     probe.unmount();

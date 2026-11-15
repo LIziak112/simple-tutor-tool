@@ -7,6 +7,7 @@ import { Loader2, MessageCircleQuestion, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { AiQueueBatchCard } from "@/features/student-ai/AiQueueBatchCard";
 import {
   AiQueueItem,
@@ -62,6 +63,8 @@ export function AiQueuePanel({
   onOpenQuestion,
   onOpenAttemptReview,
 }: AiQueueNavigationProps & { onNavigated?: () => void }) {
+  const routes = usePortalRoutes();
+
   const [group, setGroup] = useState<"active" | "archived">("active");
   const [scope, setScope] = useState<"current" | "all">(
     currentAttemptId ? "current" : "all",
@@ -117,7 +120,7 @@ export function AiQueuePanel({
     openReply = false,
   ) => {
     if (opening) return;
-    const target = aiQueueTargetOf(task, origin);
+    const target = aiQueueTargetOf(routes, task, origin);
     if (target === null) return;
     const openInPlace = openReply ? onOpenTask : onOpenQuestion;
     if (task.attemptId === currentAttemptId && openInPlace) {
@@ -161,7 +164,9 @@ export function AiQueuePanel({
       onOpenAttemptReview(target);
       return;
     }
-    void navigate(attemptReviewHref(task.attemptId, target, sourceLocation()));
+    void navigate(
+      attemptReviewHref(routes, task.attemptId, target, sourceLocation()),
+    );
   };
 
   const handleAction = (taskId: string, action: AiQueueAction) => {

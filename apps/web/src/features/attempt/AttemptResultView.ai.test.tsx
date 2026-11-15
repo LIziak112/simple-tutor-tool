@@ -1,16 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureAiQuestionMaterials } from "@/features/export/ai-material-capture";
-import { fetchStudentAiAttemptReviewDetailApi } from "@/features/student-ai/attempt-review-api";
 import {
   connectedAiStatus,
   inappAiConnectionFixture,
@@ -25,6 +17,14 @@ import {
   listStudentAiTasksApi,
   postStudentAiAttemptReviewActionApi,
 } from "@/lib/api";
+import { fetchStudentAiAttemptReviewDetailApi } from "@/lib/review-queue-legacy-api";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { AttemptResultView } from "./AttemptResultView";
 
 /**
@@ -51,7 +51,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     postStudentAiAttemptReviewActionApi: vi.fn(),
   };
 });
-vi.mock("@/features/student-ai/attempt-review-api", () => ({
+vi.mock("@/lib/review-queue-legacy-api", () => ({
   fetchStudentAiAttemptReviewDetailApi: vi.fn(),
 }));
 vi.mock("@/features/export/ai-material-capture", async (importOriginal) => {

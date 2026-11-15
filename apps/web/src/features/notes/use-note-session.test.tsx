@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
 import type { StudentMeData } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import {
   currentNoteSession,
   resetNoteSession,
 } from "@/features/notes/note-sync";
+import { render } from "@/test/render-with-portal";
 
 /**
  * useBindNoteSession（use-note-session.ts，T6R.11 复审自 use-note-head 拆出）：

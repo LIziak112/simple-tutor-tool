@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@/test/render-with-portal";
 import { useRecordsReadingPosition } from "./use-records-reading-position";
 
 vi.mock("@/features/notes/use-note-head", () => ({

@@ -1,6 +1,6 @@
-import { render } from "@testing-library/react";
 import { questionNodesOf } from "@tutor/md-dsl";
 import { describe, expect, it } from "vitest";
+import { render } from "@/test/render-with-portal";
 import { RichMarkdown } from "../RichMarkdown";
 
 /**

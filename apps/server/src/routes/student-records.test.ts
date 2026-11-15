@@ -19,6 +19,7 @@ import {
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { saveDraftAnswer } from "../services/attempt-service";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -226,23 +227,39 @@ async function startCourseAttempt(
   return ((await res.json()) as { data: { id: string } }).data.id;
 }
 
-/** PUT 草稿答案 */
+/** PUT 草稿答案；proof 为本机稿的冻结凭据（现行前端每次写入都带，旧协议不带） */
 async function saveAnswer(
   app: App,
   cookie: string,
   attemptId: string,
   questionId: string,
   answer: unknown,
+  proof: { expectedFrozenAt?: string | null } = {},
 ): Promise<void> {
   const res = await app.request(
     `/api/student/attempts/${attemptId}/answers/${encodeURIComponent(questionId)}`,
     {
       method: "PUT",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({ answer }),
+      body: JSON.stringify({ answer, ...proof }),
     },
   );
   expect(res.status, `保存 ${questionId} 失败`).toBe(200);
+}
+
+/**
+ * makeRecordsEnv 只回拨了 startedAt，冻结时刻仍是真实建卷时刻——frozenAt 与 startedAt
+ * 不同值，和线上重冻过的卷同形（建卷即冻结时两者同值）。这种卷上不带凭据的旧协议写入
+ * 按 ACT01 被 409 拦下，所以回拨之后的续作带上这张卷当前的冻结凭据。
+ */
+function writeProofOf(db: Db, attemptId: string) {
+  const row = db
+    .select({ frozenAt: attempts.frozenAt })
+    .from(attempts)
+    .where(eq(attempts.id, attemptId))
+    .get();
+  if (!row) throw new Error("待续作的测试卷不存在");
+  return { expectedFrozenAt: row.frozenAt };
 }
 
 /** POST 交卷（T6R.3：自动回传题目版本集合，与前端同流程） */
@@ -287,7 +304,7 @@ async function getRecords(
  * - course2：课程练习第 2 次草稿（未答）；
  * - a3（on_submit）：作业草稿（未答）。
  */
-async function makeRecordsEnv(): Promise<RecordsEnv> {
+async function makeRecordsEnv(legacyA3 = false): Promise<RecordsEnv> {
   const db = createTestDb();
   const app = createApp({
     isProduction: false,
@@ -481,6 +498,17 @@ async function makeRecordsEnv(): Promise<RecordsEnv> {
     submittedAt: null,
   });
 
+  if (legacyA3)
+    db.delete(attemptContextFreezes)
+      .where(eq(attemptContextFreezes.attemptId, a3AttemptId))
+      .run();
+  for (const [id, at] of [
+    [course2AttemptId, T.course2Start],
+    [a3AttemptId, T.a3Start],
+    [bCourseAttemptId, T.bCourseStart],
+  ] as const)
+    activateTestAttempt(db, id, at);
+
   return {
     app,
     db,
@@ -505,13 +533,14 @@ async function makeRecordsEnv(): Promise<RecordsEnv> {
 describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
   it("旧卷有效续作置顶，相同答案和幂等重试不再次更新时间；开始排序在分页前执行", async () => {
     const env = await makeRecordsEnv();
+    const proof = writeProofOf(env.db, env.course2AttemptId);
     saveDraftAnswer(
       env.db,
       env.aStudentId,
       env.course2AttemptId,
       Q.judge1,
       { kind: "judge", value: true },
-      { baseRevision: 0, mutationId: crypto.randomUUID() },
+      { baseRevision: 0, mutationId: crypto.randomUUID(), ...proof },
     );
     const result = await getRecords(env.app, env.aCookie, "?status=draft");
     expect(result.data?.records[0]?.attemptId).toBe(env.course2AttemptId);
@@ -523,7 +552,7 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
       env.course2AttemptId,
       Q.judge1,
       { kind: "judge", value: true },
-      { baseRevision: 1, mutationId: crypto.randomUUID() },
+      { baseRevision: 1, mutationId: crypto.randomUUID(), ...proof },
     );
     const again = await getRecords(env.app, env.aCookie, "?status=draft");
     expect(again.data?.records[0]?.lastActivityAt).toBe(activityAt);
@@ -833,10 +862,14 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
 
   it("进行中普通卷公开已做进度，包含正式手写但不含判定或答案", async () => {
     const env = await makeRecordsEnv();
-    await saveAnswer(env.app, env.aCookie, env.course2AttemptId, Q.judge1, {
-      kind: "judge",
-      value: false,
-    });
+    await saveAnswer(
+      env.app,
+      env.aCookie,
+      env.course2AttemptId,
+      Q.judge1,
+      { kind: "judge", value: false },
+      writeProofOf(env.db, env.course2AttemptId),
+    );
     env.db
       .insert(ink)
       .values({
@@ -861,7 +894,7 @@ describe("GET /api/student/records（T3.5 D10 我的记录）", () => {
   });
 
   it("未冻结且无 response 的历史草稿也有总题数，读取不会冻结或创建答案", async () => {
-    const env = await makeRecordsEnv();
+    const env = await makeRecordsEnv(true);
     env.db
       .delete(attemptContextFreezes)
       .where(eq(attemptContextFreezes.attemptId, env.a3AttemptId))

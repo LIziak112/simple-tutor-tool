@@ -15,8 +15,8 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { StableQuestionPixelGridContext } from "@/features/answering/QuestionSurfaceFrame";
 import { QuestionRenderContext } from "@/features/answering/question-render-context";
-import { StableQuestionPixelGridContext } from "@/features/attempt/QuestionSurfaceFrame";
 import {
   awaitQuestionSurfaceReady,
   publicContentSignatureOf,

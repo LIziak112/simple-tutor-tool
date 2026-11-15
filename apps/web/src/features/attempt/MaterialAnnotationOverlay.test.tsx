@@ -1,3 +1,26 @@
+import type { InkDoc, InkStroke } from "@tutor/contract";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  CoordinatedAnnotationProvider,
+  useCoordinatedAnnotation,
+} from "@/features/annotation/coordinated-annotation-context";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "@/features/answering/AttemptEditorContext";
+import { selectInkTool } from "@/features/ink/engine/toolbox.ts";
+import { INK_HIGHLIGHTER_COLORS } from "@/features/ink/engine/types.ts";
+import {
+  resetSessionInputPreference,
+  setSessionInputPreference,
+} from "@/features/ink/input-preference";
+import {
+  bindDraftSession,
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
+import { preparePwaUpdate } from "@/lib/pwa-update-safety";
 import {
   act,
   createEvent,
@@ -5,30 +28,7 @@ import {
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import type { InkDoc, InkStroke } from "@tutor/contract";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  CoordinatedAnnotationProvider,
-  useCoordinatedAnnotation,
-} from "@/features/annotation/coordinated-annotation-context";
-import { selectInkTool } from "@/features/ink/engine/toolbox.ts";
-import { INK_HIGHLIGHTER_COLORS } from "@/features/ink/engine/types.ts";
-import {
-  resetSessionInputPreference,
-  setSessionInputPreference,
-} from "@/features/ink/input-preference";
-import { preparePwaUpdate } from "@/lib/pwa-update-safety";
-import {
-  AttemptEditorProvider,
-  useAttemptEditor,
-} from "./AttemptEditorContext";
-import {
-  bindDraftSession,
-  draftStore,
-  installDraftBackend,
-  memoryBackend,
-} from "./draft-store";
+} from "@/test/render-with-portal";
 import { MaterialAnnotationOverlay } from "./MaterialAnnotationOverlay";
 
 // 绘制层复用 ink/replay/draw（jsdom 无 2d 上下文）——按仓内惯例 mock 本模块，

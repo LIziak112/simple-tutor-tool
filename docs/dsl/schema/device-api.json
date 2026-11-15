@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "register": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "phone",
+            "tablet",
+            "desktop",
+            "agent",
+            "other"
+          ]
+        },
+        "os": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "browser": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "standalone": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "deviceId",
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "phone",
+            "tablet",
+            "desktop",
+            "agent",
+            "other"
+          ]
+        },
+        "os": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "browser": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "standalone": {
+          "type": "boolean"
+        },
+        "automaticName": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "firstSeenAt": {
+          "type": "string"
+        },
+        "lastSeenAt": {
+          "type": "string"
+        },
+        "activeSessionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "deviceId",
+        "type",
+        "os",
+        "browser",
+        "standalone",
+        "automaticName",
+        "name",
+        "displayName",
+        "firstSeenAt",
+        "lastSeenAt",
+        "activeSessionCount"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "register",
+    "device"
+  ],
+  "additionalProperties": false
+}

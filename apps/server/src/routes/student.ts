@@ -5,17 +5,12 @@ import type {
 import {
   annotationBaseCreateRequestSchema,
   annotationSealRequestSchema,
-  attemptFlagRequestSchema,
-  attemptStartOptionsRequestSchema,
   attemptWorkflowUpdateDataSchema,
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
-  courseAttemptStartOptionsRequestSchema,
-  hintOpenRequestSchema,
   inkWriteMetaSchema,
   lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
-  noteUploadMetaSchema,
   practiceQuestionFeedbackDataSchema,
   practiceQuestionSubmitDataSchema,
   practiceQuestionSubmitRequestSchema,
@@ -43,12 +38,11 @@ import {
   stripPngSuffix,
 } from "../lib/binary-response";
 import {
-  formString,
   parseAnnotationBaseImageForm,
   parseAnnotationPhaseParam,
   parseAnnotationUploadForm,
   parseNoteImageUploadForm,
-  strictFormInt,
+  parseNoteUploadForm,
 } from "../lib/form-fields";
 import {
   firstIssueMessage,
@@ -73,19 +67,12 @@ import {
 import {
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
-  setStudentFlag,
-  startAttempt,
-  startCourseAttempt,
   submitLessonQuestion,
   submitPracticeQuestion,
 } from "../services/attempt-service";
-import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { getStudentLearningRecord } from "../services/learning-record-service";
-import {
-  getLessonLanding,
-  startLessonAttempt,
-} from "../services/lesson-service";
+import { getLessonLanding } from "../services/lesson-service";
 import {
   attachNoteImage,
   createCorrection,
@@ -114,7 +101,6 @@ import {
 import { listStudentRecords } from "../services/student-records";
 import { changeStudentPassword } from "../services/student-service";
 import { listWrongQuestions } from "../services/wrong-questions";
-import { createStudentInkProfileRoutes } from "./ink-profiles";
 import { createStudentQuestionProcessRoutes } from "./question-process";
 import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
@@ -122,7 +108,7 @@ import { createStudentAttemptRoutes } from "./student-attempt-routes.ts";
 import { createStudentBatchSubmissionRoutes } from "./student-batch-submission.ts";
 import { createStudentCreateRoutes } from "./student-create";
 import { createStudentEventRoutes } from "./student-event-routes";
-import { createStudentMemoRoutes } from "./student-memos";
+import { createStudentPersonalRoutes } from "./student-personal";
 import { createStudentRubricRoutes } from "./student-rubric";
 
 /**
@@ -265,11 +251,10 @@ export function createStudentRoutes(
         "/",
         createStudentQuestionProcessRoutes(db, questionProcessEnabled),
       )
-      .route("/", createStudentInkProfileRoutes(db))
       .route("/", createStudentAiRoutes(db, dataDir, publicUrl))
       .route("/", createStudentRubricRoutes(db))
       .route("/", createStudentAttachmentRoutes(db, dataDir))
-      .route("/", createStudentMemoRoutes(db, dataDir))
+      .route("/", createStudentPersonalRoutes(db, dataDir))
       .route("/", createStudentBatchSubmissionRoutes(db))
       .route("/", createStudentAttemptRoutes(db))
       .get("/me", (c) => {
@@ -298,30 +283,6 @@ export function createStudentRoutes(
             db,
             c.var.student.id,
             c.req.param("id"),
-          ),
-        });
-      })
-      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1 与可选 feedbackMode，契约拒绝 mode 无版本）
-      .post("/assignments/:id/attempt", async (c) => {
-        const options =
-          (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
-          {};
-        return c.json({
-          ok: true,
-          data: startAttempt(db, c.var.student.id, c.req.param("id"), options),
-        });
-      })
-      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
-      .put("/attempts/:id/flags/:questionId", async (c) => {
-        const body = await parseJsonBody(c, attemptFlagRequestSchema);
-        return c.json({
-          ok: true,
-          data: setStudentFlag(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            c.req.param("questionId"),
-            body.flag,
           ),
         });
       })
@@ -425,20 +386,6 @@ export function createStudentRoutes(
           200,
           { "Cache-Control": "private, no-store" },
         );
-      })
-      // T2.11：分步提示——按需下发被请求的那一条并记录（hint_open 事件 + 已解锁集合）
-      .post("/attempts/:id/hints", async (c) => {
-        const body = await parseJsonBody(c, hintOpenRequestSchema);
-        return c.json({
-          ok: true,
-          data: openHint(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            body.questionId,
-            body.index,
-          ),
-        });
       })
       // M1b：首次任何提交前更改反馈节奏（真实事务 CAS，陈旧 revision 409）；
       // 响应 no-store（不落 PWA/浏览器缓存）；拒绝 legacy/lesson/已交/首题已交/
@@ -559,32 +506,9 @@ export function createStudentRoutes(
       // 的业务门槛（已交卷、未封存行定位、每 (attempt,question) 唯一性）在
       // service.saveNoteVersion 三 phase 分派内执行。
       .put("/attempts/:id/notes/:questionId", async (c) => {
-        const form = await c.req.parseBody();
-        const body = form.body;
-        // 正文必须是文件字段（multipart 文件；字符串字段说明客户端组装错误）
-        if (!(body instanceof File)) {
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段",
-          );
-        }
-        // multipart 字段全是字符串：baseRevision 按严格十进制整数串转数
-        // （T6R.4 复审③——空串与科学计数/十六进制/小数一律不转，交契约
-        // schema 出 400；JSON 通道的 number 形态契约不变，此转换属传输层）
-        const parsed = noteUploadMetaSchema.safeParse({
-          baseRevision: strictFormInt(form, "baseRevision"),
-          mutationId: formString(form, "mutationId"),
-          phase: formString(form, "phase"),
-        });
-        if (!parsed.success) {
-          const first = firstIssueMessage(parsed.error);
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            `草稿上传元信息不合法：${first}`,
-          );
-        }
+        const { bodyBytes, meta } = await parseNoteUploadForm(
+          await c.req.parseBody(),
+        );
         return c.json({
           ok: true,
           data: saveNoteVersion(
@@ -593,8 +517,8 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             c.req.param("questionId"),
-            new Uint8Array(await body.arrayBuffer()),
-            parsed.data,
+            bodyBytes,
+            meta,
           ),
         });
       })
@@ -928,28 +852,6 @@ export function createStudentRoutes(
           ),
         });
       })
-      // T2A.6：课程练习入口（存在未交卷作答返回它；否则新建 attemptNo+1，
-      // 新一次从空白开始；事务保证并发只得一份 draft）
-      .post("/courses/:id/units/:unitId/attempts", async (c) => {
-        const options =
-          (await parseJsonBodyOrEmpty(
-            c,
-            courseAttemptStartOptionsRequestSchema,
-          )) ?? {};
-        return c.json(
-          {
-            ok: true,
-            data: startCourseAttempt(
-              db,
-              c.var.student.id,
-              c.req.param("id"),
-              c.req.param("unitId"),
-              options,
-            ),
-          },
-          201,
-        );
-      })
       // T2A.5：可见讲义双视图（去重并集 + 按课程分组，D5 过滤）
       .get("/lectures", (c) => {
         return c.json({
@@ -1059,33 +961,6 @@ export function createStudentRoutes(
         return c.json({
           ok: true,
           data: getStudentLecture(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            parsed.data.courseId,
-          ),
-        });
-      })
-      // 2026-10 讲练一体：讲练开卷（幂等 create-or-return——进行中返回同一份
-      // draft、已完成返回最新那份，绝不重开；无作答才建卷冻结）。访问判定与
-      // GET /lectures/:id 同一三分谓词（?courseId= 可选课程上下文，契约未定义
-      // start 请求体 schema，复用详情查询 schema 的 query 形态）；响应是讲练
-      // 安全投影（blocks 切段 + 冻结题公开投影 + released/summary），原文与
-      // 未提交题的答案/详解/提示内容绝不下发（泄露矩阵 routes/student-lesson.test.ts）
-      .post("/lectures/:id/lesson/start", (c) => {
-        const parsed = studentLectureDetailQuerySchema.safeParse({
-          courseId: c.req.query("courseId") ?? undefined,
-        });
-        if (!parsed.success) {
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            "查询参数不合法：courseId 必须是 UUID 格式",
-          );
-        }
-        return c.json({
-          ok: true,
-          data: startLessonAttempt(
             db,
             c.var.student.id,
             c.req.param("id"),

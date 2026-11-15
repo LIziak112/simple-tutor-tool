@@ -14,9 +14,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AttemptEditorNotice,
+  useAttemptEditor,
+} from "@/features/answering/AttemptEditorContext";
 import { MemoQuickCaptureDialog } from "@/features/memos/MemoQuickCapture";
 import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
-import { AttemptEditorNotice, useAttemptEditor } from "./AttemptEditorContext";
 
 export function AttemptHeader({
   title,
@@ -101,7 +104,11 @@ export function AttemptHeader({
         </DropdownMenu>
       </div>
       <AttemptEditorNotice />
-      <MemoQuickCaptureDialog open={memoOpen} onOpenChange={setMemoOpen} />
+      <MemoQuickCaptureDialog
+        source={{ anchor: { kind: "none" } }}
+        open={memoOpen}
+        onOpenChange={setMemoOpen}
+      />
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent
           className="max-h-[70dvh] overflow-y-auto"

@@ -5,7 +5,10 @@ import { finalScoreOf } from "../services/attempt-service.ts";
 import { ensureCatalogTitles } from "../services/course-catalog";
 import { pickEmbeddedUnits } from "../services/lesson-embedded";
 import { backfill6980Answered } from "./backfill-answered.ts";
+import { backfillAttemptActivation } from "./backfill-attempt-activation.ts";
 import { backfillAttemptOutcomes } from "./backfill-attempt-outcomes.ts";
+import { backfillAttemptSettlements } from "./backfill-attempt-settlements.ts";
+import { backfillMemoMetadata } from "./backfill-memo-metadata.ts";
 import type { Db } from "./client";
 import {
   appSettings,
@@ -216,6 +219,9 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
     });
   }
   backfillAttemptOutcomes(db, now);
+  backfillMemoMetadata(db, now);
+  backfillAttemptSettlements(db, now);
+  backfillAttemptActivation(db, now);
   backfillOrphans(db, now);
   if (!appliedKeys.has("nested_course_catalog_v1")) {
     db.transaction(() => {

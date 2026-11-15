@@ -17,8 +17,8 @@
     "e2e": "playwright test",
     "e2e:full": "pnpm run e2e",
     "e2e:affected": "node scripts/e2e-affected.mjs",
-    "lint": "biome check .",
-    "lint:changed": "node scripts/lint-affected.mjs origin/main",
+    "lint": "biome check . && node scripts/portal-boundaries.mjs",
+    "lint:changed": "node scripts/lint-affected.mjs origin/main && node scripts/portal-boundaries.mjs",
     "lint:governance": "node scripts/governance-invariants.mjs",
     "lint:file-size": "node scripts/file-size-guard.mjs check --all",
     "hooks:install": "node scripts/setup-git-hooks.mjs",
@@ -33,7 +33,8 @@
     "seed:demo": "pnpm --filter server run seed:demo",
     "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec && pnpm --filter @tutor/md-dsl run bundle-standalone",
     "checker:build": "node packages/md-dsl/scripts/build-ai-reply-checker.ts",
-    "checker:smoke": "node scripts/check-ai-reply-artifacts.mjs"
+    "checker:smoke": "node scripts/check-ai-reply-artifacts.mjs",
+    "lint:architecture": "node scripts/portal-boundaries.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

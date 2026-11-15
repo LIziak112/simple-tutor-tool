@@ -110,14 +110,15 @@ export const aiStatusOkSchema = apiOkExtend(aiStatusDataSchema);
 // ---------- POST /api/student/ai/tasks ----------
 
 /**
- * 任务创建请求：attemptId + questionId 定位（服务端解析 questionRevisionId，
- * 客户端不传修订 id）；mutationId 幂等键（同参数重复点击只产生一次）；
+ * 任务创建请求：attemptId + questionId 定位，questionRevisionId 可携带原渲染题修订凭据；
+ * mutationId 幂等键（同参数重复点击只产生一次）；
  * materials 为本次任务的三类材料选择（§4.2）；quickButtonId 可选回显来源。
  */
 export const aiTaskCreateRequestSchema = z
   .object({
     attemptId: z.uuid(),
     questionId: z.string().min(1),
+    questionRevisionId: questionRevisionIdSchema.optional(),
     question: questionField("问题"),
     channel: aiChannelSchema,
     materials: aiMaterialPreferenceSchema,

@@ -7,7 +7,7 @@ import { sessions } from "../db/schema";
  * 会话服务（老师与学生共用 sessions 表，§5.7）。
  * Cookie 值即 sessions.id：
  * - token = randomBytes(32).toString("base64url")（256 位随机，熵高于 UUID）；
- * - 不给 sessions 表加列（T0.5 建好的结构不动），token 直接作主键；
+ * - token 直接作主键；deviceId 是可空的本人设备引用，不参与认证；
  * - Cookie 属性 httpOnly + SameSite=Lax + Path=/ + Max-Age（与会话 TTL 对齐），
  *   PUBLIC_URL 为 https 时加 Secure；
  * - 滑动续期：守卫校验通过时 touchSession + 重设 Cookie（见 require-teacher /

@@ -12,6 +12,7 @@ import {
   learningStatusClass,
 } from "@/components/learning-status";
 import { Button } from "@/components/ui/button";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatCnTime, formatDueTime } from "@/lib/time";
 import { isAssignmentTodo } from "./assignment-list-filters";
 
@@ -117,6 +118,8 @@ export function StudentAssignmentCard({
   returnTo?: string;
   showCreatedAt?: boolean;
 }) {
+  const routes = usePortalRoutes();
+
   const unitNames = assignment.units.map((unit) => unit.title);
   const todo = isAssignmentTodo(assignment.status);
   return (
@@ -167,7 +170,9 @@ export function StudentAssignmentCard({
         className="min-h-11 text-sm"
       >
         <Link
-          to={`/s/assignments/${assignment.id}${returnTo ? `?${new URLSearchParams({ returnTo })}` : ""}`}
+          to={routes.learning(
+            `assignments/${assignment.id}${returnTo ? `?${new URLSearchParams({ returnTo })}` : ""}`,
+          )}
         >
           {ENTRY_LABEL[assignment.status]}
         </Link>
@@ -338,6 +343,8 @@ export function StudentCourseCard({
 }: {
   course: StudentCourseSummary;
 }) {
+  const routes = usePortalRoutes();
+
   const { completedUnitCount, visibleUnitCount } = course;
   const percent =
     visibleUnitCount > 0
@@ -346,7 +353,7 @@ export function StudentCourseCard({
   return (
     <li>
       <Link
-        to={`/s/courses/${course.id}`}
+        to={routes.learning(`courses/${course.id}`)}
         aria-label={`打开课程 ${course.name}`}
         className="group flex min-h-14 items-start gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-card-foreground shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
       >

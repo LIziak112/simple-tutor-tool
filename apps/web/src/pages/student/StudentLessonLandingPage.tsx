@@ -22,13 +22,15 @@ import {
   useLessonLanding,
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { lessonRunHref } from "@/features/student/lesson-navigation";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import { formatRelativeTime } from "@/lib/time";
 
 /**
@@ -141,12 +143,14 @@ function RestartConfirmDialog({
 }
 
 export default function StudentLessonLandingPage() {
+  const routes = usePortalRoutes();
+
   const { id = "" } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const courseId = searchParams.get("courseId") ?? undefined;
   // SAI-23 队列跳转来源（aiFrom 白名单）：从助教队列进入落地页时，头部
   // 返回键回到打开队列时的来源位置（缺省仍回课程目录/讲义列表）
-  const queueTarget = aiQueueReturnTarget(searchParams.get("aiFrom"));
+  const queueTarget = aiQueueReturnTarget(routes, searchParams.get("aiFrom"));
   const navigate = useNavigate();
   const landingQuery = useLessonLanding(
     id.length > 0 ? id : undefined,
@@ -177,7 +181,7 @@ export default function StudentLessonLandingPage() {
             你可能已被移出这门课，或课程已结束归档。有疑问请联系老师。
           </p>
           <Link
-            to="/s/courses"
+            to={routes.learning("courses")}
             className="flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             返回我的课程
@@ -197,7 +201,7 @@ export default function StudentLessonLandingPage() {
         }
         onRetry={
           notVisible
-            ? () => void navigate("/s/lectures")
+            ? () => void navigate(routes.learning("lectures"))
             : () => void landingQuery.refetch()
         }
       />
@@ -209,7 +213,7 @@ export default function StudentLessonLandingPage() {
   const hasDraft = summary?.hasDraft === true;
   const nextAttemptNo = (summary?.count ?? 0) + 1;
   const busy = restart.isPending;
-  const runTo = lessonRunHref(landing.lectureId, courseId);
+  const runTo = lessonRunHref(routes, landing.lectureId, courseId);
 
   const enterRun = () => {
     void navigate(runTo);
@@ -247,7 +251,9 @@ export default function StudentLessonLandingPage() {
         <Link
           to={
             queueTarget ??
-            (courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures")
+            (courseId !== undefined
+              ? routes.learning(`courses/${courseId}`)
+              : routes.learning("lectures"))
           }
           aria-label={
             queueTarget !== null
@@ -377,7 +383,9 @@ export default function StudentLessonLandingPage() {
                     aria-label={`${draft ? "继续作答" : "查看"}第 ${attempt.attemptNo} 次`}
                     onClick={() => {
                       void navigate(
-                        draft ? runTo : `/s/attempts/${attempt.attemptId}`,
+                        draft
+                          ? runTo
+                          : routes.learning(`attempts/${attempt.attemptId}`),
                       );
                     }}
                     className="flex min-h-14 w-full flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2 text-left shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"

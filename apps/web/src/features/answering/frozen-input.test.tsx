@@ -1,8 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
 import { useState } from "react";
 import { expect, it } from "vitest";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 
 const question: QuestionPublic = {
   id: "q",

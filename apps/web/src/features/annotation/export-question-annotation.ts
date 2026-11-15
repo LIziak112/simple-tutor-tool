@@ -6,8 +6,9 @@ import {
   draftStore,
   getDraftPersistenceState,
   getDraftSessionEpoch,
-} from "@/features/attempt/draft-store";
-import { fetchAnnotationViewApi } from "@/lib/api";
+} from "@/features/persistence/draft-store";
+import { serviceLease } from "@/features/runtime/service-leases";
+
 import {
   type AnnotationScope,
   type AnnotationSessionRef,
@@ -25,6 +26,8 @@ export async function exportQuestionAnnotationImage(
   surface: HTMLElement | null,
   options: { includeAnnotation?: boolean } = {},
 ): Promise<Blob> {
+  const { fetchAnnotationViewApi } = serviceLease(session);
+
   const epoch = getDraftSessionEpoch();
   const isCurrent = () =>
     currentAnnotationSession() === session && getDraftSessionEpoch() === epoch;

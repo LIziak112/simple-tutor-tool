@@ -1,8 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  fetchTeacherAiTaskDetailApi,
-  fetchTeacherAttemptAiRecordsApi,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * SAI-24 教师督学记录的 TanStack Query 封装（B13）：
@@ -18,6 +15,8 @@ export const teacherAiRecordsKey = (attemptId: string) =>
 
 /** 按卷求助记录（attemptId 为空（路由未就绪）不查） */
 export function useTeacherAttemptAiRecords(attemptId: string | undefined) {
+  const { fetchTeacherAttemptAiRecordsApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherAiRecordsKey(attemptId ?? "pending"),
     queryFn: () => fetchTeacherAttemptAiRecordsApi(attemptId ?? ""),
@@ -34,6 +33,8 @@ export const teacherAiTaskDetailKey = (taskId: string) =>
 
 /** 任务详情（taskId 为空不查；失败由抽屉呈现重试） */
 export function useTeacherAiTaskDetail(taskId: string | undefined) {
+  const { fetchTeacherAiTaskDetailApi } = usePortalClients();
+
   return useQuery({
     queryKey: teacherAiTaskDetailKey(taskId ?? "pending"),
     queryFn: () => fetchTeacherAiTaskDetailApi(taskId ?? ""),

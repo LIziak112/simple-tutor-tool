@@ -13,7 +13,7 @@ import {
   SortableItem,
   SortableZone,
 } from "@/features/content/sortable";
-import { reorderContentApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 题库单元行（T2A.2）：单元展开显示题目摘要表——复用现有题目编辑抽屉入口、
@@ -145,6 +145,8 @@ export function UnitQuestionTable({
   unit: LibraryUnitSummary;
   actions: QuestionRowActions;
 }) {
+  const { reorderContentApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const reorderMutation = useMutation({
     mutationFn: (ids: string[]) => reorderContentApi({ kind: "question", ids }),

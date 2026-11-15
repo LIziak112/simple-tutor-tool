@@ -7,6 +7,7 @@ import type {
 import { Link } from "react-router";
 import { learningStatusClass } from "@/components/learning-status";
 import { formatResultCounts } from "@/features/attempt/result-counts";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { CELL_STATUS_LABELS } from "./insights-format";
 
 /**
@@ -64,6 +65,8 @@ export function InsightsMatrix({
   matrix,
   studentQuery = "",
 }: InsightsMatrixProps) {
+  const routes = usePortalRoutes();
+
   const assignmentCells = new Map<string, AnalyticsAssignmentCell>();
   const unitCells = new Map<string, AnalyticsUnitCell>();
   for (const cell of matrix.cells) {
@@ -166,7 +169,9 @@ export function InsightsMatrix({
                 >
                   <Link
                     to={{
-                      pathname: `/t/students/${student.studentId}`,
+                      pathname: routes.management(
+                        `students/${student.studentId}`,
+                      ),
                       search: studentQuery,
                     }}
                     className="flex min-h-11 items-center font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -187,7 +192,9 @@ export function InsightsMatrix({
                     <td key={column.assignmentId} className="px-3 py-1.5">
                       {cell !== undefined && cell.attemptId !== null ? (
                         <Link
-                          to={`/t/data/attempts/${cell.attemptId}`}
+                          to={routes.management(
+                            `data/attempts/${cell.attemptId}`,
+                          )}
                           aria-label={`查看 ${student.displayName} 的「${column.title}」作答详情`}
                           className="inline-flex min-h-11 min-w-20 items-center justify-center rounded-lg outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
                         >

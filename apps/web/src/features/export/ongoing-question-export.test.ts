@@ -1,6 +1,8 @@
 import type { NoteDoc } from "@tutor/contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
+import { bindServiceLease } from "@/features/runtime/service-leases";
+import { testClientServices } from "@/test/portal-fixture";
 import {
   createOngoingQuestionImages,
   loadOngoingPaper,
@@ -32,7 +34,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 vi.mock("@/features/notes/note-store", () => ({ getNoteRecord: mocks.local }));
-vi.mock("@/features/attempt/draft-store", () => ({
+vi.mock("@/features/persistence/draft-store", () => ({
   draftStore: { loadDraft: mocks.draft },
   getDraftPersistenceState: mocks.persistence,
 }));
@@ -43,6 +45,7 @@ vi.mock("@/lib/api", () => ({
 }));
 const session = { origin: "https://test", studentId: "student", epoch: 1 };
 beforeEach(() => {
+  bindServiceLease(session, testClientServices);
   vi.resetAllMocks();
   mocks.local.mockResolvedValue(null);
   mocks.heads.mockResolvedValue([{ note: null }]);

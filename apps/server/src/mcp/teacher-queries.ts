@@ -24,6 +24,8 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { recordableAttemptWhere } from "../services/attempt-recordability.ts";
+import { timeProjectionsOf } from "../services/attempt-time-projection";
 import {
   currentSelfReviewWhere,
   effectiveVerdictOfRow,
@@ -178,7 +180,7 @@ export function attemptExtrasOf(
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    .where(and(inArray(responses.attemptId, ids), isNull(attempts.abandonedAt)))
+    .where(and(inArray(responses.attemptId, ids), recordableAttemptWhere()))
     .groupBy(responses.attemptId)
     .all();
   const reviewIds = new Set(
@@ -501,6 +503,10 @@ export function queryStudentResponses(
     .offset(offset)
     .all();
 
+  const times = timeProjectionsOf(
+    db,
+    rows.map((r) => r.attemptId),
+  );
   const refMap = responseRefsOf(
     db,
     rows.map((row) => ({
@@ -540,6 +546,7 @@ export function queryStudentResponses(
       selfReview,
       selfCorrect:
         selfReview === null ? null : selfReview.verdict === "correct",
+      time: times.responseTime.get(row.revisionId),
       activeSec: row.activeSec,
       hintsUsed: row.hintsUsed,
       changeCount: row.changeCount,

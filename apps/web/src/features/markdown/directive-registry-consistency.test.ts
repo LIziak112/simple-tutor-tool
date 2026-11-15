@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
 import * as contract from "@tutor/contract";
 import { listDirectives, tipDirective } from "@tutor/contract";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { render, screen } from "@/test/render-with-portal";
 import {
   DirectiveContainerHost,
   DirectiveLeafHost,

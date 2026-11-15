@@ -1,16 +1,17 @@
 import type { StudentAnswer } from "@tutor/contract";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError } from "@/lib/api";
-import { isAnswered } from "./answer-format";
-import { saveDraftAnswer } from "./attempt-queries";
-import { unsyncedAnswerIds } from "./draft-merge";
+import { isAnswered } from "@/features/answering/answer-format";
+import { unsyncedAnswerIds } from "@/features/persistence/draft-merge";
 import {
   draftStore,
   getDraftPersistenceState,
   getDraftSessionEpoch,
   subscribeDraftPersistence,
-} from "./draft-store";
-import type { DraftSyncApi } from "./use-draft-sync";
+} from "@/features/persistence/draft-store";
+import type { DraftSyncApi } from "@/features/persistence/use-draft-sync";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+import { saveDraftAnswer } from "./attempt-queries";
 
 /**
  * 答题页的答案状态与草稿保存（T2.6；T2.9 接入本地草稿仓）：
@@ -63,6 +64,7 @@ export interface AttemptAnswersState {
 /** useAttemptAnswers 的可选回调集 */
 export interface AttemptAnswersOptions {
   writesLocked?: boolean;
+  questionRevisions?: Readonly<Record<string, string>>;
   /**
    * 一次答案保存生效（立即或防抖到期，即 PUT 发起点）时回调。
    * T2.10：答题页用它上报 answer_change 事件——与保存同节奏，文本键击
@@ -85,6 +87,8 @@ export function useAttemptAnswers(
   sync?: DraftSyncApi | null,
   options?: AttemptAnswersOptions,
 ): AttemptAnswersState {
+  const clients = usePortalClients();
+
   const [answers, setAnswers] = useState<Record<string, StudentAnswer> | null>(
     null,
   );
@@ -127,58 +131,66 @@ export function useAttemptAnswers(
   const inFlight = useRef(new Map<string, Set<Promise<boolean>>>());
   const deniedFor = useRef<string | null>(null);
 
-  const save = useCallback((questionId: string, answer: StudentAnswer) => {
-    if (optionsRef.current?.writesLocked) return Promise.resolve(false);
-    const scope = attemptIdRef.current;
-    const epoch = getDraftSessionEpoch();
-    const api = syncRef.current;
-    // T2.10：与保存同节奏上报 answer_change（防抖/立即提交点各一次）
-    optionsRef.current?.onAnswerCommitted?.(questionId, answer);
-    // 按题索引在途请求（M3-D3 §11-4）：单题 flush 只等本题，不等其他题重试
-    let tasks = inFlight.current.get(questionId);
-    if (tasks === undefined) {
-      tasks = new Set();
-      inFlight.current.set(questionId, tasks);
-    }
-    const task: Promise<boolean> = saveDraftAnswer(scope, questionId, answer)
-      .then(async (receipt) => {
-        if (epoch !== getDraftSessionEpoch()) return false;
-        await draftStore.markAnswerSynced(
-          scope,
-          questionId,
-          answer,
-          receipt?.revision,
-        );
-        if (attemptIdRef.current !== scope) return true;
-        setSaveFailed(false);
-        // T2.9：答案已到服务端 → 草稿仓记指纹（增量同步去重）+ 顶栏回到已保存
-        if (api !== null && api !== undefined) {
-          api.noteAnswerSynced(questionId, answer);
-        }
-        return true;
-      })
-      .catch((err: unknown) => {
-        if (attemptIdRef.current !== scope) return false;
-        // 403/404 = 访问权终态（T2A.6，D7）：停止重试循环（区别于网络失败）
-        if (
-          err instanceof ApiError &&
-          (err.status === 403 || err.status === 404)
-        ) {
-          deniedFor.current = scope;
-          api?.noteDenied();
+  const save = useCallback(
+    (questionId: string, answer: StudentAnswer) => {
+      if (optionsRef.current?.writesLocked) return Promise.resolve(false);
+      const scope = attemptIdRef.current;
+      const epoch = getDraftSessionEpoch();
+      const api = syncRef.current;
+      // T2.10：与保存同节奏上报 answer_change（防抖/立即提交点各一次）
+      optionsRef.current?.onAnswerCommitted?.(questionId, answer);
+      // 按题索引在途请求（M3-D3 §11-4）：单题 flush 只等本题，不等其他题重试
+      let tasks = inFlight.current.get(questionId);
+      if (tasks === undefined) {
+        tasks = new Set();
+        inFlight.current.set(questionId, tasks);
+      }
+      const task: Promise<boolean> = saveDraftAnswer(
+        clients,
+        scope,
+        questionId,
+        answer,
+      )
+        .then(async (receipt) => {
+          if (epoch !== getDraftSessionEpoch()) return false;
+          await draftStore.markAnswerSynced(
+            scope,
+            questionId,
+            answer,
+            receipt?.revision,
+          );
+          if (attemptIdRef.current !== scope) return true;
+          setSaveFailed(false);
+          // T2.9：答案已到服务端 → 草稿仓记指纹（增量同步去重）+ 顶栏回到已保存
+          if (api !== null && api !== undefined) {
+            api.noteAnswerSynced(questionId, answer);
+          }
+          return true;
+        })
+        .catch((err: unknown) => {
+          if (attemptIdRef.current !== scope) return false;
+          // 403/404 = 访问权终态（T2A.6，D7）：停止重试循环（区别于网络失败）
+          if (
+            err instanceof ApiError &&
+            (err.status === 403 || err.status === 404)
+          ) {
+            deniedFor.current = scope;
+            api?.noteDenied();
+            setSaveFailed(true);
+            return false;
+          }
           setSaveFailed(true);
+          api?.noteSyncFailed();
           return false;
-        }
-        setSaveFailed(true);
-        api?.noteSyncFailed();
-        return false;
-      })
-      .finally(() => {
-        tasks.delete(task);
-      });
-    tasks.add(task);
-    return task;
-  }, []);
+        })
+        .finally(() => {
+          tasks.delete(task);
+        });
+      tasks.add(task);
+      return task;
+    },
+    [clients],
+  );
 
   const flush = useCallback(async () => {
     const scope = attemptIdRef.current;
@@ -278,7 +290,12 @@ export function useAttemptAnswers(
         return { ...base, [questionId]: answer };
       });
       // T2.9：先写本地 IndexedDB（网络无关），顶栏转「保存中」
-      draftStore.saveAnswer(attemptIdRef.current, questionId, answer);
+      draftStore.saveAnswer(
+        attemptIdRef.current,
+        questionId,
+        answer,
+        optionsRef.current?.questionRevisions?.[questionId],
+      );
       syncRef.current?.noteLocalWrite();
       const current = pendingRef.current.get(questionId);
       if (current !== undefined) clearTimeout(current.timer);

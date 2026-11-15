@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { Link, MemoryRouter, useLocation } from "react-router";
 import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import {
   SettingsNavigationProvider,
   useSettingsNavigation,

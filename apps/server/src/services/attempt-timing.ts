@@ -10,6 +10,8 @@ import { HttpError } from "../lib/http-error";
  * 限时测试（个人学习迭代模块 2，2026-11）服务端时钟——唯一实现：
  * - 建卷：学习者自选 timeLimitMinutes → 行上持久化 timeLimitSec 与 deadlineAt
  *   （= startedAt + 时长），时钟以服务端为准，换设备 / 后台 / 重连同一剩余时间；
+ *   入口取回未激活的空卷并带了限时，从那次请求起算（attempt-start 的
+ *   resumeDraftAttempt）；
  * - 读：草稿视图下发 timing（截止 / 服务端时刻 / 宽限 / 阶段），前端据此倒计时
  *   与锁编辑，不信任本机时钟；
  * - 写闸门：到时后宽限 ATTEMPT_TIME_UP_GRACE_SEC 内答案写入仍接受（离线稿追平），

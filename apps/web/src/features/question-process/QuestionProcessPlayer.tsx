@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
+import { QuestionSurface } from "@/features/answering/QuestionSurface";
 import { createAtramentReplayCanvas } from "@/features/ink/replay/draw";
 import { ExcalidrawReplay } from "@/features/ink/replay/ExcalidrawReplay";
 import {
@@ -27,10 +27,8 @@ import {
   REPLAY_SPEEDS,
   type ReplaySpeed,
 } from "@/features/ink/replay/model";
-import {
-  fetchTeacherQuestionProcessApi,
-  teacherAnnotationBasePngUrl,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import {
   focusPeriods,
   fromPlaybackTime,
@@ -55,6 +53,8 @@ function AtramentProcessInk({
   visiblePoints?: number[] | undefined;
   removed?: QuestionProcessFrame["removedSince"]["scratch"];
 }) {
+  const { teacherAnnotationBasePngUrl } = usePortalClients();
+
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<ReturnType<typeof createAtramentReplayCanvas> | null>(
     null,
@@ -509,6 +509,8 @@ function ProcessBody({
   attemptId: string;
   questionId: string;
 }) {
+  const { fetchTeacherQuestionProcessApi } = usePortalClients();
+
   const [index, setIndex] = useState(-1);
   const query = useQuery({
     queryKey: ["teacher-question-process", attemptId, questionId],

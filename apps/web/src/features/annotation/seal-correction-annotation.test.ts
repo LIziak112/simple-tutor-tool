@@ -1,5 +1,6 @@
 import type { AnnotationDoc } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testClientServices } from "@/test/portal-fixture";
 
 /**
  * seal-correction-annotation（2026-10 订正重构，自 AnnotationLayer 内嵌按钮
@@ -68,7 +69,7 @@ beforeEach(() => {
   installAnnotationBackend(memoryAnnotationBackend());
   resetAnnotationStoreForTest();
   resetAnnotationSession();
-  bindAnnotationSession(SESSION);
+  bindAnnotationSession(SESSION, testClientServices);
   putDocMock.mockReset();
   sealMock.mockReset();
   sealMock.mockResolvedValue({ phase: "correction", sealedCount: 1 });

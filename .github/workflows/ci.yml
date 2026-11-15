@@ -47,6 +47,10 @@ jobs:
         run: node --test scripts/governance-invariants.spec.mjs
       - name: 治理不变量闸门
         run: node scripts/governance-invariants.mjs
+      - name: 门户架构闸门回归
+        run: node --test scripts/portal-boundaries.spec.mjs
+      - name: 门户架构闸门（全量，说明改动也不可跳过）
+        run: node scripts/portal-boundaries.mjs
       - name: 文件规模闸门回归
         run: node --test scripts/file-size-guard.spec.mjs
       # AGENTS.md §五：全仓 1000 行硬线 + 历史基线只降不升（scripts/file-size-baseline.json）；
@@ -167,7 +171,13 @@ jobs:
   e2e:
     needs: scope
     if: needs.scope.outputs.run == 'true'
-    name: e2e (chromium + webkit, iPad 模拟)
+    name: e2e (${{ matrix.browser }}, iPad 模拟)
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      CI_E2E_PROJECT: ${{ matrix.browser }}
     runs-on: ubuntu-24.04
     container:
       # 官方 Noble 镜像已包含浏览器与系统库，避开 runner 的 Ubuntu 软件源故障。
@@ -205,7 +215,7 @@ jobs:
         # v7 运行在 Node 24；此前 @v4 为 node20（仅失败时才执行，故弃用告警一直未暴露）
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: playwright-report/
           retention-days: 7
 

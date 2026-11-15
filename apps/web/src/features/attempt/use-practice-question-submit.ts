@@ -9,25 +9,19 @@ import type {
 import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { InkUploadController } from "@/features/attempt/use-ink-upload";
-import {
-  prepareSubmitEvidence,
-  type SubmitEvidenceProblem,
-} from "@/features/notes/submit-evidence";
-import {
-  ApiError,
-  fetchPracticeQuestionFeedbackApi,
-  submitPracticeQuestionApi,
-} from "@/lib/api";
-import { requestErrorMessage } from "@/lib/api-response";
+import type { SubmitEvidenceProblem } from "@/features/notes/submit-evidence";
+import { draftStore } from "@/features/persistence/draft-store";
+import type { InkUploadController } from "@/features/persistence/use-ink-upload";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError, requestErrorMessage } from "@/lib/api-response";
 import { randomUuid } from "@/lib/uuid";
 import {
   pauseAttemptDetailPolling,
   resumeAttemptDetailPolling,
   studentAttemptKey,
 } from "./attempt-queries";
-import { draftStore } from "./draft-store";
 import { firstUnsubmittedQuestionId } from "./practice-protocol";
+import { prepareQuestionSubmission } from "./prepare-question-submission";
 
 /**
  * 新协议逐题提交编排（M3-D2，计划 §10.2/§10.3，lesson useLessonAttempt.submit
@@ -119,6 +113,11 @@ export function usePracticeQuestionSubmit(input: {
   /** 提交前收笔（编辑器让位）；返回 false = 用户选择继续书写，中止提交 */
   beforeSubmit: () => Promise<boolean>;
 }) {
+  const clients = usePortalClients();
+
+  const { submitPracticeQuestionApi, fetchPracticeQuestionFeedbackApi } =
+    usePortalClients();
+
   const { attemptId, questionIds, singleMode } = input;
   const queryClient = useQueryClient();
   const isV1 = input.data.practiceWorkflow !== undefined;
@@ -223,26 +222,13 @@ export function usePracticeQuestionSubmit(input: {
       let keepPaused = false;
       try {
         if (!(await beforeSubmitRef.current())) return { kind: "aborted" };
-        if (!(await flushQuestionLocalRef.current(questionId))) {
-          return failWith("本题答案尚未保存到本机，请重试");
-        }
-        // 手写题笔迹先行（同整卷/lesson「提交前该题笔迹已上传」口径）
-        const controller = input.inkControllers.current.get(questionId);
-        if (controller !== undefined && !(await controller.flush())) {
-          return failWith("手写内容还没有上传完成，请稍后重试");
-        }
-        await syncNowRef.current();
-        // 按题 flush（M3-D3 §11-4）：只确认本题答案同步，不等其他题在途重试；
-        // 未追平不发提交请求，就地提示可重试（与其他错误路径同走 lastError）
-        if (!(await flushQuestionRef.current(questionId))) {
-          return failWith("本题答案尚未保存完成，请检查网络后重试");
-        }
-        if (draftStore.peekUnsyncedInkIds(attemptId).includes(questionId)) {
-          return failWith("手写内容还没有上传完成，请刷新核对后重试");
-        }
-        const prep = await prepareSubmitEvidence({
+        const prep = await prepareQuestionSubmission(clients, {
           attemptId,
           questionIds: [questionId],
+          flushQuestionLocal: flushQuestionLocalRef.current,
+          flushQuestion: flushQuestionRef.current,
+          syncNow: syncNowRef.current,
+          inkControllers: input.inkControllers,
           ...(opts?.allowMissing === true
             ? { allowMissing: new Set([questionId]) }
             : {}),
@@ -368,7 +354,14 @@ export function usePracticeQuestionSubmit(input: {
         setSubmittingId(null);
       }
     },
-    [attemptId, input.inkControllers, queryClient, refetchDetail],
+    [
+      attemptId,
+      input.inkControllers,
+      queryClient,
+      refetchDetail,
+      clients,
+      submitPracticeQuestionApi,
+    ],
   );
 
   // ---- 已提交可读题的题级反馈按需 GET（缓存一次，失败可重试） ----
@@ -410,7 +403,7 @@ export function usePracticeQuestionSubmit(input: {
         feedbackFetchingRef.current.delete(questionId);
       }
     },
-    [attemptId],
+    [attemptId, fetchPracticeQuestionFeedbackApi],
   );
 
   // 单题模式：当前题为已提交可读时读取（切题即取，§10.1 no-store 每次权威；

@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
 import type { NoteHeadData } from "@tutor/contract";
 import { useState } from "react";
 import {
@@ -54,6 +46,15 @@ import {
   SCOPE,
   SESSION_A,
 } from "@/features/notes/note-test-utils";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@/test/render-with-portal";
 
 /**
  * NoteLayer（T6R.9）组件测试：开合不丢稿（挂载卸载往返）、多题不共用
@@ -226,7 +227,7 @@ beforeEach(async () => {
   entries.length = 0;
   mockCanUndo = false;
   vi.clearAllMocks();
-  bindNoteSession(SESSION_A);
+  bindNoteSession(SESSION_A, testClientServices);
 });
 
 afterEach(() => {

@@ -3,7 +3,6 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import type { AttemptDraftData } from "@tutor/contract";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -13,6 +12,7 @@ import {
   AttemptDetailReadTimeoutError,
   fetchAttemptApi,
 } from "@/lib/api";
+import { act, renderHook, waitFor } from "@/test/render-with-portal";
 import {
   pauseAttemptDetailPolling,
   resumeAttemptDetailPolling,

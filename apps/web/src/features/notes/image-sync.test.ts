@@ -1,6 +1,7 @@
 import type { NoteDoc, NoteImageMeta } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testClientServices } from "@/test/portal-fixture";
 
 /**
  * 图片任务调度与补图恢复测试（T6R.6）：
@@ -145,7 +146,7 @@ describe("syncNoteImages：串行与全套槽位", () => {
     mockedPost.mockImplementation(async (_role, _vid, _png, meta) =>
       receiptOf(meta.spec, meta.pageIndex),
     );
-    const metas = await syncNoteImages({
+    const metas = await syncNoteImages(testClientServices, {
       role: "student",
       versionId: VERSION_ID,
       doc,
@@ -182,12 +183,12 @@ describe("syncNoteImages：串行与全套槽位", () => {
       }
       return receiptOf("thumbnail", 0);
     });
-    const first = syncNoteImages({
+    const first = syncNoteImages(testClientServices, {
       role: "student",
       versionId: VERSION_ID,
       doc,
     });
-    const second = syncNoteImages({
+    const second = syncNoteImages(testClientServices, {
       role: "teacher",
       versionId: VERSION_ID,
       doc,
@@ -232,7 +233,7 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
     mockedPost
       .mockRejectedValueOnce(boom)
       .mockResolvedValueOnce(receiptOf("thumbnail", 0));
-    const failed = syncNoteImages({
+    const failed = syncNoteImages(testClientServices, {
       role: "student",
       versionId: VERSION_ID,
       doc,
@@ -242,7 +243,11 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
     expect(noteImageQueueStats().lastError).toContain("413 限额");
     // 队列未被毒化：下一个作业正常完成（sampleDoc = 缩略图 + 单页分析图）
     await expect(
-      syncNoteImages({ role: "student", versionId: VERSION_ID, doc }),
+      syncNoteImages(testClientServices, {
+        role: "student",
+        versionId: VERSION_ID,
+        doc,
+      }),
     ).resolves.toHaveLength(2);
   });
 
@@ -252,7 +257,11 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
       new Error("PNG 编码失败：toBlob 返回空（画布不可用或内存不足）"),
     );
     await expect(
-      syncNoteImages({ role: "student", versionId: VERSION_ID, doc }),
+      syncNoteImages(testClientServices, {
+        role: "student",
+        versionId: VERSION_ID,
+        doc,
+      }),
     ).rejects.toThrow(/toBlob 返回空/);
   });
 
@@ -297,7 +306,11 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
       .mockResolvedValueOnce(receiptOf("analysis", 0))
       .mockRejectedValueOnce(new Error("p1 上传失败"));
     await expect(
-      syncNoteImages({ role: "student", versionId: VERSION_ID, doc: tall }),
+      syncNoteImages(testClientServices, {
+        role: "student",
+        versionId: VERSION_ID,
+        doc: tall,
+      }),
     ).rejects.toThrow("p1 上传失败");
     // 中止：分析 p2 不再渲染/上传（渲染 3 次 = 缩略图 + p0 + p1；上传 3 次）
     expect(renderedCount).toBe(3);
@@ -306,7 +319,7 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
     mockedPost.mockImplementation(async (_role, _vid, _png, meta) =>
       receiptOf(meta.spec, meta.pageIndex),
     );
-    const metas = await syncNoteImages({
+    const metas = await syncNoteImages(testClientServices, {
       role: "student",
       versionId: VERSION_ID,
       doc: tall,
@@ -324,11 +337,19 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
     const doc = sampleDoc();
     mockedPost.mockRejectedValueOnce(new Error("网络中断"));
     await expect(
-      syncNoteImages({ role: "student", versionId: VERSION_ID, doc }),
+      syncNoteImages(testClientServices, {
+        role: "student",
+        versionId: VERSION_ID,
+        doc,
+      }),
     ).rejects.toThrow("网络中断");
     mockedPost.mockResolvedValue(receiptOf("thumbnail", 0));
     await expect(
-      syncNoteImages({ role: "student", versionId: VERSION_ID, doc }),
+      syncNoteImages(testClientServices, {
+        role: "student",
+        versionId: VERSION_ID,
+        doc,
+      }),
     ).resolves.toHaveLength(2);
     // 重试重新上传了全部槽位（首尝试 1 次 + 重试 2 次）
     expect(mockedPost.mock.calls.length).toBe(3);
@@ -355,7 +376,7 @@ describe("recoverNoteImages：补图恢复入口", () => {
     mockedPost.mockImplementation(async (_role, _vid, _png, meta) =>
       receiptOf(meta.spec, meta.pageIndex),
     );
-    const metas = await recoverNoteImages({
+    const metas = await recoverNoteImages(testClientServices, {
       role: "student",
       versionId: VERSION_ID,
     });
@@ -373,14 +394,20 @@ describe("recoverNoteImages：补图恢复入口", () => {
     mockedPost.mockImplementation(async (_role, _vid, _png, meta) =>
       receiptOf(meta.spec, meta.pageIndex),
     );
-    await recoverNoteImages({ role: "teacher", versionId: VERSION_ID });
+    await recoverNoteImages(testClientServices, {
+      role: "teacher",
+      versionId: VERSION_ID,
+    });
     expect(mockedDoc).toHaveBeenCalledWith("teacher", VERSION_ID);
   });
 
   it("正文非法 → 明确中文报错，不静默", async () => {
     mockedDoc.mockResolvedValue({ version: 2, ink: null });
     await expect(
-      recoverNoteImages({ role: "student", versionId: VERSION_ID }),
+      recoverNoteImages(testClientServices, {
+        role: "student",
+        versionId: VERSION_ID,
+      }),
     ).rejects.toThrow(/无法重建/);
   });
 });

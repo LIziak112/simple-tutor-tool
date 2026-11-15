@@ -27,6 +27,8 @@ type DraftAttemptCommon = {
   workflowRevision?: number;
   /** 限时测试（模块 2）：自选时长分钟；仅 course / assignment 建卷传入，缺省不限时 */
   timeLimitMinutes?: number | undefined;
+  /** Agent 交付的错题卷建好即可见；普通浏览卷保持未激活。 */
+  activateOnCreate?: boolean;
 };
 
 export function newDraftAttempt(
@@ -48,6 +50,10 @@ export function newDraftAttempt(
     attemptNo: config.attemptNo,
     status: "draft",
     startedAt: config.startedAt,
+    activatedAt:
+      config.activateOnCreate === true || config.timeLimitMinutes !== undefined
+        ? config.startedAt
+        : null,
     lastActivityAt: null,
     submittedAt: null,
     activeSec: null,

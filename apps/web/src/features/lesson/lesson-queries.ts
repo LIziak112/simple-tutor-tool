@@ -1,10 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ApiError,
-  fetchLessonLandingApi,
-  restartLessonAttemptApi,
-  startLessonAttemptApi,
-} from "@/lib/api";
+import { prepareLocalAttempt } from "@/features/persistence/attempt-reopen";
+import { useAttemptSessionEffects } from "@/features/persistence/use-attempt-session-effects";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { useReplayableCreate } from "@/lib/use-replayable-create";
 
 /**
@@ -37,6 +36,8 @@ export function useLessonLanding(
   lectureId: string | undefined,
   courseId?: string | undefined,
 ) {
+  const { fetchLessonLandingApi } = usePortalClients();
+
   return useQuery({
     queryKey: studentLessonLandingKey(lectureId ?? "pending", courseId),
     queryFn: () => fetchLessonLandingApi(lectureId ?? "", courseId),
@@ -53,17 +54,29 @@ export function useLessonStart(
   lectureId: string | undefined,
   courseId?: string | undefined,
 ) {
-  return useQuery({
+  const clients = usePortalClients();
+  const { startLessonAttemptApi } = clients;
+
+  const query = useQuery({
     queryKey: studentLessonKey(lectureId ?? "pending", courseId),
-    queryFn: () => startLessonAttemptApi(lectureId ?? "", courseId),
+    queryFn: async () =>
+      prepareLocalAttempt(
+        clients,
+        await startLessonAttemptApi(lectureId ?? "", courseId),
+      ),
     enabled: lectureId !== undefined && lectureId.length > 0,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
+  // 不在这里读 query.data：见 useCachedAttempt 的说明
+  useAttemptSessionEffects(studentLessonKey(lectureId ?? "pending", courseId));
+  return query;
 }
 
 /** 「再做一次/重新开始」：随时重开新卷（进行中先作废）；成功后失效开卷/落地与聚合缓存 */
 export function useRestartLesson(lectureId: string) {
+  const { restartLessonAttemptApi } = usePortalClients();
+
   const queryClient = useQueryClient();
   const create = useReplayableCreate();
   return useMutation({

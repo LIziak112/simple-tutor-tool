@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import type { AttemptDetailData } from "@tutor/contract";
 import type { ReactNode } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { fetchAttemptApi, submitAttemptApi } from "@/lib/api";
+import { act, renderHook, waitFor } from "@/test/render-with-portal";
 import { useSubmitAttempt } from "./attempt-queries";
 
 vi.mock("@/lib/api", async (importOriginal) => {

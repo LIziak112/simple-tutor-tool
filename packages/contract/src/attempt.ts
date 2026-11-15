@@ -1,8 +1,15 @@
 import { z } from "zod";
 import { attemptActivitySchema } from "./attempt-activity.ts";
 import { attemptScoreSummarySchema } from "./attempt-score-summary.ts";
+import { attemptWriteProofFields } from "./attempt-session.ts";
+import { attemptSettlementProgressSchema } from "./attempt-settlement-progress.ts";
 import { questionRevisionIdSchema } from "./attempt-submission.ts";
 import { attemptSummarySchema } from "./attempt-summary.ts";
+import {
+  attemptTimeEstimateSchema,
+  attemptTimeSchema,
+  responseTimeSchema,
+} from "./attempt-time-ledger.ts";
 import {
   attemptTimeLimitMinutesSchema,
   attemptTimingSchema,
@@ -24,6 +31,8 @@ import {
   practiceWorkflowStartOptionsFields,
   rejectFeedbackModeWithoutVersion,
 } from "./practice-workflow.ts";
+import { reviewEvidenceMetadataSchema } from "./review-facts.ts";
+import { reviewPresentationSchema } from "./review-template.ts";
 import { rubricReviewSchema } from "./rubric.ts";
 import {
   effectiveVerdictSchema,
@@ -295,6 +304,8 @@ export const hintOpenedEntrySchema = z.object({
  */
 export const attemptQuestionPublicSchema = questionPublicSchema.extend({
   questionRevisionId: questionRevisionIdSchema,
+  /** 题内容版本用于清除后本机稿安全迁移；与冻结行引用身份分开。 */
+  questionVersion: z.number().int().nonnegative().optional(),
   /**
    * 组内序号（TT-05a 域④ §5.2.3/§5.8.1）：开卷冻结时按组的子题引用顺序写入
    * attempt 上下文快照的公开投影；**不在组内的题不携带**（旧快照缺省 = 独立
@@ -331,6 +342,9 @@ export const attemptDraftUnitSchema = z.object({
 
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
 export const attemptDraftDataSchema = z.object({
+  timeEstimate: attemptTimeEstimateSchema.optional(),
+  time: attemptTimeSchema.optional(),
+  settlementProgress: attemptSettlementProgressSchema.optional(),
   attempt: attemptSummarySchema,
   /** 标题（答题页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
   title: z.string().min(1),
@@ -412,7 +426,8 @@ export const attemptDraftDataSchema = z.object({
  * - hintsOpened：做题时已解锁的提示条目（含内容；交卷后回看自己用过的提示，
  *   T2.11）。快照里的其余提示内容仍不随本视图下发（hintCount 是唯一计数形态）。
  */
-export const attemptResultQuestionSchema = z.object({
+export const attemptResultQuestionSchema = reviewEvidenceMetadataSchema.extend({
+  time: responseTimeSchema.optional(),
   questionId: z.string().min(1),
   /**
    * 题目版本引用（与作答视图 AttemptQuestionPublic 同源——该题 responses 行
@@ -529,6 +544,8 @@ export const attemptResultUnitSchema = z.object({
 
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
 export const attemptResultDataSchema = z.object({
+  time: attemptTimeSchema.optional(),
+  reviewPresentation: reviewPresentationSchema.optional(),
   attempt: attemptSummarySchema,
   /** 标题（结果页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
   title: z.string().min(1),
@@ -577,7 +594,10 @@ export const attemptResultDataSchema = z.object({
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */
 export const attemptAnswerSaveRequestSchema = z
   .object({
+    ...attemptWriteProofFields,
     answer: studentAnswerSchema,
+    /** 新端发送冻结行身份，拒绝旧标签页把答案写到重冻后的题目。 */
+    questionRevisionId: questionRevisionIdSchema.optional(),
     /** 逐题比较版本，不影响其他题的合并。 */
     baseRevision: z.number().int().nonnegative().optional(),
     /** 同一次保存重试保持不变，避免回执丢失产生重复写入。 */
@@ -650,6 +670,8 @@ export const lessonBlockSchema = z.discriminatedUnion("type", [
  */
 export const lessonStartDataSchema = z
   .object({
+    time: attemptTimeSchema.optional(),
+    timeEstimate: attemptTimeEstimateSchema.optional(),
     /** 讲练页上下文（顶部标题与来源行） */
     lecture: z.object({
       id: z.uuid(),
@@ -755,6 +777,7 @@ export const lessonLandingDataSchema = z.object({
  * HINT_INDEX_OUT_OF_RANGE（400，T2.11 验收项），保证两个越界方向同一错误码。
  */
 export const hintOpenRequestSchema = z.object({
+  ...attemptWriteProofFields,
   questionId: z.string().min(1, "questionId 不能为空"),
   index: z.number().int({ message: "index 必须是整数" }),
 });
@@ -818,6 +841,7 @@ export const attemptDetailDataSchema = z
 
 /** 标注「不会」的请求体（#6980-4）：flag=null 表示取消标记 */
 export const attemptFlagRequestSchema = z.object({
+  ...attemptWriteProofFields,
   flag: studentFlagSchema.nullable(),
 });
 

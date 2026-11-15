@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useStudentMe } from "@/features/auth/student-auth";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   filterAssignmentList,
   parseAssignmentListUrl,
@@ -25,6 +26,7 @@ import {
   isConquered,
   loadWrongMasteryStandard,
 } from "@/features/student/wrong-mastery";
+import { portalCapabilitiesOf } from "@/portals/registry";
 
 /**
  * /s/home 学生首页（T2A.5 改版 + 2026-10 IA 调整 + 2026-10 UI 打磨）：
@@ -73,8 +75,14 @@ function GreetingBanner({
 }) {
   const meQuery = useStudentMe();
   const name = meQuery.data?.displayName ?? "同学";
-  let summary = "看看今天要做什么吧。";
-  if (todoCount !== null) {
+  const capabilities = portalCapabilitiesOf(
+    "student",
+    meQuery.data?.accountKind ?? "personal",
+  );
+  let summary = capabilities.assignments
+    ? "看看今天要做什么吧。"
+    : "可以去课程里看看讲义，或者复习一下错题。";
+  if (capabilities.assignments && todoCount !== null) {
     const parts: string[] = [];
     if (todoCount > 0) parts.push(`${todoCount} 份作业待完成`);
     if (wrongPending !== null && wrongPending > 0) {
@@ -109,6 +117,8 @@ function WrongQuestionsOverview({
   wrongQuery,
   counts,
 }: ReturnType<typeof useWrongCounts>) {
+  const routes = usePortalRoutes();
+
   if (wrongQuery.isPending) {
     return (
       <div
@@ -173,14 +183,25 @@ function WrongQuestionsOverview({
         variant={pending > 0 ? "default" : "outline"}
         className="min-h-11"
       >
-        <Link to="/s/wrong">{pending > 0 ? "去复习" : "查看错题本"}</Link>
+        <Link to={routes.learning("wrong")}>
+          {pending > 0 ? "去复习" : "查看错题本"}
+        </Link>
       </Button>
     </div>
   );
 }
 
 export default function StudentHomePage() {
-  const assignmentsQuery = useStudentAssignments();
+  const routes = usePortalRoutes();
+
+  const me = useStudentMe();
+  const capabilities = portalCapabilitiesOf(
+    "student",
+    me.data?.accountKind ?? "personal",
+  );
+  const assignmentsQuery = useStudentAssignments({
+    enabled: me.isSuccess && capabilities.assignments,
+  });
   const coursesQuery = useStudentCourses();
   const wrong = useWrongCounts();
 
@@ -205,69 +226,77 @@ export default function StudentHomePage() {
 
       <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-8">
         {/* 我的作业（主区，占 3/5；「我的记录」入口只在顶栏导航，不在此重复） */}
-        <section
-          aria-labelledby="home-assignments"
-          className="min-w-0 lg:w-3/5"
-        >
-          <StudentSectionTitle
-            id="home-assignments"
-            icon={<ClipboardList aria-hidden />}
-            title="我的作业"
-            action={
-              <StudentSectionLink to="/s/assignments">
-                查看全部
-              </StudentSectionLink>
-            }
-            {...(todoCount !== null && todoCount > 0
-              ? { count: todoCount }
-              : {})}
-          />
-
-          {assignmentsQuery.isPending && (
-            <StudentListSkeleton label="正在加载作业" rows={2} />
-          )}
-          {assignmentsQuery.isError && (
-            <StudentErrorPanel
-              title="作业加载失败"
-              message={
-                assignmentsQuery.error instanceof Error
-                  ? assignmentsQuery.error.message
-                  : "网络异常，请稍后重试"
+        {capabilities.assignments && (
+          <section
+            aria-labelledby="home-assignments"
+            className="min-w-0 lg:w-3/5"
+          >
+            <StudentSectionTitle
+              id="home-assignments"
+              icon={<ClipboardList aria-hidden />}
+              title="我的作业"
+              action={
+                <StudentSectionLink to={routes.learning("assignments")}>
+                  查看全部
+                </StudentSectionLink>
               }
-              onRetry={() => void assignmentsQuery.refetch()}
+              {...(todoCount !== null && todoCount > 0
+                ? { count: todoCount }
+                : {})}
             />
-          )}
-          {assignmentsQuery.data &&
-            (todo?.length === 0 ? (
-              <StudentEmptyState
-                compact
-                icon={<ClipboardList />}
-                title="现在没有待完成的作业"
-                description={
-                  assignmentsQuery.data.assignments.length > 0
-                    ? "已完成的作业可以在“我的作业”中查看。"
-                    : "老师布置作业后会出现在这里，也可以先去课程里看看讲义。"
+
+            {assignmentsQuery.isPending && (
+              <StudentListSkeleton label="正在加载作业" rows={2} />
+            )}
+            {assignmentsQuery.isError && (
+              <StudentErrorPanel
+                title="作业加载失败"
+                message={
+                  assignmentsQuery.error instanceof Error
+                    ? assignmentsQuery.error.message
+                    : "网络异常，请稍后重试"
                 }
-                action={
-                  <StudentSectionLink to="/s/courses">
-                    去课程看看
-                  </StudentSectionLink>
-                }
+                onRetry={() => void assignmentsQuery.refetch()}
               />
-            ) : (
-              <ul aria-label="最近待完成作业" className="flex flex-col gap-3">
-                {todo?.slice(0, 2).map((assignment) => (
-                  <StudentAssignmentCard
-                    key={assignment.id}
-                    assignment={assignment}
-                  />
-                ))}
-              </ul>
-            ))}
-        </section>
+            )}
+            {assignmentsQuery.data &&
+              (todo?.length === 0 ? (
+                <StudentEmptyState
+                  compact
+                  icon={<ClipboardList />}
+                  title="现在没有待完成的作业"
+                  description={
+                    assignmentsQuery.data.assignments.length > 0
+                      ? "已完成的作业可以在“我的作业”中查看。"
+                      : "老师布置作业后会出现在这里，也可以先去课程里看看讲义。"
+                  }
+                  action={
+                    <StudentSectionLink to={routes.learning("courses")}>
+                      去课程看看
+                    </StudentSectionLink>
+                  }
+                />
+              ) : (
+                <ul aria-label="最近待完成作业" className="flex flex-col gap-3">
+                  {todo?.slice(0, 2).map((assignment) => (
+                    <StudentAssignmentCard
+                      key={assignment.id}
+                      assignment={assignment}
+                    />
+                  ))}
+                </ul>
+              ))}
+          </section>
+        )}
 
         {/* 右列（占 2/5）：错题本概览 + 我的课程 */}
-        <div className="flex flex-col gap-8 lg:w-2/5">
+        <div
+          className={
+            capabilities.assignments
+              ? "flex flex-col gap-8 lg:w-2/5"
+              : "grid w-full gap-8 lg:grid-cols-2"
+          }
+        >
           {/* 错题本（2026-10 IA 调整：升为首页一级分区，入口 = 概览卡按钮；导航在顶栏） */}
           <section aria-labelledby="home-wrong">
             <StudentSectionTitle
@@ -286,7 +315,7 @@ export default function StudentHomePage() {
               title="我的课程"
               action={
                 <Link
-                  to="/s/lectures"
+                  to={routes.learning("lectures")}
                   className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-medium text-primary outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   <BookOpen aria-hidden className="size-4 shrink-0" />
@@ -315,7 +344,11 @@ export default function StudentHomePage() {
                   compact
                   icon={<School />}
                   title="还没有加入课程"
-                  description="老师把你加入课程后，这里的讲义和练习会自动出现。"
+                  description={
+                    capabilities.assignments
+                      ? "老师把你加入课程后，这里的讲义和练习会自动出现。"
+                      : "切换到管理视角创建课程、导入资料，就能在这里开始学习。"
+                  }
                 />
               ) : (
                 <ul className="flex flex-col gap-3">

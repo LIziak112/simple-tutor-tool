@@ -1,11 +1,4 @@
 import { onlineManager } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AttemptDraftData,
   AttemptResultData,
@@ -23,17 +16,22 @@ import {
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
 import {
-  assertLoadedDraftsForPwaUpdate,
-  draftStore,
-  installDraftBackend,
-  memoryBackend,
-} from "@/features/attempt/draft-store";
-import {
   installNoteBackend,
   memoryNoteBackend,
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import { noteHeadsMockResponse } from "@/features/notes/note-test-utils";
+import {
+  installAttemptSessionBackend,
+  saveLocalAttemptSession,
+} from "@/features/persistence/attempt-session-catalog";
+import {
+  assertLoadedDraftsForPwaUpdate,
+  bindDraftSession,
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import {
   ApiError,
   fetchAttemptApi,
@@ -49,6 +47,14 @@ import {
 } from "@/lib/api";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { resetNoteHeadBatchForTest } from "@/lib/note-head-batch";
+import { testClientServices } from "@/test/portal-fixture";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAssignmentAttemptPage from "./StudentAssignmentAttemptPage";
 
@@ -352,8 +358,8 @@ beforeEach(() => {
   installNoteBackend(memoryNoteBackend());
   installAnnotationBackend(memoryAnnotationBackend());
   const session = { origin: "https://page.test", studentId: "student-page" };
-  bindNoteSession(session);
-  bindAnnotationSession(session);
+  bindNoteSession(session, testClientServices);
+  bindAnnotationSession(session, testClientServices);
   resetNoteHeadBatchForTest();
   mockedStart.mockReset();
   mockedAssignments.mockReset();
@@ -550,6 +556,38 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     expect(screen.getByRole("dialog")).toHaveTextContent("10月1日 20:00 截止");
   });
 
+  it("上一份卷被清除后重开：恢复提示和旧原稿下载入口在作业页也显示", async () => {
+    installAttemptSessionBackend(memoryBackend());
+    bindDraftSession({
+      origin: "https://page.test",
+      studentId: "student-page",
+    });
+    try {
+      await saveLocalAttemptSession({
+        attempt: START_DRAFT,
+        questions: {},
+        notice:
+          "练习内容版本已变化，旧本机原稿已保留，未放入新题。请保留此设备并联系老师核对。",
+        preservedAttemptId: "99999999-9999-4999-8999-999999999999",
+      });
+      mockedStart.mockResolvedValue(START_DRAFT);
+      mockedFetch.mockResolvedValue(DRAFT_DATA);
+      renderPage();
+
+      const notice = await screen.findByText(/旧本机原稿已保留，未放入新题/);
+      expect(
+        within(notice.closest('[role="status"]') as HTMLElement).getByRole(
+          "button",
+          { name: "下载本机原稿" },
+        ),
+      ).toBeInTheDocument();
+      // 提示不挡作答
+      expect(screen.getByText("第 1 题")).toBeInTheDocument();
+    } finally {
+      bindDraftSession(null);
+    }
+  });
+
   it("作答即保存：点判断题「对」立即 PUT 草稿，进度条更新", async () => {
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch.mockResolvedValue(DRAFT_DATA);
@@ -560,10 +598,15 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", {
     fireEvent.click(screen.getByRole("radio", { name: /对/ }));
 
     await waitFor(() => {
-      expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {
-        kind: "judge",
-        value: true,
-      } satisfies StudentAnswer);
+      expect(mockedSave).toHaveBeenCalledWith(
+        ATTEMPT_ID,
+        "练习四-1",
+        {
+          kind: "judge",
+          value: true,
+        } satisfies StudentAnswer,
+        { questionRevisionId: "rev-练习四-1" },
+      );
     });
     expect(screen.getByRole("button", { name: "答题卡" })).toHaveTextContent(
       "已填写 1/2",
@@ -1196,10 +1239,15 @@ describe("StudentAssignmentAttemptPage：草稿防丢", { timeout: 15_000 }, () 
       expect(screen.getByTestId("draft-status")).toHaveTextContent(/已保存/),
     );
     await waitFor(() =>
-      expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {
-        kind: "judge",
-        value: false,
-      } satisfies StudentAnswer),
+      expect(mockedSave).toHaveBeenCalledWith(
+        ATTEMPT_ID,
+        "练习四-1",
+        {
+          kind: "judge",
+          value: false,
+        } satisfies StudentAnswer,
+        { questionRevisionId: "rev-练习四-1" },
+      ),
     );
   });
 });

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
 import {
   AI_REPLY_MAX_FORMULA_CHARS,

@@ -1,12 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type { StudentLectureDetail } from "@tutor/contract";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +8,14 @@ import {
   postLectureEventsApi,
 } from "@/lib/api";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLectureViewPage from "./StudentLectureViewPage";
 

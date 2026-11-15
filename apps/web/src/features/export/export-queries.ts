@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { LectureDetail } from "@tutor/contract";
 import { extractOutline, type OutlineItem } from "@/features/markdown/outline";
-import { fetchLectureDetail, previewLearningPackApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
 
 /**
  * 学情数据包导出向导的查询封装（T4.4，纯消费 T4.3 接口）：
@@ -15,6 +15,8 @@ import { fetchLectureDetail, previewLearningPackApi } from "@/lib/api";
 
 /** 学情数据包预览（向导第⑤步数据源；overLimit 由页面分支提示精简） */
 export function useLearningPackPreview() {
+  const { previewLearningPackApi } = usePortalClients();
+
   return useMutation({
     mutationFn: previewLearningPackApi,
   });
@@ -22,6 +24,8 @@ export function useLearningPackPreview() {
 
 /** 讲义详情 → H2/H3 目录（headingIndex = 数组下标）；id 为空不查 */
 export function useLectureOutline(lectureId: string | null) {
+  const { fetchLectureDetail } = usePortalClients();
+
   return useQuery<LectureDetail, Error, OutlineItem[]>({
     queryKey: ["teacher", "lecture", "detail", lectureId ?? "pending"],
     queryFn: () => fetchLectureDetail(lectureId ?? ""),

@@ -51,19 +51,17 @@ import type {
   NoteVersionReceipt,
 } from "@tutor/contract";
 import { NOTE_PAPER_HEIGHT_DEFAULT, noteDocSchema } from "@tutor/contract";
-import { digestOf } from "@/features/attempt/draft-merge";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import { worstImageState } from "@/features/notes/note-image-state";
-import {
-  countPoints,
-  totalPointsAfterWrite,
-} from "@/features/notes/note-points";
+import { totalPointsAfterWrite } from "@/features/notes/note-points";
+import { sameStoredNoteDoc } from "@/features/persistence/stored-ink-doc";
 import {
   idbKVBackend,
   type KVStoreBackend,
   memoryKVBackend,
 } from "@/lib/kv-backend";
 import { randomUuid } from "@/lib/uuid";
+import { freshRecord, reviveRecord } from "./note-record-shape";
 
 // ---------- 会话与键 ----------
 
@@ -152,6 +150,7 @@ export function parseNoteKey(
 
 /** 待传版本描述：与正文同一记录原子写；重试复用同一 mutationId（幂等重放） */
 export interface NotePendingVersion {
+  expectedFrozenAt?: string | null;
   /** 幂等键（上传协议 §6.2：同 id 同正文重试返回原回执） */
   mutationId: string;
   /** 待传正文快照（上传固定的不可变副本；新写入整体替换本对象） */
@@ -222,75 +221,6 @@ export interface NoteLocalRecord {
    * 全稿 parse/重扫。
    */
   totalPoints: number;
-}
-
-function freshRecord(): NoteLocalRecord {
-  return {
-    doc: { version: 1, ink: { width: 1000, strokes: [] } },
-    pending: null,
-    baseRevision: 0,
-    noteId: null,
-    lastHead: null,
-    conflict: null,
-    denied: null,
-    local: "saved",
-    localError: null,
-    editedAt: 0,
-    docVersion: 0,
-    totalPoints: 0,
-  };
-}
-
-/** ink/strokes 形态校验（T6R.9 复审③）：坏形（历史损坏/异版本写入）弃壳
- * 返 null 重建空稿——曾在挂载/bind 扫描（getAll 原料直入）路径抛错击穿
- * 整个恢复链；只查结构不查数值（坐标/点数由写入与服务端边界管辖）。 */
-function inkShapeOk(ink: unknown): boolean {
-  if (typeof ink !== "object" || ink === null) return false;
-  const strokes = (ink as { strokes?: unknown }).strokes;
-  if (!Array.isArray(strokes)) return false;
-  for (const stroke of strokes) {
-    if (
-      typeof stroke !== "object" ||
-      stroke === null ||
-      !Array.isArray((stroke as { points?: unknown }).points)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** 读取旧记录的防御性归一（前向兼容：缺字段补默认，形态错则弃重建空稿壳） */
-function reviveRecord(raw: unknown): NoteLocalRecord | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const r = raw as Partial<NoteLocalRecord>;
-  if (
-    r.doc === undefined ||
-    typeof r.doc !== "object" ||
-    !inkShapeOk((r.doc as { ink?: unknown }).ink)
-  ) {
-    return null;
-  }
-  const base = freshRecord();
-  return {
-    ...base,
-    doc: r.doc,
-    pending:
-      r.pending && typeof r.pending.mutationId === "string" && r.pending.doc
-        ? r.pending
-        : null,
-    baseRevision: typeof r.baseRevision === "number" ? r.baseRevision : 0,
-    noteId: typeof r.noteId === "string" ? r.noteId : null,
-    lastHead: r.lastHead ?? null,
-    conflict: r.conflict ?? null,
-    denied: r.denied ?? null,
-    editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
-    docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
-    totalPoints: countPoints(r.doc.ink.strokes),
-    // local/localError 持久副本恒归一化（见文件头），读取即 saved
-    local: "saved",
-    localError: null,
-  };
 }
 
 /** 持久化快照：local 归一化（存在于 IDB 的记录定义上已落盘） */
@@ -697,6 +627,7 @@ export function writeNoteDoc(
   session: NoteSessionRef,
   scope: NoteScope,
   input: NoteDocInput,
+  expectedFrozenAt?: string | null,
 ): number {
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
@@ -710,7 +641,15 @@ export function writeNoteDoc(
     // 再改**（引擎每次变更整体换新数组，契约层笔迹不可变；gzip/parse 的
     // WeakMap memo 亦以引用为键，同引用同字节反而保幂等）
     replaceDoc(record, input);
-    record.pending = { mutationId: randomUuid(), doc: input };
+    const token =
+      expectedFrozenAt !== undefined
+        ? expectedFrozenAt
+        : record.pending?.expectedFrozenAt;
+    record.pending = {
+      mutationId: randomUuid(),
+      doc: input,
+      ...(token !== undefined ? { expectedFrozenAt: token } : {}),
+    };
     record.editedAt = Date.now();
     if (record.denied?.kind === "content") record.denied = null;
   });
@@ -969,6 +908,7 @@ export async function resolveNoteConflict(
     // 无摘要（MISMATCH）——重铸幂等键，正文快照不变
     if (conflict.current === null && record.pending !== null) {
       record.pending = {
+        ...record.pending,
         mutationId: randomUuid(),
         doc: record.pending.doc,
       };
@@ -1017,7 +957,11 @@ export async function resetCorrectionSealed(
     record.baseRevision = 0;
     record.noteId = null;
     if (record.pending !== null) {
-      record.pending = { mutationId: randomUuid(), doc: record.pending.doc };
+      record.pending = {
+        ...record.pending,
+        mutationId: randomUuid(),
+        doc: record.pending.doc,
+      };
     }
   });
 }
@@ -1067,14 +1011,14 @@ export async function clearCorrectionRecord(
 /**
  * NoteDoc 相等比较（恢复 load 不回传无变化版本的依据，复审⑫）：
  * local（pending 侧 NoteDocInput）经 safeParseDoc 物化（parseMemo 命中则
- * 零成本）；server 侧已物化（NoteDoc）不再重复 parse；两侧 digestOf
- * （draft-merge 的 stableStringify，键序无关）比较。任一侧形态非法判
- * 不等（不吞错——非法稿继续走上传由服务端裁决）。
+ * 零成本）；server 侧已物化（NoteDoc）不再重复 parse；两侧按服务端落盘
+ * 口径比较（stored-ink-doc：云端不保存每笔的 rendering）。任一侧形态非法
+ * 判不等（不吞错——非法稿继续走上传由服务端裁决）。
  */
 export function noteDocsEqual(local: NoteDocInput, server: NoteDoc): boolean {
   const parsedLocal = safeParseDoc(local);
   if (parsedLocal === null) return false;
-  return digestOf(parsedLocal) === digestOf(server);
+  return sameStoredNoteDoc(parsedLocal, server);
 }
 
 /**

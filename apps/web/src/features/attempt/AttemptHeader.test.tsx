@@ -1,9 +1,15 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
-} from "./AttemptEditorContext";
+} from "@/features/answering/AttemptEditorContext";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@/test/render-with-portal";
 import { AttemptHeader } from "./AttemptHeader";
 
 afterEach(() => vi.unstubAllGlobals());

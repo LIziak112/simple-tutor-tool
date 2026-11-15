@@ -1,15 +1,15 @@
 import { dispatchBehavior, emptyPublicStructure } from "@tutor/contract";
 import {
+  formatReferenceAnswers,
+  mathifyAnswerText,
+  withBlankValue,
+} from "@/features/answering/answer-format";
+import {
   DirectiveSessionProvider,
   type SlotBinding,
   type SlotKind,
 } from "@/features/markdown/directives/session-context";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import {
-  formatReferenceAnswers,
-  mathifyAnswerText,
-  withBlankValue,
-} from "../../attempt/answer-format";
 import { expectedSlotCountOf } from "../prepare-question";
 import type {
   AnswerKindView,

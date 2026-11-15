@@ -155,6 +155,8 @@ it("正式回执缺失或只确认部分事件时保留原批次与标识，全�
   const posted: string[][] = [];
   const fetchMock = vi.fn(
     async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(_url).endsWith("/devices/register"))
+        return Response.json({ ok: true, data: {} });
       const body = JSON.parse(String(init?.body)) as {
         delivery: { eventIds: string[] };
       };
@@ -188,7 +190,11 @@ it("正式回执缺失或只确认部分事件时保留原批次与标识，全�
     expect(persisted.keyCount()).toBe(0);
     expect(posted).toEqual([posted[0], posted[0], posted[0]]);
     expect(posted[0]).toHaveLength(2);
-    expect(fetchMock.mock.calls[0]?.[0]).toContain("/events/deliver");
+    const deliveries = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/events/deliver"),
+    );
+    expect(deliveries).toHaveLength(3);
+    expect(deliveries[0]?.[0]).toContain("/events/deliver");
   } finally {
     vi.unstubAllGlobals();
   }

@@ -3,8 +3,10 @@ import { Lightbulb, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import { useQuestionProcessContext } from "@/features/question-process/session";
-import { openAttemptHintApi } from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+
 import { randomUuid } from "@/lib/uuid";
 
 /**
@@ -90,6 +92,9 @@ export function HintPanel({
   /** 解锁成功回调（上抛页面状态追加；面板内不持有列表） */
   onUnlocked: (entry: HintOpenedEntry) => void;
 }) {
+  const { openAttemptHintApi } = usePortalClients();
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
+
   const process = useQuestionProcessContext();
   const onVisible = useCallback(
     (index: number) => process?.showHint(questionId, index),
@@ -116,7 +121,11 @@ export function HintPanel({
       index: nextIndex,
     });
     try {
-      const data = await openAttemptHintApi(attemptId, questionId, nextIndex);
+      const data = await (expectedFrozenAt === undefined
+        ? openAttemptHintApi(attemptId, questionId, nextIndex)
+        : openAttemptHintApi(attemptId, questionId, nextIndex, {
+            expectedFrozenAt,
+          }));
       if (process) {
         process.event(questionId, {
           kind: "hint",

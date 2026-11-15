@@ -12,6 +12,7 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import { useLearningContextPublisher } from "@/features/learning-context/use-learning-context-publisher";
 import type { DirectiveTelemetryInfo } from "@/features/markdown/directives/expand-context";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
@@ -21,8 +22,8 @@ import {
   scrollToHeadingAt,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
-import { usePublishLearningFocus } from "@/features/memos/learning-focus-store";
 import { MemoQuickCaptureButton } from "@/features/memos/MemoQuickCapture";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentLecture } from "@/features/student/student-queries";
 import {
@@ -57,23 +58,27 @@ const LectureMarkdown = memo(RichMarkdown);
  */
 
 export default function StudentLectureViewPage() {
+  const routes = usePortalRoutes();
+
   useStudentWorkspace();
   const { id = "" } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   /** 课程上下文（课程目录/讲义列表带出；缺省时服务端取第一个可见该讲义的课程） */
   const courseId = searchParams.get("courseId") ?? undefined;
   const lectureQuery = useStudentLecture(id, courseId);
-  // 随笔上下文锚（模块 5 第一步）：在读哪篇讲义
-  usePublishLearningFocus(
-    id === "" || lectureQuery.data === undefined
-      ? null
-      : {
-          kind: "lecture",
-          lectureId: id,
-          sectionId: null,
-          label: lectureQuery.data.title.slice(0, 120) || "讲义",
-        },
-  );
+  useLearningContextPublisher({
+    route: `lecture:${id}:${lectureQuery.data?.courseId ?? ""}`,
+    surface: "lecture",
+    title: lectureQuery.data?.title ?? "讲义",
+    lecture: lectureQuery.data
+      ? {
+          id: lectureQuery.data.id,
+          courseId: lectureQuery.data.courseId,
+          courseName: lectureQuery.data.courseName,
+        }
+      : undefined,
+    observedId: lectureQuery.data?.id ?? null,
+  });
   const isDesktop = useDesktopViewport();
   /** 桌面侧栏默认展开；窄屏只通过阅读栏进入目录。 */
   const [outlineOpen, setOutlineOpen] = useState(true);
@@ -234,7 +239,7 @@ export default function StudentLectureViewPage() {
   // （单题作答 + 即时反馈）——本阅读页对 lesson 详情重定向过去（保留 courseId
   // 课程上下文；讲义列表/课程目录行的点击由此直达讲练页）
   if (lectureQuery.data?.kind === "lesson") {
-    return <Navigate replace to={lessonHref(id, courseId)} />;
+    return <Navigate replace to={lessonHref(routes, id, courseId)} />;
   }
 
   return (
@@ -250,7 +255,11 @@ export default function StudentLectureViewPage() {
         className="reading-toolbar sticky top-0 z-20 -mx-3 flex min-h-14 items-center gap-2 border-b border-border bg-background px-3 py-1.5 sm:-mx-6 sm:min-h-16 sm:px-6 sm:py-2"
       >
         <Link
-          to={courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures"}
+          to={
+            courseId !== undefined
+              ? routes.learning(`courses/${courseId}`)
+              : routes.learning("lectures")
+          }
           aria-label={courseId !== undefined ? "返回课程目录" : "返回讲义列表"}
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
@@ -408,7 +417,9 @@ export default function StudentLectureViewPage() {
                 {lectureQuery.data.companionUnits.map((unit) => (
                   <li key={unit.id}>
                     <Link
-                      to={`/s/courses/${lectureQuery.data.courseId}/units/${unit.id}`}
+                      to={routes.learning(
+                        `courses/${lectureQuery.data.courseId}/units/${unit.id}`,
+                      )}
                       aria-label={`配套练习 ${unit.title}（${unit.questionCount} 题）`}
                       className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-card px-4 py-2 outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
                     >

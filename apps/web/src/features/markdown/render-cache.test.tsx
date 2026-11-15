@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { render, screen } from "@/test/render-with-portal";
 import { richMarkdownRemarkPlugins } from "./pipeline";
 import {
   clearMarkdownRenderCache,

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/test/render-with-portal";
 import { PwaUpdateNotice } from "./PwaUpdateNotice";
 
 const mocks = vi.hoisted(() => ({

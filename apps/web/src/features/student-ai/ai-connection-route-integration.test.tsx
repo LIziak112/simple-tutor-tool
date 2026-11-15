@@ -2,7 +2,6 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import {
   afterEach,
@@ -13,6 +12,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { AiConnectionManager } from "./AiConnectionManager";
 
 /**

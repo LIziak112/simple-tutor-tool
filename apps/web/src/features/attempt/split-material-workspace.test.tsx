@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
 import type {
   AttemptContextData,
   AttemptDraftData,
@@ -13,9 +6,20 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/persistence/draft-store";
 import { fetchAttemptApi, fetchAttemptContextApi } from "@/lib/api";
 import StudentAttemptPage from "@/pages/student/StudentAttemptPage";
-import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/test/render-with-portal";
 import {
   _resetGroupMaterialLayoutStoreForTest,
   bindGroupMaterialLayoutAccount,

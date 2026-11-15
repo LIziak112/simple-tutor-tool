@@ -1,8 +1,4 @@
 import { type InkDoc, inkDocSchema, type NoteDoc } from "@tutor/contract";
-import {
-  draftStore,
-  getDraftPersistenceState,
-} from "@/features/attempt/draft-store";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import { renderInkSnapshot } from "@/features/ink/render-ink-snapshot";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
@@ -13,10 +9,10 @@ import {
 import { withTimeout } from "@/features/notes/rasterize-utils";
 import { renderNoteImages } from "@/features/notes/render-note";
 import {
-  fetchAttemptInkApi,
-  fetchStudentNoteDocumentApi,
-  fetchStudentNoteHeadsApi,
-} from "@/lib/api";
+  draftStore,
+  getDraftPersistenceState,
+} from "@/features/persistence/draft-store";
+import { serviceLease } from "@/features/runtime/service-leases";
 
 export type OngoingPaper =
   | { kind: "草稿"; doc: NoteDoc }
@@ -38,6 +34,12 @@ export async function loadOngoingPaper(
   questionId: string,
   formal: boolean,
 ): Promise<OngoingPaper | null> {
+  const {
+    fetchAttemptInkApi,
+    fetchStudentNoteHeadsApi,
+    fetchStudentNoteDocumentApi,
+  } = serviceLease(session);
+
   if (formal) {
     if (getDraftPersistenceState(attemptId) !== "saved")
       throw new Error("本机手写未保存，请重试保存后导出");

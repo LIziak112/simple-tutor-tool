@@ -44,12 +44,13 @@ import { noteConflictSummarySchema, noteDocSchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
 import { repairNoteDoc } from "@/features/notes/note-doc-repair.ts";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
 import {
-  ApiError,
-  fetchStudentNoteDocumentApi,
-  fetchStudentNoteHeadsApi,
-  putNoteDocumentApi,
-} from "@/lib/api";
+  bindServiceLease,
+  serviceLease,
+} from "@/features/runtime/service-leases";
+import { ApiError } from "@/lib/api-response";
+
 import {
   SerialTaskQueue,
   type SerialTaskQueueStats,
@@ -235,7 +236,7 @@ function keyInSession(
   if (parsed === null || !sameSession(currentSession, parsed.session)) {
     return null;
   }
-  return parsed;
+  return { ...parsed, session: currentSession };
 }
 
 // ---------- 上传执行 ----------
@@ -345,6 +346,8 @@ async function runUpload(
   scope: NoteScope,
   epoch: number,
 ): Promise<void> {
+  const { putNoteDocumentApi } = serviceLease(session);
+
   const stale = () => epoch !== sessionEpoch || !sameSessionSafe(session);
   if (stale()) return; // 复审⑨：入口即早退——旧会话作业不做任何副作用
   if (!uploadable(peekNoteRecord(session, scope))) return; // 无待传/被冲突或终态阻塞：空跑跳过
@@ -363,7 +366,7 @@ async function runUpload(
         if (!uploadable(repaired)) return;
         snapshot = repaired;
       }
-      const { mutationId, doc } = snapshot.pending;
+      const { mutationId, doc, expectedFrozenAt } = snapshot.pending;
       const baseRevision = snapshot.baseRevision;
       let receipt: NoteVersionReceipt;
       try {
@@ -383,6 +386,7 @@ async function runUpload(
           {
             baseRevision,
             mutationId,
+            ...(expectedFrozenAt !== undefined ? { expectedFrozenAt } : {}),
             // T6R.15（D5）：phase 随 scope 上送；scratch 不发该字段（旧链路
             // wire 形态零变化，服务端缺省即 scratch）
             ...(scope.phase !== "scratch" ? { phase: scope.phase } : {}),
@@ -600,8 +604,17 @@ function teardownSession(): void {
  * 全部失效（中止在途、清计时器、丢迟到回执）。绑定后扫描本地待传——
  * 重进/重载场景的补传入口。
  */
-export function bindNoteSession(session: NoteSessionRef): void {
-  if (currentSession !== null && sameSession(currentSession, session)) return;
+export function bindNoteSession(
+  session: NoteSessionRef,
+  clients: ApiServices,
+): void {
+  bindServiceLease(session, clients);
+  if (
+    currentSession !== null &&
+    sameSession(currentSession, session) &&
+    serviceLease(currentSession) === clients
+  )
+    return;
   teardownSession();
   currentSession = session;
   unsubscribeStore = subscribeNoteStore(handleRecordChanged);
@@ -716,6 +729,8 @@ export async function resolveNoteConflictKeepCloud(
   session: NoteSessionRef,
   scope: NoteScope,
 ): Promise<void> {
+  const { fetchStudentNoteDocumentApi } = serviceLease(session);
+
   const record = peekNoteRecord(session, scope);
   if (record?.conflict == null) return;
   const versionId = record.conflict.current?.versionId;
@@ -753,6 +768,8 @@ export async function resolveNoteDeniedKeepCloud(
   session: NoteSessionRef,
   scope: NoteScope,
 ): Promise<void> {
+  const { fetchStudentNoteHeadsApi, fetchStudentNoteDocumentApi } =
+    serviceLease(session);
   if (scope.phase !== "scratch") {
     throw new Error(
       "订正与补充稿暂不支持采用云端版本，请继续书写或保留本机内容",

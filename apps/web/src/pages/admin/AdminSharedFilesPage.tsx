@@ -18,11 +18,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  ApiError,
-  deleteAdminSharedFileApi,
-  fetchAdminSharedFiles,
-} from "@/lib/api";
+import { usePortalClients } from "@/features/runtime/portal-runtime";
+import { ApiError } from "@/lib/api-response";
+
 import { formatCnTime, formatRelativeTime } from "@/lib/time";
 
 /**
@@ -42,6 +40,9 @@ const KIND_LABELS: Record<SharedFileSummary["kind"], string> = {
 };
 
 export function AdminSharedFilesPage() {
+  const { fetchAdminSharedFiles, deleteAdminSharedFileApi } =
+    usePortalClients();
+
   const queryClient = useQueryClient();
   const listQuery = useQuery({
     queryKey: adminSharedKey,

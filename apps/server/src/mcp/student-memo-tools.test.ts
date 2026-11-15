@@ -307,3 +307,29 @@ describe("随笔 MCP 工具", () => {
     expect(foreignMedia.data.error).toBe("MEMO_NOT_FOUND");
   });
 });
+
+it("add_memo复用元数据预算，超限不新增；正常旧协议仍可转记", async () => {
+  const env = await makeEnv();
+  const attemptId = insertAttempt(env.db, { studentId: env.studentId });
+  const rejected = await env.client.callTool({
+    name: "add_memo",
+    arguments: {
+      text: "小记录",
+      anchor: {
+        kind: "question",
+        attemptId,
+        questionId: "q".repeat(256 * 1024),
+        label: "来源",
+      },
+    },
+  });
+  expect(rejected.isError).toBe(true);
+  expect(JSON.stringify(rejected.content)).toContain("MEMO_METADATA_TOO_LARGE");
+  expect(
+    env.db.$client.prepare("select count(*) total from memos").get(),
+  ).toMatchObject({ total: 0 });
+  const valid = await callToolJson(env.client, "add_memo", {
+    text: "正常旧协议",
+  });
+  expect(memoSchema.parse(valid.data).seq).toBe(1);
+});

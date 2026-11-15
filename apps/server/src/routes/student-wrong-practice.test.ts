@@ -13,8 +13,10 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { purgeOpenedAttempts } from "../services/attempt-opened-purge.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
@@ -436,7 +438,19 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
     const paperJsonBody = await paper.json();
     assertNoLeak(paperJsonBody);
     assertNoStemLeak(paperJsonBody);
-    // 我的记录：wrong 草稿一直可见（永不失权——无课程归属）
+    // 未激活暂存卷隐藏；本机材料首次动作显式激活后，wrong卷仍永不失权。
+    const openedRecords = await env.app.request(
+      "/api/student/records?sourceType=wrong",
+      { headers: { cookie: env.aCookie } },
+    );
+    expect(
+      (
+        (await openedRecords.json()) as {
+          data: { records: { attemptId: string }[] };
+        }
+      ).data.records.map((row) => row.attemptId),
+    ).not.toContain(summary.id);
+    activateTestAttempt(env.db, summary.id);
     const records = await env.app.request(
       "/api/student/records?sourceType=wrong",
       { headers: { cookie: env.aCookie } },
@@ -656,6 +670,38 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
     // judge2 曾错本轮做对 → 也在聚合内（includeResolved），轮次同样 +1
     const judge2 = wrong.questions.find((card) => card.questionId === Q.judge2);
     expect(judge2?.rounds).toHaveLength(2);
+  });
+
+  it("卷次取最大值加一：没动过的空卷到期被清除后，新开的重练卷不与留下的卷重号", async () => {
+    const env = await makePracticeEnv();
+    const a1 = await startCourseAttempt(env);
+    await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, a1, T1);
+    const open = async () =>
+      (
+        (await (await postWrongPractice(env, [Q.judge1])).json()) as {
+          data: { id: string; attemptNo: number };
+        }
+      ).data;
+    const wp1 = await open();
+    const wp2 = await open();
+    expect([wp1.attemptNo, wp2.attemptNo]).toEqual([1, 2]);
+    // 第 2 张动过笔（已激活）；第 1 张一直是空卷，到期被清除
+    await saveAnswer(env, wp2.id, Q.judge1, { kind: "judge", value: true });
+    expect(
+      purgeOpenedAttempts(env.db, {
+        enabled: true,
+        now: new Date(Date.now() + 8 * 86400_000),
+      }),
+    ).toBe(1);
+    expect(
+      env.db
+        .select({ attemptNo: attempts.attemptNo })
+        .from(attempts)
+        .where(eq(attempts.sourceType, "wrong"))
+        .all(),
+    ).toEqual([{ attemptNo: 2 }]);
+    expect((await open()).attemptNo).toBe(3);
   });
 
   it("快照冻结口径：建卷后教师改题库（题干/答案/版本），重练卷的题干与判分仍按建卷快照", async () => {

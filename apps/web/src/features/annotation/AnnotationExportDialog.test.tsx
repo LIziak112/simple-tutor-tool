@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@/test/render-with-portal";
 import { AnnotationExportDialog } from "./AnnotationExportDialog";
 
 const mocks = vi.hoisted(() => ({ save: vi.fn(), copy: vi.fn() }));

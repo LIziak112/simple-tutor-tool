@@ -6,7 +6,8 @@ import { CheckCircle2, Download, Loader2, PlugZap } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
+
 import {
   useProbeStudentAiConnection,
   useStudentAiConnectionModels,

@@ -1,11 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import type { AiBatchCreateData } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,6 +6,13 @@ import {
   createStudentAiShareTicketApi,
   fetchStudentAiConnectionsApi,
 } from "@/lib/api";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/test/render-with-portal";
 import type { AiBatchReviewQuestion } from "./AiBatchReviewPanel";
 import { AiBatchReviewPanel } from "./AiBatchReviewPanel";
 import {

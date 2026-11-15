@@ -20,15 +20,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
-import { prepareAnnotationForPwaUpdate } from "@/features/attempt/pwa-draft-safety";
+import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
 import {
   createInkToolbox,
   toolConfigOf,
 } from "@/features/ink/engine/toolbox.ts";
 import { InkToolbar } from "@/features/ink/toolbar/InkToolbar.tsx";
-import { studentAnnotationBasePngUrl } from "@/lib/api";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
+import { prepareAnnotationForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
+import type { ApiServices } from "@/features/runtime/ports/api-services";
 import { usePwaUpdateGuard } from "@/lib/pwa-update-safety";
 import { blocksInBaseDomain } from "./annotation-anchor";
 import {
@@ -62,9 +63,12 @@ export interface AnnotationWorkspaceBase {
 
 /** 契约底图引用 → 工作台底图（ready 且像素宽高非空才可用）。downloadUrl 缺失时按 attemptId 直构学生直出路由（与服务端同源单源）。 */
 export function annotationWorkspaceBaseOf(
+  clients: ApiServices,
   ref: AnnotationBaseRef,
   attemptId: string,
 ): AnnotationWorkspaceBase | null {
+  const { studentAnnotationBasePngUrl } = clients;
+
   if (
     ref.state !== "ready" ||
     ref.pixelWidth === null ||
@@ -99,6 +103,7 @@ export function AnnotationWorkspace({
 }: AnnotationWorkspaceProps) {
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, questionId, phase);
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
   const label = `${ariaPrefix}题干标注`;
 
   const surfaceRef = useRef<AnnotationSurface | null>(null);
@@ -198,6 +203,8 @@ export function AnnotationWorkspace({
         session,
         { attemptId, questionId, phase },
         nextDoc,
+        undefined,
+        expectedFrozenAt,
       );
       setHistoryTick((t) => t + 1);
     });
@@ -206,7 +213,16 @@ export function AnnotationWorkspace({
       surfaceRef.current = null;
       loadedDocVersion.current = null;
     };
-  }, [session, attemptId, questionId, phase, baseWidth, baseHeight, docReady]);
+  }, [
+    session,
+    attemptId,
+    questionId,
+    phase,
+    baseWidth,
+    baseHeight,
+    docReady,
+    expectedFrozenAt,
+  ]);
 
   // 工具变化 → setTool（不重建引擎）
   useEffect(() => {

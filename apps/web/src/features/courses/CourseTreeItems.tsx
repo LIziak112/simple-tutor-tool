@@ -40,6 +40,7 @@ import {
   SortableItem,
   SortableZone,
 } from "@/features/content/sortable";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { formatDueTime } from "@/lib/time";
 import { catalogTreeRows } from "./catalog-tree";
 import { useManageCourseCatalog } from "./course-queries";
@@ -61,6 +62,8 @@ export function CourseTreeItems({
   onAdd: (parentId: string | null) => void;
   onPublish: (item: CourseDetailItem) => void;
 }) {
+  const routes = usePortalRoutes();
+
   const mutation = useManageCourseCatalog(courseId);
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const [selected, setSelected] = useState<string[]>([]);
@@ -571,7 +574,7 @@ export function CourseTreeItems({
           文件夹隐藏或尚未到发布时间时，学生也看不到其中的内容。
         </p>
         <Button asChild variant="outline" className="min-h-11">
-          <Link to={`/t/import?courseId=${courseId}`}>
+          <Link to={routes.management(`import?courseId=${courseId}`)}>
             <FileUp aria-hidden />
             导入文件到课程
           </Link>

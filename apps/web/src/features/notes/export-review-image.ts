@@ -1,3 +1,4 @@
+import { saveBlobAs } from "@/lib/save-blob";
 import "katex/dist/katex.min.css";
 
 import type { ReviewPackPreviewData, ReviewPackRole } from "@tutor/contract";
@@ -7,7 +8,7 @@ import { createElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { REVIEW_PACK_KIND_LABELS } from "@/features/export/review-pack-kinds";
 import { StaticMarkdown } from "@/features/markdown/static-markdown";
-import { saveBlobAs } from "@/lib/api";
+
 import {
   collectFontEmbedCss,
   pngBlobHasMagic,

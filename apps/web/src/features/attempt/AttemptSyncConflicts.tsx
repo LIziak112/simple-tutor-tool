@@ -12,10 +12,13 @@ import {
   resolveNoteConflictKeepCloud,
   resolveNoteConflictKeepLocal,
 } from "@/features/notes/note-sync";
-import { draftStore, getDraftSessionEpoch } from "./draft-store";
+import {
+  draftStore,
+  getDraftSessionEpoch,
+} from "@/features/persistence/draft-store";
+import type { DraftSyncApi } from "@/features/persistence/use-draft-sync";
 import { LocalDraftConflicts } from "./LocalDraftConflicts";
 import { subscribeAttemptSaveChanges } from "./use-attempt-save-status";
-import type { DraftSyncApi } from "./use-draft-sync";
 
 type Conflict = {
   questionId: string;

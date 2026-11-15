@@ -10,7 +10,7 @@ import {
   getDraftPersistenceState,
   installDraftBackend,
   memoryBackend,
-} from "./draft-store";
+} from "@/features/persistence/draft-store";
 import {
   readAttemptSaveDetails,
   retryAttemptLocalPersistence,

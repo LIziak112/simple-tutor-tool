@@ -1,5 +1,5 @@
-import { act, fireEvent, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { act, fireEvent, renderHook } from "@/test/render-with-portal";
 import { useOnlineStatus } from "./use-online-status";
 
 /** 在线状态 hook 单测（T2.12）：初值随 navigator.onLine，事件实时翻转 */

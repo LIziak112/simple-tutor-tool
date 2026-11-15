@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@/test/render-with-portal";
 import { useLessonReadingPosition } from "./use-lesson-reading-position";
 
 /**

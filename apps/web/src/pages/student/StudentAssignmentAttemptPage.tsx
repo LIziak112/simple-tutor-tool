@@ -11,6 +11,10 @@ import {
   TimeLimitPicker,
   timeLimitStartOption,
 } from "@/features/attempt/TimeLimitPicker";
+import { LocalAttemptSnapshotConflictError } from "@/features/persistence/attempt-local-session";
+import { LocalAttemptSnapshotConflictPanel } from "@/features/persistence/LocalAttemptArchive";
+import { LocalAttemptRecoveryNotice } from "@/features/persistence/use-local-attempt-activation";
+import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
 import { useStudentAssignments } from "@/features/student/student-queries";
@@ -19,7 +23,7 @@ import {
   StudentListSkeleton,
   StudentRefreshWarning,
 } from "@/features/student/student-ui";
-import { ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api-response";
 
 /**
  * /s/assignments/:id 作业答题入口（T2.6；T2A.6 通用化改造）：
@@ -37,12 +41,14 @@ export default function StudentAssignmentAttemptPage() {
 }
 
 function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
+  const routes = usePortalRoutes();
+
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const returnTo = assignmentsReturnTarget(params.get("returnTo"));
+  const returnTo = assignmentsReturnTarget(routes, params.get("returnTo"));
   // SAI-23 队列跳转来源（aiFrom 白名单独立于作业列表 returnTo）：无列表
   // 上下文时改写返回目标，保留打开队列时的来源位置
-  const queueTarget = aiQueueReturnTarget(params.get("aiFrom"));
+  const queueTarget = aiQueueReturnTarget(routes, params.get("aiFrom"));
 
   const assignments = useStudentAssignments();
   const assignment = assignments.data?.assignments.find(
@@ -53,7 +59,8 @@ function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
     initialTimeLimitOf(undefined),
   );
   const timing = timeLimitStartOption(timeLimit);
-  const back = () => void navigate(returnTo ?? queueTarget ?? "/s/home");
+  const back = () =>
+    void navigate(returnTo ?? queueTarget ?? routes.learning("home"));
   const startAttempt = useStartAttempt(assignmentId);
   const startMutate = startAttempt.mutate;
   const startIdle = startAttempt.isIdle;
@@ -68,13 +75,21 @@ function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
   // 第 2 步：详情（draft→草稿视图 / 已交→结果视图）
   const attemptId = startAttempt.data?.id;
   const detailQuery = useAttemptDetail(attemptId);
+  const snapshotError =
+    startAttempt.error instanceof LocalAttemptSnapshotConflictError
+      ? startAttempt.error
+      : detailQuery.error instanceof LocalAttemptSnapshotConflictError
+        ? detailQuery.error
+        : null;
+  if (snapshotError)
+    return <LocalAttemptSnapshotConflictPanel error={snapshotError} />;
 
   if (assignmentId === "") {
     return (
       <StudentErrorPanel
         title="地址不完整"
         message="缺少作业编号，请从首页的作业卡片重新进入。"
-        onRetry={() => void navigate("/s/home")}
+        onRetry={() => void navigate(routes.learning("home"))}
       />
     );
   }
@@ -189,6 +204,8 @@ function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
 
   return (
     <>
+      {/* 卷被清除后重开：恢复结果和旧原稿的下载入口，和通用作答页、讲练页一致 */}
+      <LocalAttemptRecoveryNotice attemptId={detailQuery.data.attempt.id} />
       {detailQuery.isError && (
         <StudentRefreshWarning
           title="题目信息刷新失败"

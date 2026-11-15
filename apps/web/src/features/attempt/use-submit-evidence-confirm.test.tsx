@@ -1,6 +1,6 @@
-import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotNoteOverview } from "@/features/notes/submit-evidence";
+import { act, renderHook } from "@/test/render-with-portal";
 import {
   type EvidenceConfirmContext,
   type EvidenceConfirmOutcome,
