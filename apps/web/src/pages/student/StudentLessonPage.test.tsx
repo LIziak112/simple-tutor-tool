@@ -7,6 +7,7 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerSubmitEventSettler } from "@/features/attempt/submit-event-settle";
 import {
   installDraftBackend,
   memoryBackend,
@@ -668,6 +669,92 @@ describe("StudentLessonPage：显示答案（单题）", () => {
     await screen.findByText("第 1 题");
     fireEvent.click(firstSubmitButton());
     expect(await screen.findByText(/请刷新后重试/)).toBeInTheDocument();
+  });
+
+  describe("显示答案前先送事件（服务端提交时封存本题用时，只算已收到的事件）", () => {
+    const cleanups: Array<() => void> = [];
+    afterEach(() => {
+      for (const cleanup of cleanups.splice(0)) cleanup();
+    });
+    /** 页面挂好后顶替本卷登记的收口函数（后登记的生效），便于控制事件何时送到 */
+    function overrideSettler(settle: () => Promise<void>) {
+      const settler = { settle: vi.fn(settle), resume: vi.fn() };
+      cleanups.push(registerSubmitEventSettler(ATTEMPT_ID, settler));
+      return settler;
+    }
+    const submitted = () => ({
+      question: releasedOf(Q1, { autoCorrect: true, finalCorrect: true }),
+      summary: DRAFT_SUMMARY,
+      attempt: attemptOf("draft"),
+    });
+
+    it("本题事件送到之后才发提交请求；交成了不接回聚焦", async () => {
+      mockedStart.mockResolvedValue(lessonStart());
+      mockedSubmitQuestion.mockResolvedValue(submitted());
+      renderPage();
+      await screen.findByText("第 1 题");
+      let release: () => void = () => {};
+      const settler = overrideSettler(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+      );
+      fireEvent.click(firstSubmitButton());
+      await waitFor(() => expect(settler.settle).toHaveBeenCalledTimes(1));
+      expect(settler.settle).toHaveBeenCalledWith(["lesson-q1"]);
+      // 事件还在路上：提交请求不抢跑
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      expect(mockedSubmitQuestion).not.toHaveBeenCalled();
+      release();
+      expect(await screen.findByText("答对")).toBeInTheDocument();
+      expect(mockedSubmitQuestion).toHaveBeenCalledTimes(1);
+      expect(settler.resume).not.toHaveBeenCalled();
+    });
+
+    it("提交没成：把聚焦接回本题", async () => {
+      mockedStart.mockResolvedValue(lessonStart());
+      mockedSubmitQuestion.mockRejectedValue(
+        new ApiError(
+          "QUESTION_REVISION_STALE",
+          "题目版本已变化，请刷新后重试",
+          409,
+        ),
+      );
+      renderPage();
+      await screen.findByText("第 1 题");
+      const settler = overrideSettler(async () => undefined);
+      fireEvent.click(firstSubmitButton());
+      expect(await screen.findByText(/请刷新后重试/)).toBeInTheDocument();
+      expect(settler.settle).toHaveBeenCalledTimes(1);
+      expect(settler.resume).toHaveBeenCalledTimes(1);
+    });
+
+    it("QUESTION_ALREADY_SUBMITTED 按已提交算：不接回聚焦", async () => {
+      mockedStart.mockResolvedValueOnce(lessonStart());
+      mockedSubmitQuestion.mockRejectedValue(
+        new ApiError("QUESTION_ALREADY_SUBMITTED", "这道题已提交过", 409),
+      );
+      mockedStart.mockResolvedValue(
+        lessonStart({
+          released: {
+            "lesson-q1": releasedOf(Q1, {
+              autoCorrect: true,
+              finalCorrect: true,
+            }),
+          },
+        }),
+      );
+      renderPage();
+      await screen.findByText("第 1 题");
+      const settler = overrideSettler(async () => undefined);
+      fireEvent.click(firstSubmitButton());
+      expect(await screen.findByText("答对")).toBeInTheDocument();
+      expect(settler.settle).toHaveBeenCalledTimes(1);
+      expect(settler.resume).not.toHaveBeenCalled();
+    });
   });
 
   it("最后一题显示答案触发自动收尾：attempt 转 graded → 页面切完成视图（再做一次/查看结果）", async () => {

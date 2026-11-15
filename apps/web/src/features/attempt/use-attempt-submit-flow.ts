@@ -24,6 +24,7 @@ import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { ApiError, requestErrorMessage } from "@/lib/api-response";
 import { withRequestDeadline } from "@/lib/request-deadline";
 import { useSubmitAttempt } from "./attempt-queries";
+import { withinSubmitSettle } from "./submit-event-settle";
 import type {
   EvidenceConfirmContext,
   EvidenceConfirmOutcome,
@@ -230,13 +231,16 @@ export function useAttemptSubmitFlow({
         // problems 必非空——declarations=null 由 problems.length>0 推导（不变量）
         return { kind: "problems", problems: prep.problems };
       }
+      // 服务端在交卷这一刻封存用时，只算已收到的事件：先收口聚焦、送出事件再交卷。
+      // 限时等待——学情请求挂起或失败都不拦交卷，事件留在发件箱照常补传。
+      // 放在宽限检查之前：等待期间宽限到期，下面的检查照样拦得住。
+      await withinSubmitSettle(finalizeEvents());
+      if (aborted()) return { kind: "aborted" };
       if (!savedOnly && lockedRef.current)
         return {
           kind: "error",
           message: "宽限已过，请重新确认按已保存作答交卷",
         };
-      // 学情队列自行落盘和补传，作答证据完成后直接提交。
-      void finalizeEvents().catch(() => {});
       return send(
         ctx,
         {

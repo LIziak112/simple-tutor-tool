@@ -36,6 +36,10 @@ import {
 } from "./attempt-queries";
 import { attemptTimeLabel } from "./attempt-time-label";
 import { prepareQuestionSubmission } from "./prepare-question-submission";
+import {
+  resumeFocusAfterFailedSubmit,
+  settleEventsBeforeSubmit,
+} from "./submit-event-settle";
 
 const ResultCard = lazy(async () => ({
   default: (await import("./ResultQuestionCard")).ResultQuestionCard,
@@ -127,6 +131,9 @@ export function AttemptPartialControls({
     if (busy) return;
     setBusy(true);
     setError(null);
+    // 结算前收口过聚焦、而这一批最后没交成：学生还在题上，把聚焦接回去
+    let focusSettled = false;
+    let settled = false;
     try {
       if (!pending.current) {
         const prep = await prepareQuestionSubmission(clients, {
@@ -166,12 +173,21 @@ export function AttemptPartialControls({
         exact: true,
       });
       if (!active.current) return;
+      // 服务端在结算这一刻封存这批题的用时，只算已收到的事件：先收口聚焦、送出事件
+      focusSettled = true;
+      await settleEventsBeforeSubmit(
+        attemptId,
+        pending.current.questions.map((q) => q.questionId),
+      );
+      if (!active.current) return;
       const received = await settleAttempt(attemptId, pending.current);
+      settled = true;
       if (active.current) setResult(received);
     } catch (err) {
       if (active.current)
         setError(err instanceof Error ? err.message : "提交失败，请重试原请求");
     } finally {
+      if (focusSettled && !settled) resumeFocusAfterFailedSubmit(attemptId);
       if (active.current) setBusy(false);
     }
   };
