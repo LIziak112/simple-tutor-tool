@@ -99,6 +99,17 @@ export function tokensOf(source) {
         template();
         continue;
       }
+      // JSX 结束标签（</b>、</Foo.Bar>、</>）整体按标点处理：
+      // 否则 `<` 之后的 `/` 会被下面当成正则起点，一路吞到下一个斜杠。
+      const closingTag =
+        char === "<" && source[at + 1] === "/"
+          ? /^<\/\s*(?:[A-Za-z_$][\w$.:-]*)?\s*>/.exec(source.slice(at))?.[0]
+          : undefined;
+      if (closingTag) {
+        push("punct", closingTag, at);
+        at += closingTag.length;
+        continue;
+      }
       if (
         char === "/" &&
         (!previous ||

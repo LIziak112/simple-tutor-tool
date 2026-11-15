@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { analyzeSources, checkPortalBoundaries } from "./portal-boundaries.mjs";
+import {
+  analyzeSources,
+  checkPortalBoundaries,
+  tokensOf,
+} from "./portal-boundaries.mjs";
 
 const feature = "apps/web/src/features/example/view.tsx";
 const check = (source, extra = {}) =>
@@ -183,3 +187,61 @@ for (const operator of ["+", "-", "*", "/", "%", "**", "<", "&", "|", "^"])
       [],
     );
   });
+
+// JSX：结束标签 `</b>` 里的斜杠不是正则起点。认错的话它会一路吞到下一个斜杠，
+// 中间和之后的字符串都不再作为字符串记号出现（2026-11-15 合并后审核 R8-F1）。
+const jsx = (body) => `export const View = () => (\n${body}\n);`;
+test("JSX 结束标签之后的门户路径仍检查", () => {
+  has(jsx(`<p>\n<b>首页</b>\n<a href="/s/home">去</a>\n</p>`), "PORTAL_ROUTE");
+  has(
+    jsx(`<div><span>文字</span><Link to="/t/library">库</Link></div>`),
+    "PORTAL_ROUTE",
+  );
+  has(
+    jsx(`<><Card.Title>题</Card.Title><Link to="/p/learn/home">回</Link></>`),
+    "PORTAL_ROUTE",
+  );
+  has(
+    jsx(`<ul>\n<li>一</li>\n<li>二</li>\n</ul>`) +
+      `\nexport const admin = "/a/settings";`,
+    "PORTAL_ROUTE",
+  );
+});
+test("JSX 结束标签之后的角色端路径与角色客户端仍检查", () => {
+  has(
+    `const title = <b>题</b>;\nconst me = fetch("/api/student/me");`,
+    "ROLE_ENDPOINT",
+  );
+  has(
+    `const title = <b>题</b>;\nconst me = api.api.student.me.$get();`,
+    "ROLE_CLIENT",
+  );
+});
+test("JSX 注释之后的门户路径仍检查", () =>
+  has(
+    jsx(`<div>\n{/* 说明 */}\n<a href="/s/home">去</a>\n</div>`),
+    "PORTAL_ROUTE",
+  ));
+test("JSX 结束标签按标点处理，不产生正则记号", () => {
+  const tokens = tokensOf(`<b>首页</b>\n<a href="/s/home">去</a>`);
+  assert.deepEqual(
+    tokens.filter((t) => t.kind === "regex"),
+    [],
+  );
+  assert.deepEqual(
+    tokens.filter((t) => t.kind === "string").map((t) => t.value),
+    ["/s/home"],
+  );
+});
+test("紧贴小于号的门户正则不被当成结束标签", () =>
+  has(String.raw`const value=x</^\/s\//;`, "PORTAL_ROUTE"));
+test("JSX 结束标签、自闭合、斜杠文本与注释里的路径不误报", () => {
+  const source = jsx(`<section>
+  <h2>进度</h2>
+  <span>{done} / {total}</span>
+  <br />
+  {/* <a href="/s/home">旧入口</a> */}
+  <Link to={routes.learning("home")}>回首页</Link>
+</section>`);
+  assert.deepEqual(check(source).violations, []);
+});
