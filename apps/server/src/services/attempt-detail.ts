@@ -70,6 +70,7 @@ function attemptPublicUnitGroups(
   const materialSlots = materialSlotOrderOf(db, attempt.id);
   return groupedSnapshotRows(db, attempt, (row, snapshot) =>
     publicOfSnapshot(snapshot, row.id, {
+      questionVersion: row.questionVersion,
       materialSlots,
       // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
       unitId: row.unitId,
@@ -230,6 +231,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
     return publicOfSnapshot(snapshot, row.id, {
+      questionVersion: row.questionVersion,
       materialSlots,
       // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
       unitId: row.unitId,

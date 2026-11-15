@@ -9,6 +9,7 @@ import type {
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
+import { attemptPhaseOf, isRecordableAttempt } from "@tutor/contract";
 // 学生端题干投影唯一入口在 attempt-service 的 studentFacingResultOf
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
 import { splitLessonBlocks } from "@tutor/md-dsl";
@@ -21,6 +22,10 @@ import {
   contextEntriesOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import {
+  type AttemptStartClient,
+  refreshOpenedAttempt,
+} from "./attempt-opened-refresh.ts";
 import {
   answerOf,
   attemptEnabledCapabilities,
@@ -37,6 +42,7 @@ import {
   resultQuestionOf,
   studentFacingResultOf,
 } from "./attempt-service";
+import { hasSubstantiveAttemptEvidence } from "./attempt-substantive-evidence.ts";
 import { attemptTimeEstimateOf } from "./attempt-time-estimate";
 import { timeProjectionsOf } from "./attempt-time-projection";
 import { createOnce } from "./create-receipt";
@@ -146,6 +152,20 @@ function embeddedUnitOf(
 }
 
 /**
+ * 未激活的讲练卷记的嵌入单元已不是讲义现在的题目来源（讲义重导换了单元号，
+ * 或零题讲练页后来才有了题）。重冻按卷上记的单元取题，对这种卷只会得到空卷，
+ * 所以入口改为作废它、按现在的单元新开一份——和「现在新开」拿到的一样。
+ * 卷上已有实质证据的不算：保留原卷（refreshOpenedAttempt 会给它补激活）。
+ */
+function lessonUnitMoved(db: Db, draft: Attempt, unitId: string): boolean {
+  return (
+    attemptPhaseOf(draft) === "opened" &&
+    draft.unitId !== unitId &&
+    !hasSubstantiveAttemptEvidence(db, draft.id)
+  );
+}
+
+/**
  * 新建讲练卷（事务内调用）：行字面量复用 newDraftAttempt（四来源唯一处），
  * 题目 = 嵌入单元 live 题（freezeInputsOfNewAttempt 域内取题）逐行冻结
  * （insertFrozenResponses）。unitId = 嵌入单元 id；零题讲练页无嵌入单元时
@@ -242,6 +262,7 @@ function buildLessonStartData(
     validQuestionIds.add(row.questionId);
     questions.push(
       publicOfSnapshot(snapshot, row.id, {
+        questionVersion: row.questionVersion,
         materialSlots,
         // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
         unitId: row.unitId,
@@ -357,6 +378,7 @@ export function startLessonAttempt(
   studentId: string,
   lectureId: string,
   courseId?: string | undefined,
+  client: AttemptStartClient = {},
 ): LessonStartData {
   const { lecture, course, unitId, topic } = requireLessonContext(
     db,
@@ -368,16 +390,28 @@ export function startLessonAttempt(
   const { attempt, created } = db.transaction((tx) => {
     const existing = lessonAttemptsOf(tx, studentId, lectureId);
     const draft = existing.find((row) => row.status === "draft");
-    if (draft !== undefined) return { attempt: draft, created: false };
+    if (draft !== undefined && !lessonUnitMoved(db, draft, unitId))
+      return {
+        attempt: refreshOpenedAttempt(db, draft, client),
+        created: false,
+      };
+    if (draft !== undefined) {
+      // 这份空卷记的单元已不是讲义的题目来源：作废它，按现在的单元新开
+      tx.update(attempts)
+        .set({ abandonedAt: new Date().toISOString() })
+        .where(eq(attempts.id, draft.id))
+        .run();
+    }
     const latest = existing[0];
     // 已完成（或历史终态）：返回最新那份——start 绝不因已完成而开新卷
-    if (latest !== undefined) return { attempt: latest, created: false };
+    if (draft === undefined && latest !== undefined)
+      return { attempt: latest, created: false };
     const fresh = createLessonAttempt(tx, db, {
       studentId,
       courseId: course.id,
       lectureId: lecture.id,
       unitId,
-      attemptNo: 1,
+      attemptNo: (latest?.attemptNo ?? 0) + 1,
     });
     return { attempt: fresh, created: true };
   });
@@ -397,6 +431,8 @@ export function startLessonAttempt(
  *   拒绝），再开新卷；无任何 attempt 409（先开始一次）；
  * - 新卷 attemptNo = 最新一份 + 1、从空白开始（不预填上次答案与笔迹），
  *   重新按嵌入单元当前 live 题建卷冻结；courseId 取当前第一个可见课程；
+ * - 最新一份是未激活的空卷、请求带来的是落地页看得到的上一份卷号时，复用
+ *   这份空卷（它不入账，落地页拿不到它的卷号；不复用就会一直判为过期）；
  * - 建卷直记 attempt_start 事件（每份新卷一条）。
  */
 export function restartLessonAttempt(
@@ -404,6 +440,7 @@ export function restartLessonAttempt(
   studentId: string,
   lectureId: string,
   request?: LessonRestartRequest,
+  client: AttemptStartClient = {},
 ): LessonStartData {
   const { lecture, course, unitId, topic } = requireLessonContext(
     db,
@@ -413,16 +450,28 @@ export function restartLessonAttempt(
 
   const create = (store: Db) =>
     store.transaction((tx) => {
-      const latest = lessonAttemptsOf(tx, studentId, lectureId)[0];
+      const existing = lessonAttemptsOf(tx, studentId, lectureId);
+      const latest = existing[0];
       if (latest === undefined) {
         throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
       }
-      if (request && latest.id !== request.expectedAttemptId)
-        throw new HttpError(
-          409,
-          "LESSON_RESTART_STALE",
-          "讲练已在其他页面重新开始，请刷新后确认",
-        );
+      if (request && latest.id !== request.expectedAttemptId) {
+        // 未激活的空卷不入账，落地页只看得到它之前的那份；从落地页再点
+        // 「再做一次」带来的就是那份的卷号。空卷本身就是要的新卷：原样复用
+        // （题目有变则重冻），不作废、不新建、不空耗卷次。
+        if (
+          attemptPhaseOf(latest) !== "opened" ||
+          existing.find(isRecordableAttempt)?.id !== request.expectedAttemptId
+        )
+          throw new HttpError(
+            409,
+            "LESSON_RESTART_STALE",
+            "讲练已在其他页面重新开始，请刷新后确认",
+          );
+        if (!lessonUnitMoved(store, latest, unitId))
+          return refreshOpenedAttempt(store, latest, client).id;
+        // 空卷记的单元已不是讲义的题目来源：走下面的作废再建
+      }
       if (latest.status === "draft") {
         tx.update(attempts)
           .set({ abandonedAt: new Date().toISOString() })
@@ -499,7 +548,9 @@ export function getLessonLanding(
     typeDistribution[row.type] = (typeDistribution[row.type] ?? 0) + 1;
   }
 
-  const attemptRows = lessonAttemptsOf(db, studentId, lectureId);
+  const attemptRows = lessonAttemptsOf(db, studentId, lectureId).filter(
+    isRecordableAttempt,
+  );
   const resultCounts = attemptResultCounts(db, attemptRows);
   const submittedRows = attemptRows.filter((row) => row.status !== "draft");
   const ascending = [...submittedRows].sort(

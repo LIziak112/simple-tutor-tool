@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attemptSessionFields } from "./attempt-session.ts";
 
 /**
  * attempt 状态（§5.2 attempts.status；D2/D3 口径 T3.2a 修订）：
@@ -83,6 +84,8 @@ const summaryFields = {
   attemptNo: z.number().int().min(1),
   status: attemptStatusSchema,
   startedAt: z.string().min(1),
+  // 服务端始终下发；可选以兼容已缓存的旧载荷。
+  ...attemptSessionFields,
   submittedAt: z.string().nullable(),
   scoreAuto: z.number().int().min(0).max(100).nullable(),
   wrongScopeLabel: z.string().min(1).nullable().optional(),

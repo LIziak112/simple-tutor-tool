@@ -1146,6 +1146,7 @@ describe("完成矩阵选卷一致性（hall-15658 F1：旧已交 + 新 draft）
         },
         {
           id: NEW_DRAFT_ID,
+          activatedAt: "2026-09-25T02:00:00.000Z",
           studentId: localSeed.students.s1.id,
           sourceType: "assignment",
           assignmentId,

@@ -46,6 +46,7 @@ export function publicOfSnapshot(
   question: Question,
   questionRevisionId: string,
   options: {
+    readonly questionVersion?: number;
     /** 冻结材料槽位序（materialId → 有序 slotId）；matching 槽位集合展开用 */
     readonly materialSlots?: ReadonlyMap<string, readonly string[]>;
     /** 冻结行单元归属（responses.unitId；审查 P2-1 旧快照兜底重抽的语境） */
@@ -91,6 +92,9 @@ export function publicOfSnapshot(
       : {}),
     hintCount: question.hints.length,
     questionRevisionId,
+    ...(options.questionVersion === undefined
+      ? {}
+      : { questionVersion: options.questionVersion }),
   });
 }
 
@@ -349,6 +353,7 @@ export function resultQuestionOf(
         : {}),
     questionRevisionId: row.id,
     publicQuestion: publicOfSnapshot(snapshot, row.id, {
+      questionVersion: row.questionVersion,
       ...(options.materialSlots
         ? { materialSlots: options.materialSlots }
         : {}),

@@ -15,7 +15,11 @@ import {
 } from "./ai-companion/student-ai-live-context.ts";
 import { contextFromMemoAnchor } from "./learning-context-projection.ts";
 import { assertMetadataByteBudget } from "./memo-budget.ts";
-import { listStudentMcpPractices } from "./student-mcp-practice-list.ts";
+import { practiceSubmittedCounts } from "./pending-mark.ts";
+import { practiceProtocolOf } from "./practice-workflow-wiring.ts";
+import { recordAnswerProgress } from "./record-answer-progress.ts";
+import { studentMcpPracticeEntryOf } from "./student-mcp-practice-list.ts";
+import { latestReachableStudentDraft } from "./student-records.ts";
 
 /** 只读取定位；不自动创建/领取求助，不把最近练习伪装成当前题。 */
 export function getStudentMcpCurrentV2(
@@ -102,14 +106,29 @@ export function getStudentMcpCurrentV2(
       const context = contexts[0];
       if (context) return output({ status: "current", context });
     }
-    const recent = listStudentMcpPractices(
-      db,
-      studentId,
-      { status: "draft", limit: 1 },
-      now,
-    ).practices[0];
-    return recent
-      ? output({ status: "recent_practice", practice: recent })
-      : output({ status: "none" });
+    const recent = latestReachableStudentDraft(db, studentId, now);
+    if (!recent) return output({ status: "none" });
+    const submitted =
+      practiceProtocolOf(recent) === "v1"
+        ? practiceSubmittedCounts(db, [recent]).get(recent.id)
+        : undefined;
+    return output({
+      status: "recent_practice",
+      practice: studentMcpPracticeEntryOf(
+        db,
+        recent,
+        {
+          answerProgress:
+            recordAnswerProgress(db, [recent]).get(recent.id) ?? null,
+          submissionProgress: submitted
+            ? {
+                submittedCount: submitted.submitted,
+                totalCount: submitted.total,
+              }
+            : null,
+        },
+        now,
+      ),
+    });
   });
 }

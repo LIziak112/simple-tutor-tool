@@ -11,6 +11,7 @@ import {
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import { makeStudent } from "../test/note-fixtures.ts";
 
 function fixture() {
@@ -27,11 +28,12 @@ function fixture() {
     .where(eq(attempts.id, practiceId))
     .run();
   const rowId = insertResponse(db, practiceId, "题-1");
+  activateTestAttempt(db, practiceId);
   return { db, studentId, practiceId, rowId };
 }
 
 describe("学生MCP本人练习元数据索引", () => {
-  it("只投影本人元数据和真实工作流，不携成绩/判定，不激活空练习", async () => {
+  it("只投影本人元数据和真实工作流，不携成绩/判定，不改写已激活练习", async () => {
     const { listStudentMcpPractices } = await import(
       "./student-mcp-practice-list.ts"
     );
@@ -63,7 +65,7 @@ describe("学生MCP本人练习元数据索引", () => {
       }),
     ]);
     expect(JSON.stringify(data)).not.toMatch(
-      /score|autoCorrect|finalCorrect|teacherComment|私注|activated|"phase"/,
+      /score|autoCorrect|finalCorrect|teacherComment|私注/,
     );
     expect(db.select().from(attempts).all()).toEqual(before);
     expect(db.select().from(events).all()).toEqual([]);

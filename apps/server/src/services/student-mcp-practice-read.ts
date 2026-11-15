@@ -1,4 +1,5 @@
 import {
+  attemptPhaseOf,
   type StudentMcpPracticeQuestionData,
   type StudentMcpPracticeQuestionReadInput,
   type StudentMcpPracticeReadInput,
@@ -131,6 +132,9 @@ export function getStudentMcpPractice(
       practiceId: attempt.id,
       title: attemptSourceMeta(db, attempt).title,
       status: attempt.status,
+      activatedAt: attempt.activatedAt,
+      frozenAt: attempt.frozenAt,
+      phase: attemptPhaseOf(attempt),
       sourceType: attempt.sourceType,
       practiceWorkflow:
         attemptWorkflowView(db, attempt, now)?.practiceWorkflow ?? null,
@@ -243,6 +247,9 @@ function prepareQuestion(
   return {
     schemaVersion: 1,
     practiceId: attempt.id,
+    activatedAt: attempt.activatedAt,
+    frozenAt: attempt.frozenAt,
+    phase: attemptPhaseOf(attempt),
     questionNo: context.session.questionNo,
     questionCount: context.session.questionCount,
     question,

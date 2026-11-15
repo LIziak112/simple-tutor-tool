@@ -5,11 +5,13 @@ import type {
   PracticeFeedbackMode,
   PracticeWorkflowStartOptions,
 } from "@tutor/contract";
-import { and, desc, eq } from "drizzle-orm";
+import { attemptPhaseOf } from "@tutor/contract";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Assignment, attempts } from "../db/schema";
+import { type Assignment, type Attempt, attempts } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { requireAssignmentVisible } from "./attempt-access.ts";
+import { touchAttemptActivity } from "./attempt-activity.ts";
 import {
   contextEntriesOf,
   liveAttemptContextClosure,
@@ -18,8 +20,13 @@ import {
   freezeInputsOfNewAttempt,
   insertFrozenResponses,
 } from "./attempt-freeze.ts";
+import {
+  type AttemptStartClient,
+  refreshOpenedAttempt,
+} from "./attempt-opened-refresh.ts";
 import { withAllowRedo } from "./attempt-redo-policy";
 import { attemptSummaryOf } from "./attempt-summary.ts";
+import { timedColumnsOf } from "./attempt-timing.ts";
 import { requireVisibleCourseUnit } from "./course-service";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
@@ -62,6 +69,50 @@ export function workflowStartColumns(
   };
 }
 
+/**
+ * 入口取回进行中的卷。未激活的空卷不入账，入口页按「开始练习」给出限时选项：
+ * 本次选了限时，就从这一刻起算并激活（限时卷点「开始」即激活，计时不可撤回）。
+ * 已激活的卷沿用它自己的时钟，本次所选不生效。
+ */
+function resumeDraftAttempt(
+  db: Db,
+  draft: Attempt,
+  options: Pick<AttemptWorkflowStartOptions, "timeLimitMinutes">,
+  client: AttemptStartClient,
+): Attempt {
+  const attempt = refreshOpenedAttempt(db, draft, client);
+  if (
+    options.timeLimitMinutes === undefined ||
+    attemptPhaseOf(attempt) !== "opened"
+  )
+    return attempt;
+  const now = new Date().toISOString();
+  return db.transaction(
+    (tx) => {
+      // 条件写：两次并发的限时开卷只有先到的生效，后到的拿到同一个时钟
+      const applied =
+        tx
+          .update(attempts)
+          .set(timedColumnsOf(now, options.timeLimitMinutes))
+          .where(
+            and(
+              eq(attempts.id, attempt.id),
+              eq(attempts.status, "draft"),
+              isNull(attempts.activatedAt),
+              isNull(attempts.abandonedAt),
+            ),
+          )
+          .run().changes > 0;
+      if (applied) touchAttemptActivity(tx, attempt.id, now);
+      return (
+        tx.select().from(attempts).where(eq(attempts.id, attempt.id)).get() ??
+        attempt
+      );
+    },
+    { behavior: "immediate" },
+  );
+}
+
 // ---------- POST /api/student/assignments/:id/attempt ----------
 
 /**
@@ -79,6 +130,7 @@ export function startAttempt(
   studentId: string,
   assignmentId: string,
   options: AttemptWorkflowStartOptions = {},
+  client: AttemptStartClient = {},
 ): AttemptStartData {
   const assignment = requireAssignmentVisible(db, studentId, assignmentId);
 
@@ -99,7 +151,10 @@ export function startAttempt(
   // 进行中的那份优先（一人一份进行中）；显式重做也不掐进行中卷——先查 draft 再判策略位（hall-15313）
   const draft = existing.find((row) => row.status === "draft");
   if (draft !== undefined) {
-    return withAllowRedo(attemptSummaryOf(draft), assignment.allowRedo);
+    return withAllowRedo(
+      attemptSummaryOf(resumeDraftAttempt(db, draft, options, client)),
+      assignment.allowRedo,
+    );
   }
 
   // 显式重做（hall-15313）：已交卷后开新卷（attemptNo 递增、从空白开始、历次可回看）；
@@ -127,7 +182,10 @@ export function startAttempt(
         .all();
       const inFlight = rows.find((row) => row.status === "draft");
       if (inFlight !== undefined) {
-        return withAllowRedo(attemptSummaryOf(inFlight), assignment.allowRedo);
+        return withAllowRedo(
+          attemptSummaryOf(resumeDraftAttempt(db, inFlight, options, client)),
+          assignment.allowRedo,
+        );
       }
       return withAllowRedo(
         createAssignmentAttempt(
@@ -245,6 +303,7 @@ export function startCourseAttempt(
   courseId: string,
   unitId: string,
   options: CourseAttemptStartOptions = {},
+  client: AttemptStartClient = {},
 ): AttemptStartData {
   requireVisibleCourseUnit(db, studentId, courseId, unitId);
 
@@ -277,7 +336,7 @@ export function startCourseAttempt(
         .where(eq(attempts.id, draft.id))
         .run();
     } else if (draft !== undefined) {
-      return attemptSummaryOf(draft);
+      return attemptSummaryOf(resumeDraftAttempt(db, draft, options, client));
     }
 
     const maxAttemptNo = existing.reduce(

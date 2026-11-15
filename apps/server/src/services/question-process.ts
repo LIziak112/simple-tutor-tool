@@ -238,6 +238,7 @@ export function readQuestionProcess(
   const row = responseOf(db, attemptId, questionId);
   const snapshot = questionSchema.parse(JSON.parse(row.questionSnapshotJson));
   const question = publicOfSnapshot(snapshot, row.id, {
+    questionVersion: row.questionVersion,
     unitId: row.unitId,
     materialSlots: materialSlotOrderOf(db, attemptId),
   });

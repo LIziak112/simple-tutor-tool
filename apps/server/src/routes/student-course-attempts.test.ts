@@ -18,6 +18,7 @@ import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import { addLimitFixtureQuestions } from "../test/question-limit-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
@@ -300,6 +301,7 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
     const body = await opened.json();
     assertNoLeak(body);
     const previous = attemptStartOkSchema.parse(body).data;
+    activateTestAttempt(env.db, previous.id);
     expect(
       env.db
         .select()
@@ -462,11 +464,8 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
     );
     expect(await landing.json()).toMatchObject({
       data: {
-        attempts: [
-          expect.objectContaining({ attemptId: replacement.id }),
-          expect.objectContaining({ attemptId: completed.id }),
-        ],
-        summary: { count: 2, submittedCount: 1, hasDraft: true },
+        attempts: [expect.objectContaining({ attemptId: completed.id })],
+        summary: { count: 1, submittedCount: 1, hasDraft: false },
       },
     });
   });

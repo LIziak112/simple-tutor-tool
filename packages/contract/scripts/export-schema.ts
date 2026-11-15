@@ -138,9 +138,21 @@ await writeSchema(
 );
 await writeSchema(
   "attempt-session.json",
-  "作答结算事实契约",
+  "作答会话与结算契约",
   z.toJSONSchema(
-    (await import("../src/attempt-session.ts")).attemptSettlementSchema,
+    z.object({
+      settlement: (await import("../src/attempt-session.ts"))
+        .attemptSettlementSchema,
+      phase: (await import("../src/attempt-session.ts")).attemptPhaseSchema,
+      activateRequest: (await import("../src/attempt-session.ts"))
+        .attemptActivateRequestSchema,
+      activateData: (await import("../src/attempt-session.ts"))
+        .attemptActivateDataSchema,
+      writeProof: (await import("../src/attempt-session.ts"))
+        .attemptWriteProofSchema,
+      openedQuery: (await import("../src/attempt-session.ts"))
+        .attemptOpenedQuerySchema,
+    }),
   ),
 );
 await writeSchema(
