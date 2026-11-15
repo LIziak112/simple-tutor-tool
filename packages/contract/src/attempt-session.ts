@@ -23,6 +23,14 @@ export const attemptWriteProofFields = {
 export const attemptWriteProofSchema = z.object(attemptWriteProofFields);
 export type AttemptWriteProof = z.infer<typeof attemptWriteProofSchema>;
 
+/**
+ * 开卷请求头，值为 "1"：这个客户端之后的每次写入都会带本稿的版本凭据
+ * （expectedFrozenAt / questionRevisionId）。带了它，再次进入未激活的卷时服务端
+ * 才按现在的题目重新冻结；没带（升级前仍在运行的旧前端包）就原样返回已冻结的
+ * 那一版——旧包不带凭据，卷一旦重冻它的每次保存都会被 409 拒绝。
+ */
+export const ATTEMPT_SNAPSHOT_PROOF_HEADER = "x-tutor-snapshot-proof";
+
 type AttemptPhaseInput = {
   status: AttemptStatus;
   activatedAt?: string | null | undefined;

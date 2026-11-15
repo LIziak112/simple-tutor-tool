@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  ATTEMPT_SNAPSHOT_PROOF_HEADER,
+  type AttemptStartData,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, expect, it, vi } from "vitest";
@@ -601,6 +605,102 @@ it("同版本复用卷与冻结行；改题/材料同事务重冻，同毫秒tok
     ),
   ).toThrow("版本");
   expect(env.row(first.id)?.activatedAt).toBeNull();
+});
+
+it("开卷请求不带凭据头（升级前的旧前端包）不重冻，之后不带凭据的保存照常；带头的新前端才重冻", async () => {
+  const env = fixture();
+  const app = createApp({
+    db: env.db,
+    dataDir: createTestDir(),
+    logger: pino({ enabled: false }),
+    publicUrl: "http://localhost:8787",
+    isProduction: false,
+  });
+  const cookie = `tutor_student_session=${createStudentSession(env.db, env.studentId).token}`;
+  const open = async (headers: Record<string, string> = {}) => {
+    const res = await app.request(
+      `/api/student/courses/${env.courseId}/units/${encodeURIComponent(env.unitId)}/attempts`,
+      { method: "POST", headers: { cookie, ...headers } },
+    );
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { data: AttemptStartData }).data;
+  };
+  const save = (attemptId: string, proof: object = {}) =>
+    app.request(`/api/student/attempts/${attemptId}/answers/activation-q`, {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        answer: { kind: "judge", value: true },
+        ...proof,
+      }),
+    });
+  const first = await open();
+  const frozenRows = env.refs(first.id).map((row) => row.id);
+  env.db
+    .update(questions)
+    .set({ version: 2, stemMd: "新版题干" })
+    .where(eq(questions.id, "activation-q"))
+    .run();
+
+  // 旧包：拿回原来冻结的那一版，冻结行原样
+  expect(await open()).toEqual(first);
+  expect(env.refs(first.id).map((row) => row.id)).toEqual(frozenRows);
+  expect(env.refs(first.id)[0]).toMatchObject({ questionVersion: 1 });
+
+  // 新包：同一份卷按现在的题目重冻
+  const refrozen = await open({ [ATTEMPT_SNAPSHOT_PROOF_HEADER]: "1" });
+  expect(refrozen.id).toBe(first.id);
+  expect(refrozen.frozenAt).not.toBe(first.frozenAt);
+  expect(env.refs(first.id)[0]).toMatchObject({ questionVersion: 2 });
+  // 重冻之后旧包再来开卷不会改回去，也不会再冻一次
+  expect(await open()).toEqual(refrozen);
+  // 不带凭据的保存被拒（它手里可能还是旧题面）；带本稿凭据的照常
+  const rejected = await save(first.id);
+  expect(rejected.status).toBe(409);
+  expect(await rejected.json()).toMatchObject({
+    error: "ATTEMPT_SNAPSHOT_CHANGED",
+  });
+  expect(
+    (await save(first.id, { expectedFrozenAt: refrozen.frozenAt })).status,
+  ).toBe(200);
+
+  // 只遇到过旧包的卷从没重冻：不带凭据的保存一直可用（和升级前一样）
+  const legacy = fixture();
+  const legacyApp = createApp({
+    db: legacy.db,
+    dataDir: createTestDir(),
+    logger: pino({ enabled: false }),
+    publicUrl: "http://localhost:8787",
+    isProduction: false,
+  });
+  const legacyCookie = `tutor_student_session=${createStudentSession(legacy.db, legacy.studentId).token}`;
+  const startLegacy = () =>
+    legacyApp.request(
+      `/api/student/courses/${legacy.courseId}/units/${encodeURIComponent(legacy.unitId)}/attempts`,
+      { method: "POST", headers: { cookie: legacyCookie } },
+    );
+  const opened = (
+    (await (await startLegacy()).json()) as {
+      data: AttemptStartData;
+    }
+  ).data;
+  legacy.db
+    .update(questions)
+    .set({ version: 2, stemMd: "新版题干" })
+    .where(eq(questions.id, "activation-q"))
+    .run();
+  await startLegacy();
+  const kept = await legacyApp.request(
+    `/api/student/attempts/${opened.id}/answers/activation-q`,
+    {
+      method: "PUT",
+      headers: { cookie: legacyCookie, "content-type": "application/json" },
+      body: JSON.stringify({ answer: { kind: "judge", value: true } }),
+    },
+  );
+  expect(kept.status).toBe(200);
+  expect(legacy.row(opened.id)).toMatchObject({ frozenAt: opened.frozenAt });
+  expect(legacy.row(opened.id)?.activatedAt).not.toBeNull();
 });
 
 it("预检后先激活可保护旧本机材料稿；活跃卷任何内容更新都不重冻", () => {
