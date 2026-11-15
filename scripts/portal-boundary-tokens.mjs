@@ -16,8 +16,17 @@ export function tokensOf(source) {
     tokens.push({ kind, value, start });
     previous = value;
   };
+  // 字符串与正则字面量不能跨行；例外只有反斜杠续行和 JSX 属性值（紧跟在 `=` 后）。
+  // 读到行尾还没闭合，说明起点认错了（JSX 文本里落单的引号、开头的斜杠）：
+  // 退回去只把这一个字符记成标点，错位不带到下一行。
+  const lineEnd = (char) => char === "\n" || char === "\r";
+  const notLiteral = (start) => {
+    at = start + 1;
+    push("punct", source[start], start);
+  };
   const quoted = (quote) => {
     const start = at++;
+    const attributeValue = previous === "=";
     let raw = "";
     while (at < source.length) {
       const char = source[at++];
@@ -26,6 +35,7 @@ export function tokensOf(source) {
         continue;
       }
       if (char === quote) break;
+      if (lineEnd(char) && !attributeValue) return notLiteral(start);
       raw += char;
     }
     push("string", decode(raw), start);
@@ -36,6 +46,8 @@ export function tokensOf(source) {
     let characterClass = false;
     while (at < source.length) {
       const char = source[at++];
+      if (lineEnd(char) || (char === "\\" && lineEnd(source[at] ?? "")))
+        return notLiteral(start);
       if (char === "\\") {
         value += char + (source[at++] ?? "");
         continue;
@@ -97,6 +109,17 @@ export function tokensOf(source) {
       }
       if (char === "`") {
         template();
+        continue;
+      }
+      // JSX 结束标签（</b>、</Foo.Bar>、</>）整体按标点处理：
+      // 否则 `<` 之后的 `/` 会被下面当成正则起点，一路吞到下一个斜杠。
+      const closingTag =
+        char === "<" && source[at + 1] === "/"
+          ? /^<\/\s*(?:[A-Za-z_$][\w$.:-]*)?\s*>/.exec(source.slice(at))?.[0]
+          : undefined;
+      if (closingTag) {
+        push("punct", closingTag, at);
+        at += closingTag.length;
         continue;
       }
       if (
