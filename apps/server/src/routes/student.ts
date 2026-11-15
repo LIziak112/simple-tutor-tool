@@ -5,13 +5,11 @@ import type {
 import {
   annotationBaseCreateRequestSchema,
   annotationSealRequestSchema,
-  attemptFlagRequestSchema,
   attemptStartOptionsRequestSchema,
   attemptWorkflowUpdateDataSchema,
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
   courseAttemptStartOptionsRequestSchema,
-  hintOpenRequestSchema,
   inkWriteMetaSchema,
   lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
@@ -71,13 +69,11 @@ import {
 import {
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
-  setStudentFlag,
   startAttempt,
   startCourseAttempt,
   submitLessonQuestion,
   submitPracticeQuestion,
 } from "../services/attempt-service";
-import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { getStudentLearningRecord } from "../services/learning-record-service";
 import {
@@ -307,21 +303,6 @@ export function createStudentRoutes(
           data: startAttempt(db, c.var.student.id, c.req.param("id"), options),
         });
       })
-      // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
-      .put("/attempts/:id/flags/:questionId", async (c) => {
-        const body = await parseJsonBody(c, attemptFlagRequestSchema);
-        return c.json({
-          ok: true,
-          data: setStudentFlag(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            c.req.param("questionId"),
-            body.flag,
-            body,
-          ),
-        });
-      })
       .get("/attempts/:id/materials", (c) =>
         c.json({
           ok: true,
@@ -422,21 +403,6 @@ export function createStudentRoutes(
           200,
           { "Cache-Control": "private, no-store" },
         );
-      })
-      // T2.11：分步提示——按需下发被请求的那一条并记录（hint_open 事件 + 已解锁集合）
-      .post("/attempts/:id/hints", async (c) => {
-        const body = await parseJsonBody(c, hintOpenRequestSchema);
-        return c.json({
-          ok: true,
-          data: openHint(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            body.questionId,
-            body.index,
-            body,
-          ),
-        });
       })
       // M1b：首次任何提交前更改反馈节奏（真实事务 CAS，陈旧 revision 409）；
       // 响应 no-store（不落 PWA/浏览器缓存）；拒绝 legacy/lesson/已交/首题已交/

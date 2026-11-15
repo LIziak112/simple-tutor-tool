@@ -811,7 +811,7 @@ it.each(["ai", "memo", "batch"] as const)(
         },
         { hmacSecret: "proof-test-secret" },
       );
-      expect(result.items[0]?.status).toBe("created");
+      expect(result.items[0]?.outcome).toBe("created");
     } else if (kind === "ai") {
       const input = {
         studentId: env.studentId,
