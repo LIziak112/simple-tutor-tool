@@ -71,9 +71,21 @@ const stopStudentAiWorker = startStudentAiWorker({
   logger: logger.child({ buildVersion }),
 });
 
+/** 具名：失败日志里的 operation 要能看出是哪一项清理 */
+function purgeExpiredOpenedAttempts(target: typeof db): void {
+  purgeOpenedAttempts(target, {
+    ...openedAttemptPurgeOptionsOf(process.env),
+    onPurged: (report) =>
+      logger.info(
+        { ...report, count: report.attemptIds.length },
+        "已清除过期的未激活作答",
+      ),
+  });
+}
+
 function purgeExpiredStudentData(): void {
   for (const purge of [
-    () => purgeOpenedAttempts(db, openedAttemptPurgeOptionsOf(process.env)),
+    purgeExpiredOpenedAttempts,
     purgeExpiredQuestionProcesses,
     purgeExpiredAttemptBatchSubmissions,
   ]) {

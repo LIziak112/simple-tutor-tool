@@ -25,7 +25,7 @@ export function hasSubstantiveAttemptEvidence(
     OR EXISTS(SELECT 1 FROM response_time_ledger WHERE attempt_id=@id)
     OR EXISTS(SELECT 1 FROM ai_attempt_review_tasks WHERE attempt_id=@id)
     OR EXISTS(SELECT 1 FROM ai_review_v2_runs WHERE attempt_id=@id)
-    OR EXISTS(SELECT 1 FROM events WHERE attempt_id=@id AND type IN ('hint_open','question_submit','attempt_submit'))
+    OR EXISTS(SELECT 1 FROM events WHERE attempt_id=@id AND type IN ('hint_open','question_submit','submit'))
     AS found`)
     .get({ id: attemptId, historical: historical ? 1 : 0 }) as {
     found: number;

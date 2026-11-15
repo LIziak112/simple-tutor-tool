@@ -144,8 +144,9 @@ export function startWrongPractice(
         : scope;
 
   return db.transaction((tx) => {
-    const countRow = tx
-      .select({ n: sql<number>`count(*)` })
+    // 取最大卷次而不是份数：未激活的空卷清除后份数会变少，按份数算会重号
+    const latestRow = tx
+      .select({ n: sql<number | null>`max(${attempts.attemptNo})` })
       .from(attempts)
       .where(
         and(
@@ -154,7 +155,7 @@ export function startWrongPractice(
         ),
       )
       .get();
-    const attemptNo = (countRow?.n ?? 0) + 1;
+    const attemptNo = (latestRow?.n ?? 0) + 1;
 
     // T6R.3：行字面量复用 newDraftAttempt（三来源建卷共用；wrong 三归属键恒
     // null——契约来源不变式，frozenAt=startedAt 建卷即冻结，快照在下方逐题预插）

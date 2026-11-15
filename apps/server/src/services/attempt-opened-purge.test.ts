@@ -10,6 +10,7 @@ import {
 } from "../test/submission-time-fixture.ts";
 import { touchAttemptActivity } from "./attempt-activity.ts";
 import {
+  type OpenedAttemptPurgeReport,
   openedAttemptPurgeOptionsOf,
   purgeOpenedAttempts,
 } from "./attempt-opened-purge.ts";
@@ -66,18 +67,27 @@ it("删除旧空卷与浏览事件，兼容time receipt/profile保护触发器�
       .prepare("DELETE FROM attempt_event_receipts WHERE attempt_id=?")
       .run(env.attemptId),
   ).toThrow("immutable");
+  // 每轮删了哪些卷要能事后查到：没删不报，删了报卷号、截止时刻和天数
+  const reports: OpenedAttemptPurgeReport[] = [];
+  const onPurged = (report: OpenedAttemptPurgeReport) => reports.push(report);
   expect(
     purgeOpenedAttempts(env.db, {
       enabled: true,
       now: new Date(at(6 * 86400)),
+      onPurged,
     }),
   ).toBe(0);
+  expect(reports).toEqual([]);
   expect(
     purgeOpenedAttempts(env.db, {
       enabled: true,
       now: new Date(at(8 * 86400)),
+      onPurged,
     }),
   ).toBe(1);
+  expect(reports).toEqual([
+    { attemptIds: [env.attemptId], cutoff: at(86400), days: 7 },
+  ]);
   for (const table of [
     "attempts",
     "responses",

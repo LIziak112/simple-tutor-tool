@@ -824,6 +824,90 @@ describe("POST /api/student/lectures/:id/lesson/restart（再做一次/重新开
     expect((await startOk(env)).data.attempt.id).toBe(first);
     for (const body of bodies) assertNoLeak(body);
   });
+  it("重开出的空卷没动过：落地页带上一份卷号再点「再做一次」复用这份空卷；空卷一旦激活，旧卷号恢复判为过期", async () => {
+    const env = await makeEnv();
+    const finishedId = (await startOk(env)).data.attempt.id;
+    const now = new Date().toISOString();
+    env.db
+      .update(responses)
+      .set({ submittedAt: now, autoCorrect: true, finalCorrect: true })
+      .where(eq(responses.attemptId, finishedId))
+      .run();
+    env.db
+      .update(attempts)
+      .set({
+        status: "graded",
+        submittedAt: now,
+        scoreAuto: 100,
+        scoreFinal: 100,
+      })
+      .where(eq(attempts.id, finishedId))
+      .run();
+    const send = (expectedAttemptId: string) =>
+      env.app.request(`/api/student/lectures/${env.lectureId}/lesson/restart`, {
+        method: "POST",
+        headers: {
+          cookie: env.memberCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          operationId: crypto.randomUUID(),
+          expectedAttemptId,
+        }),
+      });
+    const lessonRows = () =>
+      env.db
+        .select()
+        .from(attempts)
+        .where(eq(attempts.lectureId, env.lectureId))
+        .all();
+
+    const first = await send(finishedId);
+    expect(first.status).toBe(201);
+    const opened = ((await first.json()) as StartBody).data.attempt;
+    expect(opened).toMatchObject({ attemptNo: 2, status: "draft" });
+    expect(
+      lessonRows().find((row) => row.id === opened.id)?.activatedAt,
+    ).toBeNull();
+
+    // 空卷不入账：落地页仍只有第 1 次，按钮带来的还是第 1 次的卷号
+    const landing = (await (
+      await env.app.request(
+        `/api/student/lectures/${env.lectureId}/lesson/landing`,
+        { headers: { cookie: env.memberCookie } },
+      )
+    ).json()) as { data: { attempts: { attemptId: string }[] } };
+    expect(landing.data.attempts.map((row) => row.attemptId)).toEqual([
+      finishedId,
+    ]);
+
+    const again = await send(finishedId);
+    expect(again.status).toBe(201);
+    const reused = (await again.json()) as StartBody;
+    expect(lessonStartOkSchema.safeParse(reused).success).toBe(true);
+    expect(reused.data.attempt).toMatchObject({ id: opened.id, attemptNo: 2 });
+    expect(reused.data.drafts).toEqual({});
+    expect(reused.data.released).toEqual({});
+    assertNoLeak(reused);
+    // 没有多建卷，也没有把空卷作废；复用不补记 attempt_start
+    expect(lessonRows()).toHaveLength(2);
+    expect(lessonRows().every((row) => row.abandonedAt === null)).toBe(true);
+    expect(
+      env.db
+        .select()
+        .from(events)
+        .where(eq(events.attemptId, opened.id))
+        .all()
+        .filter((row) => row.type === "attempt_start"),
+    ).toHaveLength(1);
+
+    // 空卷激活后落地页已能看到它：再带第 1 次的卷号就是真的过期
+    activateTestAttempt(env.db, opened.id);
+    const stale = await restartOrStartError(await send(finishedId));
+    expect(stale.status).toBe(409);
+    expect(stale.error).toBe("LESSON_RESTART_STALE");
+    expect(lessonRows()).toHaveLength(2);
+  });
   it("无作答 409；随时重开——进行中 draft restart 也 201（旧卷作废，2026-10 教师演示口径；详测见 landing describe）", async () => {
     const env = await makeEnv();
 

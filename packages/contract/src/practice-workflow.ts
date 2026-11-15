@@ -237,7 +237,8 @@ export const attemptStartOptionsRequestSchema = z
     redo: z.boolean().optional(),
     /**
      * 限时测试（模块 2）：自选时长（分钟，1–600）。新建卷时服务端按建卷时刻算
-     * deadlineAt 持久化；取回已有进行中卷时忽略（时钟以首次建卷为准）。
+     * deadlineAt 持久化；取回的是未激活的空卷时，按本次请求的时刻起算并激活；
+     * 取回已激活的进行中卷时忽略（时钟以它开始计时的那一刻为准）。
      */
     timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
   })

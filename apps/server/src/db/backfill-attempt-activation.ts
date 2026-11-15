@@ -1,9 +1,28 @@
 import { eq, isNull } from "drizzle-orm";
 import { hasSubstantiveAttemptEvidence } from "../services/attempt-substantive-evidence.ts";
 import type { Db } from "./client.ts";
-import { attempts, dataMigrations } from "./schema.ts";
+import { type Attempt, attempts, dataMigrations } from "./schema.ts";
 
 export const ATTEMPT_ACTIVATION_BACKFILL_KEY = "attempt_activation_v1";
+
+/** Agent 经 MCP 组的错题卷是交付给学生的东西：和新建时一样，建好即入账。 */
+function isAgentDeliveredPractice(
+  row: Pick<Attempt, "sourceType" | "practiceScopeJson">,
+): boolean {
+  if (row.sourceType !== "wrong" || row.practiceScopeJson === null)
+    return false;
+  try {
+    const scope: unknown = JSON.parse(row.practiceScopeJson);
+    return (
+      typeof scope === "object" &&
+      scope !== null &&
+      "kind" in scope &&
+      scope.kind === "ai"
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** 历史时刻只能取已知的 startedAt；绝不把升级时刻伪装成首次动作。 */
 export function backfillAttemptActivation(db: Db, now = new Date()): number {
@@ -25,6 +44,9 @@ export function backfillAttemptActivation(db: Db, now = new Date()): number {
       if (
         row.status !== "draft" ||
         row.timeLimitSec !== null ||
+        // 旧版只在实质写入点更新最近作答时间：非空就是动过（含画了又擦掉的正式手写）
+        row.lastActivityAt !== null ||
+        isAgentDeliveredPractice(row) ||
         hasSubstantiveAttemptEvidence(db, row.id, true)
       ) {
         count += db
