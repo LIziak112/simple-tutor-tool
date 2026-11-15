@@ -3,10 +3,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { runBackfills } from "./backfill";
 import { createDb, createDbFromBuffer, type Db } from "./client";
 import { resolveMigrationsFolder, runMigrations } from "./migrate";
@@ -42,22 +44,41 @@ function buildTemplateBuffer(): Buffer {
   try {
     runMigrations(template);
     runBackfills(template);
-    template
-      .insert(teachers)
-      .values({
-        id: TEST_TEACHER_ID,
-        loginName: "teacher",
-        isAdmin: true,
-        disabledAt: null,
-        passwordHash: null,
-        apiToken: null,
-        createdAt: "2026-01-01T00:00:00.000Z",
-      })
-      .run();
+    seedTestTeacher(template);
     return template.$client.serialize();
   } finally {
     template.$client.close();
   }
+}
+
+function seedTestTeacher(db: Db): void {
+  db.insert(teachers)
+    .values({
+      id: TEST_TEACHER_ID,
+      loginName: "teacher",
+      isAdmin: true,
+      disabledAt: null,
+      passwordHash: null,
+      apiToken: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    })
+    .run();
+}
+
+/** 仅遗留兼容用例：旧0075 schema造数后再正式迁移0076，不删除或放松新guard。 */
+export function createTestDbBeforeActivationGuards(): Db {
+  const db = createDb(":memory:");
+  const prefix = makeMigrationsFolderUpTo("0075_hard_zodiak");
+  try {
+    db.$client.pragma("foreign_keys = OFF");
+    migrate(db, { migrationsFolder: prefix });
+  } finally {
+    db.$client.pragma("foreign_keys = ON");
+    rmSync(prefix, { recursive: true, force: true });
+  }
+  runBackfills(db);
+  seedTestTeacher(db);
+  return db;
 }
 
 export function createTestDb(): Db {

@@ -10,6 +10,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { runMigrations } from "../db/migrate.ts";
 import {
   assignments,
   attemptContextFreezes,
@@ -20,9 +21,14 @@ import {
   submissionEvidence,
   teachers,
 } from "../db/schema.ts";
-import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDbBeforeActivationGuards,
+  createTestDir,
+} from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { activateTestAttempt } from "../test/attempt-activation-fixtures.ts";
 import { putNoteReceipt } from "../test/note-fixtures.ts";
 import {
   createStudent,
@@ -158,8 +164,10 @@ async function createStudentAndLogin(
 }
 
 /** 基础环境：教师 + 导入三题练习单元 + 张三/李四 */
-async function makeEnv(): Promise<Env> {
-  const db = createTestDb();
+async function makeEnv(legacySchema = false): Promise<Env> {
+  const db = legacySchema
+    ? createTestDbBeforeActivationGuards()
+    : createTestDb();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
@@ -1442,7 +1450,7 @@ describe("M2 异常数据降级（作业授权行悬挂——v2 加固 d7c84b89 
 
 describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余行）", () => {
   it("旧卷协议修订号损坏时，整卷收尾保留已经单题提交的判定和原稿", async () => {
-    const env = await makeEnv();
+    const env = await makeEnv(true);
     const attemptId = await startPracticeAttempt(env);
     await saveAnswer(env, attemptId, Q.choice, { kind: "choice", index: 0 });
     const draft = await fetchDraft(env, attemptId);
@@ -1480,6 +1488,7 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
       )
       .get();
     expect(evidence).toBeDefined();
+    runMigrations(env.db);
     const submitted = await submitAttemptRequest(
       env.app,
       env.aCookie,
@@ -1768,6 +1777,7 @@ describe("M4-D3 进行中进度计数与结果页节奏摘要（§13/§13.8）",
     await practiceSubmitOk(env, draft, v1.attemptId, Q.choice);
     // 不带 workflowVersion 的开卷 = 旧协议草稿（对照：不带字段）
     const legacy = await startTrackedAttempt(env, {});
+    activateTestAttempt(env.db, legacy.attemptId);
 
     const rows = await fetchRecords(env);
     const v1Row = rows.find((row) => row.attemptId === v1.attemptId);
@@ -1856,6 +1866,7 @@ describe("M4-D3 进行中进度计数与结果页节奏摘要（§13/§13.8）",
 
     // legacy 卷（旧协议）草稿视图不携带 → 前端不渲染节奏摘要行
     const legacy = await startTrackedAttempt(env, {});
+    activateTestAttempt(env.db, legacy.attemptId);
     const legacyRes = await env.app.request(
       `/api/student/attempts/${legacy.attemptId}`,
       { headers: { cookie: env.aCookie } },

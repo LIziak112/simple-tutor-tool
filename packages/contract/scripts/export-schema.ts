@@ -148,6 +148,8 @@ await writeSchema(
         .attemptActivateRequestSchema,
       activateData: (await import("../src/attempt-session.ts"))
         .attemptActivateDataSchema,
+      writeProof: (await import("../src/attempt-session.ts"))
+        .attemptWriteProofSchema,
       openedQuery: (await import("../src/attempt-session.ts"))
         .attemptOpenedQuerySchema,
     }),

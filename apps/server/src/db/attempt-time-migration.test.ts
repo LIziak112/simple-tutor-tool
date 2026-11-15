@@ -50,11 +50,22 @@ it("正式迁移不升级旧draft、不改历史NULL/0或结算；重迁移幂�
     const before = db.$client
       .prepare("SELECT * FROM attempts ORDER BY id")
       .all();
+    const originalColumns = Object.keys(before[0] as Record<string, unknown>)
+      .map((name) => `"${name}"`)
+      .join(",");
     runMigrations(db);
     runMigrations(db);
     expect(
-      db.$client.prepare("SELECT * FROM attempts ORDER BY id").all(),
+      db.$client
+        .prepare(`SELECT ${originalColumns} FROM attempts ORDER BY id`)
+        .all(),
     ).toEqual(before);
+    expect(
+      db.$client
+        .prepare("SELECT activated_at FROM attempts ORDER BY id")
+        .pluck()
+        .all(),
+    ).toEqual([null, null, null]);
     expect(db.$client.prepare("SELECT * FROM responses").all()).toEqual(
       oldRows,
     );

@@ -1,6 +1,7 @@
 import { runtimeEpochOf } from "./runtime-epoch.ts";
 
 export { runtimeEpochOf } from "./runtime-epoch.ts";
+export { firstQuestionOf, hasAssistantReply } from "./student-ai-reply.ts";
 
 import { randomUUID } from "node:crypto";
 import type {
@@ -10,6 +11,7 @@ import type {
   AiFactType,
   AiMessage,
   AiTaskAction,
+  AiTaskCreateRequest,
   AiTaskOriginSummary,
   AiTaskPublic,
   AiTaskPurpose,
@@ -50,6 +52,7 @@ import {
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import {
+  assertAttemptWriteProof,
   assertAttemptWriteVersion,
   touchAttemptActivity,
 } from "../attempt-activity.ts";
@@ -70,6 +73,9 @@ import {
 import { aiTaskOriginSummariesOf } from "./student-ai-origin-summary.ts";
 import {
   checkedReplyOf,
+  firstQuestionOf,
+  firstStudentMessageRow,
+  hasAssistantReply,
   insertAssistantReply,
   lastReplyReceipt,
   latestMessageAtOf,
@@ -394,50 +400,13 @@ function contextVersionOf(
   ).slice(0, 24)}`;
 }
 
-/** 首条学生消息行（创建时插入；视图读取与 refresh 替换正文共用） */
-function firstStudentMessageRow(
-  db: Db | QueueTx,
-  taskId: string,
-): typeof aiMessages.$inferSelect | undefined {
-  return asDb(db)
-    .select()
-    .from(aiMessages)
-    .where(and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "student")))
-    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
-    .get();
-}
-
-/** 首条学生消息（任务问题正文；数据残缺是故障不是空问题） */
-export function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
-  const row = firstStudentMessageRow(db, taskId);
-  if (row === undefined) {
-    throw new HttpError(
-      500,
-      "AI_CONTEXT_BROKEN",
-      "任务缺少首条学生消息，数据不完整",
-    );
-  }
-  return row.contentMd;
-}
-
-export function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
-  return (
-    asDb(db)
-      .select({ id: aiMessages.id })
-      .from(aiMessages)
-      .where(
-        and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "assistant")),
-      )
-      .get() !== undefined
-  );
-}
-
 // ---------- 操作与语义 1：创建（幂等 + 配额） ----------
 
 export interface CreateAiTaskInput {
   readonly studentId: string;
   readonly attemptId: string;
   readonly questionId: string;
+  readonly questionRevisionId?: AiTaskCreateRequest["questionRevisionId"];
   /** 学生问题（首条消息正文；AI_QUESTION_MAX_CHARS 由路由层契约校验） */
   readonly question: string;
   readonly channel: AiChannel;
@@ -535,6 +504,12 @@ export function createAiTask(
     (tx) => {
       // 配额（事务内计数，与插入串行）：
       assertAttemptWriteVersion(tx, bundle.attempt);
+      assertAttemptWriteProof(
+        bundle.attempt,
+        undefined,
+        input.questionRevisionId,
+        bundle.responseId,
+      );
       // ① 同题进行中（pending + processing 桶；终态不占额）
       const activeStatuses: readonly AiTaskStatus[] = [
         ...AI_TASK_QUEUE_BUCKETS.pending,

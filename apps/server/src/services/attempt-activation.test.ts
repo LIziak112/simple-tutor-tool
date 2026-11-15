@@ -18,6 +18,7 @@ import {
 import { activateAttempt } from "./attempt-activation.ts";
 import { touchAttemptActivity } from "./attempt-activity.ts";
 import { saveDraftAnswer, setStudentFlag } from "./attempt-answer.ts";
+import { getAttemptDetail } from "./attempt-detail.ts";
 import { submitAttempt } from "./attempt-whole-submit.ts";
 import { saveInk } from "./ink-service.ts";
 import { saveNoteVersion } from "./note-service.ts";
@@ -26,6 +27,31 @@ import { getStudentMcpPractice } from "./student-mcp-practice-read.ts";
 afterEach(closeTimingFixtures);
 const current = (env: ReturnType<typeof timingFixture>) =>
   env.db.select().from(attempts).where(eq(attempts.id, env.attemptId)).get();
+
+it("ACT08 无固定墙钟的首次交卷回执与详情同一激活事实，前置动作首次时刻不被收尾覆盖", () => {
+  for (const withDraft of [false, true]) {
+    const env = timingFixture();
+    env.db.transaction(() => {
+      if (withDraft)
+        saveDraftAnswer(env.db, env.studentId, env.attemptId, "q1", {
+          kind: "judge",
+          value: true,
+        });
+      const first = current(env)?.activatedAt;
+      const later = new Date(Date.now() + 1234).toISOString();
+      const receipt = submitAttempt(
+        env.db,
+        env.studentId,
+        env.attemptId,
+        later,
+      );
+      expect(receipt.attempt.activatedAt).toBe(first ?? later);
+      expect(receipt.attempt).toEqual(
+        getAttemptDetail(env.db, env.studentId, env.attemptId).attempt,
+      );
+    });
+  }
+});
 
 it.each(["ink", "note", "annotation"] as const)(
   "%s 首次空白正文同步不属于实质动作",

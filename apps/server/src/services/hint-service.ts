@@ -1,4 +1,8 @@
-import type { HintOpenData, HintOpenedEntry } from "@tutor/contract";
+import type {
+  AttemptWriteProof,
+  HintOpenData,
+  HintOpenedEntry,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -9,6 +13,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  assertAttemptWriteProof,
   assertAttemptWriteVersion,
   touchAttemptActivity,
 } from "./attempt-activity.ts";
@@ -166,6 +171,7 @@ export function openHint(
   attemptId: string,
   questionId: string,
   index: number,
+  proof?: AttemptWriteProof,
 ): HintOpenData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   // 三查合一：成员校验 + 提示来源 + 解锁回写目标行一次取出（行在建卷冻结时
@@ -193,6 +199,7 @@ export function openHint(
   const hintsUsed = nextOpened.length; // 去重口径：同条重复请求不涨
   db.transaction((tx) => {
     assertAttemptWriteVersion(tx, attempt);
+    assertAttemptWriteProof(attempt, proof);
     tx.update(responses)
       .set({ hintsUsed, hintsOpenedJson: JSON.stringify(nextOpened) })
       .where(eq(responses.id, row.id))

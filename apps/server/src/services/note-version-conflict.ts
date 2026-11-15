@@ -17,13 +17,7 @@ export function revisionConflict(
   // 无 head（revision=0）时除 revision 外全空；有 head 时补版本 hash——
   // 组装经契约 noteRevisionConflictCurrentSchema.parse（复审⑤：摘要形态
   // 契约化，服务端与实现漂移即编程错误在这里当场暴露）
-  const head = existing?.currentVersionId
-    ? db
-        .select({ hash: noteVersions.hash })
-        .from(noteVersions)
-        .where(eq(noteVersions.id, existing.currentVersionId))
-        .get()
-    : undefined;
+  const headHash = noteVersionHashOf(db, existing?.currentVersionId);
   return new HttpError(
     409,
     "NOTE_REVISION_CONFLICT",
@@ -33,9 +27,23 @@ export function revisionConflict(
         noteId: existing?.id ?? null,
         revision: existing?.currentRevision ?? 0,
         versionId: existing?.currentVersionId ?? null,
-        hash: head?.hash ?? null,
+        hash: headHash ?? null,
         serverSavedAt: existing?.serverSavedAt ?? null,
       }),
     },
   );
+}
+
+/** CAS诊断与实质内容比较共用版本hash读取。 */
+export function noteVersionHashOf(
+  db: Pick<Db, "select">,
+  id: string | null | undefined,
+): string | undefined {
+  return id == null
+    ? undefined
+    : db
+        .select({ hash: noteVersions.hash })
+        .from(noteVersions)
+        .where(eq(noteVersions.id, id))
+        .get()?.hash;
 }

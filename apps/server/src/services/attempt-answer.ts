@@ -1,6 +1,7 @@
 import {
   type AttemptAnswerSaveData,
   type AttemptAnswerSaveRequest,
+  type AttemptWriteProof,
   attemptAnswerConflictCurrentSchema,
   attemptAnswerSaveDataSchema,
   type StudentAnswer,
@@ -17,6 +18,7 @@ import {
   requireUsableAttempt,
 } from "./attempt-access.ts";
 import {
+  assertAttemptWriteProof,
   assertAttemptWriteVersion,
   touchAttemptActivity,
 } from "./attempt-activity";
@@ -32,7 +34,7 @@ export function saveDraftAnswer(
   answer: StudentAnswer,
   options: Pick<
     AttemptAnswerSaveRequest,
-    "baseRevision" | "mutationId" | "questionRevisionId"
+    "baseRevision" | "mutationId" | "questionRevisionId" | "expectedFrozenAt"
   > = {},
 ): AttemptAnswerSaveData {
   return db.transaction((tx) => {
@@ -61,16 +63,12 @@ export function saveDraftAnswer(
       .where(buildAttemptQuestionWhere(attemptId, questionId))
       .get();
     if (existing === undefined) throw questionNotFound();
-    if (
-      options.questionRevisionId !== undefined &&
-      options.questionRevisionId !== existing.id
-    ) {
-      throw new HttpError(
-        409,
-        "QUESTION_REVISION_STALE",
-        "题目版本已变化，请保留本机草稿并刷新练习",
-      );
-    }
+    assertAttemptWriteProof(
+      attempt,
+      options,
+      options.questionRevisionId,
+      existing.id,
+    );
     if (existing.submittedAt !== null)
       throw new HttpError(
         409,
@@ -164,6 +162,7 @@ export function setStudentFlag(
   attemptId: string,
   questionId: string,
   flag: "unsure" | null,
+  proof?: AttemptWriteProof,
 ): { questionId: string; studentFlag: string | null } {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
@@ -180,6 +179,7 @@ export function setStudentFlag(
   assertRowNotSubmitted(db, attemptId, questionId, "修改「不会」标记");
   db.transaction((tx) => {
     assertAttemptWriteVersion(tx, attempt);
+    assertAttemptWriteProof(attempt, proof);
     const old = tx
       .select({ flag: responses.studentFlag })
       .from(responses)

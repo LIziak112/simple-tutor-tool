@@ -68,6 +68,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
 import {
+  assertAttemptWriteProof,
   assertAttemptWriteVersion,
   touchAttemptActivity,
 } from "./attempt-activity";
@@ -268,7 +269,10 @@ export function writeNoteBodyFile(
   });
 }
 
-import { revisionConflict } from "./note-version-conflict.ts";
+import {
+  noteVersionHashOf,
+  revisionConflict,
+} from "./note-version-conflict.ts";
 
 /** 版本行 → 回执（预检幂等命中与跨进程约束兜底共用一处组装） */
 function receiptOf(row: NoteVersionRow): NoteVersionReceipt {
@@ -377,6 +381,7 @@ export function saveNoteVersion(
   //    严格（快照非空——requireAttemptQuestion 返回行 id 即 questionRevisionId）；
   //    correction/supplement 宽松（软删/历史缺失题的订正与补充照常可写）
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  assertAttemptWriteProof(attempt, meta);
   const phase = meta.phase ?? "scratch";
   const { id: questionRevisionId } =
     phase === "scratch"
@@ -574,13 +579,7 @@ export function saveNoteVersion(
           "草稿头指针切换未命中（并发写竞争，本次写入已回滚）",
         );
       }
-      const previousHash = existing?.currentVersionId
-        ? tx
-            .select({ hash: noteVersions.hash })
-            .from(noteVersions)
-            .where(eq(noteVersions.id, existing.currentVersionId))
-            .get()?.hash
-        : undefined;
+      const previousHash = noteVersionHashOf(tx, existing?.currentVersionId);
       if (
         phase === "scratch" &&
         previousHash !== hash &&
@@ -1449,6 +1448,7 @@ export function getStudentQuestionNotebook(
     const question =
       snapshot !== null
         ? publicOfSnapshot(snapshot, row.response.id, {
+            questionVersion: row.response.questionVersion,
             // QM-13：matching 槽位集合按该卷冻结材料槽位序展开（跨卷轮次
             // 各自取用，不混卷）
             materialSlots: materialSlotOrderOf(db, row.attempt.id),
