@@ -115,6 +115,16 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** 未知值 → 笔画 id 形态判别（与契约 inkStrokeIdSchema 同口径；id 与 cutFrom 共用） */
+function isStrokeId(v: unknown): v is string {
+  return (
+    typeof v === "string" &&
+    v.length >= 8 &&
+    v.length <= 40 &&
+    /^[0-9A-Za-z_-]+$/.test(v)
+  );
+}
+
 /** 解析中的中间形态：笔画 + 每点原始时间戳（null=缺失/非法）+ 落笔绝对时刻 */
 interface RawStroke {
   stroke: InkStroke;
@@ -163,12 +173,9 @@ function parseSingleStroke(item: Record<string, unknown>): {
           : "#1f2328",
       weight: isFiniteNumber(item.weight) && item.weight > 0 ? item.weight : 4,
       // LR-1/LR-2 字段透传（宽松校验）：id 供锚点/时间线引用；startedAt 供真实停顿
-      ...(typeof item.id === "string" &&
-      item.id.length >= 8 &&
-      item.id.length <= 40 &&
-      /^[0-9A-Za-z_-]+$/.test(item.id)
-        ? { id: item.id }
-        : {}),
+      ...(isStrokeId(item.id) ? { id: item.id } : {}),
+      // 局部擦除切出的段带着原笔的记号：绘制时把同一笔的荧光笔段合在一起上色
+      ...(isStrokeId(item.cutFrom) ? { cutFrom: item.cutFrom } : {}),
       ...(isFiniteNumber(item.startedAt) && item.startedAt > 0
         ? { startedAt: item.startedAt }
         : {}),

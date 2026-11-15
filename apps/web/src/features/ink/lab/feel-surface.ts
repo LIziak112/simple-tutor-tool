@@ -7,14 +7,15 @@ import {
 import type Atrament from "atrament";
 import {
   createProgrammaticAtrament,
-  replayAtramentStroke,
-} from "../engine/atrament-adapter";
-import { strokeBounds } from "../engine/bounds";
+  replayAtramentStrokes,
+} from "../engine/atrament-replay";
 import { canvasToPngBlob } from "../engine/canvas-png";
 import { buildAtramentDoc, parseAtramentDoc } from "../engine/doc";
-import { eraseHit } from "../engine/erase";
-import { paintFreehandStroke } from "../engine/freehand-paint";
+import { createEraseGesture, type ErasePoint } from "../engine/erase-gesture";
+import { paintFreehandRun } from "../engine/freehand-paint";
 import { InkStore, mintStrokeId } from "../engine/history";
+import { createInkLiveLayer, type InkLiveLayer } from "../engine/live-layer";
+import { forEachPaintRun } from "../engine/paint-runs";
 import {
   NOTE_PAPER_GRID_SPACING_LOGICAL,
   paperBackgroundCss,
@@ -27,16 +28,18 @@ import {
   type PointerMachineEvent,
   touchActionForInput,
 } from "../engine/pointer-machine";
+import { PAINT_SPREAD_CSS } from "../engine/region-redraw";
+import { createShapeGesture } from "../engine/shape-gesture";
 import type { InkChangeReason, ToolAwareSurface } from "../engine/surface";
 import {
   asPointerKind,
   INK_ERASE_RADIUS,
   type InkDoc,
   type InkInputMode,
-  type InkPenColor,
-  type InkPenSize,
+  type InkPenBase,
   type InkPointerKind,
   type InkToolConfig,
+  resolveGesture,
   resolveToolSpec,
 } from "../engine/types";
 
@@ -107,10 +110,7 @@ export function createFeelSurface(
   let params = { ...initialParams };
   let machine = createPointerMachineState("pen");
   let tool: InkToolConfig = { type: "pen", color: "black", size: "medium" };
-  let base: { color: InkPenColor; size: InkPenSize } = {
-    color: "black",
-    size: "medium",
-  };
+  let base: InkPenBase = { color: "black", size: "medium" };
   let host: HTMLElement | null = null;
   let dry: HTMLCanvasElement | null = null;
   let wet: HTMLCanvasElement | null = null;
@@ -130,9 +130,39 @@ export function createFeelSurface(
   // LR-1：本笔绝对时刻与输入来源（pointerdown 捕获，随笔画提交）
   let liveStartedAt = 0;
   let livePointerKind: InkPointerKind | undefined;
-  let pendingErase = new Set<number>();
-  let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
-  let eraseActive = false;
+  /** 橡皮圈和图形预览画在这一层（盖在两块画布上，不接指针事件） */
+  let ringLayer: InkLiveLayer | null = null;
+  /**
+   * 图形工具或直线荧光笔的这一次拖动：预览在上面那一层，抬笔给出这一笔的
+   * 点列。拖动期间 live 只带这一笔的属性，点列是空的。
+   */
+  const shaper = createShapeGesture({ layer: () => ringLayer });
+  /**
+   * 橡皮从落下到抬起的这一次擦除：拖动途中正文不动，抬起时一次提交。
+   * 只有各笔保留自己画法时（正式手写）才只重画改动的那一块；实验页的调参
+   * 会换掉全部笔画的画法，笔画自带的范围不作数，整张重画。
+   */
+  const eraser = createEraseGesture({
+    repaintTarget: () =>
+      options.preserveRendering && dry && dryCtx
+        ? {
+            context: dryCtx,
+            canvas: dry,
+            pixelsPerUnit: dry.width / 1000,
+            spread: (PAINT_SPREAD_CSS * 1000) / width,
+          }
+        : null,
+    paint: (items) => {
+      if (dryCtx)
+        paintAll(
+          dryCtx,
+          items.map((item) => item.stroke),
+        );
+    },
+    redraw: redrawDry,
+    ring: () => ringLayer,
+  });
+  let eraseRadius = INK_ERASE_RADIUS;
   let reason: InkChangeReason = "stroke";
   const samples: number[] = [];
   const renders: number[] = [];
@@ -170,29 +200,42 @@ export function createFeelSurface(
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
+  /**
+   * 画一组笔画（多数时候就是一笔；同一笔切出来的荧光笔各段是一组，合在一起
+   * 上一次色，见 engine/paint-runs.ts）。画法取第一笔的，同组必相同。
+   */
   function paint(
     ctx: CanvasRenderingContext2D,
-    stroke: InkStroke,
+    run: readonly InkStroke[],
     complete: boolean,
   ) {
-    if (!dry || stroke.points.length === 0) return;
+    const head = run[0];
+    if (!dry || head === undefined) return;
     const config = options.preserveRendering
-      ? (stroke.rendering ?? DEFAULT_INK_PROFILE_CONFIG)
+      ? (head.rendering ?? DEFAULT_INK_PROFILE_CONFIG)
       : { ...params, renderer: "freehand" as const };
     if (config.renderer === "freehand") {
-      paintFreehandStroke(ctx, dry.width / 1000, stroke, config, complete);
+      paintFreehandRun(ctx, dry.width / 1000, run, config, complete);
       return;
     }
-    if (replayBrush) replayAtramentStroke(replayBrush, width, stroke);
-    return;
+    if (replayBrush) replayAtramentStrokes(replayBrush, width, run);
+  }
+  /** 按顺序把一串已有的笔画画上去，一组一组画 */
+  function paintAll(
+    ctx: CanvasRenderingContext2D,
+    strokes: readonly InkStroke[],
+  ) {
+    forEachPaintRun(strokes, (run) => paint(ctx, run, true));
   }
   function redrawDry() {
     if (!dry || !dryCtx) return;
-    const context = dryCtx;
-    clear(context, dry);
-    store.peekStrokes().forEach((stroke, index) => {
-      if (!pendingErase.has(index)) paint(context, stroke, true);
-    });
+    clear(dryCtx, dry);
+    // 擦除途中画的是预览（擦掉、切开之后的样子），正文要到抬起才改
+    const preview = eraser.visible();
+    paintAll(
+      dryCtx,
+      preview ? preview.map((item) => item.stroke) : store.peekStrokes(),
+    );
   }
   function clearWet() {
     if (predictionTimer !== null) clearTimeout(predictionTimer);
@@ -213,7 +256,7 @@ export function createFeelSurface(
       if (live)
         paint(
           wetCtx,
-          { ...live, points: [...live.points, ...predicted] },
+          [{ ...live, points: [...live.points, ...predicted] }],
           false,
         );
       stats.renderMs = performance.now() - started;
@@ -225,23 +268,27 @@ export function createFeelSurface(
     cause?: import("@tutor/contract").QuestionProcessFinish,
   ) {
     finishCause = cause;
+    // 结果里的下标属于提交前的正文：先结束这次擦除，再提交、重画
+    const erasing = eraser.active;
+    const erased = eraser.end();
+    // 图形的点列由手势给出（没拖出大小为 null，不落笔）；手写是已收到的采样
+    const shaped = shaper.active;
+    const shapePoints = shaper.end();
     if (!discard) {
-      if (eraseActive) {
-        change("erase", () => store.commitErase([...pendingErase]));
-      } else if (live && live.points.length > 0) {
-        const stroke = live;
-        change("stroke", () => store.commitAdd([stroke]));
-        if (dryCtx) paint(dryCtx, stroke, true);
+      if (erased) {
+        change("erase", () => store.commitErase(erased.removed, erased.added));
+      } else if (live) {
+        const points = shaped ? shapePoints : live.points;
+        if (points !== null && points.length > 0) {
+          const stroke = { ...live, points };
+          change("stroke", () => store.commitAdd([stroke]));
+          if (dryCtx) paint(dryCtx, [stroke], true);
+        }
       }
     }
-    if (eraseActive) {
-      pendingErase.clear();
-      redrawDry();
-    }
+    if (erasing) redrawDry();
     finishCause = undefined;
     live = null;
-    erasePrev = undefined;
-    eraseActive = false;
     clearWet();
   }
   function finish(event: PointerMachineEvent = { kind: "layoutchange" }) {
@@ -299,20 +346,20 @@ export function createFeelSurface(
       liveStartedAt = Date.now();
       livePointerKind = asPointerKind(event.pointerType);
       const first = point(event, rect);
-      eraseActive = tool.type === "eraser";
-      if (eraseActive) {
-        erasePrev = first;
-        pendingErase = new Set(
-          eraseHit(store.peekStrokes(), first.x, first.y, INK_ERASE_RADIUS),
-        );
-        redrawDry();
+      // 落笔快照：这一次手势按此刻的工具（含橡皮大小）分派
+      const resolved = resolveGesture(tool, base);
+      base = resolved.base;
+      const gesture = resolved.gesture;
+      if (gesture.kind === "erase") {
+        eraseRadius = gesture.radius;
+        eraser.begin(store.peekStrokes(), gesture.mode);
+        eraser.through([{ x: first.x, y: first.y, radius: eraseRadius }]);
       } else {
-        const resolved = resolveToolSpec(tool, base);
-        base = resolved.base;
-        if (!resolved.brush) continue;
+        if (gesture.kind !== "draw") continue;
+        const shaped = gesture.shape !== "free";
         live = {
-          tool: tool.type === "highlighter" ? "highlighter" : "pen",
-          ...resolved.brush,
+          tool: gesture.tool,
+          ...gesture.brush,
           // LR-1：笔画身份 + 落笔绝对时刻 + 输入来源（down 捕获）
           id: mintStrokeId(),
           ...(liveStartedAt > 0 ? { startedAt: liveStartedAt } : {}),
@@ -322,15 +369,29 @@ export function createFeelSurface(
           rendering: {
             renderer: "freehand",
             smoothing: params.smoothing,
-            thinning: params.thinning,
-            streamline: params.streamline,
+            // 图形是等宽的直边：粗细不随压力变，点也不滞后（拐角不被抹圆）
+            thinning: shaped ? 0 : params.thinning,
+            streamline: shaped ? 0 : params.streamline,
             sizeScale: params.sizeScale,
-            simulatePressure: params.simulatePressure,
+            simulatePressure: shaped ? false : params.simulatePressure,
           },
-          points: [first],
+          points: shaped ? [] : [first],
         };
-        samples.push(performance.now());
-        schedule();
+        if (gesture.shape !== "free") {
+          shaper.begin({
+            shape: gesture.shape,
+            from: first,
+            brush: gesture.brush,
+            bounds: { width: 1000, height: (height / width) * 1000 },
+            // 荧光笔画的就是起止点的连线，不用加密
+            sparse: gesture.tool === "highlighter",
+            // 落到画布上的线宽带粗细倍率，预览跟它一致
+            previewWeight: gesture.brush.weight * params.sizeScale,
+          });
+        } else {
+          samples.push(performance.now());
+          schedule();
+        }
       }
       try {
         wet.setPointerCapture(event.pointerId);
@@ -340,15 +401,28 @@ export function createFeelSurface(
     }
   }
   function move(event: PointerEvent) {
-    if (!enabled || !wet || !isSampleMove(machine, event.pointerId)) return;
+    if (!enabled || !wet) return;
     const rect = wet.getBoundingClientRect();
     if (rect.width <= 0) return;
+    // 橡皮悬停（鼠标、笔，没按下）：显示橡皮圈，让人先看清擦多大一块
+    if (
+      machine.activePointerId === null &&
+      event.buttons === 0 &&
+      event.pointerType !== "touch"
+    ) {
+      const hover = resolveGesture(tool, base).gesture;
+      if (hover.kind === "erase") {
+        const at = point(event, rect);
+        ringLayer?.showRing(at.x, at.y, hover.radius);
+      }
+    }
+    if (!isSampleMove(machine, event.pointerId)) return;
     const batch = event.getCoalescedEvents?.() ?? [];
     if (batch.length > 0) stats.coalescedSeen = true;
     if (event.type === "pointerrawupdate") stats.rawSeen = true;
     let changed = false;
-    const eraseStrokes = eraseActive ? store.peekStrokes() : null;
-    const eraseBoxes = eraseStrokes?.map((stroke) => strokeBounds(stroke));
+    const erasePoints: ErasePoint[] = [];
+    let shapeTo: InkStrokePoint | null = null;
     for (const sample of batch.length > 0 ? batch : [event]) {
       const next = point(sample, rect);
       const previous = live?.points.at(-1);
@@ -361,29 +435,24 @@ export function createFeelSurface(
       )
         continue;
       lastStamp = sample.timeStamp;
-      if (eraseStrokes && eraseBoxes) {
-        for (const hit of eraseHit(
-          eraseStrokes,
-          next.x,
-          next.y,
-          INK_ERASE_RADIUS,
-          eraseBoxes,
-          erasePrev,
-        )) {
-          if (!pendingErase.has(hit)) {
-            pendingErase.add(hit);
-            changed = true;
-          }
-        }
-        erasePrev = next;
+      if (eraser.active) {
+        erasePoints.push({ x: next.x, y: next.y, radius: eraseRadius });
+      } else if (shaper.active) {
+        shapeTo = next;
       } else if (live) {
         live.points.push(next);
         samples.push(performance.now());
         changed = true;
       }
     }
-    if (eraseActive) {
-      if (changed) redrawDry();
+    // 橡皮：一批采样记完再重画一次，橡皮圈跟到最后一个落点
+    if (eraser.active) {
+      eraser.through(erasePoints);
+      return;
+    }
+    // 图形：只看这一批最后拖到哪儿，更新预览
+    if (shaper.active) {
+      if (shapeTo) shaper.through(shapeTo, Math.round(shapeTo.t));
       return;
     }
     // raw 负责真实点也不抢占 move 的预测；只接受有界、短时的未来段。
@@ -433,6 +502,10 @@ export function createFeelSurface(
   const visibility = () => {
     if (document.visibilityState === "hidden") blur();
   };
+  /** 悬停留下的橡皮圈：指针离开画布、换了工具、纸面不可写就收起（拖动中的由收笔收起） */
+  const leave = () => {
+    if (!eraser.active) ringLayer?.hideRing();
+  };
   const prevent = (event: Event) => event.preventDefault();
   function touch(event: TouchEvent) {
     // 同时检查新触点与在屏触点，笔先落、手掌后落也不能触发滚动。
@@ -455,6 +528,7 @@ export function createFeelSurface(
     ["pointerup", up as EventListener],
     ["pointercancel", cancel as EventListener],
     ["lostpointercapture", lost as EventListener],
+    ["pointerleave", leave],
     ["touchstart", touch as EventListener],
     ["touchmove", touch as EventListener],
     ["contextmenu", prevent],
@@ -476,6 +550,8 @@ export function createFeelSurface(
       );
       dry.style.backgroundSize = `${(NOTE_PAPER_GRID_SPACING_LOGICAL * width) / 1000}px ${(NOTE_PAPER_GRID_SPACING_LOGICAL * width) / 1000}px`;
     }
+    // 橡皮圈所在的层与笔画同一坐标域：宽 1000、高按画布比例
+    ringLayer?.setViewBox(1000, (height / width) * 1000);
     if (dry.width === pixelWidth && dry.height === pixelHeight) return;
     finish();
     for (const canvas of [dry, wet]) {
@@ -510,6 +586,7 @@ export function createFeelSurface(
         replayBrush = createProgrammaticAtrament(dry);
       wetCtx = wet.getContext("2d");
       if (!dryCtx || !wetCtx) throw new Error("浏览器无法创建手写画布");
+      ringLayer = createInkLiveLayer(host);
       if (initial) {
         const parsedInitial = parseAtramentDoc(initial);
         store.replace(
@@ -539,7 +616,10 @@ export function createFeelSurface(
     },
     finish: () => finish(),
     setInputEnabled(next) {
-      if (!next) finish();
+      if (!next) {
+        finish();
+        leave();
+      }
       enabled = next;
       if (wet) wet.style.pointerEvents = next ? "auto" : "none";
     },
@@ -553,6 +633,7 @@ export function createFeelSurface(
       tool = next;
       base = resolveToolSpec(next, base).base;
       touchAction();
+      leave();
     },
     setParams(next) {
       finish();
@@ -618,6 +699,8 @@ export function createFeelSurface(
           wet.removeEventListener(name, listener);
       window.removeEventListener("blur", blur);
       document.removeEventListener("visibilitychange", visibility);
+      ringLayer?.destroy();
+      ringLayer = null;
       dry?.remove();
       wet?.remove();
       dry = null;

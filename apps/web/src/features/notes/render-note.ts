@@ -5,7 +5,7 @@
  *
  * 与活编辑器的关系（方案 §7 硬约束）：
  * - **不截图活 canvas、不混入未结束笔画**——只消费已提交的 NoteDoc.strokes；
- * - 复用引擎重绘原语 replayAtramentStroke（atrament 官方程序化绘制，与实时
+ * - 复用引擎重绘原语 replayAtramentStrokes（atrament 官方程序化绘制，与实时
  *   书写/全量重绘/回放同一绘制路径），不另写笔迹绘制；
  * - 每页一个**独立离屏 canvas**（挂在 body 下、absolute 移出视口但参与布局：
  *   atrament 5.x 内部用 canvas.offsetWidth/offsetHeight 做坐标换算，脱离布局
@@ -37,8 +37,8 @@ import {
 } from "@tutor/contract";
 import {
   createProgrammaticAtrament,
-  replayAtramentStroke,
-} from "@/features/ink/engine/atrament-adapter.ts";
+  replayAtramentStrokes,
+} from "@/features/ink/engine/atrament-replay.ts";
 import {
   paddedStrokeBoxesOf,
   type StrokeBounds,
@@ -51,7 +51,10 @@ import {
   NOTE_PAPER_LINE_COLOR,
   NOTE_PAPER_LINE_WIDTH_PX,
 } from "@/features/ink/engine/paper-style.ts";
-import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
+import {
+  INK_LOGICAL_WIDTH,
+  type InkStroke,
+} from "@/features/ink/engine/types.ts";
 
 // paddedStrokeBoxesOf / unionOfBoxes 已下沉 engine/bounds.ts（复审④⑫，
 // 签名收窄为 strokes 数组）；re-export 垫片已删（复审⑬）——公共出口唯一为
@@ -391,7 +394,7 @@ async function renderNotePageWithBoxes(
     if (!ctx) {
       throw new Error("渲染失败：无法创建 canvas 2d 上下文（当前环境不支持）");
     }
-    // 程序化重放实例（唯一注释段见 engine/atrament-adapter
+    // 程序化重放实例（唯一注释段见 engine/atrament-replay
     // .createProgrammaticAtrament）
     const atrament = createProgrammaticAtrament(canvas);
 
@@ -403,12 +406,15 @@ async function renderNotePageWithBoxes(
     // 画布为准，E2E 面板有对应守卫检查）。cssWidth 传
     // INK_LOGICAL_WIDTH ⇒ css 坐标 == 逻辑坐标，atrament 再按
     // canvas.width/offsetWidth（= pixelWidth/crop.width）等比映射到设备像素
+    // 一串一起画：同一笔被局部橡皮切出来的荧光笔各段合在一起上一次色
+    // （engine/paint-runs）；不在本页里的段不带上，它在本页本来就不落墨
+    const inPage: InkStroke[] = [];
     for (let si = 0; si < doc.ink.strokes.length; si++) {
       const s = doc.ink.strokes[si];
       const bb = boxes[si];
       if (s === undefined || bb === null || bb === undefined) continue;
       if (!boxIntersectsCrop(bb, crop)) continue;
-      replayAtramentStroke(atrament, INK_LOGICAL_WIDTH, {
+      inPage.push({
         ...s,
         points: s.points.map((pt) => ({
           x: pt.x - crop.x,
@@ -418,6 +424,7 @@ async function renderNotePageWithBoxes(
         })),
       });
     }
+    replayAtramentStrokes(atrament, INK_LOGICAL_WIDTH, inPage);
 
     const blob = await canvasToPngBlob(canvas);
     if (blob.size > NOTE_IMAGE_PNG_MAX_BYTES) {

@@ -4,6 +4,9 @@
  * "整笔橡皮"：橡皮轨迹点距离某笔任意一段小于半径，即删除**整笔**（而不是
  * 像素级擦除）——更适合答题场景且天然可撤销（一个 remove 历史条目）。
  * 全部使用逻辑坐标（宽度 1000 基准），半径也是逻辑单位。
+ *
+ * 这里只判断「一笔有没有被碰到」；一次拖动里碰到哪些笔画、抬笔时怎么提交，
+ * 在 erase-session.ts（局部橡皮的切分在 erase-partial.ts）。
  */
 import { type StrokeBounds, strokeBounds } from "./bounds.ts";
 import type { InkStroke, InkStrokePoint } from "./types.ts";
@@ -112,26 +115,4 @@ export function strokeHit(
     previous = pt;
   }
   return false;
-}
-
-/**
- * 橡皮拖动一步：返回被命中的笔画下标（升序，通常 0 或 1 个）。
- * 调用方负责累积并在拖动结束时一次性 commitErase。
- * boxes 可选注入与 strokes 一一对应的预计算包围盒（复审⑨热路径）。
- */
-export function eraseHit(
-  strokes: readonly InkStroke[],
-  x: number,
-  y: number,
-  radius: number,
-  boxes?: Array<StrokeBounds | null>,
-  from?: ErasePoint,
-): number[] {
-  const hits: number[] = [];
-  for (let i = 0; i < strokes.length; i++) {
-    const stroke = strokes[i];
-    if (stroke && strokeHit(stroke, x, y, radius, boxes?.[i], from))
-      hits.push(i);
-  }
-  return hits;
 }

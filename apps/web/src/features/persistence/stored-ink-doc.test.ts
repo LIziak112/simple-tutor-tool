@@ -126,6 +126,22 @@ describe("草稿纸正文：落盘口径判等", () => {
     ).toBe(false);
   });
 
+  it("局部擦除切出的段带原笔记号 cutFrom：两边都带才相同，云端丢了它就判不同", () => {
+    // 服务端规范化正文保留 cutFrom（apps/server/src/services/ink-canonical.ts）。
+    // 它若不保留，「刚传上去、回执丢了」的那一版在这里会被判成不同，报出假冲突
+    const piece: InkStroke = {
+      ...LIVE,
+      id: "stroke-piece-0001",
+      cutFrom: "stroke-live-0001",
+    };
+    const local = noteOf({ strokes: [{ ...piece, rendering: RENDERING }] });
+    expect(sameStoredNoteDoc(local, noteOf({ strokes: [piece] }))).toBe(true);
+    const { cutFrom: _cutFrom, ...withoutMark } = piece;
+    expect(sameStoredNoteDoc(local, noteOf({ strokes: [withoutMark] }))).toBe(
+      false,
+    );
+  });
+
   it("不改入参；本机稿上的 rendering 还在", () => {
     const local = noteOf({
       strokes: [{ ...LIVE, rendering: RENDERING }],

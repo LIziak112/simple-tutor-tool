@@ -12,9 +12,13 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
-import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
+import {
+  type InkToolboxState,
+  toolConfigOf,
+} from "@/features/ink/engine/toolbox.ts";
+import { InkToolbar } from "@/features/ink/toolbar/InkToolbar.tsx";
+import { useRememberedToolbox } from "@/features/ink/toolbox-memory.ts";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
-import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import { attemptMaterialsEditable } from "@/features/persistence/attempt-material-recovery";
 import { prepareAnnotationForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
@@ -37,7 +41,10 @@ import {
   type AnnotationSurface,
   createAnnotationSurface,
 } from "./annotation-surface";
-import { useCoordinatedAnnotation } from "./coordinated-annotation-context";
+import {
+  createAnnotationToolbox,
+  useCoordinatedAnnotation,
+} from "./coordinated-annotation-context";
 import {
   QuestionAnnotationFrame,
   type QuestionAnnotationFrameHandle,
@@ -118,39 +125,21 @@ export const QuestionAnnotationOverlay = forwardRef<
   const [geometry, setGeometry] = useState<QuestionFrameGeometry | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 无 Provider（讲练页、单测）时 coordinated 为 null：本地笔态即唯一事实源，
-  // 切换照常生效；有 Provider 时（作答页）共享笔态优先，材料层同步跟随。
+  // 无 Provider（讲练页、单测）时 coordinated 为 null：本地工具箱即唯一事实源，
+  // 切换照常生效；有 Provider 时（作答页）共享工具箱优先，材料层同步跟随。
+  // 两边各工具的设置都取自本机记忆里圈画那一份（toolbox-memory.ts）。
   const coordinated = useCoordinatedAnnotation();
-  const [localTool, setLocalTool] = useState<"pen" | "eraser">("pen");
-  const [localColor, setLocalColor] = useState<InkPenColor>("red");
-  const [localSize, setLocalSize] = useState<InkPenSize>("thin");
-
-  const tool = coordinated?.tool ?? localTool;
-  const color = coordinated?.color ?? localColor;
-  const size = coordinated?.size ?? localSize;
-
-  const setTool = useCallback(
-    (t: "pen" | "eraser") => {
-      setLocalTool(t);
-      coordinated?.setTool(t);
-    },
-    [coordinated],
+  const [localToolbox, setLocalToolbox] = useRememberedToolbox(
+    "annotation",
+    createAnnotationToolbox,
   );
-
-  const setColor = useCallback(
-    (c: InkPenColor) => {
-      setLocalColor(c);
-      coordinated?.setColor(c);
+  const toolbox = coordinated?.toolbox ?? localToolbox;
+  const setToolbox = useCallback(
+    (next: InkToolboxState) => {
+      setLocalToolbox(next);
+      coordinated?.setToolbox(next);
     },
-    [coordinated],
-  );
-
-  const setSize = useCallback(
-    (s: InkPenSize) => {
-      setLocalSize(s);
-      coordinated?.setSize(s);
-    },
-    [coordinated],
+    [coordinated, setLocalToolbox],
   );
 
   const [, setHistory] = useState(0);
@@ -638,10 +627,8 @@ export const QuestionAnnotationOverlay = forwardRef<
     if (!mountedOnce) return;
     if (!active && recordRef.current?.sealedAt != null) finishSurface();
     surface.current?.setInputEnabled(active);
-    surface.current?.setTool(
-      tool === "pen" ? { type: "pen", color, size } : { type: "eraser" },
-    );
-  }, [active, tool, color, size, mountedOnce, finishSurface]);
+    surface.current?.setTool(toolConfigOf(toolbox));
+  }, [active, toolbox, mountedOnce, finishSurface]);
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -763,15 +750,11 @@ export const QuestionAnnotationOverlay = forwardRef<
             className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
           >
             <div className="mx-auto flex min-h-16 max-w-[1120px] items-center justify-center gap-1 px-2 py-2">
-              <NoteToolbar
-                compact
+              <InkToolbar
                 label={`${label}标画`}
-                tool={tool}
-                onToolChange={setTool}
-                color={color}
-                onColorChange={setColor}
-                size={size}
-                onSizeChange={setSize}
+                toolbox={toolbox}
+                onToolboxChange={setToolbox}
+                align="center"
                 canUndo={surface.current?.canUndo() ?? false}
                 canRedo={surface.current?.canRedo() ?? false}
                 onUndo={() => surface.current?.undo()}
@@ -779,6 +762,7 @@ export const QuestionAnnotationOverlay = forwardRef<
                 onClearRequest={() => surface.current?.clear()}
                 clearLabel="清空标画（可撤销）"
                 moreLabel="更多标画操作"
+                moreTitle="更多（清空）"
               >
                 <Button
                   className="h-11 w-16 shrink-0 px-2"
@@ -788,7 +772,7 @@ export const QuestionAnnotationOverlay = forwardRef<
                 >
                   完成标画
                 </Button>
-              </NoteToolbar>
+              </InkToolbar>
             </div>
           </div>,
           document.body,

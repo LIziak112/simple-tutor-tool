@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { eraseHit, strokeHit } from "./erase.ts";
+import { strokeHit } from "./erase.ts";
 import type { InkStroke } from "./types.ts";
+
+/** 橡皮这一步碰到的笔画下标（升序）：逐笔问 strokeHit */
+function eraseHit(
+  strokes: readonly InkStroke[],
+  x: number,
+  y: number,
+  radius: number,
+  boxes?: undefined,
+  from?: { x: number; y: number },
+): number[] {
+  return strokes.flatMap((stroke, index) =>
+    strokeHit(stroke, x, y, radius, boxes, from) ? [index] : [],
+  );
+}
 
 /** 一条从 (100,100) 到 (500,100) 的水平笔画（逻辑坐标） */
 function hStroke(): InkStroke {
@@ -106,7 +120,7 @@ describe("整笔橡皮命中检测", () => {
     expect(strokeHit(dot, 320, 200, 14)).toBe(false);
   });
 
-  it("eraseHit 返回全部命中笔画的下标（升序）", () => {
+  it("多笔逐笔判定：返回全部命中笔画的下标（升序）", () => {
     const strokes = [
       hStroke(), // y=100
       { ...hStroke(), points: hStroke().points.map((p) => ({ ...p, y: 300 })) }, // y=300

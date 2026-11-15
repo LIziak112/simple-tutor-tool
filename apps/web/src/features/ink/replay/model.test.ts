@@ -213,6 +213,46 @@ describe("parseInkReplayData：atrament 分支", () => {
     expect(stroke?.points[0]?.p).toBe(1); // 越界压感夹逼到 [0,1]
     expect(stroke?.points[1]?.p).toBe(0.5); // 缺失压感按无压感
   });
+
+  it("局部擦除切出的段带着原笔的记号（cutFrom）：形态合法才透传，绘制时靠它把同一笔的荧光笔段合在一起", () => {
+    const piece = (cutFrom?: unknown) => ({
+      tool: "highlighter",
+      color: "#fde047",
+      weight: 18,
+      ...(cutFrom === undefined ? {} : { cutFrom }),
+      points: [
+        { x: 0, y: 0, p: 0.5, t: 0 },
+        { x: 10, y: 0, p: 0.5, t: 8 },
+      ],
+    });
+    const model = parseOk({
+      engine: "atrament",
+      version: 1,
+      data: {
+        strokes: [
+          piece("stroke-0001"),
+          piece("stroke-0001"),
+          piece("有空格 的记号"),
+          piece("short"),
+          piece(7),
+          piece(),
+        ],
+      },
+      updatedAt: 1,
+    });
+    if (model.engine !== "atrament") throw new Error("engine 应为 atrament");
+    expect(model.strokes.map((s) => s.cutFrom)).toEqual([
+      "stroke-0001",
+      "stroke-0001",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    // 没有记号的笔画上不出现这个键（与旧数据解析结果逐键一致）
+    expect(Object.hasOwn(model.strokes[5] ?? {}, "cutFrom")).toBe(false);
+    expect(Object.hasOwn(model.strokes[2] ?? {}, "cutFrom")).toBe(false);
+  });
 });
 
 describe("parseInkReplayData：excalidraw 分支", () => {
@@ -730,6 +770,12 @@ describe("LR-PR4 真实停顿与墓碑时间轴", () => {
     if (model?.engine !== "atrament") return;
     expect(model.deletedSlots).toHaveLength(1);
     expect(model.deletedSlots[0]?.stroke.id).toBe("stroke-0");
+    // 被擦掉的切段同样带着原笔的记号（「看擦改」里同一笔的各段也合在一起画）
+    const cutTomb = parseInkReplayData(
+      timedDoc([{ ...tomb, id: "piece-0001", cutFrom: "stroke-0009" }]),
+    );
+    if (cutTomb?.engine !== "atrament") throw new Error("应为 atrament");
+    expect(cutTomb.deletedSlots[0]?.stroke.cutFrom).toBe("stroke-0009");
     // 绘制位置 = startedAt 相对首笔（0）；消失点 = 15000 − 压缩位移 4000 = 11000
     expect(model.deletedSlots[0]?.startMs).toBe(0);
     expect(model.deletedSlots[0]?.deletedAtMs).toBe(11000);

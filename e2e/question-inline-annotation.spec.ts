@@ -10,6 +10,7 @@ import {
   openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
+  toolbarButtonNames,
   uniqueSuffix,
 } from "./helpers";
 
@@ -456,6 +457,18 @@ test(
     await first.getByRole("button", { name: /圈画题干/ }).click();
     const toolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
     await expect(toolbar).toBeVisible();
+    // 320px 放不下全部按钮：重做收进「更多」，「完成标画」始终留在屏幕内
+    await expect
+      .poll(() => toolbarButtonNames(toolbar))
+      .toEqual([
+        "笔",
+        "荧光笔",
+        "橡皮",
+        "形状",
+        "撤销",
+        "更多标画操作",
+        "完成标画",
+      ]);
     for (const button of await toolbar.getByRole("button").all()) {
       const box = await button.boundingBox();
       expect(box).not.toBeNull();
@@ -463,6 +476,70 @@ test(
       expect(box?.x).toBeGreaterThanOrEqual(0);
       expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
     }
+    // 四支工具在 320px 排不全：工具区可横向滑动，没露全的一侧渐隐；选中被挤住
+    // 的橡皮，它自己滑进可视区（右边还藏着形状，两侧都渐隐）；再选最后的形状，
+    // 滑到头，只剩左侧渐隐；切回笔再滑回来
+    const strip = toolbar.locator('[data-slot="ink-toolbar-tools"]');
+    await expect(strip).toHaveAttribute("data-fade", "end");
+    const stripBox = await strip.boundingBox();
+    const stripRight = (stripBox?.x ?? 0) + (stripBox?.width ?? 0);
+    const narrowEraser = toolbar.getByRole("button", {
+      name: "橡皮",
+      exact: true,
+    });
+    await narrowEraser.click();
+    await expect(narrowEraser).toHaveAttribute("aria-pressed", "true");
+    await expect(strip).toHaveAttribute("data-fade", "both");
+    const eraserBox = await narrowEraser.boundingBox();
+    expect((eraserBox?.x ?? 0) + (eraserBox?.width ?? 0)).toBeLessThanOrEqual(
+      stripRight,
+    );
+    const narrowShape = toolbar.getByRole("button", {
+      name: "形状",
+      exact: true,
+    });
+    await narrowShape.click();
+    await expect(narrowShape).toHaveAttribute("aria-pressed", "true");
+    await expect(strip).toHaveAttribute("data-fade", "start");
+    const shapeBox = await narrowShape.boundingBox();
+    expect((shapeBox?.x ?? 0) + (shapeBox?.width ?? 0)).toBeLessThanOrEqual(
+      stripRight,
+    );
+    await page.screenshot({
+      path: testInfo.outputPath("inline-toolbar-scrolled-320.png"),
+    });
+    await toolbar.getByRole("button", { name: "笔", exact: true }).click();
+    await expect(strip).toHaveAttribute("data-fade", "end");
+    await toolbar.getByRole("button", { name: "更多标画操作" }).click();
+    await expect
+      .poll(() =>
+        page
+          .getByRole("menuitem")
+          .evaluateAll((items) =>
+            items.map((item) => item.textContent?.trim()),
+          ),
+      )
+      .toEqual(["重做", "清空标画（可撤销）"]);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // 窄屏下选项面板也不超出屏幕
+    await toolbar.getByRole("button", { name: "笔", exact: true }).click();
+    const narrowPanel = page.getByRole("dialog", { name: "笔设置" });
+    await expect(narrowPanel).toBeVisible();
+    const panelBox = await narrowPanel.boundingBox();
+    expect(panelBox?.x).toBeGreaterThanOrEqual(0);
+    expect((panelBox?.x ?? 0) + (panelBox?.width ?? 0)).toBeLessThanOrEqual(
+      320,
+    );
+    for (const radio of await narrowPanel.getByRole("radio").all()) {
+      const box = await radio.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(44);
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+      expect(box?.x).toBeGreaterThanOrEqual(0);
+      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
+    }
+    await page.keyboard.press("Escape");
+    await expect(narrowPanel).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("inline-original-320.png"),
     });

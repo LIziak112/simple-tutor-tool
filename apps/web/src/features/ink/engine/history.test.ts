@@ -385,3 +385,159 @@ describe("InkStore 墓碑（LR-2）", () => {
     expect(legacy.getDeleted()).toEqual([]);
   });
 });
+
+/** 局部橡皮：一次拖动把若干笔换成切剩的各段，仍是一个历史条目 */
+describe("InkStore 局部擦除（删原笔画 + 原位插入切剩的段）", () => {
+  const named = (id: string, x: number): InkStroke => ({
+    ...stroke([
+      [x, 0],
+      [x + 100, 0],
+    ]),
+    id,
+  });
+  const ids = (store: InkStore) => store.getStrokes().map((s) => s.id);
+
+  /** a、b、c 三笔；把 b 换成 b1、b2 两段（原位） */
+  function splitMiddle(): InkStore {
+    const store = new InkStore();
+    store.commitAdd([named("stroke-a", 0)]);
+    store.commitAdd([named("stroke-b", 200)]);
+    store.commitAdd([named("stroke-c", 400)]);
+    store.commitErase(
+      [1],
+      [
+        { index: 1, stroke: named("piece-b1", 200) },
+        { index: 2, stroke: named("piece-b2", 260) },
+      ],
+    );
+    return store;
+  }
+
+  it("提交：原笔画进墓碑（eraser），段落在原笔画的位置上；一次撤销整体恢复、重做再来", () => {
+    const store = splitMiddle();
+    expect(ids(store)).toEqual([
+      "stroke-a",
+      "piece-b1",
+      "piece-b2",
+      "stroke-c",
+    ]);
+    expect(
+      store.getDeleted().map(({ id, deletedBy }) => ({ id, deletedBy })),
+    ).toEqual([{ id: "stroke-b", deletedBy: "eraser" }]);
+    expect(store.debugHistory().undo).toHaveLength(4);
+
+    // 撤销：段消失（它们从没独立存在过，不进墓碑），原笔画回到原位、墓碑回收
+    expect(store.undo()).toBe(true);
+    expect(ids(store)).toEqual(["stroke-a", "stroke-b", "stroke-c"]);
+    expect(store.getDeleted()).toEqual([]);
+
+    // 重做：同一批段（id 不变）回到同样的位置，原笔画的墓碑原样回来
+    expect(store.redo()).toBe(true);
+    expect(ids(store)).toEqual([
+      "stroke-a",
+      "piece-b1",
+      "piece-b2",
+      "stroke-c",
+    ]);
+    expect(store.getDeleted().map((tomb) => tomb.id)).toEqual(["stroke-b"]);
+  });
+
+  it("一次提交切开多笔：下标按提交后的位置解释，撤销/重做往返一致", () => {
+    const store = new InkStore();
+    for (const [id, x] of [
+      ["stroke-a", 0],
+      ["stroke-b", 200],
+      ["stroke-c", 400],
+      ["stroke-d", 600],
+    ] as const) {
+      store.commitAdd([named(id, x)]);
+    }
+    // a 切成两段、c 整笔擦掉、d 剩一段（下标乱序传入也行）
+    store.commitErase(
+      [3, 0, 2],
+      [
+        { index: 3, stroke: named("piece-d1", 600) },
+        { index: 0, stroke: named("piece-a1", 0) },
+        { index: 1, stroke: named("piece-a2", 60) },
+      ],
+    );
+    const after = ["piece-a1", "piece-a2", "stroke-b", "piece-d1"];
+    expect(ids(store)).toEqual(after);
+    expect(
+      store
+        .getDeleted()
+        .map((tomb) => tomb.id)
+        .sort(),
+    ).toEqual(["stroke-a", "stroke-c", "stroke-d"]);
+    store.undo();
+    expect(ids(store)).toEqual([
+      "stroke-a",
+      "stroke-b",
+      "stroke-c",
+      "stroke-d",
+    ]);
+    store.redo();
+    expect(ids(store)).toEqual(after);
+    // 段之后还能照常撤销到最初
+    store.undo();
+    store.undo();
+    expect(ids(store)).toEqual(["stroke-a", "stroke-b", "stroke-c"]);
+  });
+
+  it("切出来的段随后被整笔擦掉、被撤销新增：各走各的墓碑规则", () => {
+    const store = splitMiddle();
+    // 再把 piece-b1 整笔擦掉：它自己进墓碑
+    store.commitErase([1]);
+    expect(ids(store)).toEqual(["stroke-a", "piece-b2", "stroke-c"]);
+    expect(store.getDeleted().map((tomb) => tomb.id)).toEqual([
+      "stroke-b",
+      "piece-b1",
+    ]);
+    store.undo();
+    expect(store.getDeleted().map((tomb) => tomb.id)).toEqual(["stroke-b"]);
+  });
+
+  it("提交会清空重做栈并通知一次；段是副本，调用方之后改自己的对象不影响正文", () => {
+    const store = new InkStore();
+    store.commitAdd([named("stroke-a", 0)]);
+    store.commitAdd([named("stroke-b", 200)]);
+    store.undo();
+    expect(store.canRedo()).toBe(true);
+    const piece = named("piece-a1", 0);
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.commitErase([0], [{ index: 0, stroke: piece }]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.canRedo()).toBe(false);
+    piece.points[0] = { x: 999, y: 999, p: 0.5, t: 0 };
+    expect(store.getStrokes()[0]?.points[0]?.x).toBe(0);
+  });
+
+  it("历史点数预算把段也算进去", () => {
+    const store = new InkStore({ maxEntries: 50, maxPoints: 7 });
+    store.commitAdd([named("stroke-a", 0)]); // 2 点
+    store.commitAdd([named("stroke-b", 200)]); // 2 点
+    // 删 2 点 + 新增 2 段共 4 点 = 6 点；历史合计 10 > 7，从最早的开始丢
+    store.commitErase(
+      [1],
+      [
+        { index: 1, stroke: named("piece-b1", 200) },
+        { index: 2, stroke: named("piece-b2", 260) },
+      ],
+    );
+    expect(store.debugHistory().undo.map((entry) => entry.kind)).toEqual([
+      "remove",
+    ]);
+  });
+
+  it("没有任何可删下标也没有段：不产生历史、不通知", () => {
+    const store = new InkStore();
+    store.commitAdd([named("stroke-a", 0)]);
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.commitErase([], []);
+    store.commitErase([5]);
+    expect(listener).not.toHaveBeenCalled();
+    expect(store.debugHistory().undo).toHaveLength(1);
+  });
+});

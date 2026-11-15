@@ -609,6 +609,21 @@ export async function drawStrokeWithPointerEvents(
   );
 }
 
+/**
+ * 手写工具栏上现有按钮的名字（按界面顺序）。用来核对工具栏的组成：
+ * 比只数个数更严——多一个、少一个、换了位置都会失败。
+ */
+export async function toolbarButtonNames(toolbar: Locator): Promise<string[]> {
+  return toolbar
+    .getByRole("button")
+    .evaluateAll((buttons) =>
+      buttons.map(
+        (button) =>
+          button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "",
+      ),
+    );
+}
+
 /** 等待笔迹上传请求（每笔结束 2 秒防抖后 PUT）；超时返回 false */
 async function waitForInkUpload(
   page: Page,

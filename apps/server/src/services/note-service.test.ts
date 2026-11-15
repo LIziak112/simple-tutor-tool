@@ -3148,4 +3148,81 @@ describe("canonicalNoteJson 旧格式字节钉值（LR-PR3）", () => {
     expect(parsed.ink.deleted[0].deletedAt).toBe(9);
     expect(parsed.ink.deleted[0].deletedBy).toBe("eraser");
   });
+
+  it("局部擦除切出的段：原笔的记号（cutFrom）入规范化、落盘后读回还在，键位在 pointer 之后；没有记号不写键", () => {
+    const point = { x: 1, y: 2, p: 0.5, t: 0 };
+    const highlighter = {
+      tool: "highlighter",
+      color: "rgba(250, 204, 21, 0.45)",
+      weight: 18,
+    } as const;
+    const doc = noteDocSchema.parse({
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          {
+            ...highlighter,
+            id: "piece-0001",
+            cutFrom: "stroke-0001",
+            startedAt: 7,
+            pointer: "pen",
+            points: [point],
+          },
+          // 旧稿切出来的段：没有 id，记号是切开时新铸的
+          { ...highlighter, cutFrom: "piece-0009", points: [point] },
+        ],
+        deleted: [
+          {
+            ...highlighter,
+            id: "piece-0002",
+            cutFrom: "stroke-0001",
+            deletedAt: 9,
+            deletedBy: "eraser",
+            points: [point],
+          },
+        ],
+      },
+      paperHeightLogical: 800,
+      background: "grid",
+    });
+    expect(canonicalNoteJson(doc)).toBe(
+      JSON.stringify({
+        version: 1,
+        ink: {
+          width: 1000,
+          strokes: [
+            {
+              ...highlighter,
+              id: "piece-0001",
+              startedAt: 7,
+              pointer: "pen",
+              cutFrom: "stroke-0001",
+              points: [point],
+            },
+            { ...highlighter, cutFrom: "piece-0009", points: [point] },
+          ],
+          deleted: [
+            {
+              ...highlighter,
+              id: "piece-0002",
+              cutFrom: "stroke-0001",
+              points: [point],
+              deletedAt: 9,
+              deletedBy: "eraser",
+            },
+          ],
+        },
+        paperHeightLogical: 800,
+        background: "grid",
+      }),
+    );
+    // 规范化正文就是落盘的字节：读回来记号还在（绘制时靠它把同一笔的各段合在一起）
+    const round = noteDocSchema.parse(JSON.parse(canonicalNoteJson(doc)));
+    expect(round.ink.strokes.map((s) => s.cutFrom)).toEqual([
+      "stroke-0001",
+      "piece-0009",
+    ]);
+    expect(round.ink.deleted?.[0]?.cutFrom).toBe("stroke-0001");
+  });
 });

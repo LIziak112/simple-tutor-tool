@@ -49,6 +49,7 @@ export type {
   InkSurface,
   ToolAwareSurface,
 } from "./surface.ts";
+export * from "./toolbox.ts";
 export * from "./types.ts";
 
 export interface InkEngineOptions {

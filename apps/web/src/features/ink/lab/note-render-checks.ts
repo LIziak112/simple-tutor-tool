@@ -366,7 +366,8 @@ export async function runChecks(): Promise<Verdict[]> {
   );
 
   await check("highlighter", "荧光笔：黄色半透明笔迹可检出", async () => {
-    // 荧光笔压满感下墨带宽约 32px（2×16），窗口 32×32 覆盖 (500,80)±16
+    // 荧光笔墨带宽 16px（整笔一次描边，线宽不随压感变），窗口 36×36 覆盖
+    // (500,80)±18；一笔之内颜色均匀的像素检查在 e2e/note-render.spec.ts
     const img = await renderPngRegion(
       docOf([
         denseStroke(

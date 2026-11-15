@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
-import {
-  INK_LOGICAL_WIDTH,
-  type InkDeletedStroke,
-  type InkStroke,
-  type NoteDoc,
-} from "@tutor/contract";
+import { INK_LOGICAL_WIDTH, type NoteDoc } from "@tutor/contract";
+import { canonicalDeletedStroke, canonicalInkStroke } from "./ink-canonical";
 
 // ---------- hash 规范化（契约 noteBodyHashSchema 的语义实现） ----------
 
@@ -15,7 +11,7 @@ import {
  *   得到同一 hash；
  * - 按固定键序**重建**对象树（不依赖客户端 JSON 键序）：
  *   顶层 {version, ink, paperHeightLogical, background}；ink {width, strokes}；
- *   每笔 {tool, color, weight, points}；每点 {x, y, p, t}；
+ *   每笔、每点的键序见 ink-canonical.ts（与圈画共用）；
  * - JSON.stringify 紧凑输出（无空白）；数值走 ECMAScript Number::toString
  *   （同值同串；NaN/±Infinity 已被 schema 拒绝；-0 序列化为 "0"）；
  * - 不参与 hash：客户端 gzip 字节（压缩相关）、客户端墙钟（NoteDoc 无时间
@@ -36,28 +32,6 @@ export function canonicalNoteJson(doc: NoteDoc): string {
     paperHeightLogical: doc.paperHeightLogical,
     background: doc.background,
   });
-}
-
-/** LR-1 规范化笔画：固定键序；可选新字段（id/startedAt/pointer）缺席不写键 */
-function canonicalInkStroke(stroke: InkStroke): Record<string, unknown> {
-  return {
-    tool: stroke.tool,
-    color: stroke.color,
-    weight: stroke.weight,
-    ...(stroke.id !== undefined ? { id: stroke.id } : {}),
-    ...(stroke.startedAt !== undefined ? { startedAt: stroke.startedAt } : {}),
-    ...(stroke.pointer !== undefined ? { pointer: stroke.pointer } : {}),
-    points: stroke.points.map((p) => ({ x: p.x, y: p.y, p: p.p, t: p.t })),
-  };
-}
-
-/** LR-2 规范化墓碑：笔画规范化 + 删除时刻/来源（删除态的一部分，必入 hash） */
-function canonicalDeletedStroke(deleted: InkDeletedStroke): unknown {
-  return {
-    ...canonicalInkStroke(deleted),
-    deletedAt: deleted.deletedAt,
-    deletedBy: deleted.deletedBy,
-  };
 }
 
 /** 规范化正文 → sha-256（64 位小写 hex，契约 noteBodyHashSchema） */

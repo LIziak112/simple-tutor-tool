@@ -396,6 +396,12 @@
                                     "touch",
                                     "mouse"
                                   ]
+                                },
+                                "cutFrom": {
+                                  "type": "string",
+                                  "minLength": 8,
+                                  "maxLength": 40,
+                                  "pattern": "^[0-9A-Za-z_-]+$"
                                 }
                               },
                               "required": [
@@ -594,6 +600,12 @@
                                     "touch",
                                     "mouse"
                                   ]
+                                },
+                                "cutFrom": {
+                                  "type": "string",
+                                  "minLength": 8,
+                                  "maxLength": 40,
+                                  "pattern": "^[0-9A-Za-z_-]+$"
                                 }
                               },
                               "required": [
@@ -792,6 +804,12 @@
                                     "touch",
                                     "mouse"
                                   ]
+                                },
+                                "cutFrom": {
+                                  "type": "string",
+                                  "minLength": 8,
+                                  "maxLength": 40,
+                                  "pattern": "^[0-9A-Za-z_-]+$"
                                 }
                               },
                               "required": [
@@ -1029,6 +1047,12 @@
                                 "touch",
                                 "mouse"
                               ]
+                            },
+                            "cutFrom": {
+                              "type": "string",
+                              "minLength": 8,
+                              "maxLength": 40,
+                              "pattern": "^[0-9A-Za-z_-]+$"
                             }
                           },
                           "required": [
@@ -1308,6 +1332,12 @@
                                 "touch",
                                 "mouse"
                               ]
+                            },
+                            "cutFrom": {
+                              "type": "string",
+                              "minLength": 8,
+                              "maxLength": 40,
+                              "pattern": "^[0-9A-Za-z_-]+$"
                             }
                           },
                           "required": [
@@ -2310,6 +2340,12 @@
                                           "touch",
                                           "mouse"
                                         ]
+                                      },
+                                      "cutFrom": {
+                                        "type": "string",
+                                        "minLength": 8,
+                                        "maxLength": 40,
+                                        "pattern": "^[0-9A-Za-z_-]+$"
                                       }
                                     },
                                     "required": [
@@ -2508,6 +2544,12 @@
                                           "touch",
                                           "mouse"
                                         ]
+                                      },
+                                      "cutFrom": {
+                                        "type": "string",
+                                        "minLength": 8,
+                                        "maxLength": 40,
+                                        "pattern": "^[0-9A-Za-z_-]+$"
                                       }
                                     },
                                     "required": [
@@ -2706,6 +2748,12 @@
                                           "touch",
                                           "mouse"
                                         ]
+                                      },
+                                      "cutFrom": {
+                                        "type": "string",
+                                        "minLength": 8,
+                                        "maxLength": 40,
+                                        "pattern": "^[0-9A-Za-z_-]+$"
                                       }
                                     },
                                     "required": [
@@ -2943,6 +2991,12 @@
                                       "touch",
                                       "mouse"
                                     ]
+                                  },
+                                  "cutFrom": {
+                                    "type": "string",
+                                    "minLength": 8,
+                                    "maxLength": 40,
+                                    "pattern": "^[0-9A-Za-z_-]+$"
                                   }
                                 },
                                 "required": [
@@ -3222,6 +3276,12 @@
                                       "touch",
                                       "mouse"
                                     ]
+                                  },
+                                  "cutFrom": {
+                                    "type": "string",
+                                    "minLength": 8,
+                                    "maxLength": 40,
+                                    "pattern": "^[0-9A-Za-z_-]+$"
                                   }
                                 },
                                 "required": [

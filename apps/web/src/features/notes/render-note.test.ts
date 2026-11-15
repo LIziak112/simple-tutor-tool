@@ -62,10 +62,12 @@ interface PathOp {
   pts: number[];
 }
 
-/** 一次 stroke() 提交的完整快照（样式 + 路径） */
+/** 一次 stroke() 提交的完整快照（样式 + 路径 + 当时的坐标缩放） */
 interface StrokeCall {
   style: string;
   lineWidth: number;
+  /** setTransform 设下的缩放；逐段画的笔不设变换，恒为 1 */
+  scale: number;
   path: PathOp[];
 }
 
@@ -86,6 +88,8 @@ class RecordingContext {
   }> = [];
   readonly strokeCalls: StrokeCall[] = [];
   #path: PathOp[] = [];
+  #scale = 1;
+  #savedScales: number[] = [];
 
   beginPath(): void {
     this.#path = [];
@@ -104,6 +108,7 @@ class RecordingContext {
     this.strokeCalls.push({
       style: String(this.strokeStyle),
       lineWidth: this.lineWidth,
+      scale: this.#scale,
       path: this.#path,
     });
     this.#path = [];
@@ -112,9 +117,15 @@ class RecordingContext {
     this.fills.push({ style: String(this.fillStyle), x, y, w, h });
   }
   clearRect(): void {}
-  save(): void {}
-  restore(): void {}
-  setTransform(): void {}
+  save(): void {
+    this.#savedScales.push(this.#scale);
+  }
+  restore(): void {
+    this.#scale = this.#savedScales.pop() ?? 1;
+  }
+  setTransform(a: number): void {
+    this.#scale = a;
+  }
 }
 
 /** canvas → 其录制上下文（隔离断言：每个渲染页一个独立实例） */
@@ -672,7 +683,7 @@ describe("renderNotePage：笔迹重放（复用引擎原语）", () => {
     expect(redIn(ctxB)).toBe(false);
   });
 
-  it("最高笔迹含线宽不裁切：荧光笔压在纸顶/底边缘，笔迹点全部落在页内", async () => {
+  it("压在纸底边缘的荧光笔：裁剪区含线宽、到纸底为止，整笔平移后一次描边", async () => {
     // 荧光笔 w16：y∈[792,808] → bbox 784..816，纸高 800 → crop [720,800]
     const d = docOf(
       [
@@ -697,11 +708,140 @@ describe("renderNotePage：笔迹重放（复用引擎原语）", () => {
     expect(page.crop.y + page.crop.height).toBe(800);
     const ctx = ctxOf(await captureCanvas(d, ANALYSIS_PIXEL_WIDTH, page.crop));
     const hl = ctx.strokeCalls.filter((s) => s.style === INK_HIGHLIGHTER.color);
-    expect(hl.length).toBeGreaterThan(0);
+    // 荧光笔整笔一次描边：坐标是平移后（-crop.y）的逻辑坐标，线宽也是逻辑
+    // 单位，由变换统一缩放到像素
+    expect(hl).toHaveLength(1);
+    expect(hl[0]?.scale).toBe(ANALYSIS_PIXEL_WIDTH / 1000);
+    expect(hl[0]?.lineWidth).toBe(INK_HIGHLIGHTER.weight);
+    expect(hl[0]?.path).toEqual([
+      { op: "moveTo", pts: [100, 72] },
+      { op: "lineTo", pts: [900, 88] },
+    ]);
+    // 笔迹上沿（含半线宽）在页内——不因包围盒漏线宽被裁
     const ys = hl.flatMap((s) => yRange(s.path));
-    // 平移后（-crop.y）所有笔迹 y 落在 [0, 80] 页高内——不因包围盒漏线宽被裁
-    expect(Math.min(...ys)).toBeGreaterThanOrEqual(-1);
-    expect(Math.max(...ys)).toBeLessThanOrEqual(page.pixelHeight + 1);
+    expect(Math.min(...ys) - INK_HIGHLIGHTER.weight / 2).toBeGreaterThanOrEqual(
+      0,
+    );
+    // 末端采样点 y=808 在纸外（纸高 800），画到真实采样点后被页底截断：这是
+    // 纸的边界，不是裁剪区少算。（逐段画法因平滑滞后到不了末点，旧断言
+    // 「所有点都在页内」只在那种画法下成立。）
+    expect(Math.max(...ys)).toBe(808 - page.crop.y);
+    expect(page.pixelHeight).toBe(80);
+  });
+
+  it("荧光笔每笔一次描边，来回涂抹不叠深；笔仍逐段画", async () => {
+    const zigzag: Array<[number, number]> = [
+      [100, 100],
+      [400, 100],
+      [100, 104],
+      [400, 108],
+      [100, 112],
+    ];
+    const d = docOf([
+      stroke(zigzag, {
+        tool: "highlighter",
+        color: INK_HIGHLIGHTER.color,
+        weight: INK_HIGHLIGHTER.weight,
+      }),
+      stroke(zigzag),
+    ]);
+    const ctx = ctxOf(await captureCanvas(d));
+    const hl = ctx.strokeCalls.filter((s) => s.style === INK_HIGHLIGHTER.color);
+    expect(hl).toHaveLength(1);
+    expect(hl[0]?.scale).toBe(THUMBNAIL_PIXEL_WIDTH / 1000);
+    const penCalls = ctx.strokeCalls.filter(
+      (s) => s.style === INK_PEN_COLORS.black,
+    );
+    expect(penCalls.length).toBeGreaterThanOrEqual(zigzag.length);
+    expect(penCalls.every((s) => s.scale === 1)).toBe(true);
+  });
+
+  it("同一笔荧光笔被局部橡皮切成的各段合在一起只上一次色（重叠处不比擦之前深）；不是同一笔的各描各的", async () => {
+    const highlighter = {
+      tool: "highlighter" as const,
+      color: INK_HIGHLIGHTER.color,
+      weight: INK_HIGHLIGHTER.weight,
+    };
+    // 来回涂的一笔被从中间切开：上一趟和下一趟在两段里，两段相互重叠
+    const upper = {
+      ...stroke(
+        [
+          [100, 100],
+          [400, 100],
+        ],
+        highlighter,
+      ),
+      cutFrom: "stroke-0001",
+    };
+    const lower = {
+      ...stroke(
+        [
+          [400, 108],
+          [100, 108],
+        ],
+        highlighter,
+      ),
+      cutFrom: "stroke-0001",
+    };
+    const hlOf = async (doc: NoteDoc) =>
+      ctxOf(await captureCanvas(doc)).strokeCalls.filter(
+        (s) => s.style === INK_HIGHLIGHTER.color,
+      );
+    const merged = await hlOf(docOf([upper, lower]));
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.path).toEqual([
+      { op: "moveTo", pts: [100, 100] },
+      { op: "lineTo", pts: [400, 100] },
+      { op: "moveTo", pts: [400, 108] },
+      { op: "lineTo", pts: [100, 108] },
+    ]);
+    // 另一笔切出来的段（记号不同）、没被切过的笔：照旧各描各的
+    expect(
+      await hlOf(docOf([upper, { ...lower, cutFrom: "stroke-0002" }])),
+    ).toHaveLength(2);
+    const { cutFrom: _mark, ...whole } = lower;
+    expect(await hlOf(docOf([upper, whole]))).toHaveLength(2);
+  });
+
+  it("长稿分页：同一笔切出的两段各在一页时，各页只画落在本页的那一段", async () => {
+    const piece = (y: number) => ({
+      ...stroke(
+        [
+          [100, y],
+          [400, y],
+        ],
+        {
+          tool: "highlighter",
+          color: INK_HIGHLIGHTER.color,
+          weight: INK_HIGHLIGHTER.weight,
+        },
+      ),
+      cutFrom: "stroke-0001",
+    });
+    const d = docOf([piece(100), piece(2600)], {
+      paperHeightLogical: TALL_PAPER_HEIGHT,
+    });
+    const pages = planAnalysisPages(d);
+    expect(pages.length).toBeGreaterThan(1);
+    const first = pages[0];
+    const last = pages.at(-1);
+    if (!first || !last) throw new Error("分页计划缺失（测试前提不成立）");
+    const pathsOf = async (page: typeof first) =>
+      ctxOf(await captureCanvas(d, ANALYSIS_PIXEL_WIDTH, page.crop))
+        .strokeCalls.filter((s) => s.style === INK_HIGHLIGHTER.color)
+        .map((s) => s.path);
+    expect(await pathsOf(first)).toEqual([
+      [
+        { op: "moveTo", pts: [100, 100 - first.crop.y] },
+        { op: "lineTo", pts: [400, 100 - first.crop.y] },
+      ],
+    ]);
+    expect(await pathsOf(last)).toEqual([
+      [
+        { op: "moveTo", pts: [100, 2600 - last.crop.y] },
+        { op: "lineTo", pts: [400, 2600 - last.crop.y] },
+      ],
+    ]);
   });
 });
 
@@ -884,7 +1024,7 @@ describe("renderNoteImages：产物与上传元信息对齐", () => {
       expect(p.pixelWidth).toBeLessThanOrEqual(NOTE_IMAGE_MAX_PIXEL_DIM);
       expect(p.pixelHeight).toBeLessThanOrEqual(NOTE_IMAGE_MAX_PIXEL_DIM);
     }
-    expect(NOTE_RENDER_VERSION).toBe(3);
+    expect(NOTE_RENDER_VERSION).toBe(4);
   });
 });
 

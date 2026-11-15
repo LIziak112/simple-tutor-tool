@@ -60,7 +60,7 @@ describe("drivePointerEvents", () => {
     expect(setToolCalls).toEqual([
       { type: "pen", color: "black", size: "medium" },
       { type: "pen", color: "blue", size: "thin" },
-      { type: "highlighter" },
+      { type: "highlighter", color: "yellow", size: "medium" },
       { type: "pen", color: "black", size: "medium" },
     ]);
     canvas.remove();
