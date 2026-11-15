@@ -4,10 +4,19 @@ import { attempts } from "../db/schema.ts";
 import { discardOpenedArtifactsWithin } from "./attempt-opened-artifacts.ts";
 import { hasSubstantiveAttemptEvidence } from "./attempt-substantive-evidence.ts";
 
+/** 一轮清除删掉了哪些卷：这是唯一一处定时物理删除作答行的任务，要能事后查到。 */
+export interface OpenedAttemptPurgeReport {
+  attemptIds: string[];
+  cutoff: string;
+  days: number;
+}
+
 interface PurgeOptions {
   enabled?: boolean;
   days?: number;
   now?: Date;
+  /** 事务提交后、确有删除时调用一次 */
+  onPurged?: (report: OpenedAttemptPurgeReport) => void;
 }
 
 export function openedAttemptPurgeOptionsOf(env: NodeJS.ProcessEnv): {
@@ -32,6 +41,12 @@ export function purgeOpenedAttempts(
   const cutoff = new Date(
     (options.now ?? new Date()).getTime() - days * 86400_000,
   ).toISOString();
+  const attemptIds = purgeOpenedAttemptsBefore(db, cutoff);
+  if (attemptIds.length > 0) options.onPurged?.({ attemptIds, cutoff, days });
+  return attemptIds.length;
+}
+
+function purgeOpenedAttemptsBefore(db: Db, cutoff: string): string[] {
   return db.transaction(
     () => {
       const candidates = db
@@ -46,7 +61,7 @@ export function purgeOpenedAttempts(
           ),
         )
         .all();
-      let removed = 0;
+      const removed: string[] = [];
       for (const attempt of candidates) {
         if (
           hasSubstantiveAttemptEvidence(db, attempt.id) ||
@@ -68,7 +83,7 @@ export function purgeOpenedAttempts(
             .prepare(`DELETE FROM ${table} WHERE attempt_id=?`)
             .run(attempt.id);
         }
-        removed += 1;
+        removed.push(attempt.id);
       }
       return removed;
     },

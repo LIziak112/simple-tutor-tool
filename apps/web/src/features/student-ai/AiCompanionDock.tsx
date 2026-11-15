@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useLearningContextSnapshot } from "@/features/learning-context/learning-context-store";
+import { useAttemptOpened } from "@/features/persistence/AttemptSnapshotScope";
 import {
   usePortalClients,
   usePortalRoutes,
@@ -258,12 +259,15 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
 
   const materials = host.materials ?? DEFAULT_AI_MATERIALS;
   const conversation = useAiConversationController(send, controller.open);
+  // 卷还没动过笔时，从 AI 设置回的是这份卷而不是作业页（见 aiSettingsReturnSource）
+  const attemptOpened = useAttemptOpened(attemptId);
   const settingsSource = aiSettingsReturnSource(
     routes,
     location,
     attemptId,
     boundQuestionId,
     conversation.expandedId,
+    attemptOpened,
   );
   const settingsHref = routes.learning(
     `settings/ai?from=${encodeURIComponent(settingsSource)}`,

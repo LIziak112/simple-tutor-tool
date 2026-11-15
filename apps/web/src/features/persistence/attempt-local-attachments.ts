@@ -13,6 +13,7 @@ import {
   settleNotePersistence,
   writeNoteDoc,
 } from "@/features/notes/note-store";
+import { attemptRefrozen } from "./attempt-refrozen";
 import { digestOf } from "./draft-merge";
 import { currentDraftSession } from "./draft-store";
 
@@ -64,9 +65,9 @@ export function hasLocalAttachments(
 export function attachmentsSnapshotConflict(
   attachments: LocalAttemptAttachments,
   attempt: AttemptSummary,
+  legacyUnverified = false,
 ): boolean {
-  const refrozen =
-    attempt.frozenAt != null && attempt.frozenAt !== attempt.startedAt;
+  const refrozen = attemptRefrozen(attempt, legacyUnverified);
   return [
     ...attachments.notes.values(),
     ...attachments.annotations.values(),

@@ -7,7 +7,7 @@ import type {
 import { gradeResponseRow, isUnanswered } from "@tutor/grading";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { ink, responses, submissionEvidence } from "../db/schema";
+import { attempts, ink, responses, submissionEvidence } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   buildAttemptQuestionWhere,
@@ -269,7 +269,12 @@ export function commitPracticeQuestion(
       return {
         replayed: false as const,
         row: written,
-        attempt: finished.attempt ?? attempt,
+        // 没收尾时也重读：这次提交可能刚把卷激活，回执里的卷摘要不能还是
+        // 事务开头读到的那份（phase 仍是 opened、最近作答时间是旧的）
+        attempt:
+          finished.attempt ??
+          tx.select().from(attempts).where(eq(attempts.id, attemptId)).get() ??
+          attempt,
         snapshot,
       };
     },

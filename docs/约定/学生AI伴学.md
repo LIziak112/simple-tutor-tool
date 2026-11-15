@@ -79,7 +79,7 @@ v2 回执包含本题提交事实、实际结算序号、已提交进度、下�
 
 `student_settle_practice` 使用网页相同的分批事务：先读题，用返回的 `settlement.parameters` 取得工作流、题目和答案版本及证据；向学生确认后，把各题的 questionId/questionRevisionId/expectedAnswerRevision/evidence 放入 questions，顶层提供 practiceId/workflowVersion/workflowRevision 和必填 UUID mutationId。它提交已保存答案，不接收临时答案；需要改答案时先在页面保存。相同操作保留全部输入与 mutationId，异内容同键拒绝。空 questions 仅结算此前逐题提交且未归批的题。回执只含本批结果和题序，最后一批自动交卷；其余题可续做。学生自选交卷后反馈仍可分批，教师限制、限时、旧协议和讲练不支持。所有实际批成员含此前未归批题都实时过 AI 门，成功重放再按当前公布规则投影。
 
-随笔闭环：`list_my_memos` 增加 courseId、unitId、questionId、seq/seqFrom/seqTo 与 parentMemoSeq 筛选，包含完整 context。Agent 以同一 context、parentMemoSeq、operationId 调 add_memo，坐标实时核对，原始条目不改。页面只看父序号时仍有“关联条目”入口，进入独立分页列表，保留来源回链和回原条入口。MCP 设备按鉴权 connectionId 登记，不接受客户端设备冒认；当前连接表没有名称字段，自动名为 `MCP 连接 · 短ID`，学生可在已有设备设置里改名，不读取或显示凭证配置。
+随笔闭环：`list_my_memos` 增加 courseId、unitId、questionId、seq/seqFrom/seqTo 与 parentMemoSeq 筛选，包含完整 context。Agent 以同一 context、parentMemoSeq、operationId 调 add_memo，坐标实时核对，原始条目不改。锚到练习里某道题时要带读题返回的 context：里面的题目版本就是这次写入的版本凭据。没动过的练习再次进入时可能按新题目重冻，这之后只给 anchor 的 add_memo 返回 409 `ATTEMPT_SNAPSHOT_CHANGED`；context 里的题目版本已不是这份练习现在的，来源坐标核对不过，返回 404 `MEMO_ANCHOR_NOT_FOUND`。两种情况都是重新读题再记。页面只看父序号时仍有“关联条目”入口，进入独立分页列表，保留来源回链和回原条入口。MCP 设备按鉴权 connectionId 登记，不接受客户端设备冒认；当前连接表没有名称字段，自动名为 `MCP 连接 · 短ID`，学生可在已有设备设置里改名，不读取或显示凭证配置。
 
 ## 范围复盘与分节报告（v2）
 

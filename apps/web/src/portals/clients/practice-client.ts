@@ -26,7 +26,10 @@ import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
 import { callApi } from "@/lib/api-response";
 import { readAttemptDetail } from "@/lib/attempt-detail-read";
 import { withRequestDeadline } from "@/lib/request-deadline";
-import { requestAttemptActivation } from "./attempt-write-activation";
+import {
+  requestAttemptActivation,
+  SNAPSHOT_PROOF_CLIENT,
+} from "./attempt-write-activation";
 import type { HttpRuntime } from "./http-runtime";
 import type { ClientServices } from "./service-types";
 export function createPracticeClient(
@@ -71,10 +74,13 @@ export function createPracticeClient(
   ): Promise<AttemptStartData> {
     await protectSource({ sourceType: "assignment", assignmentId });
     return callApi(() =>
-      api.api.student.assignments[":id"].attempt.$post({
-        param: { id: assignmentId },
-        ...(options !== undefined ? { json: { ...options } } : {}),
-      }),
+      api.api.student.assignments[":id"].attempt.$post(
+        {
+          param: { id: assignmentId },
+          ...(options !== undefined ? { json: { ...options } } : {}),
+        },
+        SNAPSHOT_PROOF_CLIENT,
+      ),
     );
   }
   function fetchStudentUnitLandingApi(
@@ -95,10 +101,13 @@ export function createPracticeClient(
     if (options?.restartAttemptId === undefined)
       await protectSource({ sourceType: "course", courseId, unitId });
     return callApi(() =>
-      api.api.student.courses[":id"].units[":unitId"].attempts.$post({
-        param: { id: courseId, unitId },
-        ...(options !== undefined ? { json: { ...options } } : {}),
-      }),
+      api.api.student.courses[":id"].units[":unitId"].attempts.$post(
+        {
+          param: { id: courseId, unitId },
+          ...(options !== undefined ? { json: { ...options } } : {}),
+        },
+        SNAPSHOT_PROOF_CLIENT,
+      ),
     );
   }
   function startWrongPracticeApi(

@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  ATTEMPT_SNAPSHOT_PROOF_HEADER,
+  type AttemptStartData,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, expect, it, vi } from "vitest";
@@ -461,6 +465,53 @@ it("未激活卷从学生/教师记录、单元历次汇总隐藏，预检只读
   expect(body).toMatchObject({
     data: { attempt: { id: attempt.id, frozenAt: attempt.frozenAt } },
   });
+  expect(preflight.headers.get("cache-control")).toBe("private, no-store");
+  // 同班的另一名学生：预检看不到这份卷，拿卷号也激活不了
+  const classmate = makeStudent(env.db);
+  env.db
+    .insert(courseStudents)
+    .values({ courseId: env.courseId, studentId: classmate, joinedAt: now })
+    .run();
+  const classmateCookie = `tutor_student_session=${createStudentSession(env.db, classmate).token}`;
+  const foreign = await app.request(
+    `/api/student/attempts/opened?${new URLSearchParams(env.query)}`,
+    { headers: { cookie: classmateCookie } },
+  );
+  expect(foreign.status).toBe(200);
+  expect(await foreign.json()).toEqual({ ok: true, data: { attempt: null } });
+  const hijack = await app.request(
+    `/api/student/attempts/${attempt.id}/activate`,
+    {
+      method: "POST",
+      headers: { cookie: classmateCookie, "content-type": "application/json" },
+      body: JSON.stringify({ expectedFrozenAt: attempt.frozenAt }),
+    },
+  );
+  expect(hijack.status).toBe(403);
+  expect(env.row(attempt.id)?.activatedAt).toBeNull();
+  // 没选这门课的学生连预检都过不了；多余参数、缺参数一律 400
+  const outsider = `tutor_student_session=${createStudentSession(env.db, makeStudent(env.db)).token}`;
+  expect(
+    (
+      await app.request(
+        `/api/student/attempts/opened?${new URLSearchParams(env.query)}`,
+        { headers: { cookie: outsider } },
+      )
+    ).status,
+  ).toBeGreaterThanOrEqual(400);
+  for (const bad of [
+    { ...env.query, studentId: env.studentId },
+    { sourceType: "course", courseId: env.courseId },
+    { sourceType: "wrong" },
+  ])
+    expect(
+      (
+        await app.request(
+          `/api/student/attempts/opened?${new URLSearchParams(bad)}`,
+          { headers: { cookie } },
+        )
+      ).status,
+    ).toBe(400);
   const activated = await app.request(
     `/api/student/attempts/${attempt.id}/activate`,
     {
@@ -556,6 +607,102 @@ it("同版本复用卷与冻结行；改题/材料同事务重冻，同毫秒tok
   expect(env.row(first.id)?.activatedAt).toBeNull();
 });
 
+it("开卷请求不带凭据头（升级前的旧前端包）不重冻，之后不带凭据的保存照常；带头的新前端才重冻", async () => {
+  const env = fixture();
+  const app = createApp({
+    db: env.db,
+    dataDir: createTestDir(),
+    logger: pino({ enabled: false }),
+    publicUrl: "http://localhost:8787",
+    isProduction: false,
+  });
+  const cookie = `tutor_student_session=${createStudentSession(env.db, env.studentId).token}`;
+  const open = async (headers: Record<string, string> = {}) => {
+    const res = await app.request(
+      `/api/student/courses/${env.courseId}/units/${encodeURIComponent(env.unitId)}/attempts`,
+      { method: "POST", headers: { cookie, ...headers } },
+    );
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { data: AttemptStartData }).data;
+  };
+  const save = (attemptId: string, proof: object = {}) =>
+    app.request(`/api/student/attempts/${attemptId}/answers/activation-q`, {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        answer: { kind: "judge", value: true },
+        ...proof,
+      }),
+    });
+  const first = await open();
+  const frozenRows = env.refs(first.id).map((row) => row.id);
+  env.db
+    .update(questions)
+    .set({ version: 2, stemMd: "新版题干" })
+    .where(eq(questions.id, "activation-q"))
+    .run();
+
+  // 旧包：拿回原来冻结的那一版，冻结行原样
+  expect(await open()).toEqual(first);
+  expect(env.refs(first.id).map((row) => row.id)).toEqual(frozenRows);
+  expect(env.refs(first.id)[0]).toMatchObject({ questionVersion: 1 });
+
+  // 新包：同一份卷按现在的题目重冻
+  const refrozen = await open({ [ATTEMPT_SNAPSHOT_PROOF_HEADER]: "1" });
+  expect(refrozen.id).toBe(first.id);
+  expect(refrozen.frozenAt).not.toBe(first.frozenAt);
+  expect(env.refs(first.id)[0]).toMatchObject({ questionVersion: 2 });
+  // 重冻之后旧包再来开卷不会改回去，也不会再冻一次
+  expect(await open()).toEqual(refrozen);
+  // 不带凭据的保存被拒（它手里可能还是旧题面）；带本稿凭据的照常
+  const rejected = await save(first.id);
+  expect(rejected.status).toBe(409);
+  expect(await rejected.json()).toMatchObject({
+    error: "ATTEMPT_SNAPSHOT_CHANGED",
+  });
+  expect(
+    (await save(first.id, { expectedFrozenAt: refrozen.frozenAt })).status,
+  ).toBe(200);
+
+  // 只遇到过旧包的卷从没重冻：不带凭据的保存一直可用（和升级前一样）
+  const legacy = fixture();
+  const legacyApp = createApp({
+    db: legacy.db,
+    dataDir: createTestDir(),
+    logger: pino({ enabled: false }),
+    publicUrl: "http://localhost:8787",
+    isProduction: false,
+  });
+  const legacyCookie = `tutor_student_session=${createStudentSession(legacy.db, legacy.studentId).token}`;
+  const startLegacy = () =>
+    legacyApp.request(
+      `/api/student/courses/${legacy.courseId}/units/${encodeURIComponent(legacy.unitId)}/attempts`,
+      { method: "POST", headers: { cookie: legacyCookie } },
+    );
+  const opened = (
+    (await (await startLegacy()).json()) as {
+      data: AttemptStartData;
+    }
+  ).data;
+  legacy.db
+    .update(questions)
+    .set({ version: 2, stemMd: "新版题干" })
+    .where(eq(questions.id, "activation-q"))
+    .run();
+  await startLegacy();
+  const kept = await legacyApp.request(
+    `/api/student/attempts/${opened.id}/answers/activation-q`,
+    {
+      method: "PUT",
+      headers: { cookie: legacyCookie, "content-type": "application/json" },
+      body: JSON.stringify({ answer: { kind: "judge", value: true } }),
+    },
+  );
+  expect(kept.status).toBe(200);
+  expect(legacy.row(opened.id)).toMatchObject({ frozenAt: opened.frozenAt });
+  expect(legacy.row(opened.id)?.activatedAt).not.toBeNull();
+});
+
 it("预检后先激活可保护旧本机材料稿；活跃卷任何内容更新都不重冻", () => {
   const env = fixture(),
     first = env.start(),
@@ -607,6 +754,62 @@ it("重冻中途失败恢复原卷快照，限时卷建即激活", () => {
   expect(timed).toMatchObject({
     phase: "active",
     activatedAt: timed.startedAt,
+  });
+});
+
+it("入口复用未激活卷时兑现本次所选限时：此刻起算并激活；已在计时的卷不改时钟", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-14T10:00:00.000Z"));
+  const env = fixture();
+  const first = env.start();
+  expect(first).toMatchObject({
+    phase: "opened",
+    timeLimitSec: null,
+    deadlineAt: null,
+  });
+  // 空卷不入账，入口页按「开始练习」给出限时选项：十分钟后选 30 分钟再进
+  vi.setSystemTime(new Date("2026-11-14T10:10:00.000Z"));
+  const timed = env.start(30);
+  expect(timed).toMatchObject({
+    id: first.id,
+    startedAt: first.startedAt,
+    frozenAt: first.frozenAt,
+    phase: "active",
+    activatedAt: "2026-11-14T10:10:00.000Z",
+    timeLimitSec: 1800,
+    deadlineAt: "2026-11-14T10:40:00.000Z",
+  });
+  expect(env.row(first.id)?.lastActivityAt).toBe("2026-11-14T10:10:00.000Z");
+  expect(env.refs(first.id)).toHaveLength(1);
+  // 已在计时：再带别的时长进来沿用原时钟
+  vi.setSystemTime(new Date("2026-11-14T10:20:00.000Z"));
+  expect(env.start(5)).toMatchObject({
+    id: first.id,
+    activatedAt: "2026-11-14T10:10:00.000Z",
+    timeLimitSec: 1800,
+    deadlineAt: "2026-11-14T10:40:00.000Z",
+  });
+
+  // 作业入口同理；不带限时再进，空卷保持未激活
+  const assigned = createAssignment(env.db, TEST_TEACHER_ID, {
+    unitIds: [env.unitId],
+    studentIds: [env.studentId],
+  }).assignments[0];
+  if (!assigned) throw new Error("作业未生成");
+  const plain = startAttempt(env.db, env.studentId, assigned.id);
+  expect(startAttempt(env.db, env.studentId, assigned.id)).toMatchObject({
+    id: plain.id,
+    phase: "opened",
+    timeLimitSec: null,
+  });
+  expect(
+    startAttempt(env.db, env.studentId, assigned.id, { timeLimitMinutes: 20 }),
+  ).toMatchObject({
+    id: plain.id,
+    phase: "active",
+    activatedAt: "2026-11-14T10:20:00.000Z",
+    timeLimitSec: 1200,
+    deadlineAt: "2026-11-14T10:40:00.000Z",
   });
 });
 

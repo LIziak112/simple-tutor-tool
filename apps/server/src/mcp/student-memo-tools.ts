@@ -53,7 +53,7 @@ export function registerStudentMemoTools(
     "add_memo",
     {
       description:
-        "替我（当前学生）记一条文字随笔（source=agent）：语音的转写文本、对话里的结论、要点摘录都从这里转记。原始随笔不可改——转写请新增一条，不要试图改原语音。同一操作重试请复用 operationId；parentMemoSeq 可关联原始随笔；context可原样传入读题或随笔返回的完整上下文，来源坐标实时核对，设备绑定当前鉴权MCP连接。",
+        "替我（当前学生）记一条文字随笔（source=agent）：语音的转写文本、对话里的结论、要点摘录都从这里转记。原始随笔不可改——转写请新增一条，不要试图改原语音。同一操作重试请复用 operationId；parentMemoSeq 可关联原始随笔；context可原样传入读题或随笔返回的完整上下文，来源坐标实时核对，设备绑定当前鉴权MCP连接。锚到练习里某道题时请带读题返回的context（里面有读题时的题目版本）：只给anchor而这份练习按新题目重新冻结过，会返回ATTEMPT_SNAPSHOT_CHANGED；context里的题目版本已不是这份练习现在的，会返回MEMO_ANCHOR_NOT_FOUND。两种情况都重新读题，拿到最新context再记。",
       inputSchema: memoAgentCreateSchema.shape,
       annotations: {
         readOnlyHint: false,

@@ -26,8 +26,22 @@ import {
 } from "./material-repository.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 
+/** 开卷请求方的能力声明（来自请求头，不属于请求体） */
+export interface AttemptStartClient {
+  /**
+   * 请求方之后的每次写入都会带本稿版本凭据（ATTEMPT_SNAPSHOT_PROOF_HEADER）。
+   * 明确为 false 的是升级前的旧前端包：对它不重冻，行为和升级前一样。
+   * 缺省按会带处理（服务内部调用）；HTTP 开卷路由一律按请求头显式给出。
+   */
+  snapshotProof?: boolean;
+}
+
 /** 仅入口恢复时调用；任何已激活卷和正式写入都不重新冻结。 */
-export function refreshOpenedAttempt(db: Db, attempt: Attempt): Attempt {
+export function refreshOpenedAttempt(
+  db: Db,
+  attempt: Attempt,
+  client: AttemptStartClient = {},
+): Attempt {
   return db.transaction(
     (tx) => {
       const fresh = tx
@@ -58,6 +72,8 @@ export function refreshOpenedAttempt(db: Db, attempt: Attempt): Attempt {
           fresh
         );
       }
+      // 不带凭据的旧前端包：重冻后它的每次保存都会被拒，这份卷等于做不了
+      if (client.snapshotProof === false) return fresh;
       const { liveRows, teacherId, knowledgeByQuestion } =
         freezeInputsOfNewAttempt(db, fresh);
       const entries =

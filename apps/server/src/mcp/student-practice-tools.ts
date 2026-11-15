@@ -71,7 +71,7 @@ export function registerStudentPracticeTools(
     "list_my_practices",
     {
       description:
-        "列出本人练习的公开元数据、现有状态和进度，按最近活动排序；不包含题面、答案、成绩或判定。可列出不代表允许AI读题或提交，读取具体练习仍会实时检查权限。仅浏览产生的草稿沿现有记录口径保留。",
+        "列出本人练习的公开元数据、现有状态和进度，按最近活动排序；不包含题面、答案、成绩或判定。可列出不代表允许AI读题或提交，读取具体练习仍会实时检查权限。只打开过、还没有动笔的练习不在列表里，和网页「我的记录」同一口径。",
       inputSchema: studentMcpPracticeListInputSchema,
       annotations: {
         readOnlyHint: true,

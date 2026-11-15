@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { prepareLocalAttempt } from "@/features/persistence/attempt-reopen";
-import { useLocalAttemptActivation } from "@/features/persistence/use-local-attempt-activation";
+import { useAttemptSessionEffects } from "@/features/persistence/use-attempt-session-effects";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 import { ApiError } from "@/lib/api-response";
 
@@ -68,7 +68,8 @@ export function useLessonStart(
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
-  useLocalAttemptActivation(query.data?.attempt);
+  // 不在这里读 query.data：见 useCachedAttempt 的说明
+  useAttemptSessionEffects(studentLessonKey(lectureId ?? "pending", courseId));
   return query;
 }
 

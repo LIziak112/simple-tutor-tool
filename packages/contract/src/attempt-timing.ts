@@ -6,7 +6,7 @@ import { z } from "zod";
  * - 建卷请求可带 timeLimitMinutes（课程单元练习 / 作业开卷通用；错题重练与
  *   讲练不适用）；DSL `practice.timeLimitMinutes` 只是单元推荐的缺省值；
  * - 服务端按建卷时刻算出 deadlineAt 持久化，时钟以服务端为准：换设备 / 后台 /
- *   重连后同一剩余时间；
+ *   重连后同一剩余时间；入口取回的是未激活的空卷时，从带限时的那次请求起算；
  * - 到时不自动交卷：进入宽限（graceSec，缺省 10 分钟）——只能追平待同步稿、
  *   确认交卷，不能再改答案；宽限过后答案写入一律 409 ATTEMPT_TIME_UP，仍可
  *   交卷（按服务端已有答案判分）。截止前离线稿的认定以此为准（第 3 版计划
@@ -43,7 +43,7 @@ export const attemptTimingSchema = z
   .object({
     /** 时长（秒） */
     timeLimitSec: z.number().int().positive(),
-    /** 截止时刻：UTC ISO = startedAt + timeLimitSec */
+    /** 截止时刻：UTC ISO = 开始计时的时刻 + timeLimitSec（开始计时 = 建卷，或未激活的空卷被限时取回的那一刻） */
     deadlineAt: z.string().min(1),
     /** 服务端当前时刻：UTC ISO（本响应生成时） */
     serverNow: z.string().min(1),

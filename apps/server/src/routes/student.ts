@@ -5,11 +5,9 @@ import type {
 import {
   annotationBaseCreateRequestSchema,
   annotationSealRequestSchema,
-  attemptStartOptionsRequestSchema,
   attemptWorkflowUpdateDataSchema,
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
-  courseAttemptStartOptionsRequestSchema,
   inkWriteMetaSchema,
   lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
@@ -69,17 +67,12 @@ import {
 import {
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
-  startAttempt,
-  startCourseAttempt,
   submitLessonQuestion,
   submitPracticeQuestion,
 } from "../services/attempt-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { getStudentLearningRecord } from "../services/learning-record-service";
-import {
-  getLessonLanding,
-  startLessonAttempt,
-} from "../services/lesson-service";
+import { getLessonLanding } from "../services/lesson-service";
 import {
   attachNoteImage,
   createCorrection,
@@ -291,16 +284,6 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
           ),
-        });
-      })
-      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1 与可选 feedbackMode，契约拒绝 mode 无版本）
-      .post("/assignments/:id/attempt", async (c) => {
-        const options =
-          (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
-          {};
-        return c.json({
-          ok: true,
-          data: startAttempt(db, c.var.student.id, c.req.param("id"), options),
         });
       })
       .get("/attempts/:id/materials", (c) =>
@@ -869,28 +852,6 @@ export function createStudentRoutes(
           ),
         });
       })
-      // T2A.6：课程练习入口（存在未交卷作答返回它；否则新建 attemptNo+1，
-      // 新一次从空白开始；事务保证并发只得一份 draft）
-      .post("/courses/:id/units/:unitId/attempts", async (c) => {
-        const options =
-          (await parseJsonBodyOrEmpty(
-            c,
-            courseAttemptStartOptionsRequestSchema,
-          )) ?? {};
-        return c.json(
-          {
-            ok: true,
-            data: startCourseAttempt(
-              db,
-              c.var.student.id,
-              c.req.param("id"),
-              c.req.param("unitId"),
-              options,
-            ),
-          },
-          201,
-        );
-      })
       // T2A.5：可见讲义双视图（去重并集 + 按课程分组，D5 过滤）
       .get("/lectures", (c) => {
         return c.json({
@@ -1000,33 +961,6 @@ export function createStudentRoutes(
         return c.json({
           ok: true,
           data: getStudentLecture(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            parsed.data.courseId,
-          ),
-        });
-      })
-      // 2026-10 讲练一体：讲练开卷（幂等 create-or-return——进行中返回同一份
-      // draft、已完成返回最新那份，绝不重开；无作答才建卷冻结）。访问判定与
-      // GET /lectures/:id 同一三分谓词（?courseId= 可选课程上下文，契约未定义
-      // start 请求体 schema，复用详情查询 schema 的 query 形态）；响应是讲练
-      // 安全投影（blocks 切段 + 冻结题公开投影 + released/summary），原文与
-      // 未提交题的答案/详解/提示内容绝不下发（泄露矩阵 routes/student-lesson.test.ts）
-      .post("/lectures/:id/lesson/start", (c) => {
-        const parsed = studentLectureDetailQuerySchema.safeParse({
-          courseId: c.req.query("courseId") ?? undefined,
-        });
-        if (!parsed.success) {
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            "查询参数不合法：courseId 必须是 UUID 格式",
-          );
-        }
-        return c.json({
-          ok: true,
-          data: startLessonAttempt(
             db,
             c.var.student.id,
             c.req.param("id"),

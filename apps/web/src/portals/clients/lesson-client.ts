@@ -15,6 +15,7 @@ import {
 } from "@/features/persistence/attempt-local-session";
 import { getDraftSessionEpoch } from "@/features/persistence/draft-store";
 import { callApi } from "@/lib/api-response";
+import { SNAPSHOT_PROOF_CLIENT } from "./attempt-write-activation";
 import type { HttpRuntime } from "./http-runtime";
 import type { ClientServices } from "./service-types";
 export function createLessonClient(
@@ -57,7 +58,10 @@ export function createLessonClient(
       ...(courseId !== undefined ? { query: { courseId } } : {}),
     };
     return callApi(() =>
-      api.api.student.lectures[":id"].lesson.start.$post(args),
+      api.api.student.lectures[":id"].lesson.start.$post(
+        args,
+        SNAPSHOT_PROOF_CLIENT,
+      ),
     );
   }
   function submitLessonQuestionApi(

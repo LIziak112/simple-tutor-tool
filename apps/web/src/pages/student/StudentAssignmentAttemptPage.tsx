@@ -13,6 +13,7 @@ import {
 } from "@/features/attempt/TimeLimitPicker";
 import { LocalAttemptSnapshotConflictError } from "@/features/persistence/attempt-local-session";
 import { LocalAttemptSnapshotConflictPanel } from "@/features/persistence/LocalAttemptArchive";
+import { LocalAttemptRecoveryNotice } from "@/features/persistence/use-local-attempt-activation";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
@@ -203,6 +204,8 @@ function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
 
   return (
     <>
+      {/* 卷被清除后重开：恢复结果和旧原稿的下载入口，和通用作答页、讲练页一致 */}
+      <LocalAttemptRecoveryNotice attemptId={detailQuery.data.attempt.id} />
       {detailQuery.isError && (
         <StudentRefreshWarning
           title="题目信息刷新失败"
