@@ -1,10 +1,12 @@
-import type {
-  AnnotationBaseRef,
-  AnnotationConflictCurrent,
-  AnnotationDoc,
-  AnnotationReceipt,
-  AnnotationSurfaceLayout,
-  AnnotationViewData,
+import {
+  type AnnotationBaseRef,
+  type AnnotationConflictCurrent,
+  type AnnotationDoc,
+  type AnnotationReceipt,
+  type AnnotationSurfaceLayout,
+  type AnnotationViewData,
+  DEFAULT_INK_PROFILE_CONFIG,
+  inkRenderingOf,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { digestOf } from "@/features/persistence/draft-merge";
@@ -337,6 +339,56 @@ describe("applyBasePreview / applyAnnotationView（服务端事实播种）", ()
     writeAnnotationDoc(SESSION, SCOPE, local);
     await applyAnnotationView(SESSION, SCOPE, viewOf({ doc: local }));
     expect(peekAnnotationRecord(SESSION, SCOPE)?.pending).toBeNull();
+  });
+
+  it("丢回执（引擎真实形状）：本机每笔带 rendering、云端落盘不带 → 清 pending、不报冲突、本机稿不换", async () => {
+    // 引擎给每一笔（含擦除后的墓碑）都写 rendering，空的 anchors 也可能带着；
+    // 服务端落盘的规范化正文没有 rendering，空的 deleted / anchors 不写键
+    const rendering = inkRenderingOf(DEFAULT_INK_PROFILE_CONFIG);
+    const live = { ...strokeAt(4, 4), id: "stroke-live-0001" };
+    const gone = {
+      ...strokeAt(6, 6),
+      id: "stroke-gone-0001",
+      deletedAt: 1_700_000_001_000,
+      deletedBy: "eraser" as const,
+    };
+    const local: AnnotationDoc = {
+      ...docOf([{ ...live, rendering }]),
+      deleted: [{ ...gone, rendering }],
+      anchors: {},
+    };
+    writeAnnotationDoc(SESSION, SCOPE, local);
+    await applyAnnotationView(
+      SESSION,
+      SCOPE,
+      viewOf({ doc: { ...docOf([live]), deleted: [gone] } }),
+    );
+    const record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.conflict).toBeNull();
+    expect(record?.pending).toBeNull();
+    expect(record?.baseRevision).toBe(3);
+    expect(record?.doc.strokes[0]?.rendering).toEqual(rendering);
+  });
+
+  it("引擎真实形状下内容真的不同（云端的墓碑是另一笔）→ 仍报冲突，本机待传稿保留", async () => {
+    const rendering = inkRenderingOf(DEFAULT_INK_PROFILE_CONFIG);
+    const live = { ...strokeAt(4, 4), id: "stroke-live-0001" };
+    writeAnnotationDoc(SESSION, SCOPE, docOf([{ ...live, rendering }]));
+    const cloudGone = {
+      ...strokeAt(6, 6),
+      id: "stroke-gone-0001",
+      deletedAt: 1_700_000_001_000,
+      deletedBy: "eraser" as const,
+    };
+    await applyAnnotationView(
+      SESSION,
+      SCOPE,
+      viewOf({ doc: { ...docOf([live]), deleted: [cloudGone] } }),
+    );
+    const record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.conflict?.current?.revision).toBe(3);
+    expect(record?.pending).not.toBeNull();
+    expect(record?.baseRevision).toBe(0);
   });
 
   it("stale 底图引用如实缓存（UI 显示「旧版本题干的标注」）", async () => {
