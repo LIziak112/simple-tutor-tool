@@ -45,13 +45,15 @@ export function saveDraftAnswer(
     )
       throw new Error("本题已有较新的本机答案，旧答案未上传");
     const baseRevision = record?.answerRevisions?.[questionId];
+    const questionRevisionId = record?.answerQuestionRevisions?.[questionId];
+    const sync = {
+      ...(baseRevision === undefined ? {} : { baseRevision, mutationId }),
+      ...(questionRevisionId === undefined ? {} : { questionRevisionId }),
+    };
     try {
-      const receipt = await (baseRevision === undefined
+      const receipt = await (Object.keys(sync).length === 0
         ? saveAttemptAnswerApi(attemptId, questionId, answer)
-        : saveAttemptAnswerApi(attemptId, questionId, answer, {
-            baseRevision,
-            mutationId,
-          }));
+        : saveAttemptAnswerApi(attemptId, questionId, answer, sync));
       if (epoch !== getDraftSessionEpoch()) return receipt;
       await draftStore.markAnswerSynced(
         attemptId,

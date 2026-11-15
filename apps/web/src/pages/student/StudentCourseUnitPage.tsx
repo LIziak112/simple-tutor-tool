@@ -43,6 +43,7 @@ import {
   TimeLimitPicker,
   timeLimitStartOption,
 } from "@/features/attempt/TimeLimitPicker";
+import { LocalAttemptStartFailure } from "@/features/persistence/LocalAttemptArchive";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import {
   StudentErrorPanel,
@@ -580,11 +581,7 @@ function UnitLandingView({
             </Button>
           )}
           {!redoOpen && startAttempt.isError && (
-            <p role="alert" className="text-xs text-destructive">
-              {startAttempt.error instanceof Error
-                ? startAttempt.error.message
-                : "开始失败，请稍后重试"}
-            </p>
+            <LocalAttemptStartFailure error={startAttempt.error} />
           )}
         </div>
       </div>

@@ -556,6 +556,9 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
             channel,
             materials: selection,
             mutationId: pending.mutationId,
+            ...("questionRevisionId" in question
+              ? { questionRevisionId: question.questionRevisionId }
+              : {}),
             ...(quickButtonId !== null ? { quickButtonId } : {}),
           });
         } catch (cause) {

@@ -4,6 +4,7 @@ import type {
   HintOpenedEntry,
   LessonStartData,
 } from "@tutor/contract";
+import { attemptPhaseOf } from "@tutor/contract";
 import { CheckCircle2, ListTree, LoaderCircle, RotateCw } from "lucide-react";
 import {
   Fragment,
@@ -71,7 +72,11 @@ import {
   scrollToHeadingAt,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
+import { AttemptSnapshotScope } from "@/features/persistence/AttemptSnapshotScope";
+import { LocalAttemptSnapshotConflictError } from "@/features/persistence/attempt-local-session";
+import { LocalAttemptSnapshotConflictPanel } from "@/features/persistence/LocalAttemptArchive";
 import { DraftSyncProvider } from "@/features/persistence/use-draft-sync";
+import { LocalAttemptRecoveryNotice } from "@/features/persistence/use-local-attempt-activation";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { lessonHref } from "@/features/student/lesson-navigation";
 import {
@@ -115,6 +120,8 @@ export default function StudentLessonPage() {
   const [searchParams] = useSearchParams();
   const courseId = searchParams.get("courseId") ?? undefined;
   const lessonQuery = useLessonStart(id.length > 0 ? id : undefined, courseId);
+  if (lessonQuery.error instanceof LocalAttemptSnapshotConflictError)
+    return <LocalAttemptSnapshotConflictPanel error={lessonQuery.error} />;
 
   if (lessonQuery.isPending) {
     return <StudentListSkeleton label="正在打开讲练页" />;
@@ -142,16 +149,23 @@ export default function StudentLessonPage() {
     );
   }
   const data = lessonQuery.data;
-  return data.attempt.status !== "draft" ? (
-    <LessonCompletedView data={data} courseId={courseId} lectureId={id} />
-  ) : (
-    <LessonAnswerView
-      key={data.attempt.id}
-      data={data}
-      courseId={courseId}
-      lectureId={id}
-      refetch={lessonQuery.refetch}
-    />
+  return (
+    <>
+      <LocalAttemptRecoveryNotice attemptId={data.attempt.id} />
+      <AttemptSnapshotScope attempt={data.attempt}>
+        {attemptPhaseOf(data.attempt) === "finished" ? (
+          <LessonCompletedView data={data} courseId={courseId} lectureId={id} />
+        ) : (
+          <LessonAnswerView
+            key={data.attempt.id}
+            data={data}
+            courseId={courseId}
+            lectureId={id}
+            refetch={lessonQuery.refetch}
+          />
+        )}
+      </AttemptSnapshotScope>
+    </>
   );
 }
 
@@ -588,7 +602,7 @@ function LessonAnswerInner({
     contextError,
     contextRetry,
     contextFetching,
-  } = useLessonGroupAnchors(attemptId, order);
+  } = useLessonGroupAnchors(attemptId, order, data.attempt.frozenAt);
   const questionIds = useMemo(
     () => data.questions.map((question) => question.id),
     [data.questions],
@@ -787,7 +801,7 @@ function LessonCompletedView({
     contextError,
     contextRetry,
     contextFetching,
-  } = useLessonGroupAnchors(attemptId, order);
+  } = useLessonGroupAnchors(attemptId, order, data.attempt.frozenAt);
   const capabilities = useMemo(
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],

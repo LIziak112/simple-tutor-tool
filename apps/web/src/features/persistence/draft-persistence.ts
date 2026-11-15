@@ -2,6 +2,7 @@ import type { InkDoc, StudentAnswer } from "@tutor/contract";
 import { digestOf, inkDigestOf } from "@/features/persistence/draft-merge";
 import type {
   AttemptDraftRecord,
+  LocalSnapshotBinding,
   MaterialInkBaseMeta,
 } from "@/features/persistence/draft-store";
 import { randomUuid } from "@/lib/uuid";
@@ -9,6 +10,7 @@ import { randomUuid } from "@/lib/uuid";
 type MaterialDraft = {
   ink?: InkDoc | undefined;
   base?: MaterialInkBaseMeta | undefined;
+  snapshot?: LocalSnapshotBinding | undefined;
 };
 
 export type LocalDraftConflict =
@@ -33,6 +35,7 @@ export function storedVersionOf(
         value: {
           ink: record.materialInks?.[key],
           base: record.materialInkBases?.[key],
+          snapshot: record.materialSnapshotBindings?.[key],
         },
       };
   }
@@ -51,6 +54,9 @@ export function readDraftRecord(value: unknown): AttemptDraftRecord {
     inkDigests: raw.inkDigests ?? {},
     answerRevisions: raw.answerRevisions ?? {},
     answerMutationIds: raw.answerMutationIds ?? {},
+    answerQuestionRevisions: raw.answerQuestionRevisions ?? {},
+    inkSnapshotBindings: raw.inkSnapshotBindings ?? {},
+    materialSnapshotBindings: raw.materialSnapshotBindings ?? {},
     answerConflicts: raw.answerConflicts ?? {},
     localConflicts: raw.localConflicts ?? [],
   };
@@ -93,7 +99,11 @@ function materialsOf(
       ]),
     ].map((key) => [
       key,
-      { ink: record.materialInks?.[key], base: record.materialInkBases?.[key] },
+      {
+        ink: record.materialInks?.[key],
+        base: record.materialInkBases?.[key],
+        snapshot: record.materialSnapshotBindings?.[key],
+      },
     ]),
   );
 }
@@ -178,9 +188,11 @@ export function mergePersistedDraft(
   );
   const materialInks: Record<string, InkDoc> = {};
   const materialInkBases: Record<string, MaterialInkBaseMeta> = {};
+  const materialSnapshotBindings: Record<string, LocalSnapshotBinding> = {};
   for (const [key, material] of Object.entries(materials)) {
     setEntry(materialInks, key, material.ink);
     setEntry(materialInkBases, key, material.base);
+    setEntry(materialSnapshotBindings, key, material.snapshot);
   }
   const answerMetadata = (key: string) =>
     !answerCollisions.has(key) &&
@@ -191,6 +203,7 @@ export function mergePersistedDraft(
     inks,
     materialInks,
     materialInkBases,
+    materialSnapshotBindings,
     savedAt: Math.max(stored.savedAt, pending.savedAt),
     syncedAt: Math.max(stored.syncedAt, pending.syncedAt),
     answerDigests: mergeMap(
@@ -208,6 +221,13 @@ export function mergePersistedDraft(
         (pending.inks[key]?.serverRevision ?? 0) >=
           (stored.inks[key]?.serverRevision ?? 0),
     ),
+    inkSnapshotBindings: mergeMap(
+      base.inkSnapshotBindings,
+      pending.inkSnapshotBindings,
+      stored.inkSnapshotBindings,
+      (key, binding) =>
+        !inkCollisions.has(key) && binding?.digest === inkBody(inks[key]),
+    ),
     answerRevisions: mergeMap(
       base.answerRevisions,
       pending.answerRevisions,
@@ -218,6 +238,12 @@ export function mergePersistedDraft(
       base.answerMutationIds,
       pending.answerMutationIds,
       stored.answerMutationIds,
+      (key) => !answerCollisions.has(key),
+    ),
+    answerQuestionRevisions: mergeMap(
+      base.answerQuestionRevisions,
+      pending.answerQuestionRevisions,
+      stored.answerQuestionRevisions,
       (key) => !answerCollisions.has(key),
     ),
     answerConflicts: mergeMap(
@@ -244,12 +270,14 @@ export function clearConfirmedDraft(
     delete record.answerDigests[key];
     delete record.answerRevisions?.[key];
     delete record.answerMutationIds?.[key];
+    delete record.answerQuestionRevisions?.[key];
   }
   for (const [key, doc] of Object.entries(record.inks)) {
     if (hasConflict("ink", key) || record.inkDigests[key] !== inkDigestOf(doc))
       continue;
     delete record.inks[key];
     delete record.inkDigests[key];
+    delete record.inkSnapshotBindings?.[key];
   }
   return Object.keys(record.answers).length ||
     Object.keys(record.inks).length ||
@@ -295,8 +323,14 @@ export function chooseLocalDraft(
       case "material":
         record.materialInks ??= {};
         record.materialInkBases ??= {};
+        record.materialSnapshotBindings ??= {};
         setEntry(record.materialInks, conflict.key, conflict.value?.ink);
         setEntry(record.materialInkBases, conflict.key, conflict.value?.base);
+        setEntry(
+          record.materialSnapshotBindings,
+          conflict.key,
+          conflict.value?.snapshot,
+        );
         break;
     }
   }

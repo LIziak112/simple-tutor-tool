@@ -1,6 +1,7 @@
 import type {
   AttemptContextData,
   AttemptMaterialRevisions,
+  AttemptWriteProof,
   HintOpenData,
 } from "@tutor/contract";
 export interface PracticeMaterialsPorts {
@@ -12,5 +13,6 @@ export interface PracticeMaterialsPorts {
     attemptId: string,
     questionId: string,
     index: number,
+    proof?: AttemptWriteProof,
   ): Promise<HintOpenData>;
 }

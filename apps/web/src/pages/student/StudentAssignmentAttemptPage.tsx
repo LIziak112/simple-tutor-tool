@@ -11,6 +11,9 @@ import {
   TimeLimitPicker,
   timeLimitStartOption,
 } from "@/features/attempt/TimeLimitPicker";
+import { LocalAttemptSnapshotConflictError } from "@/features/persistence/attempt-local-session";
+import { LocalAttemptSnapshotConflictPanel } from "@/features/persistence/LocalAttemptArchive";
+import { LocalAttemptRecoveryNotice } from "@/features/persistence/use-local-attempt-activation";
 import { usePortalRoutes } from "@/features/runtime/portal-runtime";
 import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
@@ -72,6 +75,14 @@ function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
   // 第 2 步：详情（draft→草稿视图 / 已交→结果视图）
   const attemptId = startAttempt.data?.id;
   const detailQuery = useAttemptDetail(attemptId);
+  const snapshotError =
+    startAttempt.error instanceof LocalAttemptSnapshotConflictError
+      ? startAttempt.error
+      : detailQuery.error instanceof LocalAttemptSnapshotConflictError
+        ? detailQuery.error
+        : null;
+  if (snapshotError)
+    return <LocalAttemptSnapshotConflictPanel error={snapshotError} />;
 
   if (assignmentId === "") {
     return (
@@ -193,6 +204,8 @@ function AssignmentAttemptEntry({ assignmentId }: { assignmentId: string }) {
 
   return (
     <>
+      {/* 卷被清除后重开：恢复结果和旧原稿的下载入口，和通用作答页、讲练页一致 */}
+      <LocalAttemptRecoveryNotice attemptId={detailQuery.data.attempt.id} />
       {detailQuery.isError && (
         <StudentRefreshWarning
           title="题目信息刷新失败"

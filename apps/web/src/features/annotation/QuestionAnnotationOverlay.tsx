@@ -15,6 +15,7 @@ import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import { attemptMaterialsEditable } from "@/features/persistence/attempt-material-recovery";
 import { prepareAnnotationForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
 import { useDraftSyncRecovery } from "@/features/persistence/use-draft-sync";
@@ -83,6 +84,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   const editor = useAttemptEditor(question.id);
   const recovery = useDraftSyncRecovery();
   const session = useAnnotationSessionRef();
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
   const record = useAnnotationRecord(attemptId, question.id, phase);
   const process = useQuestionProcessContext();
   const processRef = useRef(process);
@@ -606,6 +608,7 @@ export const QuestionAnnotationOverlay = forwardRef<
         { attemptId, questionId: question.id, phase },
         doc,
         sealedFinalization.current ? "sealed-finalization" : undefined,
+        expectedFrozenAt,
       );
       setHistory((value) => value + 1);
     });
@@ -629,6 +632,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     cloudBaseId,
     frozenReady,
     finishSurface,
+    expectedFrozenAt,
   ]);
   useEffect(() => {
     if (!mountedOnce) return;

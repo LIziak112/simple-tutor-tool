@@ -19,6 +19,8 @@ import type { lessonQuestionOrder } from "./lesson-question-order";
 export function useLessonGroupAnchors(
   attemptId: string,
   order: ReturnType<typeof lessonQuestionOrder>,
+  /** 卷的冻结时刻：同一份卷重冻后换一份上下文缓存 */
+  frozenAt?: string | null,
 ): {
   anchors: ReadonlyMap<string, GroupContextSegment>;
   soloMaterials: ReadonlyMap<string, readonly AttemptContextMaterial[]>;
@@ -26,7 +28,7 @@ export function useLessonGroupAnchors(
   contextRetry: () => void;
   contextFetching: boolean;
 } {
-  const contextQuery = useAttemptContext(attemptId);
+  const contextQuery = useAttemptContext(attemptId, frozenAt);
   const [anchors, soloMaterials] = useMemo(() => {
     if (contextQuery.data === undefined)
       return [EMPTY_ANCHORS, EMPTY_SOLO_MATERIALS] as const;

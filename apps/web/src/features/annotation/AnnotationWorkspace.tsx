@@ -24,6 +24,7 @@ import { useAttemptEditor } from "@/features/answering/AttemptEditorContext";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
+import { useAttemptSnapshotToken } from "@/features/persistence/AttemptSnapshotScope";
 import { prepareAnnotationForPwaUpdate } from "@/features/persistence/pwa-draft-safety";
 import type { ApiServices } from "@/features/runtime/ports/api-services";
 
@@ -100,6 +101,7 @@ export function AnnotationWorkspace({
 }: AnnotationWorkspaceProps) {
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, questionId, phase);
+  const expectedFrozenAt = useAttemptSnapshotToken(attemptId);
   const label = `${ariaPrefix}题干标注`;
 
   const surfaceRef = useRef<AnnotationSurface | null>(null);
@@ -198,6 +200,8 @@ export function AnnotationWorkspace({
         session,
         { attemptId, questionId, phase },
         nextDoc,
+        undefined,
+        expectedFrozenAt,
       );
       setHistoryTick((t) => t + 1);
     });
@@ -206,7 +210,16 @@ export function AnnotationWorkspace({
       surfaceRef.current = null;
       loadedDocVersion.current = null;
     };
-  }, [session, attemptId, questionId, phase, baseWidth, baseHeight, docReady]);
+  }, [
+    session,
+    attemptId,
+    questionId,
+    phase,
+    baseWidth,
+    baseHeight,
+    docReady,
+    expectedFrozenAt,
+  ]);
 
   // 工具变化 → setTool（不重建引擎）
   useEffect(() => {

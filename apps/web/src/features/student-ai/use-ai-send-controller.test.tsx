@@ -234,6 +234,9 @@ describe("useAiSendController（SAI-20 先测 6 条）", () => {
     act(() => view.result.current.prepareNew(QUESTION_A.id));
     expect(view.result.current.linkShare).toBeNull();
     expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedCreate.mock.calls[0]?.[0].questionRevisionId).toBe(
+      QUESTION_A.questionRevisionId,
+    );
     expect(mockedRevokeShare).not.toHaveBeenCalled();
   });
   it("失败后的普通重试沿用原稿，主动换新稿即使问题相同也重新采集", async () => {

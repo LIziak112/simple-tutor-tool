@@ -46,6 +46,13 @@ function renderRow(row: StudentRecordRow) {
 }
 
 describe("记录卡片进行中进度（M4-D3）", () => {
+  it("已入账的材料圈画等0题作答仍可继续，不由前端按题数隐藏", () => {
+    renderRow(
+      rowFixture({ answerProgress: { answeredCount: 0, totalCount: 3 } }),
+    );
+    expect(screen.getByRole("link", { name: /继续作答/ })).toBeVisible();
+    expect(screen.getByText("已做 0 / 3 题")).toBeInTheDocument();
+  });
   it("draft 且携带 n/N（v1 卷）显示「已提交 1/3 题」", () => {
     renderRow(
       rowFixture({ practiceSubmittedCount: 1, practiceQuestionCount: 3 }),

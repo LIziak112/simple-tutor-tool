@@ -1,10 +1,15 @@
 import type {
+  AttemptActivateData,
+  AttemptActivateRequest,
   AttemptAnswerSaveData,
   AttemptAnswerSaveRequest,
   AttemptDetailData,
   AttemptFlagData,
+  AttemptOpenedQuery,
   AttemptStartData,
+  AttemptSummary,
   AttemptWorkflowUpdateData,
+  AttemptWriteProof,
   CourseAttemptStartOptions,
   PracticeWorkflowStartOptions,
   PracticeWorkflowUpdateRequest,
@@ -13,6 +18,13 @@ import type {
   WrongPracticeScope,
 } from "@tutor/contract";
 export interface PracticePorts {
+  fetchOpenedAttemptApi(
+    query: AttemptOpenedQuery,
+  ): Promise<{ attempt: AttemptSummary | null }>;
+  activateAttemptApi(
+    attemptId: string,
+    request: AttemptActivateRequest,
+  ): Promise<AttemptActivateData>;
   startAttemptApi(
     assignmentId: string,
     options?: PracticeWorkflowStartOptions,
@@ -37,12 +49,16 @@ export interface PracticePorts {
     attemptId: string,
     questionId: string,
     answer: AttemptAnswerSaveRequest["answer"],
-    sync?: Pick<AttemptAnswerSaveRequest, "baseRevision" | "mutationId">,
+    sync?: Pick<
+      AttemptAnswerSaveRequest,
+      "baseRevision" | "mutationId" | "questionRevisionId" | "expectedFrozenAt"
+    >,
   ): Promise<AttemptAnswerSaveData>;
   setStudentFlagApi(
     attemptId: string,
     questionId: string,
     flag: StudentFlag | null,
+    proof?: AttemptWriteProof,
   ): Promise<AttemptFlagData>;
   fetchAttemptApi(
     attemptId: string,

@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useLearningContextSnapshot } from "@/features/learning-context/learning-context-store";
+import { useAttemptOpened } from "@/features/persistence/AttemptSnapshotScope";
 import {
   usePortalClients,
   usePortalRoutes,
@@ -45,13 +46,13 @@ import {
   studentModeReasonText,
   useAiSendController,
 } from "@/features/student-ai/use-ai-send-controller";
-
 import {
   AiReadingMemoryContext,
   useAiReadingMemory,
 } from "./AiReadingWorkspace";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useAiDisplayPreference } from "./ai-display-preference-store";
+import { aiSettingsReturnSource } from "./ai-settings-return";
 
 /**
  * SAI-22 伴学栏共享装配（B12 执行步骤 1）：布局控制器 + 发送控制器 + 会话
@@ -258,17 +259,18 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
 
   const materials = host.materials ?? DEFAULT_AI_MATERIALS;
   const conversation = useAiConversationController(send, controller.open);
-  const returnParams = new URLSearchParams(location.search);
-  for (const key of ["aiTask", "aiQuestion", "aiCompose"])
-    returnParams.delete(key);
-  if (boundQuestionId !== null) {
-    if (conversation.expandedId !== null) {
-      returnParams.set("aiTask", conversation.expandedId);
-      returnParams.set("aiQuestion", boundQuestionId);
-    } else returnParams.set("aiCompose", boundQuestionId);
-  }
+  // 卷还没动过笔时，从 AI 设置回的是这份卷而不是作业页（见 aiSettingsReturnSource）
+  const attemptOpened = useAttemptOpened(attemptId);
+  const settingsSource = aiSettingsReturnSource(
+    routes,
+    location,
+    attemptId,
+    boundQuestionId,
+    conversation.expandedId,
+    attemptOpened,
+  );
   const settingsHref = routes.learning(
-    `settings/ai?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}`,
+    `settings/ai?from=${encodeURIComponent(settingsSource)}`,
   );
   const openComposeRef = useRef(async (_questionId: string) => false);
   openComposeRef.current = async (questionId: string) => {
@@ -657,7 +659,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
             .then(() => {
               void navigate(
                 routes.learning(
-                  `settings?from=${encodeURIComponent(`${location.pathname}${returnParams.size ? `?${returnParams}` : ""}`)}#ai-display`,
+                  `settings?from=${encodeURIComponent(settingsSource)}#ai-display`,
                 ),
               );
             })
