@@ -20,7 +20,10 @@ import {
   freezeInputsOfNewAttempt,
   insertFrozenResponses,
 } from "./attempt-freeze.ts";
-import { refreshOpenedAttempt } from "./attempt-opened-refresh.ts";
+import {
+  type AttemptStartClient,
+  refreshOpenedAttempt,
+} from "./attempt-opened-refresh.ts";
 import { withAllowRedo } from "./attempt-redo-policy";
 import { attemptSummaryOf } from "./attempt-summary.ts";
 import { timedColumnsOf } from "./attempt-timing.ts";
@@ -75,8 +78,9 @@ function resumeDraftAttempt(
   db: Db,
   draft: Attempt,
   options: Pick<AttemptWorkflowStartOptions, "timeLimitMinutes">,
+  client: AttemptStartClient,
 ): Attempt {
-  const attempt = refreshOpenedAttempt(db, draft);
+  const attempt = refreshOpenedAttempt(db, draft, client);
   if (
     options.timeLimitMinutes === undefined ||
     attemptPhaseOf(attempt) !== "opened"
@@ -126,6 +130,7 @@ export function startAttempt(
   studentId: string,
   assignmentId: string,
   options: AttemptWorkflowStartOptions = {},
+  client: AttemptStartClient = {},
 ): AttemptStartData {
   const assignment = requireAssignmentVisible(db, studentId, assignmentId);
 
@@ -147,7 +152,7 @@ export function startAttempt(
   const draft = existing.find((row) => row.status === "draft");
   if (draft !== undefined) {
     return withAllowRedo(
-      attemptSummaryOf(resumeDraftAttempt(db, draft, options)),
+      attemptSummaryOf(resumeDraftAttempt(db, draft, options, client)),
       assignment.allowRedo,
     );
   }
@@ -178,7 +183,7 @@ export function startAttempt(
       const inFlight = rows.find((row) => row.status === "draft");
       if (inFlight !== undefined) {
         return withAllowRedo(
-          attemptSummaryOf(resumeDraftAttempt(db, inFlight, options)),
+          attemptSummaryOf(resumeDraftAttempt(db, inFlight, options, client)),
           assignment.allowRedo,
         );
       }
@@ -298,6 +303,7 @@ export function startCourseAttempt(
   courseId: string,
   unitId: string,
   options: CourseAttemptStartOptions = {},
+  client: AttemptStartClient = {},
 ): AttemptStartData {
   requireVisibleCourseUnit(db, studentId, courseId, unitId);
 
@@ -330,7 +336,7 @@ export function startCourseAttempt(
         .where(eq(attempts.id, draft.id))
         .run();
     } else if (draft !== undefined) {
-      return attemptSummaryOf(resumeDraftAttempt(db, draft, options));
+      return attemptSummaryOf(resumeDraftAttempt(db, draft, options, client));
     }
 
     const maxAttemptNo = existing.reduce(

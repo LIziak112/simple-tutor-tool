@@ -53,6 +53,22 @@ it("ACT08 无固定墙钟的首次交卷回执与详情同一激活事实，前�
   }
 });
 
+it("逐题提交把卷激活时，回执里的卷摘要是激活后的那份，与详情一致", () => {
+  const env = timingFixture();
+  expect(current(env)?.activatedAt).toBeNull();
+  // 第一个动作就是逐题提交第 1 题（不是最后一题，不触发整卷收尾）
+  const receipt = env.submit("q1", 30);
+  if (!("attempt" in receipt)) throw new Error("应为逐题提交回执");
+  expect(receipt.attempt).toMatchObject({
+    status: "draft",
+    phase: "active",
+    activatedAt: at(30),
+  });
+  expect(receipt.attempt).toEqual(
+    getAttemptDetail(env.db, env.studentId, env.attemptId).attempt,
+  );
+});
+
 it.each(["ink", "note", "annotation"] as const)(
   "%s 首次空白正文同步不属于实质动作",
   (kind) => {
