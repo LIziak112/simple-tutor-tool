@@ -1,11 +1,5 @@
+import { countPoints } from "./note-points";
 import type { NoteLocalRecord } from "./note-store";
-
-/** 全稿点数求和（revive/减笔冷路径；追加笔走增量不经过这里） */
-export function countPoints(strokes: readonly { points: unknown[] }[]): number {
-  let total = 0;
-  for (const stroke of strokes) total += stroke.points.length;
-  return total;
-}
 
 export function freshRecord(): NoteLocalRecord {
   return {
