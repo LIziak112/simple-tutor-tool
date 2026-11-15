@@ -15,6 +15,10 @@ import { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { memoryKVBackend } from "@/lib/kv-backend";
 import { act, render } from "@/test/render-with-portal";
+import {
+  resumeFocusAfterFailedSubmit,
+  settleEventsBeforeSubmit,
+} from "./submit-event-settle";
 import { useAttemptEvents } from "./use-attempt-events";
 
 /**
@@ -58,6 +62,8 @@ interface HarnessApi {
   trackInkFullscreen(questionId: string, on: boolean): void;
   trackHintUnlock(questionId: string, index: number): void;
   finalizeSubmit(): Promise<void>;
+  settleQuestionSubmit(questionIds: readonly string[]): Promise<void>;
+  resumeQuestionFocus(): void;
   noteInteraction(questionId: string): void;
   trackAnswerChange(questionId: string, answer: StudentAnswer): void;
 }
@@ -214,6 +220,184 @@ describe("useAttemptEvents：ink_fullscreen / hint 解锁（T4.0b）", () => {
       action: "open",
     });
     unmount();
+  });
+});
+
+// ---------- 题级提交前收口：服务端提交时封存用时，只算已收到的事件 ----------
+
+describe("useAttemptEvents：题级提交前收口（逐题 / 讲练单题 / 分批）", () => {
+  /** 已出网事件里与聚焦有关的那几种，按出网顺序 */
+  const focusTrail = (events: PostedEvent[]) =>
+    events
+      .filter((e) =>
+        ["question_focus", "question_blur", "answer_change"].includes(
+          String(e.type),
+        ),
+      )
+      .map((e) => `${String(e.type)}:${String(e.questionId)}`);
+
+  it("聚焦题在这批里：结束它的聚焦，返回前事件已经出网", async () => {
+    const { api, unmount } = renderHook("att-settle-1");
+    api.noteInteraction("q1");
+    api.trackAnswerChange("q1", { kind: "judge", value: true });
+    api.trackInkEdit("q1", "undo");
+    expect(mockedPost).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await api.settleQuestionSubmit(["q1"]);
+    });
+    // 不等 5 秒定时器：settleQuestionSubmit 返回时这一批已经发出
+    const events = mockedPost.mock.calls.flatMap(
+      (call) => call[1] as unknown as PostedEvent[],
+    );
+    expect(focusTrail(events)).toEqual([
+      "question_focus:q1",
+      "answer_change:q1",
+      "question_blur:q1",
+    ]);
+    // 未到期的手写编辑批次一并冲出
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "ink_edit_batch", questionId: "q1" }),
+    );
+    unmount();
+    // 聚焦已经结束：卸载不再补第二条 blur
+    expect(
+      focusTrail(await flushedEvents()).filter(
+        (item) => item === "question_blur:q1",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("聚焦题不在这批里：它的聚焦不动，事件照样出网", async () => {
+    const { api, unmount } = renderHook("att-settle-2");
+    api.noteInteraction("q2");
+    await act(async () => {
+      await api.settleQuestionSubmit(["q1"]);
+    });
+    expect(focusTrail(await flushedEvents())).toEqual(["question_focus:q2"]);
+    // q2 仍是聚焦题：再交互不重复报 focus，切题时才补它的 blur
+    api.noteInteraction("q2");
+    api.noteInteraction("q3");
+    await act(async () => {
+      await api.finalizeSubmit();
+    });
+    expect(focusTrail(await flushedEvents())).toEqual([
+      "question_focus:q2",
+      "question_blur:q2",
+      "question_focus:q3",
+      "question_blur:q3",
+    ]);
+    unmount();
+  });
+
+  it("提交成了：之后再在这道题上交互，照常重新聚焦", async () => {
+    const { api, unmount } = renderHook("att-settle-3");
+    api.noteInteraction("q1");
+    await act(async () => {
+      await api.settleQuestionSubmit(["q1"]);
+    });
+    api.noteInteraction("q1");
+    await act(async () => {
+      await api.finalizeSubmit();
+    });
+    expect(focusTrail(await flushedEvents())).toEqual([
+      "question_focus:q1",
+      "question_blur:q1",
+      "question_focus:q1",
+      "question_blur:q1",
+    ]);
+    unmount();
+  });
+
+  it("提交没成：resumeQuestionFocus 把聚焦接回同一道题，只接一次", async () => {
+    const { api, unmount } = renderHook("att-settle-4");
+    api.noteInteraction("q1");
+    await act(async () => {
+      await api.settleQuestionSubmit(["q1"]);
+    });
+    api.resumeQuestionFocus();
+    api.resumeQuestionFocus();
+    await act(async () => {
+      await api.finalizeSubmit();
+    });
+    expect(focusTrail(await flushedEvents())).toEqual([
+      "question_focus:q1",
+      "question_blur:q1",
+      "question_focus:q1",
+      "question_blur:q1",
+    ]);
+    unmount();
+  });
+
+  it("提交没成但学生已经去了别的题：不把聚焦抢回来", async () => {
+    const { api, unmount } = renderHook("att-settle-5");
+    api.noteInteraction("q1");
+    await act(async () => {
+      await api.settleQuestionSubmit(["q1"]);
+    });
+    api.noteInteraction("q2");
+    api.resumeQuestionFocus();
+    await act(async () => {
+      await api.finalizeSubmit();
+    });
+    expect(focusTrail(await flushedEvents())).toEqual([
+      "question_focus:q1",
+      "question_blur:q1",
+      "question_focus:q2",
+      "question_blur:q2",
+    ]);
+    unmount();
+  });
+
+  it("没有结束过聚焦（聚焦题不在批里）：resumeQuestionFocus 什么都不做", async () => {
+    const { api, unmount } = renderHook("att-settle-6");
+    api.noteInteraction("q2");
+    await act(async () => {
+      await api.settleQuestionSubmit(["q1"]);
+    });
+    api.resumeQuestionFocus();
+    await act(async () => {
+      await api.finalizeSubmit();
+    });
+    expect(focusTrail(await flushedEvents())).toEqual([
+      "question_focus:q2",
+      "question_blur:q2",
+    ]);
+    unmount();
+  });
+
+  it("按卷登记：各提交路径经 submit-event-settle 调到本卷的收口；卸载后撤销", async () => {
+    const { api, unmount } = renderHook("att-settle-7");
+    api.noteInteraction("q1");
+    await act(async () => {
+      await settleEventsBeforeSubmit("att-settle-7", ["q1"]);
+    });
+    expect(focusTrail(await flushedEvents())).toEqual([
+      "question_focus:q1",
+      "question_blur:q1",
+    ]);
+    // 提交没成 → 经登记表接回聚焦
+    resumeFocusAfterFailedSubmit("att-settle-7");
+    // 别的卷号调不到这里
+    await act(async () => {
+      await settleEventsBeforeSubmit("att-other", ["q1"]);
+    });
+    await act(async () => {
+      await api.finalizeSubmit();
+    });
+    expect(focusTrail(await flushedEvents())).toEqual([
+      "question_focus:q1",
+      "question_blur:q1",
+      "question_focus:q1",
+      "question_blur:q1",
+    ]);
+    unmount();
+    mockedPost.mockClear();
+    await act(async () => {
+      await settleEventsBeforeSubmit("att-settle-7", ["q1"]);
+    });
+    resumeFocusAfterFailedSubmit("att-settle-7");
+    expect(mockedPost).not.toHaveBeenCalled();
   });
 });
 

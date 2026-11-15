@@ -68,6 +68,95 @@ it.each(["wrong", "lesson"] as const)(
     expect(() => e.db.delete(attemptTimeSpans).run()).toThrow(/immutable/);
   },
 );
+it("提交前没送到的事件不计入：只收到focus封存为0秒，迟到的blur不改账", () => {
+  // 所以网页端每条提交路径都先送事件再发提交：docs/约定/封存题内活动用时.md
+  const e = timingFixture();
+  const q1 = e.row("q1").id;
+  const ledgerOf = (responseId: string) =>
+    e.db
+      .select()
+      .from(responseTimeLedger)
+      .all()
+      .find((r) => r.responseId === responseId);
+  appendAttemptEvents(
+    e.db,
+    e.studentId,
+    e.attemptId,
+    [{ type: "question_focus", questionId: "q1", clientTs: 1000 }],
+    "v1",
+  );
+  e.submit("q1", 12);
+  const sealed = ledgerOf(q1);
+  expect(sealed).toMatchObject({
+    state: "available",
+    activeSec: 0,
+    observedSec: 0,
+  });
+  appendAttemptEvents(
+    e.db,
+    e.studentId,
+    e.attemptId,
+    [{ type: "question_blur", questionId: "q1", clientTs: 11000 }],
+    "v1",
+  );
+  e.submit("q2", 20);
+  expect(ledgerOf(q1)).toEqual(sealed);
+});
+it("提交时收口聚焦，之后回看已封存的题不改它的账，也不占下一题的时间", () => {
+  const e = timingFixture();
+  const ledgerOf = (questionId: string) =>
+    e.db
+      .select()
+      .from(responseTimeLedger)
+      .all()
+      .find((r) => r.responseId === e.row(questionId).id);
+  // q1 作答 10 秒，提交前 blur 已送到
+  appendAttemptEvents(
+    e.db,
+    e.studentId,
+    e.attemptId,
+    [
+      { type: "question_focus", questionId: "q1", clientTs: 1000 },
+      { type: "answer_change", questionId: "q1", clientTs: 9000 },
+      { type: "question_blur", questionId: "q1", clientTs: 11000 },
+    ],
+    "v1",
+  );
+  e.submit("q1", 12);
+  const sealed = ledgerOf("q1");
+  expect(sealed).toMatchObject({ state: "available", activeSec: 10 });
+  // 提交后留在 q1 看反馈 8 秒，再去做 q2 10 秒
+  appendAttemptEvents(
+    e.db,
+    e.studentId,
+    e.attemptId,
+    [
+      { type: "question_focus", questionId: "q1", clientTs: 12000 },
+      { type: "question_blur", questionId: "q1", clientTs: 20000 },
+      { type: "question_focus", questionId: "q2", clientTs: 20000 },
+      { type: "answer_change", questionId: "q2", clientTs: 25000 },
+      { type: "question_blur", questionId: "q2", clientTs: 30000 },
+    ],
+    "v1",
+  );
+  e.submit("q2", 31);
+  expect(ledgerOf("q1")).toEqual(sealed);
+  expect(ledgerOf("q2")).toMatchObject({ state: "available", activeSec: 10 });
+  expect(attemptTimeOf(e.db, e.attemptId)).toMatchObject({
+    activeSec: 20,
+    unknownCount: 0,
+  });
+  expect(
+    e.db
+      .select()
+      .from(attemptTimeSpans)
+      .all()
+      .map((r) => [r.kind, r.start, r.end]),
+  ).toEqual([
+    ["active", 1000, 11000],
+    ["active", 20000, 30000],
+  ]);
+});
 it("重复delivery不新增receipt，异常事务零封存", () => {
   const e = timingFixture();
   const row = e.row("q1");

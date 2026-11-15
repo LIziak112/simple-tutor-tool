@@ -16,6 +16,7 @@ import {
 import type { QuestionProcessRecorder } from "@/features/question-process/recorder";
 import { usePortalClients } from "@/features/runtime/portal-runtime";
 import type { EventQueueApi } from "@/lib/event-queue-core";
+import { registerSubmitEventSettler } from "./submit-event-settle";
 
 /**
  * 答题页学习痕迹埋点（T2.10，§5.5；T4.0b 交互/手写增强）：
@@ -45,8 +46,13 @@ import type { EventQueueApi } from "@/lib/event-queue-core";
  *     attempt 的 baseRevision 前进（一次成功同步）报一条，把草稿链对齐到
  *     事件时间轴；首次观察到某键只记基线——打开旧页 head 回读不算同步；
  * - page_hidden / page_visible：事件队列内部自动注入（attempt scope）；
- * - submit：finalizeSubmit 在 POST submit 前补 blur + submit 事件并 flush，
- *   确保服务端交卷计算时事件序列已入库（flush 失败不阻塞交卷，宽松口径兜底）。
+ * - 整卷交卷：finalizeSubmit 在 POST submit 前补 blur 并 flush，交卷流程限时
+ *   等它（flush 失败或超时不阻塞交卷）。
+ * - 题级提交（逐题、讲练单题、分批）：settleQuestionSubmit 在发提交请求前结束
+ *   这些题里的当前聚焦并 flush；按卷登记到 submit-event-settle，由各提交路径
+ *   限时调用；提交没成由 resumeQuestionFocus 把聚焦接回去。
+ *   服务端提交时封存用时，只算已收到的事件，所以提交要排在事件后面
+ *   （docs/约定/封存题内活动用时.md「提交前先送事件」）。
  *
  * 前端不计算任何汇总值（activeSec 由服务端按原始事件计算，§5.5）。
  */
@@ -127,6 +133,13 @@ export interface AttemptEventsApi {
   syncProcessFocus(): void;
   /** 交卷前收尾：结束当前聚焦并补传已有事件。 */
   finalizeSubmit(): Promise<void>;
+  /**
+   * 题级提交前收尾（逐题、讲练单题、分批）：当前聚焦题在这批里就结束它的聚焦，
+   * 并补传已有事件。不在这批里的聚焦题不动，它的计时接着走。
+   */
+  settleQuestionSubmit(questionIds: readonly string[]): Promise<void>;
+  /** 题级提交没成：把 settleQuestionSubmit 结束的那次聚焦接回去。 */
+  resumeQuestionFocus(): void;
   /** 收到交卷回执后在单题过程追加收尾标记。 */
   confirmSubmit(): void;
 }
@@ -522,6 +535,48 @@ export function useAttemptEvents(
     }
   }, [flushInkEdits]);
 
+  /** settleQuestionSubmit 结束的那次聚焦（提交没成时由 resumeQuestionFocus 接回） */
+  const settledFocusRef = useRef<string | null>(null);
+  const settleQuestionSubmit = useCallback(
+    async (questionIds: readonly string[]) => {
+      const queue = queueRef.current;
+      if (queue === null) return;
+      const focused = focusedRef.current;
+      settledFocusRef.current = null;
+      if (focused !== null && questionIds.includes(focused)) {
+        // 本题到此为止：之后再有交互或滚动，照常重新聚焦
+        queue.track({
+          type: "question_blur",
+          clientTs: Date.now(),
+          questionId: focused,
+        });
+        focusedRef.current = null;
+        settledFocusRef.current = focused;
+      }
+      flushInkEdits();
+      if (inkEditTimerRef.current !== null) {
+        clearTimeout(inkEditTimerRef.current);
+        inkEditTimerRef.current = null;
+      }
+      await queue.flush();
+    },
+    [flushInkEdits],
+  );
+  const resumeQuestionFocus = useCallback(() => {
+    const questionId = settledFocusRef.current;
+    settledFocusRef.current = null;
+    // 这期间学生已经聚焦到某道题（交互或滚动）就不动
+    if (questionId !== null && focusedRef.current === null) focusTo(questionId);
+  }, [focusTo]);
+  useEffect(
+    () =>
+      registerSubmitEventSettler(attemptId, {
+        settle: settleQuestionSubmit,
+        resume: resumeQuestionFocus,
+      }),
+    [attemptId, settleQuestionSubmit, resumeQuestionFocus],
+  );
+
   const confirmSubmit = useCallback(() => {
     const recorder = process?.current;
     if (recorder?.options.attemptId !== attemptId) return;
@@ -544,6 +599,8 @@ export function useAttemptEvents(
       registerCard,
       syncProcessFocus,
       finalizeSubmit,
+      settleQuestionSubmit,
+      resumeQuestionFocus,
       confirmSubmit,
     }),
     [
@@ -556,6 +613,8 @@ export function useAttemptEvents(
       registerCard,
       syncProcessFocus,
       finalizeSubmit,
+      settleQuestionSubmit,
+      resumeQuestionFocus,
       confirmSubmit,
     ],
   );

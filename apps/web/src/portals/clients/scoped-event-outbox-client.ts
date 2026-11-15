@@ -51,7 +51,10 @@ export function createScopedEventOutboxClient(http: HttpRuntime) {
     // 每次落盘建新键；其他标签页删已确认的旧键时不会擦掉本页新增的事件。
     const inMemory = new Map<string, OutboxEntry>();
     let staging = Promise.resolve();
-    let draining = false;
+    /** 在途的一轮发送；等它的人拿到的是「自己落盘的事件已经送过一轮」。 */
+    let draining: Promise<void> | null = null;
+    /** 在途这一轮取快照之后又有人落盘：结束后紧接着再跑一轮。 */
+    let rerun = false;
     let denied = false;
 
     const envelope = (entry: OutboxEntry) => {
@@ -93,62 +96,79 @@ export function createScopedEventOutboxClient(http: HttpRuntime) {
       return entry.eventIds.every((id) => acknowledged.has(id));
     }
 
-    async function drain(): Promise<void> {
-      if (draining || denied || !isCurrent() || !navigator.onLine) return;
-      draining = true;
-      try {
-        const backend = store();
-        const entries = new Map(inMemory);
+    /**
+     * 同一时刻只跑一轮。在途的一轮在开头取过快照，之后才落盘的事件不在其中；
+     * 这时不另起并发的一轮，而是记一笔、让在途的那轮结束后接着再跑，并把同一个
+     * promise 交给调用方——提交前等 flush 的人据此确信自己的事件已经送过一轮。
+     */
+    function drain(): Promise<void> {
+      if (draining !== null) {
+        rerun = true;
+        return draining;
+      }
+      draining = (async () => {
         try {
-          for (const key of await backend.keys(prefix)) {
-            const value = (await backend.get(key)) as OutboxEntry | undefined;
-            if (value?.events && value.eventIds?.length === value.events.length)
-              entries.set(key, value);
-          }
-        } catch (error) {
-          console.warn("事件离线仓读取失败（保留积压）", error);
+          do {
+            rerun = false;
+            await drainOnce();
+          } while (rerun);
+        } finally {
+          draining = null;
         }
-        for (const [key, entry] of entries) {
-          if (!isCurrent()) break;
-          try {
-            if (document.visibilityState === "hidden" && !inMemory.has(key)) {
-              if (beacon) beacon(entry.events, entry.viewId);
-              else if (beacon === undefined)
-                navigator.sendBeacon?.(
-                  path,
-                  new Blob([JSON.stringify(envelope(entry))], {
-                    type: "application/json",
-                  }),
-                );
-              continue;
-            }
-            if (!(await acknowledge(entry))) continue;
-          } catch (error) {
-            if (
-              error instanceof ApiError &&
-              ((error.status === 403 &&
-                error.code !== "EVENT_ACCOUNT_CHANGED") ||
-                error.code === "EVENT_TARGET_UNAVAILABLE" ||
-                error.code === "ATTEMPT_ABANDONED")
-            ) {
-              // 键只属于当前账号和当前练习/讲义，其他范围仍可补发。
-              denied = true;
-              for (const pendingKey of entries.keys()) {
-                inMemory.delete(pendingKey);
-                await backend.del(pendingKey).catch(() => undefined);
-              }
-              break;
-            }
-            console.warn("事件批量上报失败（已留待重发）", error);
+      })();
+      return draining;
+    }
+
+    async function drainOnce(): Promise<void> {
+      if (denied || !isCurrent() || !navigator.onLine) return;
+      const backend = store();
+      const entries = new Map(inMemory);
+      try {
+        for (const key of await backend.keys(prefix)) {
+          const value = (await backend.get(key)) as OutboxEntry | undefined;
+          if (value?.events && value.eventIds?.length === value.events.length)
+            entries.set(key, value);
+        }
+      } catch (error) {
+        console.warn("事件离线仓读取失败（保留积压）", error);
+      }
+      for (const [key, entry] of entries) {
+        if (!isCurrent()) break;
+        try {
+          if (document.visibilityState === "hidden" && !inMemory.has(key)) {
+            if (beacon) beacon(entry.events, entry.viewId);
+            else if (beacon === undefined)
+              navigator.sendBeacon?.(
+                path,
+                new Blob([JSON.stringify(envelope(entry))], {
+                  type: "application/json",
+                }),
+              );
             continue;
           }
-          inMemory.delete(key);
-          await backend
-            .del(key)
-            .catch((error) => console.warn("清除已确认事件失败", error));
+          if (!(await acknowledge(entry))) continue;
+        } catch (error) {
+          if (
+            error instanceof ApiError &&
+            ((error.status === 403 && error.code !== "EVENT_ACCOUNT_CHANGED") ||
+              error.code === "EVENT_TARGET_UNAVAILABLE" ||
+              error.code === "ATTEMPT_ABANDONED")
+          ) {
+            // 键只属于当前账号和当前练习/讲义，其他范围仍可补发。
+            denied = true;
+            for (const pendingKey of entries.keys()) {
+              inMemory.delete(pendingKey);
+              await backend.del(pendingKey).catch(() => undefined);
+            }
+            break;
+          }
+          console.warn("事件批量上报失败（已留待重发）", error);
+          continue;
         }
-      } finally {
-        draining = false;
+        inMemory.delete(key);
+        await backend
+          .del(key)
+          .catch((error) => console.warn("清除已确认事件失败", error));
       }
     }
 

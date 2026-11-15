@@ -9,6 +9,10 @@ import type {
 import { attemptSubmissionConflictSchema } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { questionRevisionMap } from "@/features/attempt/attempt-question-view";
+import {
+  resumeFocusAfterFailedSubmit,
+  settleEventsBeforeSubmit,
+} from "@/features/attempt/submit-event-settle";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptSaveStatus } from "@/features/attempt/use-attempt-save-status";
@@ -301,10 +305,17 @@ export function useLessonAttempt(
       if (prep.declarations === null) {
         return { kind: "problems", problems: prep.problems };
       }
+      // 提交前收口过聚焦、而这道题最后没交成：学生还在题上，把聚焦接回去
+      let focusSettled = false;
+      let submitted = false;
       try {
         const record = await draftStore.loadDraft(attemptId, {
           strictRead: true,
         });
+        if (!sameSession()) return sessionChanged;
+        // 服务端在提交这一刻封存本题用时，只算已收到的事件：先收口聚焦、送出事件
+        focusSettled = true;
+        await settleEventsBeforeSubmit(attemptId, [questionId]);
         if (!sameSession()) return sessionChanged;
         const result = await submitLessonQuestionApi(attemptId, questionId, {
           questionRevisionId: question.questionRevisionId,
@@ -314,6 +325,7 @@ export function useLessonAttempt(
             0,
           evidence: prep.declarations[0],
         });
+        submitted = true;
         if (!sameSession()) return sessionChanged;
         setOverlay((prev) => ({
           released: {
@@ -334,6 +346,7 @@ export function useLessonAttempt(
         if (isAlreadySubmittedError(err)) {
           // 已提交过（旧响应迟到/他端已交）：静默收敛——重新拉 start，
           // 题卡随 released 转结果态，不弹错误
+          submitted = true;
           void refetch();
           return { kind: "submitted" };
         }
@@ -360,6 +373,8 @@ export function useLessonAttempt(
           kind: "error",
           message: requestErrorMessage(err, "提交失败，请稍后重试"),
         };
+      } finally {
+        if (focusSettled && !submitted) resumeFocusAfterFailedSubmit(attemptId);
       }
     },
     [

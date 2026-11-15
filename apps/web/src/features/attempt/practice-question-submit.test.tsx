@@ -30,6 +30,7 @@ import {
   fetchAttemptApi,
   fetchPracticeQuestionFeedbackApi,
   fetchStudentNoteHeadsApi,
+  postAttemptEventsApi,
   saveAttemptAnswerApi,
   submitAttemptApi,
   submitPracticeQuestionApi,
@@ -49,6 +50,7 @@ import {
   savePracticePreference,
 } from "./practice-preference-store";
 import { workflowOf } from "./practice-test-fixtures";
+import { SUBMIT_EVENT_SETTLE_TIMEOUT_MS } from "./submit-event-settle";
 
 /**
  * 逐题提交交互闭环（M3-D2，§7.2/§8/§9.1/§11）：v1 新协议卷的主操作状态机——
@@ -95,6 +97,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const mockedFetch = vi.mocked(fetchAttemptApi);
 const mockedSubmit = vi.mocked(submitPracticeQuestionApi);
 const mockedFeedbackGet = vi.mocked(fetchPracticeQuestionFeedbackApi);
+const mockedEvents = vi.mocked(postAttemptEventsApi);
 
 const ATTEMPT_ID = "66666666-6666-4666-8666-666666666666";
 const UUID_RE =
@@ -294,6 +297,9 @@ beforeEach(() => {
   mockedFetch.mockReset();
   mockedSubmit.mockReset();
   mockedFeedbackGet.mockReset();
+  // 个别用例会让学情请求挂起：每个用例从「立即成功」开始
+  mockedEvents.mockReset();
+  mockedEvents.mockImplementation(async () => ({ accepted: 1 }));
   vi.mocked(submitAttemptApi).mockReset();
   mockedSubmit.mockResolvedValue(submitReceipt({}));
   mockedFeedbackGet.mockResolvedValue({
@@ -620,6 +626,94 @@ it("网络失败后重试复用同一 mutationId，成功后收敛", async () =>
   const second = mockedSubmit.mock.calls[1]?.[2]?.submissionMutationId;
   expect(first).toMatch(UUID_RE);
   expect(second).toBe(first);
+});
+
+// ---------- 提交前先送事件：服务端提交时封存本题用时，只算已收到的事件 ----------
+
+type PostedEvent = { type: string; questionId?: string };
+
+/** 已出网的学情事件里与聚焦有关的那几条，按出网顺序 */
+const focusTrail = () =>
+  mockedEvents.mock.calls
+    .flatMap((call) => call[1] as unknown as PostedEvent[])
+    .filter((e) => e.type === "question_focus" || e.type === "question_blur")
+    .map((e) => `${e.type}:${e.questionId}`);
+
+/** 带着本题 blur 的那一批事件卡在网络上；返回放行函数 */
+function holdBlurBatch(): () => void {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  mockedEvents.mockImplementation(async (_attemptId, events) => {
+    if ((events as unknown as PostedEvent[]).some(isBlur)) await held;
+    return { accepted: 1 };
+  });
+  return release;
+}
+const isBlur = (event: PostedEvent) => event.type === "question_blur";
+
+it("提交本题：先结束本题聚焦、把事件送到服务端，再发提交请求", async () => {
+  await renderSingle(baseDraft());
+  mockedEvents.mockClear();
+  const release = holdBlurBatch();
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
+  await waitFor(() =>
+    expect(focusTrail()).toEqual(["question_focus:q1", "question_blur:q1"]),
+  );
+  // 事件还在路上：提交请求不抢跑
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+  expect(mockedSubmit).not.toHaveBeenCalled();
+  release();
+  // 事件一到就发提交，不等满上限
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1), {
+    timeout: SUBMIT_EVENT_SETTLE_TIMEOUT_MS / 2,
+  });
+  await screen.findByText("回答正确");
+  // 交成了：聚焦到此为止，不再接回
+  expect(focusTrail()).toEqual(["question_focus:q1", "question_blur:q1"]);
+});
+
+it("学情请求挂起也不拦提交本题：等满上限后照常提交", {
+  timeout: 15_000,
+}, async () => {
+  await renderSingle(baseDraft());
+  mockedEvents.mockClear();
+  holdBlurBatch();
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
+  await waitFor(() => expect(focusTrail()).toContain("question_blur:q1"));
+  expect(mockedSubmit).not.toHaveBeenCalled();
+  await screen.findByText(
+    "回答正确",
+    {},
+    { timeout: SUBMIT_EVENT_SETTLE_TIMEOUT_MS + 5_000 },
+  );
+  expect(mockedSubmit).toHaveBeenCalledTimes(1);
+});
+
+it("提交本题没成：聚焦接回本题，重试时再收口一次", async () => {
+  mockedSubmit
+    .mockImplementationOnce(() => Promise.reject(new Error("网络异常")))
+    .mockImplementationOnce(async () => submitReceipt({}));
+  await renderSingle(baseDraft());
+  mockedEvents.mockClear();
+  fireEvent.click(screen.getByRole("radio", { name: "对" }));
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
+  await screen.findByText("网络异常");
+  fireEvent.click(screen.getByRole("button", { name: /^提交$/ }));
+  await screen.findByText("回答正确");
+  await waitFor(() =>
+    expect(focusTrail()).toEqual([
+      "question_focus:q1",
+      "question_blur:q1",
+      "question_focus:q1",
+      "question_blur:q1",
+    ]),
+  );
 });
 
 it("最后一题收尾：不自动重发详情查询，主动作换查看本次结果", async () => {

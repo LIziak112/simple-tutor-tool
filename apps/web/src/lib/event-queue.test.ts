@@ -200,6 +200,62 @@ it("正式回执缺失或只确认部分事件时保留原批次与标识，全�
   }
 });
 
+it("上一轮发送在途时又有事件入队：这次 flush 等到新事件也送出才返回（提交前收口靠它）", async () => {
+  installEventStore(memoryStore());
+  const posted: string[][] = [];
+  let releaseFirst: () => void = () => undefined;
+  const firstHeld = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const fetchMock = vi.fn(
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(_url).endsWith("/devices/register"))
+        return Response.json({ ok: true, data: {} });
+      const body = JSON.parse(String(init?.body)) as {
+        events: Array<{ type: string }>;
+        delivery: { eventIds: string[] };
+      };
+      posted.push(body.events.map((event) => event.type));
+      // 第一批（定时发送那一轮）卡在网络上
+      if (posted.length === 1) await firstHeld;
+      const ids = body.delivery.eventIds;
+      return Response.json({
+        ok: true,
+        data: { accepted: ids.length, acknowledgedIds: ids },
+      });
+    },
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    const queue = makeQueue({
+      owner: {
+        origin: "https://tutor.example",
+        studentId: "f8300f08-2b02-4e26-9025-934cf83aed9e",
+      },
+    });
+    queue.track(ev("question_focus", { questionId: "q1" }));
+    const timed = queue.flush();
+    await vi.waitFor(() => expect(posted).toHaveLength(1));
+
+    // 提交前收口：补一条 blur 再 flush——上一轮取快照时它还不存在
+    queue.track(ev("question_blur", { questionId: "q1" }));
+    let settled = false;
+    const beforeSubmit = queue.flush().then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    expect(posted).toEqual([["question_focus"]]);
+
+    releaseFirst();
+    await beforeSubmit;
+    expect(posted).toEqual([["question_focus"], ["question_blur"]]);
+    await timed;
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 afterEach(() => {
   for (const q of created.splice(0)) q.dispose();
   vi.useRealTimers();

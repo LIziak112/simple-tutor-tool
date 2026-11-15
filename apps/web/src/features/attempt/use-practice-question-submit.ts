@@ -22,6 +22,10 @@ import {
 } from "./attempt-queries";
 import { firstUnsubmittedQuestionId } from "./practice-protocol";
 import { prepareQuestionSubmission } from "./prepare-question-submission";
+import {
+  resumeFocusAfterFailedSubmit,
+  settleEventsBeforeSubmit,
+} from "./submit-event-settle";
 
 /**
  * 新协议逐题提交编排（M3-D2，计划 §10.2/§10.3，lesson useLessonAttempt.submit
@@ -220,6 +224,9 @@ export function usePracticeQuestionSubmit(input: {
       };
       let pausedForSubmission = false;
       let keepPaused = false;
+      // 提交前收口过聚焦、而这道题最后没交成：学生还在题上，把聚焦接回去
+      let focusSettled = false;
+      let submitted = false;
       try {
         if (!(await beforeSubmitRef.current())) return { kind: "aborted" };
         const prep = await prepareQuestionSubmission(clients, {
@@ -280,6 +287,10 @@ export function usePracticeQuestionSubmit(input: {
             exact: true,
           });
         }
+        // 服务端在提交这一刻封存本题用时，只算已收到的事件：先收口聚焦、送出事件
+        focusSettled = true;
+        await settleEventsBeforeSubmit(attemptId, [questionId]);
+        if (!activeRef.current) return { kind: "aborted" };
         let result: Awaited<ReturnType<typeof postOnce>>;
         try {
           result = await postOnce(mutationId);
@@ -298,6 +309,7 @@ export function usePracticeQuestionSubmit(input: {
             throw err;
           }
         }
+        submitted = true;
         mutationPairRef.current = null;
         mutationRetriedRef.current = false;
         setFeedbacks((prev) => ({
@@ -318,6 +330,7 @@ export function usePracticeQuestionSubmit(input: {
       } catch (err) {
         if (isAlreadySubmittedError(err)) {
           // 已提交过（迟到回执/他端已交）：静默收敛，不弹错误
+          submitted = true;
           refetchDetail();
           return { kind: "submitted" };
         }
@@ -350,6 +363,7 @@ export function usePracticeQuestionSubmit(input: {
         if (pausedForSubmission && !keepPaused) {
           resumeAttemptDetailPolling(attemptId);
         }
+        if (focusSettled && !submitted) resumeFocusAfterFailedSubmit(attemptId);
         submittingRef.current = null;
         setSubmittingId(null);
       }
