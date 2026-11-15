@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { test as baseTest, chromium, expect, webkit } from "@playwright/test";
+import { watchPageForFailure } from "./diagnostics/page-watch";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
@@ -111,6 +112,7 @@ for (const withoutCompatibility of [false, true]) {
               channel: process.env.CI ? "" : "msedge",
               args: ["--force-device-scale-factor=1.25"],
             });
+      let otherWatch: ReturnType<typeof watchPageForFailure> | undefined;
       try {
         const context = await otherBrowser.newContext({
           baseURL,
@@ -118,6 +120,10 @@ for (const withoutCompatibility of [false, true]) {
           deviceScaleFactor: 1.25,
         });
         const other = await context.newPage();
+        otherWatch = watchPageForFailure(
+          other,
+          `第二台设备（${otherBrowser.browserType().name()}）`,
+        );
         if (withoutCompatibility) {
           // 不同内核也可能生成相同旧签名；在首帧前固定字距差，明确制造失配。
           await other.route("**/*", async (route) => {
@@ -241,6 +247,10 @@ for (const withoutCompatibility of [false, true]) {
         expect(writes).toBe(0);
         expect(leaks.violations()).toEqual([]);
         await context.close();
+      } catch (error) {
+        // trace 和截图不跟这个自己 launch 的浏览器：把它的现场打进日志，再原样抛出
+        await otherWatch?.report(error);
+        throw error;
       } finally {
         await otherBrowser.close();
       }

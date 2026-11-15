@@ -3,7 +3,7 @@ import {
   type AnnotationDoc,
   annotationPngFingerprint,
 } from "@tutor/contract";
-import { digestOf } from "@/features/persistence/draft-merge";
+import { sameStoredAnnotationDoc } from "@/features/persistence/stored-ink-doc";
 import type { KVAtomicBackend, KVStoreBackend } from "@/lib/kv-backend";
 import type { AnnotationLocalRecord } from "./annotation-store";
 
@@ -43,12 +43,15 @@ export function emptyAnnotationDoc(doc: AnnotationDoc): boolean {
   );
 }
 
-/** 两份正文按稳定序列化比较。 */
+/**
+ * 两份正文按服务端落盘口径比较（stored-ink-doc：云端不保存每笔的
+ * rendering，空的 deleted / anchors 不写键）。
+ */
 export function annotationDocsEqual(
   a: AnnotationDoc,
   b: AnnotationDoc,
 ): boolean {
-  return digestOf(a) === digestOf(b);
+  return sameStoredAnnotationDoc(a, b);
 }
 
 function mayCache(record: AnnotationLocalRecord): boolean {

@@ -58,7 +58,7 @@ import {
 } from "@tutor/contract";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import { worstImageState } from "@/features/notes/note-image-state";
-import { digestOf } from "@/features/persistence/draft-merge";
+import { sameStoredNoteDoc } from "@/features/persistence/stored-ink-doc";
 import {
   idbKVBackend,
   type KVStoreBackend,
@@ -1034,14 +1034,14 @@ export async function clearCorrectionRecord(
 /**
  * NoteDoc 相等比较（恢复 load 不回传无变化版本的依据，复审⑫）：
  * local（pending 侧 NoteDocInput）经 safeParseDoc 物化（parseMemo 命中则
- * 零成本）；server 侧已物化（NoteDoc）不再重复 parse；两侧 digestOf
- * （draft-merge 的 stableStringify，键序无关）比较。任一侧形态非法判
- * 不等（不吞错——非法稿继续走上传由服务端裁决）。
+ * 零成本）；server 侧已物化（NoteDoc）不再重复 parse；两侧按服务端落盘
+ * 口径比较（stored-ink-doc：云端不保存每笔的 rendering）。任一侧形态非法
+ * 判不等（不吞错——非法稿继续走上传由服务端裁决）。
  */
 export function noteDocsEqual(local: NoteDocInput, server: NoteDoc): boolean {
   const parsedLocal = safeParseDoc(local);
   if (parsedLocal === null) return false;
-  return digestOf(parsedLocal) === digestOf(server);
+  return sameStoredNoteDoc(parsedLocal, server);
 }
 
 /**

@@ -1,4 +1,9 @@
-import { noteDocSchema } from "@tutor/contract";
+import {
+  DEFAULT_INK_PROFILE_CONFIG,
+  inkRenderingOf,
+  type NoteDoc,
+  noteDocSchema,
+} from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
@@ -183,6 +188,50 @@ async function pendingMutationIdOf(
   const mutationId = (await recordOf(session, scope)).pending?.mutationId;
   if (mutationId === undefined) throw new Error("无待传版本（测试前置失败）");
   return mutationId;
+}
+
+/** 指定版本号的云端 head（noteId 与 headOf() 同一行） */
+function headAt(revision: number): ReturnType<typeof headOf> {
+  const head = headOf();
+  if (!head.note) throw new Error("夹具缺 note（测试前置失败）");
+  head.note.revision = revision;
+  head.note.currentVersionId = receiptOf(revision).versionId;
+  return head;
+}
+
+/**
+ * 同一份正文的两种形状：local 照引擎写出的来（每一笔、含擦除后的墓碑，都带
+ * rendering）；stored 照服务端规范化落盘的来（没有 rendering）。
+ */
+function engineShapedDocs(): { local: NoteDoc; stored: NoteDoc } {
+  const rendering = inkRenderingOf(DEFAULT_INK_PROFILE_CONFIG);
+  const live = {
+    ...stroke([
+      [10, 10],
+      [40, 40],
+    ]),
+    id: "stroke-live-0001",
+    startedAt: 1_700_000_000_000,
+    pointer: "pen" as const,
+  };
+  const gone = {
+    ...stroke([[50, 50]]),
+    id: "stroke-gone-0001",
+    startedAt: 1_700_000_000_500,
+    pointer: "pen" as const,
+    deletedAt: 1_700_000_001_000,
+    deletedBy: "eraser" as const,
+  };
+  const docWith = (extra: object): NoteDoc =>
+    noteDocSchema.parse({
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [{ ...live, ...extra }],
+        deleted: [{ ...gone, ...extra }],
+      },
+    });
+  return { local: docWith({ rendering }), stored: docWith({}) };
 }
 
 /**
@@ -389,6 +438,43 @@ describe("note-store：恢复 load 不算编辑", () => {
     const after = await recordOf(SESSION_A, SCOPE);
     expect(after.pending).not.toBeNull();
     expect(deriveServerState(after, false)).toBe("dirty");
+  });
+
+  it("丢回执（引擎真实形状）：本机每笔带 rendering、云端落盘不带 → 清 pending、对齐基线、不报冲突", async () => {
+    // 已同步到第 1 版；本机改成「一笔活的 + 一笔擦掉的」，这一版其实已经传到
+    // 云端成了第 2 版，只是回执没到：本机仍是待传、基线 1
+    await applyServerLoad(SESSION_A, SCOPE, DOC_A, headOf());
+    const { local, stored } = engineShapedDocs();
+    writeNoteDoc(SESSION_A, SCOPE, local);
+    await applyServerLoad(SESSION_A, SCOPE, stored, headAt(2));
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.conflict).toBeNull();
+    expect(record.pending).toBeNull();
+    expect(record.baseRevision).toBe(2);
+    expect(deriveServerState(record, false)).toBe("synced");
+  });
+
+  it("引擎真实形状下内容真的不同（云端多一笔）→ 仍报冲突，本机待传稿和基线不动", async () => {
+    await applyServerLoad(SESSION_A, SCOPE, DOC_A, headOf());
+    const { local, stored } = engineShapedDocs();
+    writeNoteDoc(SESSION_A, SCOPE, local);
+    const mutationId = await pendingMutationIdOf(SESSION_A, SCOPE);
+    const other = noteDocSchema.parse({
+      ...stored,
+      ink: {
+        ...stored.ink,
+        strokes: [
+          ...stored.ink.strokes,
+          { ...stroke([[1, 1]]), id: "stroke-else-0001" },
+        ],
+      },
+    });
+    await applyServerLoad(SESSION_A, SCOPE, other, headAt(2));
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.conflict?.current?.revision).toBe(2);
+    expect(record.pending?.mutationId).toBe(mutationId);
+    expect(record.baseRevision).toBe(1);
+    expect(record.doc).toEqual(local);
   });
 
   it("NoteDoc 相等比较：缺省与显式默认值物化后相等", async () => {
