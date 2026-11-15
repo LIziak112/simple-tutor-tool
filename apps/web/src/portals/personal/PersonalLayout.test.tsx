@@ -119,6 +119,7 @@ function setup(entry = "/p/learn/home", unauthorized = false) {
             <Route path="*" element={<p>个人管理内容</p>} />
           </Route>
           <Route path="/p/login" element={<LoginDestination />} />
+          <Route path="/" element={<p>身份选择首页</p>} />
         </Routes>
       </TestPortalProvider>
     );
@@ -199,6 +200,36 @@ it("个人管理401复用认证守卫并保留业务查询和hash", async () => 
   expect(await screen.findByTestId("login-path")).toHaveTextContent(
     "/p/login?returnTo=%2Fp%2Fmanage%2Flibrary%3Ffolder%3Df%23q2",
   );
+});
+
+for (const view of ["学习", "管理"] as const) {
+  it(`个人${view}视角有「切换身份」：回首页选身份，不退出个人会话`, async () => {
+    const { logout } = setup(
+      view === "学习" ? "/p/learn/home" : "/p/manage/library",
+    );
+    await screen.findByText(`个人${view}内容`);
+    const link = screen.getByRole("link", { name: "切换身份" });
+    expect(link).toHaveAttribute("href", "/");
+    fireEvent.click(link);
+    expect(await screen.findByText("身份选择首页")).toBeVisible();
+    expect(logout).not.toHaveBeenCalled();
+  });
+}
+
+it("管理未保存设置保护顶栏切换身份", async () => {
+  setup("/p/manage/settings");
+  await screen.findByText("未保存设置样本");
+  fireEvent.click(screen.getByRole("link", { name: "切换身份" }));
+  expect(
+    await screen.findByRole("dialog", { name: "放弃未保存的更改？" }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+  expect(screen.getByText("未保存设置样本")).toBeVisible();
+  fireEvent.click(screen.getByRole("link", { name: "切换身份" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "放弃更改并离开" }),
+  );
+  expect(await screen.findByText("身份选择首页")).toBeVisible();
 });
 
 for (const action of ["资源库", "切换到学习视角", "退出登录"]) {

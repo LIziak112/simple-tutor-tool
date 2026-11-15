@@ -1,6 +1,7 @@
 import type { StudentMeData, TeacherInfo } from "@tutor/contract";
 import { type ReactNode, useEffect, useState } from "react";
 import {
+  Link,
   Navigate,
   NavLink,
   Outlet,
@@ -204,6 +205,11 @@ function PersonalLayoutContent() {
             >
               {view === "learning" ? "管理视角" : "学习视角"}
             </PersonalViewButton>
+            {/* 回首页选别的身份，不退出个人会话；管理视角有未保存设置时，
+                由 SettingsNavigationProvider 对站内链接的统一拦截先问一句 */}
+            <Link to="/" className="flex min-h-11 items-center px-3">
+              切换身份
+            </Link>
             <button
               type="button"
               className="min-h-11 px-3"

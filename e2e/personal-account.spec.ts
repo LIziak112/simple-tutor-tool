@@ -134,6 +134,14 @@ test.describe("个人账号 · 注册 / 双视角 / 一枚 token", {
     await expect(page.getByText("我的作业", { exact: true })).toHaveCount(0);
     await expect(page.getByText(courseName, { exact: true })).toBeVisible();
 
+    // 切换身份：回首页选身份，个人双会话都还在，从个人入口卡能回到学习视角
+    await page.getByRole("link", { name: "切换身份", exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+    expect((await page.request.get("/api/teacher/me")).status()).toBe(200);
+    expect((await page.request.get("/api/student/me")).status()).toBe(200);
+    await page.getByRole("link", { name: /^个人学习/ }).click();
+    await expect(page).toHaveURL(/\/p\/learn\/home/);
+
     // 一枚 token：学习视角 AI 伴学新建 MCP 连接，接口地址为 /mcp/personal
     const created = await page.request.post("/api/student/ai/connections", {
       data: { channel: "mcp" },
