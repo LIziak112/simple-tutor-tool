@@ -9,7 +9,14 @@ import {
 } from "drizzle-orm/sqlite-core";
 import type { PublicationInput } from "learning-kernel";
 import type { KernelOpeningDraft } from "../services/kernel-assignment-input.ts";
-import { assignments, attempts, students } from "./schema.ts";
+import type { ChoiceAmendmentIntent } from "../services/kernel-choice-amendment-intent.ts";
+import {
+  assignments,
+  attempts,
+  responses,
+  students,
+  teachers,
+} from "./schema.ts";
 
 export const kernelAssignments = sqliteTable("kernel_assignments", {
   assignmentId: text("assignment_id")
@@ -116,5 +123,22 @@ export const kernelAttemptRefreezes = sqliteTable("kernel_attempt_refreezes", {
     .notNull(),
   responses: text("responses_json", { mode: "json" })
     .$type<KernelOpeningDraft["responses"]>()
+    .notNull(),
+});
+
+export const kernelChoiceAmendments = sqliteTable("kernel_choice_amendments", {
+  attemptId: text("attempt_id")
+    .primaryKey()
+    .notNull()
+    .references(() => kernelAttemptBindings.attemptId),
+  operationId: text("operation_id").notNull().unique(),
+  responseId: text("response_id")
+    .notNull()
+    .references(() => responses.id),
+  teacherId: text("teacher_id")
+    .notNull()
+    .references(() => teachers.id),
+  intent: text("intent_json", { mode: "json" })
+    .$type<ChoiceAmendmentIntent>()
     .notNull(),
 });

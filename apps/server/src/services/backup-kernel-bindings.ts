@@ -16,10 +16,12 @@ import {
   kernelAttemptBindings,
   kernelAttemptConfirmations,
   kernelAttemptRefreezes,
+  kernelChoiceAmendments,
 } from "../db/schema-kernel-assignments.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
 import { kernelOpeningDraftSchema } from "./kernel-assignment-input.ts";
+import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
 
 const publicationIdentitySchema = z.object({
   practice: z.object({ id: z.string(), version: z.number().int().positive() }),
@@ -81,6 +83,18 @@ function verifyProjection(db: Db, directory: string): void {
     }
     throw error;
   }
+  const pendingAmendments = db
+    .select({ attemptId: kernelChoiceAmendments.attemptId })
+    .from(kernelChoiceAmendments)
+    .all();
+  for (const { attemptId } of pendingAmendments) {
+    try {
+      recoverKernelChoiceAmendment(db, directory, attemptId);
+    } catch {
+      throw new ZipReadError("备份中的答案勘误意图与内核作答不一致");
+    }
+  }
+
   const evidenceCount = db.$client.prepare<[string], { count: number }>(
     "SELECT COUNT(*) AS count FROM submission_evidence WHERE attempt_id = ?",
   );

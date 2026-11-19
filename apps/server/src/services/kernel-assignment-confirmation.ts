@@ -41,6 +41,8 @@ import {
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 
+import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
+
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type OriginalQuestion = ChoiceConfirmationInput["questions"][number];
 
@@ -105,6 +107,7 @@ export function readKernelConfirmationFacts(
   dataDir: string,
   attempt: Attempt,
 ) {
+  recoverKernelChoiceAmendment(db, dataDir, attempt.id);
   const ticket = kernelConfirmationTicketFor(db, attempt.id);
   if (!ticket) return undefined;
   return withTicket(db, dataDir, attempt, ticket, (runtime, status, scope) =>

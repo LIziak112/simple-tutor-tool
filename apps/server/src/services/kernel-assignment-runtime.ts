@@ -39,7 +39,9 @@ export type KernelAttemptBinding = typeof kernelAttemptBindings.$inferSelect;
 
 type ConfirmationHooks = Pick<
   Parameters<typeof openLearningRuntime>[0],
-  "verifyOriginal" | "authorizeConfirmationRecovery"
+  | "verifyOriginal"
+  | "authorizeConfirmationRecovery"
+  | "authorizeChoiceDraftAmendment"
 > & { evaluateScope?: () => OwnClassChoiceEvaluationScope | undefined };
 
 export function withKernelRuntime<T>(

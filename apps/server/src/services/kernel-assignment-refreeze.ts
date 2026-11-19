@@ -20,6 +20,7 @@ import {
   kernelAttemptBindings,
   kernelAttemptConfirmations,
   kernelAttemptRefreezes,
+  kernelChoiceAmendments,
 } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { requireOwnAttempt } from "./attempt-access.ts";
@@ -69,6 +70,11 @@ function isOpenEmpty(db: Db, attempt: Attempt): boolean {
       .select()
       .from(kernelAttemptConfirmations)
       .where(eq(kernelAttemptConfirmations.attemptId, id))
+      .get() &&
+    !db
+      .select()
+      .from(kernelChoiceAmendments)
+      .where(eq(kernelChoiceAmendments.attemptId, id))
       .get() &&
     !db
       .select()

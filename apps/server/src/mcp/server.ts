@@ -11,7 +11,6 @@ import {
   notePhaseSchema,
   questionTypeSchema,
   teacherAttemptListQuerySchema,
-  teacherResponseAnswerEditSchema,
   teacherResponseSnapshotEditSchema,
 } from "@tutor/contract";
 import { z } from "zod";
@@ -68,6 +67,7 @@ import {
   deleteUnstartedAssignment,
   resolveAssignmentStudentIds,
 } from "./assignment-tools";
+import { registerTeacherAnswerEdit } from "./teacher-answer-edit-tool.ts";
 import { queryTeacherAttemptCards } from "./teacher-attempt-cards.ts";
 import {
   decodeCursorOffset,
@@ -1208,14 +1208,5 @@ export function registerTeacherTools(
     guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
   );
 
-  server.registerTool(
-    "update_response_answer",
-    {
-      description:
-        "修正未作废草稿卷中未提交题目的草稿答案。用 query_student_responses 定位并读取版本。修正不会提交、判分或计入学生改答次数，原因同步留痕。",
-      inputSchema: teacherResponseAnswerEditSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true },
-    },
-    guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
-  );
+  registerTeacherAnswerEdit(server, db, dataDir, teacherId);
 }
