@@ -1,10 +1,12 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  BACKUP_KERNEL_ARTIFACT,
+  BACKUP_KERNEL_DATABASE,
+  BACKUP_KERNEL_MANIFEST,
   BACKUP_MAX_UPLOAD_BYTES,
   BACKUP_SNAPSHOT_NAME_PATTERN,
 } from "@tutor/contract";
-import Database from "better-sqlite3";
 import { HttpError } from "../lib/http-error.ts";
 import { writePlannedZipEntry } from "../lib/zip-entry-stream.ts";
 import {
@@ -13,6 +15,7 @@ import {
   type ZipEntryPlan,
   ZipReadError,
 } from "../lib/zip-read.ts";
+import { verifyKernelBackupManifest } from "./backup-kernel-pair.ts";
 
 interface BackupLayout {
   readonly dbFilename: string;
@@ -70,13 +73,30 @@ function validateBackupLayout(
     previous = path;
   }
   for (const entry of entries) {
-    if (entry === database || entry.name === layout.secretKeyName) continue;
+    if (
+      entry.name === BACKUP_KERNEL_MANIFEST &&
+      entry.uncompressedSize > 1024
+    ) {
+      throw new ZipReadError("双库归档清单过大");
+    }
+    if (
+      entry.name === BACKUP_KERNEL_ARTIFACT &&
+      entry.uncompressedSize > 1024 * 1024
+    ) {
+      throw new ZipReadError("固定内核归档过大");
+    }
+    if (
+      entry === database ||
+      entry.name === layout.secretKeyName ||
+      entry.name === BACKUP_KERNEL_DATABASE ||
+      entry.name === BACKUP_KERNEL_MANIFEST ||
+      entry.name === BACKUP_KERNEL_ARTIFACT
+    )
+      continue;
     const parts = entry.name.split("/");
     const top = parts[0] ?? "";
     if (parts.length < 2 || !layout.directories.has(top)) {
-      throw new ZipReadError(
-        `压缩包结构不符：不认识的顶层内容「${top}」（只允许 db 文件、blobs/、shared/、secret.key）`,
-      );
+      throw new ZipReadError(`压缩包结构不符：不认识的顶层内容「${top}」`);
     }
     if (
       process.platform === "win32" &&
@@ -86,30 +106,6 @@ function validateBackupLayout(
     }
   }
   return database;
-}
-
-function validateStagedDatabase(filename: string): void {
-  try {
-    const db = new Database(filename, { readonly: true, fileMustExist: true });
-    try {
-      const teacherTable = db
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'teachers'",
-        )
-        .get();
-      if (
-        !teacherTable ||
-        db.pragma("quick_check(1)", { simple: true }) !== "ok"
-      ) {
-        throw new ZipReadError("备份中的数据库不可用");
-      }
-    } finally {
-      db.close();
-    }
-  } catch (error) {
-    if (error instanceof ZipReadError) throw error;
-    throw new ZipReadError("备份中的数据库不可用");
-  }
 }
 
 /** 完整预检后逐条写入同卷暂存目录，所有内容校验完成后才返回。 */
@@ -136,8 +132,16 @@ export async function stageBackupArchive(
       mkdirSync(dirname(destination), { recursive: true });
       await writePlannedZipEntry(entry, destination);
     }
-    validateStagedDatabase(dbPath);
-    return { dbFilename: database.name, restoredFiles: entries.length };
+    verifyKernelBackupManifest(dbPath, staging);
+    const metadata = entries.filter(
+      ({ name }) =>
+        name === BACKUP_KERNEL_MANIFEST || name === BACKUP_KERNEL_ARTIFACT,
+    );
+    for (const entry of metadata) rmSync(join(staging, entry.name));
+    return {
+      dbFilename: database.name,
+      restoredFiles: entries.length - metadata.length,
+    };
   } catch (error) {
     if (error instanceof ZipBudgetError)
       throw new HttpError(413, "BACKUP_TOO_LARGE", error.message);

@@ -15,7 +15,13 @@ import {
   openedAttemptPurgeOptionsOf,
   purgeOpenedAttempts,
 } from "./services/attempt-opened-purge";
-import { startBackupScheduler } from "./services/backup-service";
+import { verifyBackupDirectory } from "./services/backup-kernel-pair.ts";
+import { registerBackupProcess } from "./services/backup-process-guard.ts";
+import {
+  BACKUP_DIR_NAME,
+  DB_FILE_NAME,
+  startBackupScheduler,
+} from "./services/backup-service";
 import { purgeExpiredQuestionProcesses } from "./services/question-process";
 
 /**
@@ -33,6 +39,11 @@ installCrashHandlers();
 assertValidatorCoverage();
 
 const config = readConfig(process.env);
+registerBackupProcess(
+  join(config.dataDir, BACKUP_DIR_NAME),
+  DB_FILE_NAME,
+  (directory) => verifyBackupDirectory(directory, DB_FILE_NAME),
+);
 
 // 开发时开 debug 日志方便排查，生产保持 info
 const logger = pino({ level: config.isProduction ? "info" : "debug" });

@@ -5,19 +5,17 @@ import { z } from "zod";
  * 快照列表、恢复请求（multipart）与恢复摘要的 data 部分；错误码。
  *
  * 口径（D20 备份范围，用户定）：
- * - 备份 = **全量 DATA_DIR**：db 快照（VACUUM INTO，只含数据库）+ blobs/（笔迹）+
- *   shared/（共享发布）+ secret.key（Phase 5 加密密钥），**排除 backups/ 自身**；
- * - 日常自动快照只做 db 文件（启动时 + 每 24h，保留 14 份轮转）；blobs/shared/
- *   secret.key 在**下载时实时读档**打进 zip，避免每日复制大目录；
+ * - 下载备份含主库快照、内核库快照及配套工件（如有内核）、blobs/、shared/、secret.key，
+ *   排除 backups/。两库用 VACUUM INTO 捕获已提交数据；
+ * - 日常自动快照只含主库（启动时 + 每 24h，保留 14 份轮转）；
  * - 备份/恢复是**整库操作**：多教师共存一个库（D14 一生一师但同库），
  *   主机指定的有效管理员才可查看快照、下载或恢复，恢复仍需登录密码（D21）。
  *
  * 恢复安全（D21，用户定）：
  * - 恢复请求必须带**登录密码**（multipart 的 password 字段），服务端 scrypt 校验，
  *   错误密码 → 403 BACKUP_INVALID_PASSWORD；
- * - 服务端执行顺序：校验 zip 结构 → **恢复前自动再做一次快照**（回滚保险）→
- *   解压到临时目录 → DATA_DIR 内容整体替换（除 backups/，原子替换失败回滚）→
- *   重启数据连接（服务进程不重启）；
+ * - 服务端执行顺序：预检 zip → 同卷暂存与校验 → 确认独占后做一次主库快照 →
+ *   记录替换计划并切换 DATA_DIR 内容（保留 backups/）→ 重开数据连接；
  * - 恢复后以**恢复库中的会话**为准：当前登录会话可能失效，属预期——
  *   响应携带 sessionWarning=true，UI 据此提示重新登录。
  *
@@ -26,8 +24,7 @@ import { z } from "zod";
  * - content-type: application/zip；
  * - content-disposition: attachment; filename="tutor-backup-<北京时间戳>.zip"；
  * - cache-control: no-store；
- * - zip 内结构：快照命名 db 文件（tutor-YYYYMMDD-HHMMSS.db，VACUUM INTO 的完整库）
- *   + blobs/** + shared/** + secret.key（各自存在才打包），不含 backups/。
+ * - zip 内主库文件命名为 tutor-YYYYMMDD-HHMMSS.db，双库归档加入内核库、清单及固定工件。
  *
  * 恢复请求（POST /api/teacher/backup/restore）为 multipart/form-data（与笔迹上传同模式）：
  * - 字段 zip：File（备份 zip 全量字节）；
@@ -51,6 +48,18 @@ export const BACKUP_KEEP_COUNT = 14;
 /** 快照文件命名：tutor-YYYYMMDD-HHMMSS.db（北京时间；同秒冲突加 -2/-3 序号） */
 export const BACKUP_SNAPSHOT_NAME_PATTERN = /^tutor-\d{8}-\d{6}(-\d+)?\.db$/;
 
+/** 双库归档的固定顶层文件及内容指纹。无内核数据引用的旧归档可省略这组文件。 */
+export const BACKUP_KERNEL_DATABASE = "learning-kernel.sqlite";
+export const BACKUP_KERNEL_MANIFEST = "learning-kernel-backup.json";
+export const BACKUP_KERNEL_ARTIFACT = "learning-kernel-artifact.tgz";
+export const backupKernelManifestSchema = z.strictObject({
+  formatVersion: z.literal(1),
+  productSha256: z.hash("sha256"),
+  kernelSha256: z.hash("sha256"),
+  kernelSchemaVersion: z.number().int().positive(),
+  kernelArtifactSha256: z.hash("sha256"),
+});
+
 // ---------- 快照列表 ----------
 
 /** 最近快照项（GET /api/teacher/backup/snapshots 的 data 元素） */
@@ -72,8 +81,8 @@ export const backupSnapshotListDataSchema = z.object({
 
 /**
  * 恢复响应 data（POST /api/teacher/backup/restore）。
- * restoredFiles = 解压并落位 DATA_DIR 的文件总数（db + secret.key + blobs/shared
- * 递归文件）；snapshotTime = 从 zip 内 db 文件名解析的快照时点（北京时间戳转
+ * restoredFiles = 落位 DATA_DIR 的文件总数（两库、secret.key 和 blobs/shared
+ * 递归文件，归档校验元数据仅在暂存使用）；snapshotTime = 从 zip 内主库文件名解析的快照时点（北京时间戳转
  * UTC ISO；zip 内为 tutor.db（非快照命名）时为 null，表示无法判定时点）。
  */
 export const backupRestoreResultSchema = z.object({
@@ -81,7 +90,7 @@ export const backupRestoreResultSchema = z.object({
   dbFilename: z.string().min(1),
   /** 快照时点（UTC ISO）；zip 内 db 非 tutor-YYYYMMDD-HHMMSS.db 命名时为 null */
   snapshotTime: z.string().nullable(),
-  /** 恢复写入的文件总数（db + secret.key + blobs/shared 递归） */
+  /** 恢复写入的文件总数（数据库、secret.key 和 blobs/shared 递归文件） */
   restoredFiles: z.number().int().min(1),
   /** 当前登录会话可能已失效（恢复库中的会话为准）——UI 据此提示重新登录 */
   sessionWarning: z.literal(true),
@@ -95,11 +104,10 @@ export const BACKUP_OPERATOR_REQUIRED = "BACKUP_OPERATOR_REQUIRED";
  * 备份相关错误码（鉴权 401 见 auth.ts）：
  * - BACKUP_OPERATOR_REQUIRED：当前会话无整站备份权限（403）；
  * - BACKUP_INVALID_PASSWORD：恢复时登录密码不正确（403，D21）；
- * - BACKUP_ZIP_INVALID：zip 损坏 / 结构不符（400，中文说明缺什么——必备 db 文件、
- *   顶层只允许 db / blobs / shared / secret.key，禁路径穿越与 backups/ 覆写）；
+ * - BACKUP_ZIP_INVALID：zip 损坏、结构不符、双库不匹配或缺少必需文件（400）；
  * - BACKUP_TOO_LARGE：恢复上传或 ZIP 展开预算超限（413）；
  * - BACKUP_ROLLBACK_FAILED：自动回滚未完成，保留旧数据暂存目录并保持数据库关闭（500）；
- * - BACKUP_RESTORE_FAILED：暂存时数据连接已被另一恢复替换（409），或替换 DATA_DIR 失败（500，响应说明是否已回滚）。
+ * - BACKUP_RESTORE_FAILED：进程占用、另一次恢复或恢复标记冲突（409），或替换 DATA_DIR 失败（500）。
  */
 export const backupErrorCodeSchema = z.enum([
   BACKUP_OPERATOR_REQUIRED,
