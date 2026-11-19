@@ -14,6 +14,7 @@ export default defineConfig({
   dialect: "sqlite",
   schema: [
     "./src/db/schema.ts",
+    "./src/db/schema-attempt-original-reservations.ts",
     "./src/db/create-receipt-schema.ts",
     "./src/db/attempt-time-schema.ts",
   ],

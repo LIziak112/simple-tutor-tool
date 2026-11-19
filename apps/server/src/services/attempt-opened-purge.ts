@@ -1,7 +1,10 @@
 import { and, eq, isNull, lt } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { attempts } from "../db/schema.ts";
-import { discardOpenedArtifactsWithin } from "./attempt-opened-artifacts.ts";
+import {
+  discardOpenedArtifactsWithin,
+  hasPendingOriginals,
+} from "./attempt-opened-artifacts.ts";
 import { hasSubstantiveAttemptEvidence } from "./attempt-substantive-evidence.ts";
 
 /** 一轮清除删掉了哪些卷：这是唯一一处定时物理删除作答行的任务，要能事后查到。 */
@@ -65,7 +68,8 @@ function purgeOpenedAttemptsBefore(db: Db, cutoff: string): string[] {
       for (const attempt of candidates) {
         if (
           hasSubstantiveAttemptEvidence(db, attempt.id) ||
-          hasOtherProtectedChildren(db, attempt.id)
+          hasOtherProtectedChildren(db, attempt.id) ||
+          hasPendingOriginals(db, attempt.id)
         )
           continue;
         // 延迟FK仅到本事务提交；先删父行让原有append-only删除触发器正确识别整卷清除。

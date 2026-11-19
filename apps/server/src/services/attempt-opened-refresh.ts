@@ -18,7 +18,10 @@ import {
   freezeInputsOfNewAttempt,
   insertFrozenResponses,
 } from "./attempt-freeze.ts";
-import { discardOpenedArtifactsWithin } from "./attempt-opened-artifacts.ts";
+import {
+  discardOpenedArtifactsWithin,
+  hasPendingOriginals,
+} from "./attempt-opened-artifacts.ts";
 import { hasSubstantiveAttemptEvidence } from "./attempt-substantive-evidence.ts";
 import {
   freezeAttemptContextSnapshotsWithin,
@@ -105,6 +108,11 @@ export function refreshOpenedAttempt(
         JSON.stringify(context.map(key).sort()) ===
         JSON.stringify(entries.map(key).sort());
       if (sameQuestions && sameContext) return fresh;
+      if (
+        fresh.sourceType === "assignment" &&
+        hasPendingOriginals(tx, fresh.id)
+      )
+        return fresh;
       // 删除空快照时没有证据引用；先移除冻结标记再重建，沿用原有归属触发器。
       discardOpenedArtifactsWithin(tx, fresh.id);
       tx.delete(attemptContextFreezes)

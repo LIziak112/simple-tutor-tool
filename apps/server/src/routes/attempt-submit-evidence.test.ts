@@ -1,24 +1,43 @@
-import { readFileSync } from "node:fs";
-import type {
-  ApiErr,
-  NoteVersionReceipt,
-  SubmitEvidenceDeclaration,
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
+import {
+  type ApiErr,
+  attemptResultOkSchema,
+  type NoteVersionReceipt,
+  noteHeadDataSchema,
+  noteVersionReceiptSchema,
+  type SubmitEvidenceDeclaration,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
-import type { Db } from "../db/client.ts";
+import { createDb, type Db } from "../db/client.ts";
 import {
+  attemptSettlements,
   attempts as attemptsTable,
   submissionEvidence as evidenceTable,
+  noteVersions,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { purgeOpenedAttempts } from "../services/attempt-opened-purge.ts";
+import {
+  reserveSubmissionOriginals,
+  settleSubmissionOriginalReservation,
+} from "../services/attempt-original-reservation.ts";
+import {
+  gcNoteVersions,
+  NOTE_GC_SAFETY_WINDOW_MS,
+} from "../services/note-gc.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   gzipJson,
+  makeNotePng,
   noteDoc,
+  noteImageForm,
   putNoteBodyForm,
   putNoteReceipt,
 } from "../test/note-fixtures.ts";
@@ -30,7 +49,10 @@ import {
   loginStudent,
   noteRowOf,
 } from "../test/note-world.ts";
-import { submitAttemptRequest } from "../test/submit-revisions.ts";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions.ts";
 
 /**
  * T6R.10 提交事务固定原稿（路由层测试）：交卷请求携带每题笔记证据声明
@@ -62,27 +84,36 @@ type App = ReturnType<typeof createApp>;
 let app: App;
 let db: Db;
 let dataDir: string;
+let databasePath: string;
 let teacherCookie: string;
 let unitId: string;
 let aId: string;
 let aCookie: string;
 
-beforeAll(async () => {
-  db = createTestDb();
-  dataDir = createTestDir();
-  app = createApp({
+function mountApp(db: Db, dataDir: string): App {
+  return createApp({
     isProduction: false,
     logger: silentLogger,
     db,
     dataDir,
     publicUrl: "http://localhost:8787",
   });
+}
+
+async function createEvidenceFixture() {
+  const dataDir = createTestDir();
+  const databasePath = join(dataDir, "attempt-submit-evidence.sqlite");
+  const template = createTestDb();
+  writeFileSync(databasePath, template.$client.serialize());
+  template.$client.close();
+  const db = createDb(databasePath);
+  const app = mountApp(db, dataDir);
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
-  teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+  const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
   const importRes = await app.request("/api/teacher/import/commit", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
@@ -94,15 +125,28 @@ beforeAll(async () => {
   ).data.units;
   const firstUnit = units[0];
   if (firstUnit === undefined) throw new Error("样例导入未产出单元");
-  unitId = firstUnit.id;
-  aId = await makeStudent("张三");
-  aCookie = await loginStudent(app, "张三", STUDENT_PASSWORD);
+  const aId = await createStudent(app, teacherCookie, "张三", STUDENT_PASSWORD);
+  const aCookie = await loginStudent(app, "张三", STUDENT_PASSWORD);
+  return {
+    db,
+    app,
+    dataDir,
+    databasePath,
+    teacherCookie,
+    unitId: firstUnit.id,
+    aId,
+    aCookie,
+  };
+}
+
+beforeAll(async () => {
+  ({ db, app, dataDir, databasePath, teacherCookie, unitId, aId, aCookie } =
+    await createEvidenceFixture());
 });
 
-/** 建 student（note-world 共享件——含密码口径）；本地仅薄壳绑定教师 cookie */
-function makeStudent(name: string): Promise<string> {
-  return createStudent(app, teacherCookie, name, STUDENT_PASSWORD);
-}
+afterAll(() => {
+  db?.$client.close();
+});
 
 /** 按下标取题目 id（越界即测试前置失败——比非空断言可诊断） */
 function qAt(ids: string[], index: number): string {
@@ -254,18 +298,645 @@ describe("T6R.10 交卷固定原稿：frozen 主链", () => {
     expect(frozenRow?.versionId).toBe(receipt2.versionId);
   });
 
-  it("missing（用户明确选择）落行 state=missing、无版本引用", async () => {
+  it("有工作稿时明示 missing，重开数据库并原样重发仍无原稿引用", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
+    const notedId = qAt(ids, 1);
+    const attemptPath = `/api/student/attempts/${attemptId}`;
+    const headers = { cookie: aCookie, "content-type": "application/json" };
+    const working = await putNoteReceipt(app, aCookie, attemptId, notedId);
+    expect(working.revision).toBe(1);
+    const answer = { kind: "choice", index: 1 } as const;
+    const saved = await app.request(`${attemptPath}/answers/${notedId}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ answer }),
+    });
+    expect(saved.status).toBe(200);
+    const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
     const evidence: SubmitEvidenceDeclaration[] = ids.map((questionId) => ({
       questionId,
-      state: "missing" as const,
+      state: questionId === notedId ? "missing" : "none",
     }));
-    const res = await submitWith(attemptId, evidence);
-    expect(res.status).toBe(200);
+    const body = JSON.stringify({ revisions, evidence });
+    const submit = () =>
+      app.request(`${attemptPath}/submit`, { method: "POST", headers, body });
+
+    const submitted = await submit();
+    expect(submitted.status).toBe(200);
+    const { data: result } = attemptResultOkSchema.parse(
+      await submitted.json(),
+    );
+    expect(
+      result.units
+        .flatMap((unit) => unit.questions)
+        .find((row) => row.questionId === notedId),
+    ).toMatchObject({ answer, autoCorrect: true, finalCorrect: true });
+
     const rows = evidenceRowsOf(attemptId);
     expect(rows).toHaveLength(ids.length);
-    expect(rows.every((r) => r.state === "missing" && r.versionId === null));
+    expect(
+      new Map(
+        rows.map(({ questionId, state, versionId }) => [
+          questionId,
+          { state, versionId },
+        ]),
+      ),
+    ).toEqual(
+      new Map(
+        evidence.map(({ questionId, state }) => [
+          questionId,
+          { state, versionId: null },
+        ]),
+      ),
+    );
+
+    const readEvidence = async () => {
+      const res = await app.request(`${attemptPath}/evidence/${notedId}`, {
+        headers: { cookie: aCookie },
+      });
+      expect(res.status).toBe(200);
+      const payload = (await res.json()) as { data: unknown };
+      assertNoLeak(payload);
+      return noteHeadDataSchema.parse(payload.data);
+    };
+    const before = await readEvidence();
+    expect(before).toMatchObject({
+      evidence: {
+        attemptId,
+        questionId: notedId,
+        state: "missing",
+        versionId: null,
+      },
+      note: {
+        phase: "scratch",
+        revision: 1,
+        currentVersionId: working.versionId,
+      },
+      images: [],
+      supplements: [],
+    });
+
+    const form = putNoteBodyForm(gzipJson(noteDoc(2)));
+    form.set("phase", "supplement");
+    const supplemental = await app.request(`${attemptPath}/notes/${notedId}`, {
+      method: "PUT",
+      headers: { cookie: aCookie },
+      body: form,
+    });
+    expect(supplemental.status).toBe(200);
+    const payload = (await supplemental.json()) as { data: unknown };
+    const supplement = noteVersionReceiptSchema.parse(payload.data);
+    expect(supplement.versionId).not.toBe(working.versionId);
+
+    db.$client.close();
+    db = createDb(databasePath);
+    app = mountApp(db, dataDir);
+    const retry = await expectApiErr(submit());
+    expect([retry.status, retry.code]).toEqual([409, "ALREADY_SUBMITTED"]);
+    expect(evidenceRowsOf(attemptId)).toEqual(rows);
+    const after = await readEvidence();
+    expect(after.evidence).toEqual(before.evidence);
+    expect(after.note).toEqual(before.note);
+    expect(after.images).toEqual([]);
+    expect(after.supplements).toMatchObject([
+      {
+        phase: "supplement",
+        revision: 1,
+        currentVersionId: supplement.versionId,
+      },
+    ]);
+  });
+});
+
+describe("M04 原稿保全：跨库确认窗口模型", () => {
+  it("正式冻结原稿保留，尚未投影的外部版本引用保护不了被替换的工作头", async () => {
+    const fixture = await createEvidenceFixture();
+    const { dataDir, databasePath, teacherCookie, unitId, aId, aCookie } =
+      fixture;
+    let { db, app } = fixture;
+    const newAttempt = () =>
+      freshNoteAttempt(app, teacherCookie, unitId, [aId], aCookie);
+    const readVersion = (id: string) =>
+      db.select().from(noteVersions).where(eq(noteVersions.id, id)).get();
+    const snapshot = (receipt: NoteVersionReceipt) => {
+      const row = readVersion(receipt.versionId);
+      if (!row) throw new Error("草稿上传后缺少版本行");
+      const file = join(dataDir, row.bodyPath);
+      const bytes = readFileSync(file);
+      expect(createHash("sha256").update(gunzipSync(bytes)).digest("hex")).toBe(
+        receipt.hash,
+      );
+      expect(row.hash).toBe(receipt.hash);
+      return { row, file, bytes };
+    };
+    const confirm = (attemptId: string) => ({
+      attempt: db
+        .select()
+        .from(attemptsTable)
+        .where(eq(attemptsTable.id, attemptId))
+        .get(),
+      evidence: db
+        .select()
+        .from(evidenceTable)
+        .where(eq(evidenceTable.attemptId, attemptId))
+        .all(),
+      settlements: db
+        .select()
+        .from(attemptSettlements)
+        .where(eq(attemptSettlements.attemptId, attemptId))
+        .all(),
+    });
+
+    try {
+      const controlId = await newAttempt();
+      const revisions = await fetchSubmitRevisions(app, aCookie, controlId);
+      const ids = revisions.map(({ questionId }) => questionId);
+      const notedId = qAt(ids, 1);
+      const frozen = await putNoteReceipt(app, aCookie, controlId, notedId, 1);
+      const control = await submitAttemptRequest(
+        app,
+        aCookie,
+        controlId,
+        declarationsWithFrozen(ids, notedId, frozen),
+      );
+      expect(control.status).toBe(200);
+      const controlBefore = confirm(controlId);
+      expect(controlBefore.attempt?.submittedAt).toEqual(expect.any(String));
+      expect(controlBefore.evidence).toHaveLength(ids.length);
+      expect(
+        controlBefore.evidence.find(({ questionId }) => questionId === notedId),
+      ).toMatchObject({ state: "frozen", versionId: frozen.versionId });
+      expect(controlBefore.settlements).toMatchObject([{ kind: "final" }]);
+
+      const form = putNoteBodyForm(gzipJson(noteDoc(3)));
+      form.set("phase", "supplement");
+      const supplemental = await app.request(
+        `/api/student/attempts/${controlId}/notes/${notedId}`,
+        { method: "PUT", headers: { cookie: aCookie }, body: form },
+      );
+      expect(supplemental.status).toBe(200);
+      const payload = (await supplemental.json()) as { data: unknown };
+      const supplement = noteVersionReceiptSchema.parse(payload.data);
+
+      const pendingId = await newAttempt();
+      const selected = await putNoteReceipt(
+        app,
+        aCookie,
+        pendingId,
+        notedId,
+        1,
+      );
+      const selection = snapshot(selected);
+      // 独立文件仅模拟外部引用尚未投影的窗口，不是内核回执。
+      const externalReference = join(createTestDir(), "selected-note.json");
+      const reference = JSON.stringify({
+        attemptId: pendingId,
+        questionId: notedId,
+        versionId: selected.versionId,
+        hash: selected.hash,
+      });
+      writeFileSync(externalReference, reference);
+      const secondSession = await loginStudent(app, "张三", STUDENT_PASSWORD);
+      expect(secondSession).not.toBe(aCookie);
+      const newer = await putNoteReceipt(
+        app,
+        secondSession,
+        pendingId,
+        notedId,
+        2,
+        { baseRevision: selected.revision },
+      );
+      expect(noteRowOf(db, pendingId, notedId)?.currentVersionId).toBe(
+        newer.versionId,
+      );
+
+      const pendingBefore = confirm(pendingId);
+      expect(pendingBefore).toMatchObject({
+        attempt: { status: "draft", submittedAt: null },
+        evidence: [],
+        settlements: [],
+      });
+      const kept = [frozen, supplement, newer].map(snapshot);
+      expect(supplement.versionId).not.toBe(frozen.versionId);
+
+      db.$client.close();
+      db = createDb(databasePath);
+      app = mountApp(db, dataDir);
+      expect(readVersion(selected.versionId)).toEqual(selection.row);
+      expect(readFileSync(selection.file)).toEqual(selection.bytes);
+      const lastSavedAt = Math.max(
+        ...[selected, frozen, supplement, newer].map(({ savedAt }) =>
+          Date.parse(savedAt),
+        ),
+      );
+      const now = new Date(lastSavedAt + NOTE_GC_SAFETY_WINDOW_MS + 1);
+      const gc = gcNoteVersions(db, dataDir, { now });
+
+      expect(readVersion(selected.versionId)).toBeUndefined();
+      expect(readFileSync(externalReference, "utf8")).toBe(reference);
+      expect(gc).toMatchObject({
+        deletedVersionRows: 1,
+        deletedFiles: 1,
+        keptByReference: 3,
+        keptByBackup: 0,
+        unreadableBackupDbs: 0,
+        fileFailures: 0,
+      });
+      expect(existsSync(selection.file)).toBe(false);
+      const noDocument = await expectApiErr(
+        app.request(
+          `/api/student/note-versions/${selected.versionId}/document`,
+          { headers: { cookie: aCookie } },
+        ),
+      );
+      expect([noDocument.status, noDocument.code]).toEqual([
+        404,
+        "NOTE_NOT_FOUND",
+      ]);
+      for (const { row, file, bytes } of kept) {
+        expect(readVersion(row.id)).toEqual(row);
+        expect(readFileSync(file)).toEqual(bytes);
+        const response = await app.request(
+          `/api/student/note-versions/${row.id}/document`,
+          {
+            headers: { cookie: aCookie },
+          },
+        );
+        expect(response.status).toBe(200);
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+      }
+      expect(noteRowOf(db, pendingId, notedId)?.currentVersionId).toBe(
+        newer.versionId,
+      );
+      expect(confirm(pendingId)).toEqual(pendingBefore);
+      expect(confirm(controlId)).toEqual(controlBefore);
+    } finally {
+      db.$client.close();
+    }
+  });
+});
+
+describe("M04 原稿持久预留", () => {
+  it("工作头后移与重开后保护原稿和图片，明确终止后释放", async () => {
+    const fixture = await createEvidenceFixture();
+    const { dataDir, databasePath, teacherCookie, unitId, aId, aCookie } =
+      fixture;
+    let { db, app } = fixture;
+    try {
+      const attemptId = await freshNoteAttempt(
+        app,
+        teacherCookie,
+        unitId,
+        [aId],
+        aCookie,
+      );
+      const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+      const questionId = qAt(
+        revisions.map((row) => row.questionId),
+        1,
+      );
+      const first = await putNoteReceipt(
+        app,
+        aCookie,
+        attemptId,
+        questionId,
+        1,
+      );
+      const intent = {
+        operationId: randomUUID(),
+        attemptId,
+        studentId: aId,
+        originals: [
+          { questionId, versionId: first.versionId, revision: first.revision },
+        ],
+      };
+      const readBody = (versionId: string) =>
+        app.request(`/api/student/note-versions/${versionId}/document`, {
+          headers: { cookie: aCookie },
+        });
+      const firstBody = Buffer.from(
+        await (await readBody(first.versionId)).arrayBuffer(),
+      );
+      expect(firstBody.byteLength).toBeGreaterThan(0);
+      const png = makeNotePng();
+      const attached = await app.request(
+        `/api/student/note-versions/${first.versionId}/images`,
+        {
+          method: "POST",
+          headers: { cookie: aCookie },
+          body: noteImageForm(png),
+        },
+      );
+      expect(attached.status).toBe(200);
+      const {
+        data: { imageId },
+      } = (await attached.json()) as { data: { imageId: string } };
+      const readImage = () =>
+        app.request(
+          `/api/student/note-versions/${first.versionId}/images/${imageId}.png`,
+          {
+            headers: { cookie: aCookie },
+          },
+        );
+
+      const reserved = reserveSubmissionOriginals(db, dataDir, intent);
+      expect(reserved).toEqual([{ ...intent.originals[0], hash: first.hash }]);
+      const secondSession = await loginStudent(app, "张三", STUDENT_PASSWORD);
+      const newer = await putNoteReceipt(
+        app,
+        secondSession,
+        attemptId,
+        questionId,
+        2,
+        { baseRevision: first.revision },
+      );
+      const newerBody = Buffer.from(
+        await (await readBody(newer.versionId)).arrayBuffer(),
+      );
+      const now = new Date(
+        Date.parse(newer.savedAt) + NOTE_GC_SAFETY_WINDOW_MS + 1,
+      );
+
+      db.$client.close();
+      db = createDb(databasePath);
+      app = mountApp(db, dataDir);
+      const collected = gcNoteVersions(db, dataDir, { now });
+      expect(collected).toMatchObject({
+        candidateVersionRows: 0,
+        deletedVersionRows: 0,
+        deletedFiles: 0,
+        keptByReference: 2,
+      });
+      expect(reserveSubmissionOriginals(db, dataDir, intent)).toEqual(reserved);
+      expect(() =>
+        reserveSubmissionOriginals(db, dataDir, {
+          ...intent,
+          operationId: randomUUID(),
+        }),
+      ).toThrow(expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }));
+      expect(() =>
+        reserveSubmissionOriginals(db, dataDir, {
+          ...intent,
+          originals: [
+            {
+              questionId,
+              versionId: newer.versionId,
+              revision: newer.revision,
+            },
+          ],
+        }),
+      ).toThrow(expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }));
+      const original = await readBody(first.versionId);
+      expect(original.status).toBe(200);
+      expect(Buffer.from(await original.arrayBuffer())).toEqual(firstBody);
+      const originalImage = await readImage();
+      expect(originalImage.status).toBe(200);
+      expect(Buffer.from(await originalImage.arrayBuffer())).toEqual(
+        Buffer.from(png),
+      );
+      expect(noteRowOf(db, attemptId, questionId)?.currentVersionId).toBe(
+        newer.versionId,
+      );
+      expect(() =>
+        db
+          .delete(noteVersions)
+          .where(eq(noteVersions.id, first.versionId))
+          .run(),
+      ).toThrow(
+        expect.objectContaining({ code: "SQLITE_CONSTRAINT_FOREIGNKEY" }),
+      );
+
+      const key = { attemptId, operationId: intent.operationId };
+      expect(() =>
+        settleSubmissionOriginalReservation(db, key, "projected"),
+      ).toThrow(expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }));
+      expect(gcNoteVersions(db, dataDir, { now }).deletedVersionRows).toBe(0);
+      expect(
+        db
+          .select()
+          .from(evidenceTable)
+          .where(eq(evidenceTable.attemptId, attemptId))
+          .all(),
+      ).toEqual([]);
+      expect(
+        db
+          .select()
+          .from(attemptSettlements)
+          .where(eq(attemptSettlements.attemptId, attemptId))
+          .all(),
+      ).toEqual([]);
+
+      const legacy = await submitAttemptRequest(
+        app,
+        aCookie,
+        attemptId,
+        declarationsWithFrozen(
+          revisions.map((row) => row.questionId),
+          questionId,
+          newer,
+        ),
+      );
+      expect(legacy.status).toBe(200);
+      expect(() =>
+        settleSubmissionOriginalReservation(db, key, "projected"),
+      ).toThrow(expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }));
+      expect(gcNoteVersions(db, dataDir, { now }).deletedVersionRows).toBe(0);
+      settleSubmissionOriginalReservation(db, key, "aborted");
+      settleSubmissionOriginalReservation(db, key, "aborted");
+      expect(() => reserveSubmissionOriginals(db, dataDir, intent)).toThrow(
+        expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }),
+      );
+      expect(gcNoteVersions(db, dataDir, { now })).toMatchObject({
+        deletedVersionRows: 1,
+        deletedImageRows: 1,
+        deletedFiles: 1,
+        keptByReference: 1,
+        fileFailures: 0,
+      });
+      expect((await readBody(first.versionId)).status).toBe(404);
+      expect((await readImage()).status).toBe(404);
+      const current = await readBody(newer.versionId);
+      expect(current.status).toBe(200);
+      expect(Buffer.from(await current.arrayBuffer())).toEqual(newerBody);
+    } finally {
+      db.$client.close();
+    }
+  });
+
+  it("不同学生的卷可复用操作号，终止后清除本卷不动待确认卷", async () => {
+    const { app, db, dataDir, teacherCookie, unitId, aId, aCookie } =
+      await createEvidenceFixture();
+    try {
+      const bId = await createStudent(
+        app,
+        teacherCookie,
+        "李四",
+        STUDENT_PASSWORD,
+      );
+      const bCookie = await loginStudent(app, "李四", STUDENT_PASSWORD);
+      const operationId = randomUUID();
+      const prepare = async (studentId: string, cookie: string) => {
+        const attemptId = await freshNoteAttempt(
+          app,
+          teacherCookie,
+          unitId,
+          [studentId],
+          cookie,
+        );
+        const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
+        const questionId = qAt(
+          revisions.map((row) => row.questionId),
+          1,
+        );
+        const emptyDraft = await putNoteReceipt(
+          app,
+          cookie,
+          attemptId,
+          questionId,
+          0,
+        );
+        const intent = {
+          studentId,
+          attemptId,
+          operationId,
+          originals: [
+            {
+              questionId,
+              versionId: emptyDraft.versionId,
+              revision: emptyDraft.revision,
+            },
+          ],
+        };
+        const reserved = reserveSubmissionOriginals(db, dataDir, intent);
+        return { intent, reserved };
+      };
+
+      const first = await prepare(aId, aCookie);
+      const second = await prepare(bId, bCookie);
+      expect(first.reserved[0]?.questionId).toBe(
+        second.reserved[0]?.questionId,
+      );
+      expect(first.reserved[0]?.versionId).not.toBe(
+        second.reserved[0]?.versionId,
+      );
+      const findAttempt = (id: string) =>
+        db.select().from(attemptsTable).where(eq(attemptsTable.id, id)).get();
+      expect(findAttempt(first.intent.attemptId)).toMatchObject({
+        activatedAt: null,
+      });
+      expect(findAttempt(second.intent.attemptId)).toMatchObject({
+        activatedAt: null,
+      });
+
+      const now = new Date(Date.now() + 8 * 24 * 60 * 60 * 1_000);
+      expect(purgeOpenedAttempts(db, { enabled: true, now })).toBe(0);
+      settleSubmissionOriginalReservation(db, first.intent, "aborted");
+      expect(purgeOpenedAttempts(db, { enabled: true, now })).toBe(1);
+      expect(findAttempt(first.intent.attemptId)).toBeUndefined();
+      expect(findAttempt(second.intent.attemptId)).toMatchObject({
+        activatedAt: null,
+      });
+      expect(reserveSubmissionOriginals(db, dataDir, second.intent)).toEqual(
+        second.reserved,
+      );
+    } finally {
+      db.$client.close();
+    }
+  });
+
+  it("按操作原子预留，正式冻结相同版本后才能移交保护", async () => {
+    const attemptId = await freshAttempt();
+    const ids = await questionIdsOf(attemptId);
+    const firstId = qAt(ids, 0);
+    const secondId = qAt(ids, 1);
+    const original = await putNoteReceipt(app, aCookie, attemptId, firstId);
+    const second = await putNoteReceipt(app, aCookie, attemptId, secondId);
+    const latest = await putNoteReceipt(app, aCookie, attemptId, secondId, 2, {
+      baseRevision: second.revision,
+    });
+    const intent = {
+      operationId: randomUUID(),
+      attemptId,
+      studentId: aId,
+      originals: [
+        {
+          questionId: firstId,
+          versionId: original.versionId,
+          revision: original.revision,
+        },
+        {
+          questionId: secondId,
+          versionId: second.versionId,
+          revision: second.revision,
+        },
+      ],
+    };
+    expect(() =>
+      reserveSubmissionOriginals(db, dataDir, {
+        ...intent,
+        studentId: randomUUID(),
+      }),
+    ).toThrow(expect.objectContaining({ code: "FORBIDDEN" }));
+    expect(() => reserveSubmissionOriginals(db, dataDir, intent)).toThrow(
+      expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }),
+    );
+    const corrected = {
+      ...intent,
+      originals: [
+        {
+          questionId: firstId,
+          versionId: original.versionId,
+          revision: original.revision,
+        },
+        {
+          questionId: secondId,
+          versionId: latest.versionId,
+          revision: latest.revision,
+        },
+      ],
+    };
+    expect(
+      reserveSubmissionOriginals(db, dataDir, { ...intent, originals: [] }),
+    ).toEqual([]);
+    const reserved = reserveSubmissionOriginals(db, dataDir, corrected);
+    expect(reserved).toHaveLength(2);
+    expect(() =>
+      reserveSubmissionOriginals(db, dataDir, { ...intent, originals: [] }),
+    ).toThrow(expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }));
+    expect(
+      reserveSubmissionOriginals(db, dataDir, {
+        ...corrected,
+        originals: corrected.originals.toReversed(),
+      }),
+    ).toEqual(reserved);
+    const key = { attemptId, operationId: intent.operationId };
+    const evidence: SubmitEvidenceDeclaration[] = ids.map((questionId) => {
+      const selection = corrected.originals.find(
+        (item) => item.questionId === questionId,
+      );
+      return selection
+        ? { ...selection, state: "frozen" }
+        : { questionId, state: "none" };
+    });
+    expect((await submitWith(attemptId, evidence)).status).toBe(200);
+    settleSubmissionOriginalReservation(db, key, "projected");
+    settleSubmissionOriginalReservation(db, key, "projected");
+    expect(() =>
+      settleSubmissionOriginalReservation(db, key, "aborted"),
+    ).toThrow(expect.objectContaining({ code: "NOTE_EVIDENCE_MISMATCH" }));
+    expect(reserveSubmissionOriginals(db, dataDir, corrected)).toEqual(
+      reserved,
+    );
+    expect(
+      evidenceRowsOf(attemptId).filter(({ state }) => state === "frozen"),
+    ).toEqual(
+      expect.arrayContaining(
+        corrected.originals.map(({ questionId, versionId }) =>
+          expect.objectContaining({ questionId, versionId }),
+        ),
+      ),
+    );
   });
 });
 

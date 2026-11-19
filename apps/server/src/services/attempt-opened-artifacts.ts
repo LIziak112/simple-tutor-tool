@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
   annotationBases,
@@ -8,6 +8,26 @@ import {
   notes,
   noteVersions,
 } from "../db/schema.ts";
+
+import { attemptOriginalReservations } from "../db/schema-attempt-original-reservations.ts";
+
+export function hasPendingOriginals(
+  db: Pick<Db, "select">,
+  attemptId: string,
+): boolean {
+  return (
+    db
+      .select({ questionId: attemptOriginalReservations.questionId })
+      .from(attemptOriginalReservations)
+      .where(
+        and(
+          eq(attemptOriginalReservations.attemptId, attemptId),
+          isNotNull(attemptOriginalReservations.pendingVersionId),
+        ),
+      )
+      .get() !== undefined
+  );
+}
 
 /** 仅在同事务已确认无实质内容之后使用；重冻与清除共享空稿/底图FK删除顺序。 */
 export function discardOpenedArtifactsWithin(
