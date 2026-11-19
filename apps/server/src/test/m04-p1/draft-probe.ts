@@ -17,7 +17,6 @@ import pino from "pino";
 import { z } from "zod";
 import { createApp } from "../../app.ts";
 import type { Db } from "../../db/client.ts";
-import { attempts } from "../../db/schema.ts";
 import { createTestDb, createTestDir } from "../../db/test-utils.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import {
@@ -27,24 +26,24 @@ import {
 } from "../../services/attempt-access.ts";
 import { assertAttemptWriteProof } from "../../services/attempt-activity.ts";
 import type { saveDraftAnswer } from "../../services/attempt-answer.ts";
-import {
-  attemptResponseRows,
-  freezeInputsOfNewAttempt,
-  insertFrozenResponses,
-} from "../../services/attempt-freeze.ts";
+import { attemptResponseRows } from "../../services/attempt-freeze.ts";
 import { assertFrozenAnswerShape } from "../../services/attempt-question-projection.ts";
 import { attemptSummaryOf } from "../../services/attempt-summary.ts";
-import { studentSelfReviewEnabledOf } from "../../services/practice-feedback-settings-service.ts";
 import { snapshotOfRow } from "../../services/snapshot.ts";
 import type { TestApp } from "../note-fixtures.ts";
 import { createTrialApp } from "./assembly.ts";
 import {
   attemptFacts,
   postAssignment,
+  removeAssignmentOwner,
   setupAssignment,
   verifyInactiveOwnerCookies,
 } from "./product-fixture.ts";
-import { draftForAssignment, publicationForAssignment } from "./publication.ts";
+import {
+  draftForAssignment,
+  projectTrialDraft,
+  publicationForAssignment,
+} from "./publication.ts";
 
 type DraftRuntime = ReturnType<typeof openLearningRuntime> & {
   saveChoiceDraft(
@@ -200,18 +199,7 @@ const trial = createTrialApp(
       receipt.startedAt,
     );
     if (!activitySteps.has(receipt.activityId)) {
-      const { liveRows, teacherId, knowledgeByQuestion } =
-        freezeInputsOfNewAttempt(db, draft);
-      db.transaction((tx) => {
-        tx.insert(attempts).values(draft).run();
-        insertFrozenResponses(
-          tx,
-          draft.id,
-          liveRows,
-          knowledgeByQuestion,
-          studentSelfReviewEnabledOf(db, teacherId),
-        );
-      });
+      projectTrialDraft(db, draft);
       activitySteps.set(receipt.activityId, receipt.stepAttemptId);
     }
     return attemptSummaryOf(draft);
@@ -423,20 +411,7 @@ async function oldClientResponses() {
   });
   return { first, repeat, takeover, afterTakeover };
 }
-async function removeOwner(world: World) {
-  const response = await world.app.request(
-    `/api/teacher/assignments/${world.assignmentId}`,
-    {
-      method: "PATCH",
-      headers: { "content-type": "application/json", cookie: world.teacher },
-      body: JSON.stringify({
-        removeStudentIds: [world.studentId],
-        confirmStarted: true,
-      }),
-    },
-  );
-  assert.equal(response.status, 200, await response.text());
-}
+
 function kernelFacts() {
   const inspection = new DatabaseSync(kernelPath, { readOnly: true });
   try {
@@ -655,8 +630,8 @@ try {
       changeCount: 1,
     },
   ]);
-  await removeOwner(candidate);
-  await removeOwner(legacy);
+  await removeAssignmentOwner(candidate.app, candidate);
+  await removeAssignmentOwner(legacy.app, legacy);
   const candidateAfterRemoval = await put(
     candidate,
     0,

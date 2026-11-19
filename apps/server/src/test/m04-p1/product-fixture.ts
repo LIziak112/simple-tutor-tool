@@ -15,6 +15,10 @@ const markdown = readFileSync(
 );
 const ownerName = "合成甲";
 
+export function loginAssignmentOwner(app: TestApp) {
+  return loginStudent(app, ownerName);
+}
+
 export function attemptFacts(db: Db) {
   return db.$client
     .prepare(
@@ -55,7 +59,7 @@ export async function setupAssignment(app: TestApp) {
 
   const studentId = await createStudent(app, teacher, ownerName);
   const otherStudentId = await createStudent(app, teacher, "合成乙");
-  const ownerCookie = await loginStudent(app, ownerName);
+  const ownerCookie = await loginAssignmentOwner(app);
   const otherCookie = await loginStudent(app, "合成乙");
   const assigned = await app.request("/api/teacher/assignments", {
     method: "POST",
@@ -103,7 +107,7 @@ export async function verifyInactiveOwnerCookies(
   });
   assert.equal(logout.status, 200, await logout.text());
   await reject(ownerCookie);
-  const activeCookie = await loginStudent(app, ownerName);
+  const activeCookie = await loginAssignmentOwner(app);
   const archive = await app.request(`/api/teacher/students/${studentId}`, {
     method: "PATCH",
     headers: { cookie: teacher, "content-type": "application/json" },
@@ -111,6 +115,28 @@ export async function verifyInactiveOwnerCookies(
   });
   assert.equal(archive.status, 200, await archive.text());
   await reject(activeCookie);
+}
+
+export async function removeAssignmentOwner(
+  app: TestApp,
+  {
+    assignmentId,
+    studentId,
+    teacher,
+  }: Awaited<ReturnType<typeof setupAssignment>>,
+) {
+  const response = await app.request(
+    `/api/teacher/assignments/${assignmentId}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie: teacher },
+      body: JSON.stringify({
+        removeStudentIds: [studentId],
+        confirmStarted: true,
+      }),
+    },
+  );
+  assert.equal(response.status, 200, await response.text());
 }
 
 export function postAssignment(

@@ -1,14 +1,16 @@
 import { studentStemMd } from "@tutor/md-dsl";
 import type { PublicationInput } from "learning-kernel";
 import type { Db } from "../../db/client.ts";
-import type { Assignment } from "../../db/schema.ts";
+import { type Assignment, type Attempt, attempts } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { liveAttemptContextClosure } from "../../services/attempt-context.ts";
 import {
   freezeInputsOfNewAttempt,
+  insertFrozenResponses,
   questionOfRow,
 } from "../../services/attempt-freeze.ts";
 import { newDraftAttempt } from "../../services/new-draft-attempt.ts";
+import { studentSelfReviewEnabledOf } from "../../services/practice-feedback-settings-service.ts";
 
 export function draftForAssignment(
   assignment: Assignment,
@@ -26,6 +28,23 @@ export function draftForAssignment(
     lectureId: null,
     attemptNo: 1,
     startedAt,
+  });
+}
+
+export function projectTrialDraft(db: Db, draft: Attempt) {
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
+    db,
+    draft,
+  );
+  db.transaction((tx) => {
+    tx.insert(attempts).values(draft).run();
+    insertFrozenResponses(
+      tx,
+      draft.id,
+      liveRows,
+      knowledgeByQuestion,
+      studentSelfReviewEnabledOf(db, teacherId),
+    );
   });
 }
 
