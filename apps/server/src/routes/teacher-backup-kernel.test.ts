@@ -14,6 +14,7 @@ import {
   attemptStartOkSchema,
   BACKUP_KERNEL_ARTIFACT,
   BACKUP_KERNEL_MANIFEST,
+  BACKUP_SNAPSHOT_NAME_PATTERN,
   backupKernelManifestSchema,
   teacherInfoOkSchema,
 } from "@tutor/contract";
@@ -480,3 +481,232 @@ it("归档并恢复 K9 已重冻而主库待投影的合法截面", async () => 
   expect(await reply.text()).toContain("重冻后：2 + 3 是多少？");
   expect(binding()).toEqual({ practice_version: 2 });
 }, 45_000);
+
+async function prepareBackupOriginals(source: ReturnType<typeof openInstance>) {
+  const app = source.app();
+  const world = await setupAssignment(app);
+  const teacher = await app.request("/api/teacher/me", {
+    headers: { cookie: world.teacher },
+  });
+  const admin = source.app(
+    teacherInfoOkSchema.parse(await teacher.json()).data.id,
+  );
+  const assignment = await assignKernelFixture(app, world);
+  const id = await openedAttempt(app, assignment, world.ownerCookie);
+  const questionId = await answer(app, id, world.ownerCookie, 0, 1);
+  const anotherQuestionId = "m04-p0-q2";
+  const first = await putNoteReceipt(app, world.ownerCookie, id, questionId);
+  const chosen = await putNoteReceipt(
+    app,
+    world.ownerCookie,
+    id,
+    questionId,
+    2,
+    { baseRevision: first.revision },
+  );
+  const submit = () =>
+    submitAttemptRequest(app, world.ownerCookie, id, [
+      {
+        questionId,
+        state: "frozen",
+        versionId: chosen.versionId,
+        revision: chosen.revision,
+      },
+      { questionId: anotherQuestionId, state: "none" },
+    ]);
+  const download = () =>
+    admin.request("/api/teacher/backup/download", {
+      headers: { cookie: world.teacher },
+    });
+  return {
+    app,
+    admin,
+    world,
+    id,
+    questionId,
+    anotherQuestionId,
+    first,
+    chosen,
+    submit,
+    download,
+  };
+}
+
+it("双库下载与恢复拒绝已投影原稿索引的缺行或错版本", async () => {
+  using source = openInstance();
+  const fixture = await prepareBackupOriginals(source);
+  const {
+    app,
+    admin,
+    world,
+    id,
+    questionId,
+    anotherQuestionId,
+    first,
+    chosen,
+    submit,
+    download,
+  } = fixture;
+  const result = await readResult(await submit());
+  expect(
+    await readResult(await readAttempt(app, id, world.ownerCookie)),
+  ).toEqual(result);
+  const clean = await download();
+  expect(clean.status, await clean.clone().text()).toBe(200);
+  const entries = readZipEntriesMap(Buffer.from(await clean.arrayBuffer()));
+  const productFile = [...entries.keys()].find((name) =>
+    BACKUP_SNAPSHOT_NAME_PATTERN.test(name),
+  );
+  const productBytes = productFile ? entries.get(productFile) : undefined;
+  if (!productFile || !productBytes) throw new Error("双库 ZIP 中没有主库");
+
+  const removeNone = (db: Database.Database) =>
+    db
+      .prepare(
+        "DELETE FROM submission_evidence WHERE attempt_id = ? AND question_id = ?",
+      )
+      .run(id, anotherQuestionId);
+  const snapshotDb = new Database(productBytes);
+  try {
+    expect(removeNone(snapshotDb).changes).toBe(1);
+    const damaged = snapshotDb.serialize();
+    entries.set(productFile, damaged);
+    const manifest = backupKernelManifestSchema.parse(
+      JSON.parse(entries.get(BACKUP_KERNEL_MANIFEST)?.toString() ?? "null"),
+    );
+    entries.set(
+      BACKUP_KERNEL_MANIFEST,
+      Buffer.from(
+        JSON.stringify({
+          ...manifest,
+          productSha256: createHash("sha256").update(damaged).digest("hex"),
+        }),
+      ),
+    );
+  } finally {
+    snapshotDb.close();
+  }
+  const rejectedArchive = await restore(
+    admin,
+    world.teacher,
+    await rezip(entries),
+  );
+  const product = source.handle.db.$client;
+  expect(rejectedArchive.status, await rejectedArchive.clone().text()).toBe(
+    400,
+  );
+  await expect(rejectedArchive.json()).resolves.toMatchObject({
+    error: "BACKUP_ZIP_INVALID",
+  });
+  expect(
+    await readResult(await readAttempt(app, id, world.ownerCookie)),
+  ).toEqual(result);
+
+  const evidence = () =>
+    product
+      .prepare(
+        "SELECT question_id, state, version_id, recorded_at FROM submission_evidence WHERE attempt_id = ? ORDER BY question_id",
+      )
+      .all(id);
+  expect(removeNone(product).changes).toBe(1);
+  const ordinary = await readAttempt(app, id, world.ownerCookie);
+  expect(ordinary.status).toBe(409);
+  await expect(ordinary.json()).resolves.toMatchObject({
+    error: "NOTE_EVIDENCE_MISMATCH",
+  });
+  const assertRejectedDownload = async () => {
+    const unchanged = evidence();
+    const refused = await download();
+    expect(refused.status, refused.headers.get("content-type") ?? "").toBe(500);
+    await expect(refused.json()).resolves.toMatchObject({ ok: false });
+    expect(evidence()).toEqual(unchanged);
+  };
+  await assertRejectedDownload();
+
+  // 两个正文都完好，只有回执指定的第二版能作正式原稿。
+  product
+    .prepare(
+      "INSERT INTO submission_evidence (id, attempt_id, question_id, state, recorded_at) SELECT ?, attempt_id, ?, 'none', recorded_at FROM submission_evidence WHERE attempt_id = ? AND question_id = ?",
+    )
+    .run(crypto.randomUUID(), anotherQuestionId, id, questionId);
+  const changeVersion = product.prepare(
+    "UPDATE submission_evidence SET version_id = ? WHERE attempt_id = ? AND question_id = ? AND version_id = ?",
+  );
+  expect(
+    changeVersion.run(first.versionId, id, questionId, chosen.versionId)
+      .changes,
+  ).toBe(1);
+  await assertRejectedDownload();
+  expect(
+    product
+      .prepare("DELETE FROM submission_evidence WHERE attempt_id = ?")
+      .run(id).changes,
+  ).toBe(2);
+  await assertRejectedDownload();
+});
+
+it("合法已确认待投影可导出原截面并在恢复后按原操作生成原稿索引", async () => {
+  using source = openInstance();
+  const {
+    app,
+    admin,
+    world,
+    id,
+    questionId,
+    anotherQuestionId,
+    chosen,
+    submit,
+    download,
+  } = await prepareBackupOriginals(source);
+  const product = () => source.handle.db.$client;
+  product().exec(`
+    CREATE TRIGGER fail_backup_confirmation_projection BEFORE UPDATE OF status ON attempts
+    WHEN OLD.status = 'draft' AND NEW.status <> 'draft'
+    BEGIN SELECT RAISE(ABORT, 'forced backup confirmation projection failure'); END
+  `);
+  expect((await submit()).status).toBe(500);
+  product().exec("DROP TRIGGER fail_backup_confirmation_projection");
+  const state = (db: Database.Database) =>
+    db
+      .prepare(`
+    SELECT status, (SELECT COUNT(*) FROM submission_evidence WHERE attempt_id = attempts.id) AS evidence_count
+    FROM attempts WHERE id = ?
+  `)
+      .get(id);
+  const original = { status: "draft", evidence_count: 0 };
+  expect(state(product())).toEqual(original);
+  const downloadResponse = await download();
+  expect(downloadResponse.status, await downloadResponse.clone().text()).toBe(
+    200,
+  );
+  expect(state(product())).toEqual(original);
+  const bytes = new Uint8Array(await downloadResponse.arrayBuffer());
+  const archivedProduct = [...readZipEntriesMap(Buffer.from(bytes))].find(
+    ([name]) => BACKUP_SNAPSHOT_NAME_PATTERN.test(name),
+  )?.[1];
+  if (!archivedProduct) throw new Error("双库 ZIP 中没有主库");
+  const archived = new Database(archivedProduct);
+  try {
+    expect(state(archived)).toEqual(original);
+  } finally {
+    archived.close();
+  }
+
+  const restored = await restore(admin, world.teacher, bytes);
+  expect(restored.status, await restored.clone().text()).toBe(200);
+  expect(state(product())).toEqual(original);
+  const result = await readResult(
+    await readAttempt(app, id, world.ownerCookie),
+  );
+  expect(result.attempt.scoreAuto).toBe(50);
+  expect(
+    product()
+      .prepare(
+        "SELECT question_id, state, version_id FROM submission_evidence WHERE attempt_id = ? ORDER BY question_id",
+      )
+      .all(id),
+  ).toEqual([
+    { question_id: questionId, state: "frozen", version_id: chosen.versionId },
+    { question_id: anotherQuestionId, state: "none", version_id: null },
+  ]);
+});

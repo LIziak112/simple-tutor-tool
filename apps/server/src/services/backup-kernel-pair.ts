@@ -160,8 +160,9 @@ function inspectDatabases(
       if (kernel.prepare("PRAGMA foreign_key_check").get()) {
         throw new ZipReadError("备份中的内核数据库引用不完整");
       }
-      verifyBackupBindings(product, kernel, directory);
-      verifyOriginals(product, directory);
+      verifyBackupBindings(product, kernel, directory, (copy) =>
+        verifyOriginals(copy, directory),
+      );
       const version = kernel
         .prepare<[], { version: number | null }>(
           "SELECT MAX(version) AS version FROM schema_migrations",

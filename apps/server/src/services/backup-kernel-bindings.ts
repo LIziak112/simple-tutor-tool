@@ -5,15 +5,18 @@ import {
   BACKUP_KERNEL_DATABASE,
 } from "@tutor/contract";
 import type Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { openLearningRuntime } from "learning-kernel";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
-import * as schema from "../db/schema.ts";
-import { ZipReadError } from "../lib/zip-read.ts";
+import { createDb, type Db } from "../db/client.ts";
+import { runMigrations } from "../db/migrate.ts";
+import { attempts } from "../db/schema.ts";
 import {
-  createOwnClassChoiceEvaluator,
-  type OwnClassChoiceEvaluationScope,
-} from "./attempt-choice-evaluation.ts";
+  kernelAttemptBindings,
+  kernelAttemptConfirmations,
+  kernelAttemptRefreezes,
+} from "../db/schema-kernel-assignments.ts";
+import { ZipReadError } from "../lib/zip-read.ts";
+import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
 
 const kernelRefreezePublicationSchema = z.object({
   practice: z.object({ id: z.string(), version: z.number().int().positive() }),
@@ -27,204 +30,153 @@ export function hasBackupTable(db: Database.Database, name: string): boolean {
   );
 }
 
-interface Binding {
-  readonly id: string;
-  readonly studentId: string;
-  readonly assignmentId: string;
-  readonly practiceVersion: number;
-  readonly startedAt: string;
-  readonly stepId: string;
-  readonly status: string;
-}
+function verifyProjection(db: Db, directory: string): void {
+  const bindings = db
+    .select({
+      binding: kernelAttemptBindings,
+      attempt: attempts,
+      confirmation: kernelAttemptConfirmations,
+      refreeze: kernelAttemptRefreezes,
+    })
+    .from(kernelAttemptBindings)
+    .leftJoin(attempts, eq(attempts.id, kernelAttemptBindings.attemptId))
+    .leftJoin(
+      kernelAttemptConfirmations,
+      eq(kernelAttemptConfirmations.attemptId, kernelAttemptBindings.attemptId),
+    )
+    .leftJoin(
+      kernelAttemptRefreezes,
+      eq(kernelAttemptRefreezes.attemptId, kernelAttemptBindings.attemptId),
+    )
+    .all();
+  const evidenceCount = db.$client.prepare<[string], { count: number }>(
+    "SELECT COUNT(*) AS count FROM submission_evidence WHERE attempt_id = ?",
+  );
 
-interface Confirmation {
-  readonly operationId: string;
-  readonly stepId: string;
-  readonly practiceVersion: number;
-  readonly request: string;
-}
+  withKernelConfirmationReader(db, directory, (runtime, recover) => {
+    for (const { attempt, binding, confirmation, refreeze } of bindings) {
+      if (!attempt || attempt.assignmentId !== binding.assignmentId) {
+        throw new ZipReadError("主库中的作答归属不一致");
+      }
+      const actor = { role: "student", id: attempt.studentId } as const;
+      const activity = runtime.read(actor, attempt.id);
+      const activityVersion =
+        "practiceVersion" in activity ? activity.practiceVersion : undefined;
+      if (
+        activity.activityId !== attempt.id ||
+        !("startedAt" in activity) ||
+        activity.startedAt !== attempt.startedAt ||
+        !("stepAttemptId" in activity)
+      ) {
+        throw new ZipReadError("主库和内核库中的作答归属不一致");
+      }
+      if (
+        activity.stepAttemptId !== binding.stepAttemptId ||
+        (activityVersion !== undefined &&
+          activityVersion !== binding.practiceVersion)
+      ) {
+        if (
+          !refreeze ||
+          attempt.status !== "draft" ||
+          activity.status !== "active" ||
+          refreeze.stepAttemptId !== binding.stepAttemptId ||
+          refreeze.expectedPracticeVersion !== binding.practiceVersion ||
+          refreeze.practiceVersion !== activityVersion
+        ) {
+          throw new ZipReadError("主库和内核库中的作答版本不一致");
+        }
+        const publication = kernelRefreezePublicationSchema.parse(
+          refreeze.publication,
+        );
+        if (
+          publication.practice.id !== binding.assignmentId ||
+          publication.practice.version !== refreeze.practiceVersion
+        ) {
+          throw new ZipReadError("主库的重冻意图与作答归属不一致");
+        }
+        const replay = runtime.replacePreparedActivityVersion(
+          actor,
+          attempt.id,
+          {
+            protocolVersion: 1,
+            operationId: refreeze.operationId,
+            stepAttemptId: binding.stepAttemptId,
+            expectedPracticeVersion: binding.practiceVersion,
+            practiceVersion: refreeze.practiceVersion,
+          },
+        );
+        if (
+          replay.activityId !== attempt.id ||
+          replay.stepAttemptId !== activity.stepAttemptId ||
+          replay.startedAt !== attempt.startedAt ||
+          replay.practiceVersion !== activityVersion
+        ) {
+          throw new ZipReadError("内核无法重放已换版回执");
+        }
+      }
 
-interface Refreeze {
-  readonly operationId: string;
-  readonly stepId: string;
-  readonly expectedPracticeVersion: number;
-  readonly practiceVersion: number;
-  readonly publication: string;
+      if (activity.status !== "completed") {
+        if (attempt.status === "submitted" || attempt.status === "graded") {
+          throw new ZipReadError("主库已交卷但内核作答未确认");
+        }
+        if (activityVersion === undefined) {
+          // 旧 start 活动不在公开 read 中显示版本，使用相同开卷键核对旧回执。
+          const replay = runtime.start(actor, {
+            protocolVersion: 1,
+            operationId: `open:${binding.assignmentId}`,
+            practiceId: binding.assignmentId,
+            practiceVersion: binding.practiceVersion,
+          });
+          if (
+            replay.activityId !== attempt.id ||
+            replay.stepAttemptId !== binding.stepAttemptId ||
+            replay.startedAt !== attempt.startedAt
+          ) {
+            throw new ZipReadError("内核的旧开卷回执与主库不一致");
+          }
+        }
+        continue;
+      }
+      if (!confirmation)
+        throw new ZipReadError("内核已确认作答缺少对应的宿主交卷意图");
+
+      const request = attemptSubmitRequestSchema.parse(confirmation.request);
+      const before = evidenceCount.get(attempt.id)?.count;
+      try {
+        recover(attempt, binding, { ...confirmation, request });
+      } catch {
+        throw new ZipReadError("备份中的内核交卷回执与宿主投影不一致");
+      }
+      // 正式读取可为待投影草稿重建整组索引。已结算卷的索引须在归档前就完整。
+      if (
+        attempt.status !== "draft" &&
+        evidenceCount.get(attempt.id)?.count !== before
+      ) {
+        throw new ZipReadError("备份中的已结算作答缺少正式原稿索引");
+      }
+    }
+  });
 }
 
 export function verifyBackupBindings(
   product: Database.Database,
   kernel: Database.Database,
   directory: string,
+  verifyOriginals: (copy: Database.Database) => void,
 ): void {
   if (!hasBackupTable(product, "kernel_attempt_bindings")) return;
-  const bindings = product
-    .prepare<[], Binding>(`
-    SELECT b.attempt_id AS id, b.assignment_id AS assignmentId,
-      b.practice_version AS practiceVersion, b.step_attempt_id AS stepId,
-      a.student_id AS studentId, a.started_at AS startedAt, a.status
-    FROM kernel_attempt_bindings b LEFT JOIN attempts a ON a.id = b.attempt_id
-  `)
-    .all();
-  const confirmations = hasBackupTable(product, "kernel_attempt_confirmations")
-    ? product.prepare<[string], Confirmation>(`
-      SELECT operation_id AS operationId, step_attempt_id AS stepId,
-        practice_version AS practiceVersion, request_json AS request
-      FROM kernel_attempt_confirmations WHERE attempt_id = ?
-    `)
-    : undefined;
-  const refreezes = hasBackupTable(product, "kernel_attempt_refreezes")
-    ? product.prepare<[string], Refreeze>(`
-      SELECT operation_id AS operationId, step_attempt_id AS stepId,
-        expected_practice_version AS expectedPracticeVersion, practice_version AS practiceVersion,
-        publication_json AS publication
-      FROM kernel_attempt_refreezes WHERE attempt_id = ?
-    `)
-    : undefined;
-  const space = mkdtempDisposableSync(join(directory, "tutor-verify-kernel-"));
+  using space = mkdtempDisposableSync(join(directory, "tutor-verify-kernel-"));
+  const productPath = join(space.path, "product-copy.sqlite");
+  // 正式恢复可能补写结算与原稿索引。只在双库副本中执行，保留归档的原始截面。
+  product.prepare("VACUUM INTO ?").run(productPath);
+  kernel.prepare("VACUUM INTO ?").run(join(space.path, BACKUP_KERNEL_DATABASE));
+  const copy = createDb(productPath);
   try {
-    const databasePath = join(space.path, BACKUP_KERNEL_DATABASE);
-    // 公开的恢复调用可能执行迁移或补齐确认。只在验证副本中调用，原始截面保持不动。
-    kernel.prepare("VACUUM INTO ?").run(databasePath);
-    const productDb = drizzle(product, { schema });
-    let scope: OwnClassChoiceEvaluationScope | undefined;
-    let operation: string | undefined;
-    const runtime = openLearningRuntime({
-      databasePath,
-      choiceEvaluators: [createOwnClassChoiceEvaluator(productDb, () => scope)],
-      authorizeConfirmationRecovery: (request) =>
-        scope !== undefined &&
-        request.studentId === scope.studentId &&
-        request.activityId === scope.attemptId &&
-        request.stepAttemptId === scope.stepAttemptId &&
-        request.operationId === operation,
-    });
-    try {
-      for (const binding of bindings) {
-        const actor = { role: "student", id: binding.studentId } as const;
-        const activity = runtime.read(actor, binding.id);
-        const activityVersion =
-          "practiceVersion" in activity ? activity.practiceVersion : undefined;
-        if (
-          activity.activityId !== binding.id ||
-          !("startedAt" in activity) ||
-          activity.startedAt !== binding.startedAt ||
-          !("stepAttemptId" in activity)
-        ) {
-          throw new ZipReadError("主库和内核库中的作答归属不一致");
-        }
-        if (
-          activity.stepAttemptId !== binding.stepId ||
-          (activityVersion !== undefined &&
-            activityVersion !== binding.practiceVersion)
-        ) {
-          const ticket = refreezes?.get(binding.id);
-          if (
-            !ticket ||
-            binding.status !== "draft" ||
-            activity.status !== "active" ||
-            ticket.stepId !== binding.stepId ||
-            ticket.expectedPracticeVersion !== binding.practiceVersion ||
-            ticket.practiceVersion !== activityVersion
-          ) {
-            throw new ZipReadError("主库和内核库中的作答版本不一致");
-          }
-          const publication = kernelRefreezePublicationSchema.parse(
-            JSON.parse(ticket.publication),
-          );
-          if (
-            publication.practice.id !== binding.assignmentId ||
-            publication.practice.version !== ticket.practiceVersion
-          ) {
-            throw new ZipReadError("主库的重冻意图与作答归属不一致");
-          }
-          const replay = runtime.replacePreparedActivityVersion(
-            actor,
-            binding.id,
-            {
-              protocolVersion: 1,
-              operationId: ticket.operationId,
-              stepAttemptId: binding.stepId,
-              expectedPracticeVersion: binding.practiceVersion,
-              practiceVersion: ticket.practiceVersion,
-            },
-          );
-          if (
-            replay.activityId !== binding.id ||
-            replay.stepAttemptId !== activity.stepAttemptId ||
-            replay.startedAt !== binding.startedAt ||
-            replay.practiceVersion !== activityVersion
-          ) {
-            throw new ZipReadError("内核无法重放已换版回执");
-          }
-        }
-
-        if (activity.status !== "completed") {
-          if (binding.status === "submitted" || binding.status === "graded") {
-            throw new ZipReadError("主库已交卷但内核作答未确认");
-          }
-          if (activityVersion === undefined) {
-            // 旧 start 活动不在公开 read 中显示版本，使用相同开卷键核对旧回执。
-            const replay = runtime.start(actor, {
-              protocolVersion: 1,
-              operationId: `open:${binding.assignmentId}`,
-              practiceId: binding.assignmentId,
-              practiceVersion: binding.practiceVersion,
-            });
-            if (
-              replay.activityId !== binding.id ||
-              replay.stepAttemptId !== binding.stepId ||
-              replay.startedAt !== binding.startedAt
-            ) {
-              throw new ZipReadError("内核的旧开卷回执与主库不一致");
-            }
-          }
-          continue;
-        }
-        const ticket = confirmations?.get(binding.id);
-        if (
-          !ticket ||
-          ticket.stepId !== binding.stepId ||
-          ticket.practiceVersion !== binding.practiceVersion
-        ) {
-          throw new ZipReadError("内核已确认作答缺少对应的宿主交卷意图");
-        }
-        const request = attemptSubmitRequestSchema.parse(
-          JSON.parse(ticket.request),
-        );
-        scope = {
-          attemptId: binding.id,
-          assignmentId: binding.assignmentId,
-          studentId: binding.studentId,
-          stepAttemptId: binding.stepId,
-          practiceVersion: binding.practiceVersion,
-          slotId: "answers",
-          questionRevisions: new Map(
-            request.revisions.map(({ questionId, questionRevisionId }) => [
-              questionId,
-              questionRevisionId,
-            ]),
-          ),
-        };
-        operation = ticket.operationId;
-        const recovered = runtime.recoverChoiceConfirmation(actor, binding.id, {
-          protocolVersion: 1,
-          stepAttemptId: ticket.stepId,
-          operationId: ticket.operationId,
-        });
-        if (
-          recovered.practice.id !== binding.assignmentId ||
-          recovered.practice.version !== binding.practiceVersion ||
-          recovered.receipt.stepAttemptId !== binding.stepId ||
-          recovered.receipt.slotId !== scope.slotId
-        ) {
-          throw new ZipReadError("内核回执的作答归属或版本不一致");
-        }
-      }
-    } finally {
-      runtime.close();
-    }
+    // 历史归档的主库同样需要当前读路径所依赖的表。迁移仅发生在核验副本。
+    runMigrations(copy);
+    verifyProjection(copy, space.path);
+    verifyOriginals(copy.$client);
   } finally {
-    space.remove();
+    copy.$client.close();
   }
 }
