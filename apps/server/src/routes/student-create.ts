@@ -30,26 +30,32 @@ const startClientOf = (c: Context): AttemptStartClient => ({
   snapshotProof: c.req.header(ATTEMPT_SNAPSHOT_PROOF_HEADER) === "1",
 });
 
+/** 作业开卷的 HTTP 契约与已认证学生身份由同一个处理器提供。 */
+export function createAssignmentAttemptStartRoutes(
+  db: Db,
+  startAssignmentAttempt = startAttempt,
+) {
+  return new Hono<StudentEnv>().post("/assignments/:id/attempt", async (c) => {
+    const options =
+      (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ?? {};
+    return c.json({
+      ok: true,
+      data: startAssignmentAttempt(
+        db,
+        c.var.student.id,
+        c.req.param("id"),
+        options,
+        startClientOf(c),
+      ),
+    });
+  });
+}
+
 /** 开卷与建卷入口：作业、课程单元、讲练的开始与重开，错题重练组卷。 */
 export function createStudentCreateRoutes(db: Db) {
   return (
     new Hono<StudentEnv>()
-      // M1b：请求体可选（空 body / 空对象 = 旧协议；仅接受 workflowVersion=1 与可选 feedbackMode，契约拒绝 mode 无版本）
-      .post("/assignments/:id/attempt", async (c) => {
-        const options =
-          (await parseJsonBodyOrEmpty(c, attemptStartOptionsRequestSchema)) ??
-          {};
-        return c.json({
-          ok: true,
-          data: startAttempt(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            options,
-            startClientOf(c),
-          ),
-        });
-      })
+      .route("/", createAssignmentAttemptStartRoutes(db))
       // T2A.6：课程练习入口（存在未交卷作答返回它；否则新建 attemptNo+1，
       // 新一次从空白开始；事务保证并发只得一份 draft）
       .post("/courses/:id/units/:unitId/attempts", async (c) => {
