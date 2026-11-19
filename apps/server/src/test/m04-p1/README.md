@@ -47,3 +47,33 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/original-probe.ts
 同卷 `enabledCapabilities` 按教师设置读回 `[] → ["ink"] → []`。本人开启时写 V1 并上传 PNG，实际原稿预留对照服务端正文哈希。关闭后、教师移出名单后，本人仍读回 V1，第二会话用版本 1 为基线保存 V2，新开卷返回 403。随后重开产品和内核 SQLite，以实际 24 小时窗口加 1 毫秒执行 GC，0 个版本候选、0 个文件删除，保留 V1 及 V2。重试同一预留取回原 V1，学生读回的 V1 gzip 170 字节、PNG 76 字节与回收前逐字节相同，当前头仍为 V2。
 
 他人对笔记读写、版本正文与 PNG 均收到 403，注销或教师归档后旧 Cookie 对四条路径均收到 401。产品最终有一份卷、两条冻结响应和一项待确认预留，成绩、正式证据与结算为 0。内核活动仍可正常读取，提交、自动判定与完成记录为 0。该试验覆盖正常路由的存取与预留前提，浏览器画布和权威提交后的投影移交留给后续验收。
+
+## K4 权威回执移交原稿
+
+使用内核修订 `1269cbe421af9ec4f378e60bae0a143bde8ed8ca` 的固定试装归档，SHA-256 为 `62221d38e30bff8c64dccfca3e9c8075dd98a57a824984daa8fb07d16084063e`。产品锁仍使用 K2。用试装目录的公开 Node 入口调用 `confirmChoices` 和 `recoverChoiceConfirmation`。隔离装配的作业开卷、产品冻结题和笔记存取沿用上一节。
+
+在已执行过产品离线安装的仓根，用固定归档创建试装目录后执行探针。解包保留归档原字节，Zod 解析到产品锁中的 4.6.5。
+
+```powershell
+$k4Archive = 'C:/Users/HUAYU/AppData/Local/Temp/ownclass-k1-fresh-d2537b8/target/m04-p1-choice-confirm-final/learning-kernel-0.1.0.tgz'
+$k4Hash = '62221D38E30BFF8C64DCCFCA3E9C8075DD98A57A824984DAA8FB07D16084063E'
+if ((Get-FileHash -LiteralPath $k4Archive).Hash -ne $k4Hash) { throw 'K4 归档哈希不符' }
+$k4Install = Join-Path ([IO.Path]::GetTempPath()) ('ownclass-m04-k4-' + [guid]::NewGuid().ToString('N'))
+$k4Module = Join-Path $k4Install 'node_modules/learning-kernel'
+New-Item -ItemType Directory -Path $k4Module | Out-Null
+Copy-Item -LiteralPath $k4Archive -Destination (Join-Path $k4Install 'learning-kernel-0.1.0.tgz')
+tar -xf (Join-Path $k4Install 'learning-kernel-0.1.0.tgz') -C $k4Module --strip-components 1
+if ($LASTEXITCODE -ne 0) { throw 'K4 归档展开失败' }
+New-Item -ItemType Junction -Path (Join-Path $k4Install 'node_modules/zod') -Target (Resolve-Path 'node_modules/.pnpm/zod@4.6.5/node_modules/zod').Path | Out-Null
+pnpm --dir apps/server exec tsx src/test/m04-p1/receipt-originals-probe.mjs $k4Install
+```
+
+同一两题三种声明分别取证：
+
+- P0 原样评分声明可以发布和开卷，用新 `confirmChoices` 确认返回 `422 INVALID_SLOT`。
+- 保持 P0 题面、选项和评分键，携带实际题版本并启用 `confirmFromDrafts`，发布在 `practice.steps.0.submit.slots` 被拒，要求草稿确认槽与内置评分分开声明。
+- 独立的无评分统一确认夹具实际确认，三份隔离库分别验证 `frozen/none`、`missing/none`、旧客户端协议省略原稿时的 `uncollected/uncollected`。存在工作稿而省略声明，产品预检返回 `409 NOTE_EVIDENCE_MISMATCH`。
+
+冻结场景在 V2 已成为工作头时确认选中的 V1。内核提交成功、产品证据为空后丢弃响应路径，关闭并重开两库。可信恢复按同一活动、步骤和操作取回同一回执。直接恢复未获授权，错卷、错操作以及篡改文档 ID、版本或摘要均无法移交。实际写入两条证据后注入解 pin 失败，外层事务回滚到零证据，原预留继续保护 V1。再次恢复并投影后，两题按权威确认时刻写入，V1 改由正式证据引用保护。重复投影返回原回执且行值相同。移交前后的 GC 各保留两个版本，V1 的 gzip 170 字节和 PNG 76 字节与回收前逐字节相同。
+
+明确缺稿时，已有工作稿仍可识别，正式原稿版本为空。旧客户端省略且无稿的恢复结果保留 `uncollected`，产品没有证据行。每个无评分夹具的内核只有一份正式提交和一条完成，自动判定为 0。产品只有可重建的证据行，作答答案、成绩、正式提交时间、结算和提交事件均未生成。真实普通单选评分、公网页面交卷路由和跨进程故障演练留给后续验收。

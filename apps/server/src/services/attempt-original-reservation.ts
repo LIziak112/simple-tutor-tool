@@ -27,7 +27,10 @@ function reservationScope(operation: Operation) {
   );
 }
 
-function operationRows(db: Pick<Db, "select">, operation: Operation) {
+export function readSubmissionOriginalReservations(
+  db: Pick<Db, "select">,
+  operation: Operation,
+) {
   return db
     .select()
     .from(attemptOriginalReservations)
@@ -62,7 +65,7 @@ export function reserveSubmissionOriginals(
       );
       if (byQuestion.size !== originals.length) throw reservationConflict();
 
-      const existing = operationRows(tx, intent);
+      const existing = readSubmissionOriginalReservations(tx, intent);
       if (existing.length > 0) {
         if (
           existing.length !== originals.length ||
@@ -119,7 +122,7 @@ export function reserveSubmissionOriginals(
         };
       });
       tx.insert(attemptOriginalReservations).values(rows).run();
-      return operationRows(tx, intent).map(
+      return readSubmissionOriginalReservations(tx, intent).map(
         ({ questionId, versionId, revision, hash }) => ({
           questionId,
           versionId,
@@ -146,7 +149,7 @@ export function settleSubmissionOriginalReservation(
   }
   db.transaction(
     (tx) => {
-      const rows = operationRows(tx, operation);
+      const rows = readSubmissionOriginalReservations(tx, operation);
       if (rows.length === 0 || rows.every(({ state }) => state === outcome))
         return;
       if (rows.some(({ state }) => state !== "pending"))
