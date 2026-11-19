@@ -1118,13 +1118,8 @@ export function registerTeacherTools(
     },
     guard((args) => {
       const studentId = resolveToolStudent(db, teacherId, args.studentId);
-      return jsonContent(
-        queryStudentResponses(db, teacherId, {
-          ...args,
-          studentId,
-          limit: args.limit ?? 50,
-        }),
-      );
+      const query = { ...args, studentId, limit: args.limit ?? 50 };
+      return jsonContent(queryStudentResponses(db, teacherId, query, dataDir));
     }),
   );
 

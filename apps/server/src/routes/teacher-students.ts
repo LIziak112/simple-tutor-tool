@@ -39,7 +39,7 @@ import {
  * 业务逻辑在 StudentService（api-endpoint 技能约定）。返回类型不显式标注 Hono：
  * 链式注册把路由签名累积进推断类型（AppType / hc 端到端类型前提）。
  */
-export function createStudentTeacherRoutes(db: Db) {
+export function createStudentTeacherRoutes(db: Db, dataDir: string) {
   return new Hono<TeacherEnv>()
     .get("/students", (c) => {
       // GET 无 JSON body：查询参数手工过契约 schema（stringbool 解析 "true"/"false"）
@@ -86,6 +86,7 @@ export function createStudentTeacherRoutes(db: Db) {
           c.var.teacher.id,
           c.req.param("id"),
           parsed.data,
+          dataDir,
         ),
       });
     })

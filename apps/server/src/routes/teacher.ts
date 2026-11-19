@@ -229,7 +229,7 @@ export function createTeacherRoutes(
       .route("/", createLibraryRoutes(db, dataDir, specDir))
       // T2B.7：共享发布与导入（发布/列表/预览/导入/删除，业务在 shared-service）
       .route("/", createSharedRoutes(db, dataDir))
-      .route("/", createStudentTeacherRoutes(db))
+      .route("/", createStudentTeacherRoutes(db, dataDir))
       .route(
         "/",
         createAssignmentTeacherRoutes(db, kernelAssignmentCreationEnabled),

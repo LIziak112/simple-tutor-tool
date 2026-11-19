@@ -1,16 +1,24 @@
 import type { AttemptResultCounts } from "@tutor/contract";
 import { and, eq, isNotNull, isNull, ne, or, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { assignments, attempts, students } from "../db/schema.ts";
+import {
+  assignments,
+  attempts,
+  type ResponseRow,
+  students,
+} from "../db/schema.ts";
 import {
   kernelAssignments,
   kernelAttemptBindings,
   kernelAttemptConfirmations,
 } from "../db/schema-kernel-assignments.ts";
+import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   type RecoverKernelConfirmation,
   withKernelConfirmationReader,
 } from "./kernel-assignment-confirmation-recovery.ts";
+import { kernelDraftRowsOf } from "./kernel-assignment-facts.ts";
+import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { hasKernelAssignmentTables } from "./kernel-assignment-routing.ts";
 import {
   kernelAttemptUnavailable,
@@ -29,7 +37,21 @@ export function readTeacherKernelConfirmations(
   teacherId: string,
   filter: SQL | undefined,
 ): Map<string, TeacherKernelConfirmation> {
-  if (dataDir === undefined || !hasKernelAssignmentTables(db)) return new Map();
+  return readTeacherKernelFacts(db, dataDir, teacherId, filter).confirmed;
+}
+
+/** 调用方锁定宿主、先收窄范围；一次连接读取正式确认和可选的有效草稿。 */
+export function readTeacherKernelFacts(
+  db: Db,
+  dataDir: string | undefined,
+  teacherId: string,
+  filter: SQL | undefined,
+  includeDrafts = false,
+) {
+  const confirmed = new Map<string, TeacherKernelConfirmation>();
+  const drafts: ResponseRow[] = [];
+  if (dataDir === undefined || !hasKernelAssignmentTables(db))
+    return { confirmed, drafts };
   const scopes = db
     .select({
       attempt: attempts,
@@ -57,22 +79,26 @@ export function readTeacherKernelConfirmations(
         eq(assignments.teacherId, teacherId),
         eq(attempts.sourceType, "assignment"),
         isNull(attempts.abandonedAt),
-        or(
-          ne(attempts.status, "draft"),
-          isNotNull(kernelAttemptConfirmations.attemptId),
-        ),
+        includeDrafts
+          ? undefined
+          : or(
+              ne(attempts.status, "draft"),
+              isNotNull(kernelAttemptConfirmations.attemptId),
+            ),
         filter,
       ),
     )
     .all();
-  if (scopes.length === 0) return new Map();
+  if (scopes.length === 0) return { confirmed, drafts };
 
   return withKernelConfirmationReader(db, dataDir, (runtime, recover) => {
-    const confirmed = new Map<string, TeacherKernelConfirmation>();
     for (const { attempt, binding, ticket } of scopes) {
-      if (binding === null || ticket === null) kernelAttemptUnavailable();
+      if (binding === null) kernelAttemptUnavailable();
+      if (includeDrafts && attempt.status === "draft")
+        requireNoPendingKernelRefreeze(db, attempt);
       const activity = readBoundKernelActivity(runtime, attempt, binding);
       if (activity.status === "completed") {
+        if (ticket === null) kernelAttemptUnavailable();
         const facts = recover(attempt, binding, ticket);
         confirmed.set(attempt.id, {
           ...facts,
@@ -84,9 +110,18 @@ export function readTeacherKernelConfirmations(
             pendingSelfReviewCount: 0,
           },
         });
-      } else if (activity.status !== "active" || attempt.status !== "draft")
+        continue;
+      }
+      if (activity.status !== "active" || attempt.status !== "draft")
         kernelAttemptUnavailable();
+      if (
+        includeDrafts &&
+        projectKernelDraftActivity(db, attempt, runtime).activatedAt !== null
+      ) {
+        for (const row of kernelDraftRowsOf(db, attempt, activity))
+          drafts.push(row);
+      }
     }
-    return confirmed;
+    return { confirmed, drafts };
   });
 }
