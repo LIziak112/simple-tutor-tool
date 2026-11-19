@@ -42,7 +42,6 @@ import { QUESTION_NODES_VERSION, questionNodesOf } from "@tutor/md-dsl";
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
-  type Attempt,
   annotationBases,
   annotations,
   events,
@@ -51,27 +50,26 @@ import {
   notes,
   noteVersions,
   type ResponseRow,
-  responses,
+  submissionEvidence,
 } from "../db/schema";
 import { parseGzipOrJsonBytes } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
-import {
-  answerOf,
-  frozenRowsInDisplayOrder,
-  publicOfSnapshot,
-  requireUsableAttempt,
-} from "./attempt-service";
+import { answerOf, publicOfSnapshot } from "./attempt-service";
 import { inkStatsOf } from "./learning-record-ink-stats.ts";
 import { timelineOf } from "./learning-record-timeline.ts";
 import { serializeStudentAnswer } from "./mark-response";
 import { readNoteVersionDoc } from "./note-service";
+import {
+  type QuestionRecordPrincipal,
+  type QuestionRecordScope,
+  withQuestionRecordScope,
+} from "./question-record-scope.ts";
 import {
   effectiveVerdictOfRow,
   selfReviewRecordOf,
   teacherMarkOf,
 } from "./response-verdict.ts";
 import { questionReviewReadable } from "./review-access.ts";
-import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /** 解压上限：标注正文（annotation-service 同值；独立引入避免私有耦合） */
 const ANNOTATION_BODY_DECOMPRESSED_MAX_BYTES_LOCAL = 8 * 1024 * 1024;
@@ -79,31 +77,6 @@ const ANNOTATION_BODY_DECOMPRESSED_MAX_BYTES_LOCAL = 8 * 1024 * 1024;
 const INK_MAX_STROKES_UNCOMPRESSED_LOCAL = 32 * 1024 * 1024;
 
 // ---------- 内部读取（无门口；所有权/可用性门口在入口函数） ----------
-
-function responseRowOf(
-  db: Db,
-  attemptId: string,
-  questionId: string,
-): ResponseRow {
-  const row = db
-    .select()
-    .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attemptId),
-        eq(responses.questionId, questionId),
-      ),
-    )
-    .get();
-  if (row === undefined || row.questionSnapshotJson === null) {
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这次练习",
-    );
-  }
-  return row;
-}
 
 function snapshotOf(row: ResponseRow): Question {
   try {
@@ -128,16 +101,6 @@ function snapshotOf(row: ResponseRow): Question {
   }
 }
 
-/** 卷内题号（冻结展示序；快照缺失行不计数——annotation-service 同口径） */
-function questionNoOf(db: Db, attempt: Attempt, questionId: string): number {
-  let no = 0;
-  for (const entry of frozenRowsInDisplayOrder(db, attempt)) {
-    if (entry.row.questionSnapshotJson !== null) no += 1;
-    if (entry.row.questionId === questionId) break;
-  }
-  return Math.max(1, no);
-}
-
 function readJsonGz(
   path: string,
   maxDecompressed: number,
@@ -160,10 +123,12 @@ function readJsonGz(
 function draftMaterialOf(
   db: Db,
   dataDir: string,
-  attemptId: string,
-  questionId: string,
+  { attempt, row }: QuestionRecordScope,
   teacher: boolean,
+  useConfirmedOriginal: boolean,
 ): InkMaterialFacet {
+  const attemptId = attempt.id;
+  const questionId = row.questionId;
   const note = db
     .select()
     .from(notes)
@@ -175,11 +140,38 @@ function draftMaterialOf(
       ),
     )
     .get();
-  if (
-    note === undefined ||
-    note.currentVersionId === null ||
-    note.currentRevision === 0
-  ) {
+  // 已确认卷按正式证据取原稿，宿主迟到的工作稿不会覆盖交卷版本。
+  const original =
+    useConfirmedOriginal && note !== undefined
+      ? db
+          .select({
+            versionId: submissionEvidence.versionId,
+            revision: noteVersions.revision,
+            savedAt: noteVersions.serverSavedAt,
+          })
+          .from(submissionEvidence)
+          .leftJoin(
+            noteVersions,
+            and(
+              eq(noteVersions.id, submissionEvidence.versionId),
+              eq(noteVersions.noteId, note.id),
+            ),
+          )
+          .where(
+            and(
+              eq(submissionEvidence.attemptId, attemptId),
+              eq(submissionEvidence.questionId, questionId),
+            ),
+          )
+          .get()
+      : undefined;
+  const versionId =
+    original === undefined ? note?.currentVersionId : original.versionId;
+  const revision =
+    original === undefined ? note?.currentRevision : original.revision;
+  const savedAt =
+    original === undefined ? note?.serverSavedAt : original.savedAt;
+  if (note === undefined || versionId == null || !revision) {
     return {
       kind: "draft",
       present: false,
@@ -190,7 +182,7 @@ function draftMaterialOf(
       images: [],
     };
   }
-  const version = readNoteVersionDoc(db, dataDir, note.currentVersionId);
+  const version = readNoteVersionDoc(db, dataDir, versionId);
   const doc = noteDocSchema.parse(version.doc) satisfies NoteDoc;
   const strokes = doc.ink.strokes;
   const deleted = doc.ink.deleted ?? [];
@@ -199,13 +191,11 @@ function draftMaterialOf(
     present: true,
     phase: "scratch",
     version: {
-      revision: note.currentRevision,
+      revision,
       hash: version.rowHash,
       // 角色投影（设计稿 §3.5）：student 只留 revision/hash；id/时刻仅 teacher
-      ...(teacher ? { versionId: note.currentVersionId } : {}),
-      ...(teacher && note.serverSavedAt !== null
-        ? { savedAt: note.serverSavedAt }
-        : {}),
+      ...(teacher ? { versionId } : {}),
+      ...(teacher && savedAt != null ? { savedAt } : {}),
       ...(teacher && note.sealedAt !== null ? { sealedAt: note.sealedAt } : {}),
     },
     frame: {
@@ -222,7 +212,7 @@ function draftMaterialOf(
     images: db
       .select()
       .from(noteImages)
-      .where(eq(noteImages.noteVersionId, note.currentVersionId))
+      .where(eq(noteImages.noteVersionId, versionId))
       .all()
       .map((image) => ({
         kind:
@@ -397,14 +387,22 @@ function annotationMaterialOf(
 
 // ---------- 判定面（§3.7）与装配入口 ----------
 
-function assemble(
+export function assembleQuestionLearningRecord(
   db: Db,
   dataDir: string,
-  attempt: Attempt,
-  row: ResponseRow,
-  role: "student" | "teacher" | "ai",
+  scope: QuestionRecordScope,
   now: Date,
+  forAi = false,
 ): LearningRecord {
+  const { attempt, row, no } = scope;
+  const role = forAi && scope.role === "student" ? "ai" : scope.role;
+  if (row.questionSnapshotJson === null)
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
+
   const teacher = role === "teacher";
   const snapshot = snapshotOf(row);
   const pub = publicOfSnapshot(snapshot, row.id, {
@@ -414,12 +412,13 @@ function assemble(
   const selfReview = showJudgment ? selfReviewRecordOf(row) : null;
   const effectiveVerdict = teacher ? effectiveVerdictOfRow(row) : null;
 
+  // 单题 AI 任务按快照中的工作稿引用钉住材料，详情与导出按正式原稿回看。
   const draft = draftMaterialOf(
     db,
     dataDir,
-    attempt.id,
-    row.questionId,
+    scope,
     teacher,
+    scope.kernelConfirmed && role !== "ai",
   );
   const formalInk = formalInkMaterialOf(
     db,
@@ -483,7 +482,7 @@ function assemble(
     generatedAt: now.toISOString(),
     identity: {
       questionRevisionId: row.id,
-      questionNo: questionNoOf(db, attempt, row.questionId),
+      questionNo: Math.max(1, no),
       ...(teacher
         ? {
             attemptId: attempt.id,
@@ -577,9 +576,14 @@ export function getStudentLearningRecord(
   questionId: string,
   now: Date = new Date(),
 ): LearningRecord {
-  const attempt = requireUsableAttempt(db, studentId, attemptId);
-  const row = responseRowOf(db, attempt.id, questionId);
-  return assemble(db, dataDir, attempt, row, "student", now);
+  return readLearningRecord(
+    db,
+    dataDir,
+    { kind: "student", id: studentId },
+    attemptId,
+    questionId,
+    now,
+  );
 }
 
 /** 教师视角记录（域内；requireTeacherAttempt 门口：本人学生的 attempt） */
@@ -591,9 +595,14 @@ export function getTeacherLearningRecord(
   questionId: string,
   now: Date = new Date(),
 ): LearningRecord {
-  const { attempt } = requireTeacherAttempt(db, teacherId, attemptId);
-  const row = responseRowOf(db, attempt.id, questionId);
-  return assemble(db, dataDir, attempt, row, "teacher", now);
+  return readLearningRecord(
+    db,
+    dataDir,
+    { kind: "teacher", id: teacherId },
+    attemptId,
+    questionId,
+    now,
+  );
 }
 
 /** AI 视图记录（学生上下文授权口径：学生投影 + 按快照授权携带答案/解析/提示） */
@@ -605,9 +614,34 @@ export function getAiLearningRecord(
   questionId: string,
   now: Date = new Date(),
 ): LearningRecord {
-  const attempt = requireUsableAttempt(db, studentId, attemptId);
-  const row = responseRowOf(db, attempt.id, questionId);
-  return assemble(db, dataDir, attempt, row, "ai", now);
+  return readLearningRecord(
+    db,
+    dataDir,
+    { kind: "student", id: studentId },
+    attemptId,
+    questionId,
+    now,
+    true,
+  );
+}
+
+function readLearningRecord(
+  db: Db,
+  dataDir: string,
+  principal: QuestionRecordPrincipal,
+  attemptId: string,
+  questionId: string,
+  now: Date,
+  forAi = false,
+): LearningRecord {
+  return withQuestionRecordScope(
+    db,
+    dataDir,
+    principal,
+    attemptId,
+    questionId,
+    (scope) => assembleQuestionLearningRecord(db, dataDir, scope, now, forAi),
+  );
 }
 
 /**

@@ -19,13 +19,9 @@ import {
   unitGroupedRows,
 } from "./attempt-service.ts";
 import { attemptTimeOf, timeProjectionsOf } from "./attempt-time-projection.ts";
-import { readKernelConfirmationFacts } from "./kernel-assignment-confirmation.ts";
+import { readKernelAttemptFacts } from "./kernel-assignment-facts.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
-import {
-  kernelAttemptUnavailable,
-  ownClassChoiceAnswerOf,
-  withBoundKernelActivity,
-} from "./kernel-assignment-runtime.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import { pendingMarkCount, pendingSelfReviewCounts } from "./pending-mark.ts";
 import { countsAsWrong } from "./response-verdict.ts";
 import { attemptResultCounts } from "./result-counts.ts";
@@ -93,53 +89,10 @@ export function getTeacherAttemptDetail(
         teacherId,
         attemptId,
       );
-      const facts = readKernelTeacherFacts(db, dataDir, attempt);
+      const facts = readKernelAttemptFacts(db, dataDir, attempt);
       return detailOf(db, teacherId, studentName, facts.attempt, facts.rows);
     })
     .immediate();
-}
-
-function readKernelTeacherFacts(db: Db, dataDir: string, attempt: Attempt) {
-  const confirmed = readKernelConfirmationFacts(db, dataDir, attempt);
-  if (confirmed !== undefined) return confirmed;
-  if (attempt.status !== "draft") kernelAttemptUnavailable();
-  return withBoundKernelActivity(db, dataDir, attempt, (_runtime, activity) => {
-    if (activity.status !== "active") kernelAttemptUnavailable();
-    const rows = new Map<string, ResponseRow>(
-      attemptResponseRows(db, attempt.id).map(
-        (row) =>
-          [
-            row.questionId,
-            {
-              ...row,
-              answerJson: null,
-              answered: false,
-              changeCount: 0,
-              submittedAt: null,
-            },
-          ] as const,
-      ),
-    );
-    for (const draft of ("choiceDrafts" in activity
-      ? activity.choiceDrafts
-      : undefined) ?? []) {
-      const row = rows.get(draft.questionId);
-      const answer = ownClassChoiceAnswerOf(draft.choice);
-      if (
-        draft.slotId !== "answers" ||
-        row === undefined ||
-        row.questionVersion !== draft.questionVersion ||
-        snapshotOfRow(row)?.options?.[answer.index] === undefined
-      )
-        kernelAttemptUnavailable();
-      rows.set(row.questionId, {
-        ...row,
-        answerJson: JSON.stringify(answer),
-        changeCount: draft.changeCount,
-      });
-    }
-    return { attempt, rows: [...rows.values()] };
-  });
 }
 
 function detailOf(

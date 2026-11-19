@@ -10,7 +10,6 @@ import type {
 import {
   formatQuestionAnswers,
   HANDWRITTEN_QUESTION_TYPES,
-  learningRecordJsonSchema,
   lettersOf,
   REVIEW_PACK_MAX_BYTES,
   renderReviewPackPrompt,
@@ -22,7 +21,7 @@ import {
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, ink as inkTable, type ResponseRow } from "../db/schema";
+import { ink as inkTable } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write.ts";
 import { promptOverrideBodyOf } from "./ai-companion/ai-prompt-settings-service";
@@ -33,21 +32,13 @@ import {
   answerOf,
   attemptTeacherId,
   effectiveVerdictOfRow,
-  frozenRowsInDisplayOrder,
-  requireUsableAttempt,
-  selfReviewRecordOf,
-} from "./attempt-service";
-import {
   materialSlotOrderOf,
+  selfReviewRecordOf,
   structuresOfSnapshot,
 } from "./attempt-service.ts";
 import { beijingExportStampOf } from "./export-csv";
 import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
-import {
-  getStudentLearningRecord,
-  getTeacherLearningRecord,
-} from "./learning-record-service";
 import { serializeStudentAnswerOfRow } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service.ts";
 import {
@@ -55,9 +46,14 @@ import {
   evidenceMissingRowsOf,
   readyEvidenceImagesOf,
 } from "./question-evidence";
+import {
+  type QuestionRecordPrincipal,
+  type QuestionRecordScope,
+  withQuestionRecordScope,
+} from "./question-record-scope.ts";
 import { questionReviewReadable } from "./review-access.ts";
+import { reviewPackRecordOf } from "./review-pack-record.ts";
 import { snapshotOfRow } from "./snapshot.ts";
-import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /**
  * 单题完整导出服务（T6R.13，方案 §8/§9.1「一个装配服务、三种用户入口」的
@@ -89,9 +85,7 @@ import { requireTeacherAttempt } from "./teacher-attempt-service";
  */
 
 /** 请求主体：学生本人或教师域 */
-export type ReviewPackPrincipal =
-  | { readonly kind: "student"; readonly id: string }
-  | { readonly kind: "teacher"; readonly id: string };
+export type ReviewPackPrincipal = QuestionRecordPrincipal;
 
 /** 服务选项：now 注入测试时刻；maxBytes 注入缩小的上限（预检用例） */
 export interface ReviewPackServiceOptions {
@@ -172,8 +166,6 @@ export interface ReviewPackZip {
   readonly filename: string;
 }
 
-// ---------- 授权与定位 ----------
-
 /** 手写题笔迹缺失行（「行在文件没」——文件被删/读不到，显式登记不静默） */
 function inkMissingRow(qRef: string): LearningPackManifestMissing {
   return {
@@ -184,67 +176,11 @@ function inkMissingRow(qRef: string): LearningPackManifestMissing {
   };
 }
 
-/**
- * 定位单题行：学生走 requireUsableAttempt（本人 + 来源访问权 + 懒冻结，
- * 403/404 既有口径）；教师走 requireTeacherAttempt（域外统一 404）。
- * 题目按 attempt 自有冻结行宽判定（软删题历史可导），展示序走
- * frozenRowsInDisplayOrder；**题号与结果视图/教师详情同口径——快照缺失
- * （questionSnapshotJson=null）的行不计数**（两个视图都跳过缺失行编号，
- * /code-review 角A/C 双证）。
- */
-function requireReviewScope(
-  db: Db,
-  principal: ReviewPackPrincipal,
-  attemptId: string,
-  questionId: string,
-): {
-  attempt: Attempt;
-  row: ResponseRow;
-  no: number;
-  teacherId: string;
-} {
-  let attempt: Attempt;
-  let teacherId: string;
-  if (principal.kind === "student") {
-    attempt = requireUsableAttempt(db, principal.id, attemptId);
-    const owner = attemptTeacherId(db, attempt);
-    if (owner === null) {
-      throw new HttpError(
-        500,
-        "EXPORT_ASSEMBLY_BROKEN",
-        "作答归属教师缺失（学生行不存在），无法装配",
-      );
-    }
-    teacherId = owner;
-  } else {
-    attempt = requireTeacherAttempt(db, principal.id, attemptId).attempt;
-    teacherId = principal.id;
-  }
-  let no = 0;
-  let row: ResponseRow | undefined;
-  for (const entry of frozenRowsInDisplayOrder(db, attempt)) {
-    // 快照缺失行不计数（两视图同口径）；目标行本身缺失时取「下一可用位」
-    if (entry.row.questionSnapshotJson !== null) {
-      no += 1;
-    }
-    if (entry.row.questionId === questionId) {
-      row = entry.row;
-      break;
-    }
-  }
-  if (row === undefined) {
-    throw new HttpError(404, "QUESTION_NOT_FOUND", "该题不在这份作答中");
-  }
-  return { attempt, row, no, teacherId };
-}
-
 // ---------- 装配 ----------
 
 /**
- * 装配单题包（preview 与 zip 的共用核心；本函数自身纯读——但学生路径经
- * requireUsableAttempt 的**懒冻结**可能升级遗留 draft 卷（T6R.3 既有副作用））。
- * 输出经 reviewPackSchema / reviewPackPreviewDataSchema 服务端自检——
- * 学生包的 id 剥离与答案剔除在装配层与 schema 层双重锁定。
+ * preview 与 zip 共用装配。先恢复已授权的冻结卷或确认投影，再按角色装配。
+ * reviewPackSchema / reviewPackPreviewDataSchema 复核学生包的标识符与答案门控。
  */
 export function assembleReviewPack(
   db: Db,
@@ -254,17 +190,37 @@ export function assembleReviewPack(
   questionId: string,
   options: ReviewPackServiceOptions = {},
 ): ReviewPackAssembly {
-  // T6R.16 挂账①：now 解析三处收敛（export-service.resolveNowDate 单点）
   const nowDate = resolveNowDate(options.now);
-  const nowIso = nowDate.toISOString();
-  const role = principal.kind;
-  const teacherRole = role === "teacher";
-  const { attempt, row, no, teacherId } = requireReviewScope(
+  return withQuestionRecordScope(
     db,
+    dataDir,
     principal,
     attemptId,
     questionId,
+    (scope) =>
+      assembleAuthorizedReviewPack(db, dataDir, principal, scope, nowDate),
   );
+}
+
+function assembleAuthorizedReviewPack(
+  db: Db,
+  dataDir: string,
+  principal: ReviewPackPrincipal,
+  scope: QuestionRecordScope,
+  nowDate: Date,
+): ReviewPackAssembly {
+  const nowIso = nowDate.toISOString();
+  const role = scope.role;
+  const teacherRole = role === "teacher";
+  const { attempt, row, no } = scope;
+  const teacherId = teacherRole ? principal.id : attemptTeacherId(db, attempt);
+  if (teacherId === null) {
+    throw new HttpError(
+      500,
+      "EXPORT_ASSEMBLY_BROKEN",
+      "作答归属教师缺失（学生行不存在），无法装配",
+    );
+  }
   // AI 提示词设置（hall-9533）：按主体注入「角色 + 任务」指令覆盖
   // （teacher → 教师槽位、student → 学生槽位；null = 默认模板）
   const instructionOverrideMd = promptOverrideBodyOf(
@@ -578,60 +534,8 @@ ${frozenMaterial.contentMd}`,
     interactionNotes: staticMaterial.interactionNotes,
   });
 
-  // —— LR-PR3：按角色投影的学习记录（学习记录模型设计稿 §7.2）——
-  // 复用装配服务入口（学生/教师各自门口同构）；升级遗留/快照缺失等无法
-  // 装配的行如实缺席（P1 不伪造），导出其余内容照常
-  let recordJson: string | null = null;
-  let recordSchemaJson: string | null = null;
-  let recordNote: string | null = null;
-  try {
-    const learningRecord =
-      role === "teacher"
-        ? getTeacherLearningRecord(
-            db,
-            dataDir,
-            principal.id,
-            attemptId,
-            questionId,
-            nowDate,
-          )
-        : getStudentLearningRecord(
-            db,
-            dataDir,
-            principal.id,
-            attemptId,
-            questionId,
-            nowDate,
-          );
-    recordJson = `${JSON.stringify(learningRecord, null, 2)}\n`;
-    recordSchemaJson = `${JSON.stringify(learningRecordJsonSchema, null, 2)}\n`;
-  } catch (err) {
-    // 评审 #11695：只吞已知遗留类错误（升级遗留/快照缺失/文件缺失），
-    // ZodError 等不变量破坏照常抛出（出口 fail-closed 不在导出路径失效）；
-    // 如实缺席要在 manifest.contextNotes 留痕
-    if (err instanceof HttpError) {
-      recordNote = `record.json 未装配：${err.code}: ${err.message}`;
-    } else {
-      throw err;
-    }
-  }
-  const recordEntries =
-    recordJson === null || recordSchemaJson === null
-      ? []
-      : [
-          {
-            path: "record.json",
-            kind: "record" as const,
-            bytes: Buffer.byteLength(recordJson, "utf8"),
-            refs: [qRef],
-          },
-          {
-            path: "record-schema.json",
-            kind: "record" as const,
-            bytes: Buffer.byteLength(recordSchemaJson, "utf8"),
-            refs: [qRef],
-          },
-        ];
+  const { recordJson, recordSchemaJson, recordNote, recordEntries } =
+    reviewPackRecordOf(db, dataDir, scope, nowDate, qRef);
 
   // —— manifest（pack.json 同前同时为清单；pack.json 自身不列） ——
   const contextNotes: string[] = [];

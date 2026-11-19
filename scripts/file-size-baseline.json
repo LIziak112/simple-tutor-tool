@@ -13,7 +13,6 @@
   "apps/server/src/services/note-service.ts": 1818,
   "apps/server/src/services/question-evidence.ts": 1005,
   "apps/server/src/services/reparse-service.ts": 1035,
-  "apps/server/src/services/review-pack-service.ts": 1095,
   "apps/server/src/services/seed-demo.ts": 1101,
   "apps/web/src/features/annotation/annotation-store.ts": 1368,
   "apps/web/src/features/assignments/AssignmentComposeWizard.tsx": 1217,
