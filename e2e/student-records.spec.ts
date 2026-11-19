@@ -161,18 +161,51 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", {
       await page
         .locator("#pending-student-filter option", { hasText: studentName })
         .waitFor({ state: "attached" });
-      await page.selectOption("#pending-student-filter", {
-        label: studentName,
+      // 同一张卡也可能先出现在未筛选队列。选定本学生并收到该队列后才填写。
+      const filteredQueue = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === "GET" &&
+          url.pathname === "/api/teacher/pending-marks" &&
+          url.searchParams.get("studentId") === student.id
+        );
       });
+      await page.selectOption("#pending-student-filter", { value: student.id });
+      const pending = await filteredQueue;
+      expect(pending.ok()).toBe(true);
+      const { data: pendingData } = (await pending.json()) as {
+        data: { marks: Array<{ studentId: string; responseId: string }> };
+      };
+      expect(pendingData.marks).toHaveLength(1);
+      const [target] = pendingData.marks;
+      if (target === undefined) throw new Error("目标学生没有待批卡片");
+      expect(target.studentId).toBe(student.id);
+
       const card = page.locator(
         `article[aria-label="待批卡片：${studentName}"]`,
       );
-      await expect(card).toBeVisible();
-      // 评语框填评语 → 键盘 1 标对（评语随判定一并提交；先 Tab 移出输入守卫）
-      await page.fill("#pending-comment-input", commentText);
-      await page.keyboard.press("Tab");
+      const comment = card.getByRole("textbox", { name: /^评语/ });
+      await comment.fill(commentText);
+      await expect(comment).toHaveValue(commentText);
+      await comment.press("Tab");
+      const markResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname ===
+            `/api/teacher/responses/${target.responseId}/mark`,
+      );
       await page.keyboard.press("1");
-      // 队列清空 + 空态出现（空态来自 refetch，确保服务端已落库再切学生端）
+      const marked = await markResponse;
+      expect(marked.ok()).toBe(true);
+      expect(marked.request().postDataJSON()).toEqual({
+        mark: "correct",
+        comment: commentText,
+      });
+      expect(await marked.json()).toMatchObject({
+        ok: true,
+        data: { teacherMark: "correct", teacherComment: commentText },
+      });
+      // 正式批改回执已核对，再检查队列与学生结果。
       await expect(card).toHaveCount(0);
       await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
 
