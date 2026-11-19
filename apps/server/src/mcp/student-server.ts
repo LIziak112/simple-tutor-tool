@@ -142,8 +142,10 @@ export function registerStudentTools(
   registerStudentReviewV2Tools(server, deps);
   registerStudentWrongPracticeTools(server, deps);
   registerStudentPracticeTools(server, {
-    list: (input) => listStudentMcpPractices(db, studentId, input),
-    practice: (input) => getStudentMcpPractice(db, studentId, input),
+    list: (input) =>
+      listStudentMcpPractices(db, studentId, input, new Date(), dataDir),
+    practice: (input) =>
+      getStudentMcpPractice(db, studentId, input, new Date(), dataDir),
     question: (input) =>
       getStudentMcpPracticeQuestion(
         db,

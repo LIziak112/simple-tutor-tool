@@ -1,19 +1,58 @@
 import {
+  type AttemptDetailData,
   type AttemptQuestionPublic,
   attemptQuestionPublicSchema,
   lessonQuestionIdsInDisplayOrder,
 } from "@tutor/contract";
 import { splitLessonBlocks } from "@tutor/md-dsl";
 import type { Db } from "../db/client.ts";
-import type { Attempt } from "../db/schema.ts";
+import type { Attempt, ResponseRow } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { requireStudentAiAttempt } from "./ai-companion/teaching-policy-service.ts";
 import { requireUsableAttempt } from "./attempt-access.ts";
 import {
   frozenMemberRefs,
   incompleteFrozenAttempt,
 } from "./attempt-frozen-integrity.ts";
 import { getStudentAttemptPaper } from "./attempt-service.ts";
+import { readKernelAssignmentDetail } from "./kernel-assignment-drafts.ts";
+import { isKernelAttempt } from "./kernel-assignment-routing.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import { answerOf } from "./snapshot.ts";
 import { requireVisibleStudentLecture } from "./student-course-service.ts";
+
+export function studentMcpPracticeAttempt(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  dataDir: string | undefined,
+) {
+  const kernel =
+    dataDir === undefined
+      ? undefined
+      : readKernelAssignmentDetail(db, dataDir, studentId, attemptId, undefined)
+          ?.detail;
+  const { attempt } = requireStudentAiAttempt(db, studentId, attemptId);
+  if (
+    kernel === null ||
+    (dataDir === undefined && isKernelAttempt(db, attempt))
+  )
+    kernelAttemptUnavailable();
+  return { attempt, kernel };
+}
+
+export function studentMcpCurrentAnswer(
+  row: Pick<ResponseRow, "questionId" | "id" | "answerJson">,
+  kernel: AttemptDetailData | undefined,
+) {
+  if (kernel === undefined) return answerOf(row.answerJson);
+  if ("drafts" in kernel) return kernel.drafts[row.questionId] ?? null;
+  const result = kernel.units
+    .flatMap((unit) => unit.questions)
+    .find((question) => question.questionId === row.questionId);
+  if (result?.questionRevisionId !== row.id) kernelAttemptUnavailable();
+  return result.answer;
+}
 
 /** 保留既有MCP入口名；通用冻结成员校验由共享职责承担。 */
 export function assertStudentMcpFrozenMembers(db: Db, attemptId: string): void {
