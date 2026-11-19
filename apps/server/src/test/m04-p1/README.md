@@ -14,7 +14,7 @@ pnpm exec vitest run apps/server/src/routes/m04-p1-assembly.test.ts
 pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts
 ```
 
-当前归档来自已验收的内核修订 `7e9b0df1c921cad307a362f762ad9d70c3fd37b3` 的干净构建，SHA-256 为 `3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d`。仓内保留原字节，pnpm 锁定归档与 Zod。先前 K6 来源为 `e9311e9357f384e495c1b539c8b1a5c6df43958f`，SHA-256 为 `d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42`。
+当前内核以 `apps/server/package.json`、`pnpm-lock.yaml` 的固定归档路径和文件的实际 SHA-256 为准。历史 K8 归档来自内核修订 `7e9b0df1c921cad307a362f762ad9d70c3fd37b3`，SHA-256 为 `3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d`。历史 K6 来自 `e9311e9357f384e495c1b539c8b1a5c6df43958f`，SHA-256 为 `d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42`。
 
 默认探针要求重复开卷获得同一个真实内核回执、本人在既有详情 URL 读到相同冻结题、另一个学生被拒绝。关闭重开内核 SQLite 后复验本人读取。教师移出作业名单后本人仍可取回已有作答，新开卷被拒。真实注销与教师归档后，旧 Cookie 无法读取。探针输出各库路径和实际行数。Vitest 的独占路由用例使用候选替身。
 
@@ -162,6 +162,12 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/tes
 ```
 
 旧库演练读取合成目录的原数据库和对应产品修订中的固定内核包，在隔离目录恢复并走原学生与教师详情。K8 语料是一份已交两题、教师 50 分的试卷。K9 语料是混代反例的完整较晚截面，甲正在作答，乙已经交卷且教师评分为 0。混代测试将甲开卷后的主库与乙交卷后的内核库组合，修复前下载和恢复均返回 200。修复后下载返回 500，恢复返回 400，现有乙卷仍可读取。开卷意图测试保留内核尚未开卷和已开卷待绑两种截面，验证正常恢复沿用已生成的活动。
+
+K10 升级演练以 `963c0bd8` 经正常管理员下载产生的合成归档为输入，SHA-256 为 `91bb913d0441f6d37036345c98af65b7cd132e9e29321774259569e90d091329`。在 PowerShell 中将合成站点口令提供给 `OWNCLASS_BACKUP_FIXTURE_TEACHER_PASSWORD` 和 `OWNCLASS_BACKUP_FIXTURE_STUDENT_PASSWORD`，`$currentKernelSha256` 取当前锁定包实测指纹。探针在两个隔离目录先后恢复 K10 与当前运行时下载的 ZIP，查验原成绩、V2 文档和 PNG 的原字节，并续写原旧草稿。指纹一致但未登记的内核工件仍被拒绝。
+
+```powershell
+node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/test/fixtures/backup-official-upgrade.mjs $k10OfficialZip $currentKernelSha256
+```
 
 
 ### P4 教师批改工作台跨进程恢复
