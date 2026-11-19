@@ -12,8 +12,10 @@ import {
   attemptSubmitRequestSchema,
 } from "@tutor/contract";
 import pino from "pino";
+import { createApp } from "../../app.ts";
 import { createDb } from "../../db/client.ts";
 import { createTestDb, createTestDir } from "../../db/test-utils.ts";
+import { HttpError } from "../../lib/http-error.ts";
 import {
   requireAssignmentVisible,
   requireUsableAttempt,
@@ -32,8 +34,12 @@ import {
   postNoteImage,
   putNoteReceipt,
 } from "../note-fixtures.ts";
-import { fetchSubmitRevisions } from "../submit-revisions.ts";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../submit-revisions.ts";
 import { createTrialApp } from "./assembly.ts";
+import { createTrialChoiceDraftSaver } from "./choice-draft-adapter.ts";
 import {
   attemptFacts,
   loginAssignmentOwner,
@@ -46,15 +52,20 @@ import {
   publicationForAssignment,
 } from "./publication.ts";
 
-const archiveHash =
+const originalArchiveHash =
   "62221d38e30bff8c64dccfca3e9c8075dd98a57a824984daa8fb07d16084063e";
-assert.ok(process.argv[2], "须提供隔离的 K4 试装目录");
+const compatibleArchiveHash =
+  "fd44d13b3707c6f68bee845663493b72f9c64ce4e3ef8c03ac81861abc2c9843";
+assert.ok(process.argv[2], "须提供隔离的内核试装目录");
 const preview = resolve(process.argv[2]);
 const hash = (data) => createHash("sha256").update(data).digest("hex");
-assert.equal(
-  hash(readFileSync(join(preview, "learning-kernel-0.1.0.tgz"))),
-  archiveHash,
+const archiveHash = hash(
+  readFileSync(join(preview, "learning-kernel-0.1.0.tgz")),
 );
+assert.ok(
+  archiveHash === originalArchiveHash || archiveHash === compatibleArchiveHash,
+);
+const compatibleSaveTrial = archiveHash === compatibleArchiveHash;
 const previewRequire = createRequire(join(preview, "package.json"));
 const kernelEntry = previewRequire.resolve("learning-kernel");
 const { openLearningRuntime } = await import(pathToFileURL(kernelEntry).href);
@@ -149,6 +160,7 @@ function makeTrial(withScoring = false) {
           assert.ok(grading);
           runtime.publish({ practice: withoutGrading });
         }
+        const previousActivity = opened?.activityId;
         opened = runtime.start(
           { role: "student", id: studentId },
           {
@@ -164,9 +176,31 @@ function makeTrial(withScoring = false) {
           opened.activityId,
           opened.startedAt,
         );
-        projectTrialDraft(productDb, draft);
+        if (previousActivity !== opened.activityId)
+          projectTrialDraft(productDb, draft);
         return attemptSummaryOf(draft);
       },
+      undefined,
+      compatibleSaveTrial
+        ? createTrialChoiceDraftSaver(
+            (...args) => runtime.saveChoiceDraft(...args),
+            (productDb, studentId, attemptId) => {
+              const attempt = requireUsableAttempt(
+                productDb,
+                studentId,
+                attemptId,
+              );
+              if (attemptId !== opened?.activityId) {
+                throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
+              }
+              return { attempt, stepAttemptId: opened.stepAttemptId };
+            },
+            {
+              isClosed: (principal, attemptId) =>
+                runtime.read(principal, attemptId).status === "completed",
+            },
+          )
+        : undefined,
     );
   }
   mount();
@@ -234,7 +268,7 @@ function evidence(trial, attemptId) {
   );
 }
 
-function kernelFacts(trial) {
+function kernelFacts(trial, includeDrafts = false) {
   const sqlite = new DatabaseSync(trial.kernelPath, { readOnly: true });
   try {
     return Object.fromEntries(
@@ -245,6 +279,9 @@ function kernelFacts(trial) {
         "submissions",
         "automatic_verdicts",
         "completions",
+        ...(includeDrafts
+          ? ["works", "work_versions", "choice_draft_operations"]
+          : []),
       ].map((table) => [
         table,
         sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n,
@@ -795,14 +832,318 @@ async function unfrozenRecovery(omitted) {
     trial.close();
   }
 }
+async function sendChoice(app, attemptId, cookie, questionId, body) {
+  return app.request(
+    `/api/student/attempts/${attemptId}/answers/${questionId}`,
+    {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+async function legacyClosedReplay() {
+  const db = createTestDb();
+  try {
+    const app = createApp({
+      db,
+      dataDir: createTestDir(),
+      isProduction: false,
+      publicUrl: "http://localhost:8787",
+      logger: pino({ enabled: false }),
+    });
+    const { assignmentId, ownerCookie } = await setupAssignment(app);
+    const started = await postAssignment(app, assignmentId, ownerCookie);
+    assert.equal(started.status, 200);
+    const { id } = attemptStartOkSchema.parse(await started.json()).data;
+    const [head] = await fetchSubmitRevisions(app, ownerCookie, id);
+    const unversioned = { answer: { kind: "choice", index: 1 } };
+    for (const revision of [1, 2]) {
+      const saved = await sendChoice(
+        app,
+        id,
+        ownerCookie,
+        firstId,
+        unversioned,
+      );
+      assert.equal(saved.status, 200);
+      assert.equal((await saved.json()).data.revision, revision);
+    }
+    const takeover = {
+      ...unversioned,
+      baseRevision: 2,
+      mutationId: randomUUID(),
+      questionRevisionId: head.questionRevisionId,
+    };
+    assert.equal(
+      (await sendChoice(app, id, ownerCookie, firstId, takeover)).status,
+      200,
+    );
+    const submitted = await submitAttemptRequest(app, ownerCookie, id);
+    assert.equal(submitted.status, 200, await submitted.clone().text());
+    const replay = await sendChoice(app, id, ownerCookie, firstId, takeover);
+    const body = await replay.json();
+    assert.equal(replay.status, 409, JSON.stringify(body));
+    assert.equal(body.error, "ALREADY_SUBMITTED");
+    return { status: replay.status, ...body };
+  } finally {
+    db.$client.close();
+  }
+}
+
+async function compatibleSave() {
+  const legacyReplay = await legacyClosedReplay();
+  const trial = makeTrial();
+  try {
+    const world = await open(trial);
+    const { scope } = world;
+    const heads = await fetchSubmitRevisions(
+      trial.app,
+      world.ownerCookie,
+      scope.attemptId,
+    );
+    assert.deepEqual(
+      heads.map(({ questionId, expectedAnswerRevision }) => [
+        questionId,
+        expectedAnswerRevision,
+      ]),
+      [
+        [firstId, 0],
+        [secondId, 0],
+      ],
+    );
+    const drafts = (questionId) =>
+      trial.runtime
+        .read(world.principal, scope.attemptId)
+        .choiceDrafts?.find((row) => row.questionId === questionId);
+    const save = async (
+      questionId,
+      body,
+      status,
+      cookie = world.ownerCookie,
+    ) => {
+      const response = await sendChoice(
+        trial.app,
+        scope.attemptId,
+        cookie,
+        questionId,
+        body,
+      );
+      const payload = await response.json();
+      assert.equal(response.status, status, JSON.stringify(payload));
+      assert.equal(payload.ok, status === 200);
+      assert.doesNotMatch(
+        JSON.stringify(payload),
+        /"(answers|solutionMd|scoringKey|acceptedChoices)"\s*:/u,
+      );
+      if (status !== 200) {
+        assert.equal(Object.hasOwn(payload, "data"), false);
+        if (payload.error !== "ANSWER_REVISION_CONFLICT") {
+          assert.equal(Object.hasOwn(payload, "_current"), false);
+        }
+      }
+      return { status, ...payload };
+    };
+    const firstBody = { answer: { kind: "choice", index: 1 } };
+    const secondBody = { answer: { kind: "choice", index: 0 } };
+    const first = await save(firstId, firstBody, 200);
+    const retry = await save(firstId, firstBody, 200);
+    assert.deepEqual(first.data, {
+      questionId: firstId,
+      revision: 1,
+      changeCount: 1,
+    });
+    assert.deepEqual(retry.data, {
+      questionId: firstId,
+      revision: 2,
+      changeCount: 2,
+    });
+    const firstHead = heads[0];
+    const takeover = {
+      ...firstBody,
+      baseRevision: retry.data.revision,
+      mutationId: randomUUID(),
+      questionRevisionId: firstHead.questionRevisionId,
+    };
+    const adopted = await save(firstId, takeover, 200);
+    assert.deepEqual(adopted, retry);
+    const afterTakeover = await save(firstId, firstBody, 409);
+    assert.equal(afterTakeover.error, "ANSWER_REVISION_CONFLICT");
+    assert.deepEqual(afterTakeover._current, {
+      revision: 2,
+      draft: firstBody.answer,
+    });
+    const otherQuestion = await save(secondId, secondBody, 200);
+    assert.deepEqual(otherQuestion.data, {
+      questionId: secondId,
+      revision: 1,
+      changeCount: 1,
+    });
+    assert.equal(
+      (await save(firstId, firstBody, 403, world.otherCookie)).error,
+      "FORBIDDEN",
+    );
+    assert.equal(
+      (await save(firstId, { ...firstBody, baseRevision: 2 }, 400)).error,
+      "VALIDATION_ERROR",
+    );
+    assert.deepEqual(
+      [drafts(firstId).choice, drafts(secondId).choice],
+      ["1", "0"],
+    );
+    const prepared = prepareChoiceOriginals(
+      trial.db,
+      trial.dataDir,
+      scope,
+      attemptSubmitRequestSchema.parse({
+        revisions: heads.map((head) => ({
+          ...head,
+          expectedAnswerRevision: drafts(head.questionId).revision,
+        })),
+        evidence: heads.map(({ questionId }) => ({
+          questionId,
+          state: "none",
+        })),
+      }),
+    );
+    const beforeConfirm = kernelFacts(trial, true);
+    assert.equal(beforeConfirm.works, 2);
+    assert.equal(beforeConfirm.work_versions, 3);
+    assert.equal(beforeConfirm.choice_draft_operations, 1);
+    const receipt = confirm(trial, world, prepared);
+    const beforeReopen = kernelFacts(trial, true);
+    assertProjectedOnly(trial, 0);
+    const exactReplay = await sendChoice(
+      trial.app,
+      scope.attemptId,
+      world.ownerCookie,
+      firstId,
+      takeover,
+    );
+    const exactBody = await exactReplay.json();
+    assert.equal(
+      exactReplay.status,
+      409,
+      JSON.stringify({
+        legacyReplay,
+        kernelBacked: { status: exactReplay.status, ...exactBody },
+      }),
+    );
+    assert.equal(exactBody.error, "ALREADY_SUBMITTED");
+    const history = trial.runtime.saveChoiceDraft(
+      world.principal,
+      scope.attemptId,
+      {
+        protocolVersion: 1,
+        stepAttemptId: scope.stepAttemptId,
+        slotId: "answers",
+        operationId: takeover.mutationId,
+        baseRevision: takeover.baseRevision,
+        questionId: firstId,
+        questionVersion: 1,
+        choice: String(takeover.answer.index),
+      },
+    );
+    assert.equal(history.revision, adopted.data.revision);
+    assert.deepEqual(kernelFacts(trial, true), beforeReopen);
+    trial.reopen();
+    const startAgain = await postAssignment(
+      trial.app,
+      world.assignmentId,
+      world.ownerCookie,
+    );
+    assert.equal(startAgain.status, 200);
+    assert.equal(
+      attemptStartOkSchema.parse(await startAgain.json()).data.id,
+      scope.attemptId,
+    );
+    assert.equal(
+      trial.runtime.read(world.principal, scope.attemptId).status,
+      "completed",
+    );
+    assert.deepEqual(trial.recover(scope).receipt, receipt);
+    const closed = await save(
+      secondId,
+      { answer: { kind: "choice", index: 1 } },
+      409,
+    );
+    const closedVersioned = await save(
+      firstId,
+      { ...takeover, mutationId: randomUUID() },
+      409,
+    );
+    assert.equal(closed.error, "ALREADY_SUBMITTED");
+    assert.equal(closedVersioned.error, "ALREADY_SUBMITTED");
+    const replayAfterReopen = await save(firstId, takeover, 409);
+    assert.equal(replayAfterReopen.error, "ALREADY_SUBMITTED");
+    assert.equal(
+      (await save(firstId, firstBody, 403, world.otherCookie)).error,
+      "FORBIDDEN",
+    );
+    assert.deepEqual(kernelFacts(trial, true), beforeReopen);
+    assert.deepEqual(beforeReopen, {
+      practices: 1,
+      scoring_keys: 0,
+      activities: 1,
+      submissions: 1,
+      automatic_verdicts: 0,
+      completions: 1,
+      works: 3,
+      work_versions: 4,
+      choice_draft_operations: 1,
+    });
+    const product = assertProjectedOnly(trial, 0);
+    const hostAnswers = compact(
+      trial.db.$client
+        .prepare(
+          "SELECT answer_revision, change_count, answer_mutation_id FROM responses WHERE attempt_id = ?",
+        )
+        .all(scope.attemptId),
+    );
+    assert.equal(hostAnswers.length, 2);
+    assert.ok(
+      hostAnswers.every(
+        (row) =>
+          row.answer_revision === 0 &&
+          row.change_count === 0 &&
+          row.answer_mutation_id === null,
+      ),
+    );
+    return {
+      first,
+      retry,
+      adopted,
+      afterTakeover,
+      otherQuestion,
+      closed,
+      closedVersioned,
+      legacyReplay,
+      exactReplay: { status: exactReplay.status, ...exactBody },
+      replayAfterReopen,
+      kernelHistoricalRevision: history.revision,
+      receipt,
+      product,
+      beforeConfirm,
+      kernel: beforeReopen,
+    };
+  } finally {
+    trial.close();
+  }
+}
+
 console.log(
   JSON.stringify(
     {
       archiveHash,
       scoringRed: await scoredRed(),
-      frozen: await frozenRecovery(),
-      missing: await unfrozenRecovery(false),
-      uncollected: await unfrozenRecovery(true),
+      ...(compatibleSaveTrial
+        ? { compatibleSave: await compatibleSave() }
+        : {
+            frozen: await frozenRecovery(),
+            missing: await unfrozenRecovery(false),
+            uncollected: await unfrozenRecovery(true),
+          }),
     },
     null,
     2,

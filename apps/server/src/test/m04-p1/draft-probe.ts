@@ -6,8 +6,6 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import {
-  attemptAnswerConflictCurrentSchema,
-  attemptAnswerSaveDataSchema,
   attemptDraftOkSchema,
   attemptStartOkSchema,
   studentRecordsOkSchema,
@@ -20,18 +18,17 @@ import type { Db } from "../../db/client.ts";
 import { createTestDb, createTestDir } from "../../db/test-utils.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import {
-  questionNotFound,
   requireAssignmentVisible,
   requireUsableAttempt,
 } from "../../services/attempt-access.ts";
-import { assertAttemptWriteProof } from "../../services/attempt-activity.ts";
-import type { saveDraftAnswer } from "../../services/attempt-answer.ts";
-import { attemptResponseRows } from "../../services/attempt-freeze.ts";
-import { assertFrozenAnswerShape } from "../../services/attempt-question-projection.ts";
 import { attemptSummaryOf } from "../../services/attempt-summary.ts";
-import { snapshotOfRow } from "../../services/snapshot.ts";
 import type { TestApp } from "../note-fixtures.ts";
 import { createTrialApp } from "./assembly.ts";
+import {
+  createTrialChoiceDraftSaver,
+  type DraftConflict,
+  type TrialSaveChoiceDraft,
+} from "./choice-draft-adapter.ts";
 import {
   attemptFacts,
   postAssignment,
@@ -46,20 +43,7 @@ import {
 } from "./publication.ts";
 
 type DraftRuntime = ReturnType<typeof openLearningRuntime> & {
-  saveChoiceDraft(
-    principal: StudentPrincipal,
-    activityId: string,
-    input: {
-      protocolVersion: 1;
-      operationId: string;
-      stepAttemptId: string;
-      slotId: string;
-      questionId: string;
-      questionVersion: number;
-      choice: string;
-      baseRevision: number;
-    },
-  ): { questionId: string; revision: number; changeCount: number };
+  saveChoiceDraft: TrialSaveChoiceDraft;
 };
 const [install] = process.argv.slice(2);
 assert.ok(install, "须提供已离线安装草稿试验包的目录");
@@ -92,14 +76,7 @@ const options = {
 };
 const owner = (id: string): StudentPrincipal => ({ role: "student", id });
 const activitySteps = new Map<string, string>();
-const parseKernelError = z.object({
-  status: z.literal(409),
-  code: z.enum(["OPERATION_CONFLICT", "ANSWER_REVISION_CONFLICT"]),
-  current: z
-    .object({ revision: z.int(), choice: z.string().nullable() })
-    .optional(),
-});
-const kernelOperationErrors: z.infer<typeof parseKernelError>[] = [];
+const kernelOperationErrors: DraftConflict[] = [];
 function boundActivity(db: Db, studentId: string, attemptId: string) {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.assignmentId === null)
@@ -109,68 +86,14 @@ function boundActivity(db: Db, studentId: string, attemptId: string) {
     throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
   return { attempt, stepAttemptId };
 }
-const saveInKernel: typeof saveDraftAnswer = (
-  db,
-  studentId,
-  attemptId,
-  questionId,
-  answer,
-  proof = {},
-) => {
-  const { attempt, stepAttemptId } = boundActivity(db, studentId, attemptId);
-  const row = attemptResponseRows(db, attemptId).find(
-    (row) => row.questionId === questionId,
-  );
-  if (row === undefined) throw questionNotFound();
-  assertAttemptWriteProof(attempt, proof, proof.questionRevisionId, row.id);
-  const snapshot = snapshotOfRow(row);
-  if (snapshot === null) throw questionNotFound();
-  assertFrozenAnswerShape(db, row, snapshot, answer);
-  if (
-    answer.kind !== "choice" ||
-    proof.baseRevision === undefined ||
-    proof.mutationId === undefined
-  ) {
-    throw new HttpError(400, "VALIDATION_ERROR", "须提供单选答案及保存凭据");
-  }
-  try {
-    return attemptAnswerSaveDataSchema.parse(
-      runtime.saveChoiceDraft(owner(studentId), attemptId, {
-        protocolVersion: 1,
-        operationId: proof.mutationId,
-        stepAttemptId,
-        slotId: "answers",
-        questionId,
-        questionVersion: row.questionVersion,
-        choice: String(answer.index),
-        baseRevision: proof.baseRevision,
-      }),
-    );
-  } catch (error) {
-    const parsed = parseKernelError.safeParse(error);
-    if (!parsed.success) throw error;
-    const { code, current } = parsed.data;
-    if (code === "OPERATION_CONFLICT") kernelOperationErrors.push(parsed.data);
-    // 内核随异常提供同一事务内读取的云端稿。
-    const details = current
-      ? {
-          _current: attemptAnswerConflictCurrentSchema.parse({
-            revision: current.revision,
-            draft:
-              current.choice === null
-                ? null
-                : { kind: "choice", index: Number(current.choice) },
-          }),
-        }
-      : undefined;
-    throw new HttpError(
-      409,
-      current ? "ANSWER_REVISION_CONFLICT" : code,
-      "本题答案保存发生冲突",
-      details,
-    );
-  }
-};
+const saveInKernel = createTrialChoiceDraftSaver(
+  runtime.saveChoiceDraft,
+  boundActivity,
+  {
+    versionedOnly: true,
+    onOperationConflict: (error) => kernelOperationErrors.push(error),
+  },
+);
 const trial = createTrialApp(
   { ...options, db },
   (db, studentId, assignmentId) => {
