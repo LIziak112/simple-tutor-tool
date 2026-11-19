@@ -1,3 +1,4 @@
+import type { AttemptResultCounts } from "@tutor/contract";
 import { and, eq, isNotNull, isNull, ne, or, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { assignments, attempts, students } from "../db/schema.ts";
@@ -16,13 +17,18 @@ import {
   readBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 
+interface TeacherKernelConfirmation
+  extends ReturnType<RecoverKernelConfirmation> {
+  resultCounts: AttemptResultCounts;
+}
+
 /** 单次读取已确认的教师域内作答。调用方另行缩小课程、学生和时间范围。 */
 export function readTeacherKernelConfirmations(
   db: Db,
   dataDir: string | undefined,
   teacherId: string,
   filter: SQL | undefined,
-): Map<string, ReturnType<RecoverKernelConfirmation>> {
+): Map<string, TeacherKernelConfirmation> {
   if (dataDir === undefined || !hasKernelAssignmentTables(db)) return new Map();
   const scopes = db
     .select({
@@ -62,13 +68,23 @@ export function readTeacherKernelConfirmations(
   if (scopes.length === 0) return new Map();
 
   return withKernelConfirmationReader(db, dataDir, (runtime, recover) => {
-    const confirmed = new Map<string, ReturnType<RecoverKernelConfirmation>>();
+    const confirmed = new Map<string, TeacherKernelConfirmation>();
     for (const { attempt, binding, ticket } of scopes) {
       if (binding === null || ticket === null) kernelAttemptUnavailable();
       const activity = readBoundKernelActivity(runtime, attempt, binding);
-      if (activity.status === "completed")
-        confirmed.set(attempt.id, recover(attempt, binding, ticket));
-      else if (activity.status !== "active" || attempt.status !== "draft")
+      if (activity.status === "completed") {
+        const facts = recover(attempt, binding, ticket);
+        confirmed.set(attempt.id, {
+          ...facts,
+          resultCounts: {
+            correctCount: facts.rows.filter((row) => row.finalCorrect === true)
+              .length,
+            totalCount: facts.rows.length,
+            pendingCount: 0,
+            pendingSelfReviewCount: 0,
+          },
+        });
+      } else if (activity.status !== "active" || attempt.status !== "draft")
         kernelAttemptUnavailable();
     }
     return confirmed;

@@ -13,17 +13,7 @@ import {
   wrongPracticeScopeSchema,
   wrongScopeLabelOf,
 } from "@tutor/contract";
-import {
-  and,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -51,12 +41,13 @@ import {
 } from "./attempt-service";
 import { timeProjectionsOf } from "./attempt-time-projection";
 import {
-  pendingMarkCount,
+  pendingMarkCounts,
   pendingMarkCountsByStudent,
   practiceSubmittedCounts,
 } from "./pending-mark";
 import { attemptResultCounts } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
+import { readTeacherAttemptPage } from "./teacher-workbench-selection.ts";
 
 /**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
@@ -79,9 +70,6 @@ import { snapshotOfRow } from "./snapshot";
  * 统一用它；待批数（pendingCount）单独走 D4 共享谓词（与列表卡片/矩阵同
  * 口径，不含待自评行）。
  */
-
-/** 最近活动时间排序键（D6/D10 同一口径：submittedAt ?? startedAt） */
-const lastActivitySql = sql`coalesce(${attempts.submittedAt}, ${attempts.startedAt})`;
 
 // answerOf/jsonOf 已收敛唯一实现：attempt-service.answerOf（null 语义）与
 // snapshot.jsonOf——本文件经顶部 import 使用，不再留平行副本
@@ -305,60 +293,28 @@ export function listTeacherAttempts(
   db: Db,
   teacherId: string,
   query: TeacherAttemptListQuery,
+  dataDir?: string,
 ): TeacherAttemptListData {
-  const filters = [
-    query.studentId !== undefined
-      ? eq(attempts.studentId, query.studentId)
-      : undefined,
-    query.courseId !== undefined
-      ? eq(attempts.courseId, query.courseId)
-      : undefined,
-    query.assignmentId !== undefined
-      ? eq(attempts.assignmentId, query.assignmentId)
-      : undefined,
-    query.unitId !== undefined ? eq(attempts.unitId, query.unitId) : undefined,
-    query.sourceType !== undefined
-      ? eq(attempts.sourceType, query.sourceType)
-      : undefined,
-    query.status !== undefined ? eq(attempts.status, query.status) : undefined,
-    query.from !== undefined
-      ? sql`${lastActivitySql} >= ${query.from}`
-      : undefined,
-    query.to !== undefined ? sql`${lastActivitySql} <= ${query.to}` : undefined,
-    query.startedFrom !== undefined
-      ? sql`julianday(${attempts.startedAt}) >= julianday(${query.startedFrom})`
-      : undefined,
-    query.startedTo !== undefined
-      ? sql`julianday(${attempts.startedAt}) <= julianday(${query.startedTo})`
-      : undefined,
-  ].filter((item): item is NonNullable<typeof item> => item !== undefined);
+  return readTeacherAttemptCards(db, teacherId, query, dataDir).data;
+}
 
-  const where = and(
-    eq(students.teacherId, teacherId),
-    // 作废卷（2026-10 讲练随时重开）不进教师作答列表（行保留审计）
-    recordableAttemptWhere(),
-    ...filters,
-  );
-  const totalRow = db
-    .select({ n: sql<number>`count(*)` })
-    .from(attempts)
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(where)
-    .get();
-  const rows = db
-    .select({ attempt: attempts, studentName: students.displayName })
-    .from(attempts)
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(where)
-    .orderBy(desc(lastActivitySql), desc(attempts.id))
-    .limit(query.limit)
-    .offset(query.offset)
-    .all();
-
-  const resultCounts = attemptResultCounts(
+export function readTeacherAttemptCards(
+  db: Db,
+  teacherId: string,
+  query: TeacherAttemptListQuery,
+  dataDir: string | undefined,
+) {
+  const { rows, total, confirmed } = readTeacherAttemptPage(
     db,
-    rows.map((row) => row.attempt),
+    teacherId,
+    query,
+    dataDir,
   );
+  const legacyAttempts = rows
+    .map(({ attempt }) => attempt)
+    .filter(({ id }) => !confirmed.has(id));
+  const resultCounts = attemptResultCounts(db, legacyAttempts);
+  const pendingCounts = pendingMarkCounts(db, legacyAttempts);
   // T-PR4：行级已提交数（学生主页作答记录区「已提交 n / 共 m」用；与 v1 逐题
   // 进度同一实现 practiceSubmittedCounts——draft 按行级事实、已收尾收敛整卷）
   const submittedCounts = practiceSubmittedCounts(
@@ -395,18 +351,26 @@ export function listTeacherAttempts(
             .get()?.n ?? 0)
         : attemptQuestionRows(db, attempt).length,
     status: attempt.status,
-    resultCounts: resultCounts.get(attempt.id) ?? null,
+    resultCounts:
+      confirmed.get(attempt.id)?.resultCounts ??
+      resultCounts.get(attempt.id) ??
+      null,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
     // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
-    pendingCount: pendingMarkCount(db, attempt),
+    pendingCount: pendingCounts.get(attempt.id) ?? 0,
     submittedCount: submittedCounts.get(attempt.id)?.submitted ?? 0,
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     time: cardTimes.aggregate(attempt.id),
     activeSec: attempt.activeSec,
   }));
-  return { attempts: cards, total: totalRow?.n ?? 0 };
+  return {
+    data: { attempts: cards, total },
+    confirmedCounts: new Map(
+      [...confirmed].map(([id, facts]) => [id, facts.resultCounts]),
+    ),
+  };
 }
 
 /**

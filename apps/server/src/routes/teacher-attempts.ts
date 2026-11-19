@@ -91,7 +91,7 @@ export function createTeacherAttemptRoutes(
         }
         return c.json({
           ok: true,
-          data: listTeacherAttempts(db, c.var.teacher.id, parsed.data),
+          data: listTeacherAttempts(db, c.var.teacher.id, parsed.data, dataDir),
         });
       })
       .get("/attempts/:id", (c) => {
@@ -250,7 +250,7 @@ export function createTeacherAttemptRoutes(
         }
         return c.json({
           ok: true,
-          data: listPendingMarks(db, c.var.teacher.id, parsed.data),
+          data: listPendingMarks(db, c.var.teacher.id, parsed.data, dataDir),
         });
       })
       // T3.4（D13）：CSV 导出文件直出——UTF-8 BOM 前缀让 Excel 直接打开中文不

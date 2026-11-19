@@ -13,7 +13,7 @@ import {
   finalCorrectOf,
   NEW_QUESTION_TYPES,
 } from "@tutor/contract";
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -34,13 +34,15 @@ import {
 } from "./attempt-service";
 import { responseTimeOf } from "./attempt-time-projection";
 import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
-import { pendingMarkCount, submittedTeacherPendingSql } from "./pending-mark";
+import { pendingMarkCount } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
   inkByQuestionOf,
   inkInfoOf,
   sourceOf,
 } from "./teacher-attempt-service";
+
+import { readPendingMarkRows } from "./teacher-workbench-selection.ts";
 
 /**
  * 批注与待批队列业务层（T3.2b，Phase3 清单 D3/D4）：
@@ -271,36 +273,9 @@ export function listPendingMarks(
   db: Db,
   teacherId: string,
   query: PendingMarkListQuery,
+  dataDir?: string,
 ): PendingMarkListData {
-  const where = and(
-    eq(students.teacherId, teacherId),
-    submittedTeacherPendingSql,
-    query.studentId !== undefined
-      ? eq(attempts.studentId, query.studentId)
-      : undefined,
-    query.courseId !== undefined
-      ? eq(attempts.courseId, query.courseId)
-      : undefined,
-    query.assignmentId !== undefined
-      ? eq(attempts.assignmentId, query.assignmentId)
-      : undefined,
-  );
-  const rows = db
-    .select({
-      response: responses,
-      attempt: attempts,
-      studentName: students.displayName,
-    })
-    .from(responses)
-    .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(where)
-    .orderBy(
-      asc(attempts.submittedAt),
-      asc(attempts.id),
-      asc(responses.questionId),
-    )
-    .all();
+  const rows = readPendingMarkRows(db, teacherId, query, dataDir);
 
   // 按 attempt 分组（排序键含 attemptId，同 attempt 的行必然相邻，分组不破坏全局顺序）
   const byAttempt = new Map<

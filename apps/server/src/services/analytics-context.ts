@@ -283,13 +283,8 @@ function readContext(
       ? new Map()
       : attemptResultCounts(db, legacyAttempts);
   if (view.kind !== "questions") {
-    for (const [id, { rows }] of confirmed)
-      resultCounts.set(id, {
-        correctCount: rows.filter((r) => r.finalCorrect === true).length,
-        totalCount: rows.length,
-        pendingCount: 0,
-        pendingSelfReviewCount: 0,
-      });
+    for (const [id, facts] of confirmed)
+      resultCounts.set(id, facts.resultCounts);
   }
 
   return {

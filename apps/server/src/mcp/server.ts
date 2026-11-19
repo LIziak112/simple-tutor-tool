@@ -55,10 +55,7 @@ import {
   listStudentReports,
 } from "../services/report-service";
 import { listStudents } from "../services/student-service";
-import {
-  editTeacherDraftResponse,
-  listTeacherAttempts,
-} from "../services/teacher-attempt-service";
+import { editTeacherDraftResponse } from "../services/teacher-attempt-service";
 import {
   commitZipImport,
   decodeImportZipBase64,
@@ -72,8 +69,8 @@ import {
   deleteUnstartedAssignment,
   resolveAssignmentStudentIds,
 } from "./assignment-tools";
+import { queryTeacherAttemptCards } from "./teacher-attempt-cards.ts";
 import {
-  attemptExtrasOf,
   decodeCursorOffset,
   queryStudentResponses,
   resolveToolStudent,
@@ -934,7 +931,7 @@ export function registerTeacherTools(
   );
 
   // 15. query_student_attempts：学生历次作答卷盘点（T-PR2 MCP-A ①，薄封装
-  // listTeacherAttempts + 每卷增量计数，见 teacher-queries.attemptExtrasOf）
+  // 卡片与每卷增量计数统一在 teacher-attempt-cards 装配）
   server.registerTool(
     "query_student_attempts",
     {
@@ -1019,50 +1016,9 @@ export function registerTeacherTools(
             `查询参数不合法：${firstIssueMessage(parsed.error)}`,
           );
         }
-        const query = parsed.data;
-        const { attempts: cards, total } = listTeacherAttempts(
-          db,
-          teacherId,
-          query,
+        return jsonContent(
+          queryTeacherAttemptCards(db, teacherId, parsed.data, dataDir),
         );
-        const extras = attemptExtrasOf(
-          db,
-          cards.map((card) => card.attemptId),
-        );
-        const offset = decodeCursorOffset(cursor);
-        const nextCursor =
-          offset + cards.length < total ? String(offset + cards.length) : null;
-        return jsonContent({
-          total,
-          nextCursor,
-          attempts: cards.map((card) => ({
-            attemptId: card.attemptId,
-            studentId: card.studentId,
-            studentName: card.studentName,
-            sourceType: card.sourceType,
-            courseId: card.courseId,
-            courseName: card.courseName,
-            assignmentId: card.assignmentId,
-            assignmentTitle: card.assignmentTitle,
-            unitId: card.unitId,
-            unitTitle: card.unitTitle,
-            attemptNo: card.attemptNo,
-            status: card.status,
-            startedAt: card.startedAt,
-            submittedAt: card.submittedAt,
-            activeSec: card.activeSec,
-            unitCount: card.unitCount,
-            questionCount: card.questionCount,
-            scoreAuto: card.scoreAuto,
-            scoreFinal: card.scoreFinal,
-            submittedCount: extras.get(card.attemptId)?.submittedCount ?? 0,
-            correctCount: extras.get(card.attemptId)?.correctCount ?? 0,
-            wrongCount: extras.get(card.attemptId)?.wrongCount ?? 0,
-            pendingCount: card.pendingCount,
-            unsureCount: extras.get(card.attemptId)?.unsureCount ?? 0,
-            hasAiReview: extras.get(card.attemptId)?.hasAiReview ?? false,
-          })),
-        });
       },
     ),
   );

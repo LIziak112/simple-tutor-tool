@@ -13,7 +13,6 @@ import {
 } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
-  aiAttemptReviewTasks,
   aiTasks,
   annotations,
   attempts,
@@ -24,7 +23,6 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { recordableAttemptWhere } from "../services/attempt-recordability.ts";
 import { timeProjectionsOf } from "../services/attempt-time-projection";
 import {
   currentSelfReviewWhere,
@@ -143,77 +141,6 @@ export function parseKnowledgeArray(raw: string | null): string[] {
   } catch {
     return [];
   }
-}
-
-// ---------- query_student_attempts 的每卷增量计数 ----------
-
-/** 每卷盘点计数（query_student_attempts 在 listTeacherAttempts 卡片上的增量面） */
-export interface AttemptExtras {
-  /** 单题已提交的行数（draft 卷为部分提交数；已交卷 = 冻结行数） */
-  submittedCount: number;
-  correctCount: number;
-  wrongCount: number;
-  /** 待批数（finalCorrect 为空且快照非空，D4 共享口径） */
-  pendingCount: number;
-  /** 自标「不会」的行数 */
-  unsureCount: number;
-  /** 是否已有整卷 AI 复盘任务（任意状态，创建过即算） */
-  hasAiReview: boolean;
-}
-
-/** 一批卷的增量计数（两条聚合 SQL，避免逐卷 N+1；无 responses 行的卷补零值） */
-export function attemptExtrasOf(
-  db: Db,
-  attemptIds: readonly string[],
-): Map<string, AttemptExtras> {
-  const map = new Map<string, AttemptExtras>();
-  if (attemptIds.length === 0) return map;
-  const ids = [...attemptIds];
-  const counts = db
-    .select({
-      attemptId: responses.attemptId,
-      submitted: sql<number>`coalesce(sum(case when ${responses.submittedAt} is not null then 1 else 0 end), 0)`,
-      correct: sql<number>`coalesce(sum(case when ${responses.finalCorrect} = 1 then 1 else 0 end), 0)`,
-      wrong: sql<number>`coalesce(sum(case when ${responses.finalCorrect} = 0 then 1 else 0 end), 0)`,
-      pending: sql<number>`coalesce(sum(case when ${responses.finalCorrect} is null and ${responses.questionSnapshotJson} is not null then 1 else 0 end), 0)`,
-      unsure: sql<number>`coalesce(sum(case when ${responses.studentFlag} = 'unsure' then 1 else 0 end), 0)`,
-    })
-    .from(responses)
-    .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    .where(and(inArray(responses.attemptId, ids), recordableAttemptWhere()))
-    .groupBy(responses.attemptId)
-    .all();
-  const reviewIds = new Set(
-    db
-      .select({ attemptId: aiAttemptReviewTasks.attemptId })
-      .from(aiAttemptReviewTasks)
-      .where(inArray(aiAttemptReviewTasks.attemptId, ids))
-      .all()
-      .map((row) => row.attemptId),
-  );
-  for (const row of counts) {
-    map.set(row.attemptId, {
-      submittedCount: row.submitted ?? 0,
-      correctCount: row.correct ?? 0,
-      wrongCount: row.wrong ?? 0,
-      pendingCount: row.pending ?? 0,
-      unsureCount: row.unsure ?? 0,
-      hasAiReview: reviewIds.has(row.attemptId),
-    });
-  }
-  for (const id of ids) {
-    if (!map.has(id)) {
-      map.set(id, {
-        submittedCount: 0,
-        correctCount: 0,
-        wrongCount: 0,
-        pendingCount: 0,
-        unsureCount: 0,
-        hasAiReview: reviewIds.has(id),
-      });
-    }
-  }
-  return map;
 }
 
 // ---------- query_student_responses ----------
