@@ -256,7 +256,7 @@ export function createStudentRoutes(
       .route("/", createStudentAttachmentRoutes(db, dataDir))
       .route("/", createStudentPersonalRoutes(db, dataDir))
       .route("/", createStudentBatchSubmissionRoutes(db))
-      .route("/", createStudentAttemptRoutes(db))
+      .route("/", createStudentAttemptRoutes(db, dataDir))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })
@@ -942,7 +942,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      .route("/", createStudentCreateRoutes(db))
+      .route("/", createStudentCreateRoutes(db, dataDir))
       // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）；
       // kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null + blocks 切段 +
       // companionUnits 恒空（嵌入单元隐藏，题目已在页内），泄露测试见

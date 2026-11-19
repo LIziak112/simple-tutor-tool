@@ -23,6 +23,7 @@ import {
   setStudentFlag,
 } from "../services/attempt-service.ts";
 import { openHint } from "../services/hint-service.ts";
+import { verifyKernelStudentAttempt } from "../services/kernel-assignment-attempt.ts";
 import { respondAttemptDetail } from "./student-attempt-detail.ts";
 import { createStudentLearningContextRoutes } from "./student-learning-context";
 import { createStudentSettlementRoutes } from "./student-settlements.ts";
@@ -48,7 +49,7 @@ export function createStudentAnswerSaveRoutes(db: Db, save = saveDraftAnswer) {
 }
 
 /** 作答详情、冻结上下文、公开试卷，以及草稿保存、标记、提示这几条带冻结凭据写入的契约出口。 */
-export function createStudentAttemptRoutes(db: Db) {
+export function createStudentAttemptRoutes(db: Db, dataDir: string) {
   return (
     new Hono<StudentEnv>()
       .get("/attempts/opened", (c) => {
@@ -102,7 +103,13 @@ export function createStudentAttemptRoutes(db: Db) {
         });
       })
       .get("/attempts/:id", (c) =>
-        respondAttemptDetail(c, db, c.var.student.id, c.req.param("id")),
+        respondAttemptDetail(
+          c,
+          db,
+          c.var.student.id,
+          c.req.param("id"),
+          dataDir,
+        ),
       )
       // tt-07a（QM-06）：冻结上下文公开投影（材料/组快照）读取——作答期渲染与
       // 结果回看共用，只读快照不查 live 库（教师改材料/软删不影响已开卷）；坏
@@ -122,6 +129,12 @@ export function createStudentAttemptRoutes(db: Db) {
       // 权限，被移出/作业软删后已建作答仍可取卷；course 来源每次校验可见性与
       // 成员资格，D22——course draft 失去访问权 403/404，前端据此按终态停发）
       .get("/attempts/:id/paper", (c) => {
+        verifyKernelStudentAttempt(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("id"),
+        );
         return c.json({
           ok: true,
           data: studentPaperDataSchema.parse(

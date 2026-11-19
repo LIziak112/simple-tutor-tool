@@ -1,5 +1,4 @@
 import type { AssignmentCreateRequest } from "@tutor/contract";
-import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
@@ -9,19 +8,6 @@ import {
   assertKernelAssignmentPolicy,
   loadKernelAssignmentChoices,
 } from "./kernel-assignment-input.ts";
-
-export function isKernelAssignment(
-  db: Pick<Db, "select">,
-  assignmentId: string,
-): boolean {
-  return (
-    db
-      .select()
-      .from(kernelAssignments)
-      .where(eq(kernelAssignments.assignmentId, assignmentId))
-      .get() !== undefined
-  );
-}
 
 export function createAssignmentsWithBackend(
   db: Db,

@@ -3,18 +3,22 @@ import type { Context } from "hono";
 import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
 import { readConditionalAttemptDetail } from "../services/attempt-detail-cache";
+import { verifyKernelStudentAttempt } from "../services/kernel-assignment-attempt.ts";
 
 export function respondAttemptDetail(
   c: Context,
   db: Db,
   studentId: string,
   attemptId: string,
+  dataDir?: string,
 ) {
   c.header("Cache-Control", "private, no-store");
   const ownedAttemptId = attemptIdSchema.safeParse(attemptId);
   if (!ownedAttemptId.success) {
     throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
   }
+  if (dataDir)
+    verifyKernelStudentAttempt(db, dataDir, studentId, ownedAttemptId.data);
   const { etag, detail } = readConditionalAttemptDetail(
     db,
     studentId,

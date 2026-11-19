@@ -30,6 +30,7 @@ import {
   recordQuestionSubmitEvent,
   submissionActivityOf,
 } from "./event-service";
+import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
 import { practiceRequestDigestOf } from "./practice-submit-intent.ts";
 import {
   assertDraftCourseVisible,
@@ -62,6 +63,7 @@ export function commitPracticeQuestion(
       // 归属（不存在/跨学生统一 404）+ 作废 409：写路径共用前导（与 PATCH
       // workflow 同一实现）
       const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
+      requireLegacyAttemptWrite(tx, attempt);
       // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致）
       assertDraftCourseVisible(db, studentId, attempt);
       // 新协议路径仅普通来源的新协议卷：lesson 独立适配 → 协议不匹配；历史卷 → legacy（§5.3）

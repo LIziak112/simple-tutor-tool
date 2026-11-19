@@ -6,6 +6,7 @@ import {
   hasPendingOriginals,
 } from "./attempt-opened-artifacts.ts";
 import { hasSubstantiveAttemptEvidence } from "./attempt-substantive-evidence.ts";
+import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 
 /** 一轮清除删掉了哪些卷：这是唯一一处定时物理删除作答行的任务，要能事后查到。 */
 export interface OpenedAttemptPurgeReport {
@@ -67,6 +68,7 @@ function purgeOpenedAttemptsBefore(db: Db, cutoff: string): string[] {
       const removed: string[] = [];
       for (const attempt of candidates) {
         if (
+          isKernelAttempt(db, attempt) ||
           hasSubstantiveAttemptEvidence(db, attempt.id) ||
           hasOtherProtectedChildren(db, attempt.id) ||
           hasPendingOriginals(db, attempt.id)

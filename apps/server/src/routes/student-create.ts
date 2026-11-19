@@ -52,10 +52,17 @@ export function createAssignmentAttemptStartRoutes(
 }
 
 /** 开卷与建卷入口：作业、课程单元、讲练的开始与重开，错题重练组卷。 */
-export function createStudentCreateRoutes(db: Db) {
+export function createStudentCreateRoutes(db: Db, dataDir: string) {
+  const startAssignment: typeof startAttempt = (
+    current,
+    student,
+    assignment,
+    options,
+    client,
+  ) => startAttempt(current, student, assignment, options, client, dataDir);
   return (
     new Hono<StudentEnv>()
-      .route("/", createAssignmentAttemptStartRoutes(db))
+      .route("/", createAssignmentAttemptStartRoutes(db, startAssignment))
       // T2A.6：课程练习入口（存在未交卷作答返回它；否则新建 attemptNo+1，
       // 新一次从空白开始；事务保证并发只得一份 draft）
       .post("/courses/:id/units/:unitId/attempts", async (c) => {

@@ -5,13 +5,11 @@ import type {
   PracticeFeedbackMode,
   PracticeWorkflowStartOptions,
 } from "@tutor/contract";
-import { attemptPhaseOf } from "@tutor/contract";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Assignment, type Attempt, attempts } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { requireAssignmentVisible } from "./attempt-access.ts";
-import { touchAttemptActivity } from "./attempt-activity.ts";
 import {
   contextEntriesOf,
   liveAttemptContextClosure,
@@ -26,9 +24,11 @@ import {
 } from "./attempt-opened-refresh.ts";
 import { withAllowRedo } from "./attempt-redo-policy";
 import { attemptSummaryOf } from "./attempt-summary.ts";
-import { timedColumnsOf } from "./attempt-timing.ts";
+import { startOpenedAttemptTimer } from "./attempt-timing.ts";
 import { requireVisibleCourseUnit } from "./course-service";
-import { isKernelAssignment } from "./kernel-assignment-ownership.ts";
+import { startKernelAssignmentAttempt } from "./kernel-assignment-attempt.ts";
+import { isKernelAssignment } from "./kernel-assignment-routing.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
@@ -82,36 +82,7 @@ function resumeDraftAttempt(
   client: AttemptStartClient,
 ): Attempt {
   const attempt = refreshOpenedAttempt(db, draft, client);
-  if (
-    options.timeLimitMinutes === undefined ||
-    attemptPhaseOf(attempt) !== "opened"
-  )
-    return attempt;
-  const now = new Date().toISOString();
-  return db.transaction(
-    (tx) => {
-      // 条件写：两次并发的限时开卷只有先到的生效，后到的拿到同一个时钟
-      const applied =
-        tx
-          .update(attempts)
-          .set(timedColumnsOf(now, options.timeLimitMinutes))
-          .where(
-            and(
-              eq(attempts.id, attempt.id),
-              eq(attempts.status, "draft"),
-              isNull(attempts.activatedAt),
-              isNull(attempts.abandonedAt),
-            ),
-          )
-          .run().changes > 0;
-      if (applied) touchAttemptActivity(tx, attempt.id, now);
-      return (
-        tx.select().from(attempts).where(eq(attempts.id, attempt.id)).get() ??
-        attempt
-      );
-    },
-    { behavior: "immediate" },
-  );
+  return startOpenedAttemptTimer(db, attempt, options.timeLimitMinutes);
 }
 
 // ---------- POST /api/student/assignments/:id/attempt ----------
@@ -132,13 +103,17 @@ export function startAttempt(
   assignmentId: string,
   options: AttemptWorkflowStartOptions = {},
   client: AttemptStartClient = {},
+  kernelDataDir?: string,
 ): AttemptStartData {
   const assignment = requireAssignmentVisible(db, studentId, assignmentId);
   if (isKernelAssignment(db, assignment.id)) {
-    throw new HttpError(
-      503,
-      "KERNEL_ATTEMPT_UNAVAILABLE",
-      "内核作业暂时无法开卷",
+    if (!kernelDataDir) kernelAttemptUnavailable();
+    return startKernelAssignmentAttempt(
+      db,
+      kernelDataDir,
+      studentId,
+      assignmentId,
+      options,
     );
   }
 

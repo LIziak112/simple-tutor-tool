@@ -1,3 +1,4 @@
+import { singleChoiceScoringSourceSchema } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import type { Db } from "../db/client.ts";
 import type { Assignment, Attempt } from "../db/schema.ts";
@@ -11,6 +12,13 @@ export function kernelDraftForAssignment(
   studentId: string,
   id: string,
   startedAt: string,
+  options: Pick<
+    Parameters<typeof newDraftAttempt>[0],
+    | "timeLimitMinutes"
+    | "practiceWorkflowVersion"
+    | "feedbackMode"
+    | "workflowRevision"
+  > = {},
 ): Attempt {
   return newDraftAttempt({
     id,
@@ -22,6 +30,7 @@ export function kernelDraftForAssignment(
     lectureId: null,
     attemptNo: 1,
     startedAt,
+    ...options,
   });
 }
 
@@ -65,16 +74,11 @@ export function loadKernelAssignmentChoices(
 
   const questions = liveRows.map((row) => {
     const snapshot = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
-    const { id, type, options, answers, hints } = snapshot;
-    if (
-      type !== "choice" ||
-      answers?.kind !== "choice" ||
-      !options?.[answers.index] ||
-      hints?.length
-    )
-      ineligible();
+    const scoring = singleChoiceScoringSourceSchema.safeParse(snapshot);
+    if (!scoring.success || snapshot.hints?.length) ineligible();
+    const { options, answers } = scoring.data;
     return {
-      id,
+      id: snapshot.id,
       version: row.version,
       prompt: studentStemMd(snapshot),
       options: Object.fromEntries(
