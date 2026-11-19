@@ -32,6 +32,7 @@ import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   ensureKernelRuntimeStorage,
   kernelAttemptUnavailable,
+  withBoundKernelActivity,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
@@ -39,27 +40,7 @@ import { resolveNewAttemptWorkflow } from "./practice-workflow-wiring.ts";
 import type { Tx } from "./question-sync.ts";
 
 function verifyKernelBinding(db: Db, dataDir: string, attempt: Attempt): void {
-  const binding = db
-    .select()
-    .from(kernelAttemptBindings)
-    .where(eq(kernelAttemptBindings.attemptId, attempt.id))
-    .get();
-  if (!binding || binding.assignmentId !== attempt.assignmentId)
-    kernelAttemptUnavailable();
-  withKernelRuntime(db, dataDir, false, (runtime) => {
-    const activity = runtime.read(
-      { role: "student", id: attempt.studentId },
-      attempt.id,
-    );
-    if (
-      activity.activityId !== attempt.id ||
-      !("stepAttemptId" in activity) ||
-      activity.stepAttemptId !== binding.stepAttemptId ||
-      !("startedAt" in activity) ||
-      activity.startedAt !== attempt.startedAt
-    )
-      kernelAttemptUnavailable();
-  });
+  withBoundKernelActivity(db, dataDir, attempt, () => undefined);
 }
 
 export function verifyKernelStudentAttempt(

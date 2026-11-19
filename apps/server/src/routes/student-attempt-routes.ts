@@ -24,6 +24,7 @@ import {
 } from "../services/attempt-service.ts";
 import { openHint } from "../services/hint-service.ts";
 import { verifyKernelStudentAttempt } from "../services/kernel-assignment-attempt.ts";
+import { saveAssignmentDraftAnswer } from "../services/kernel-assignment-drafts.ts";
 import { respondAttemptDetail } from "./student-attempt-detail.ts";
 import { createStudentLearningContextRoutes } from "./student-learning-context";
 import { createStudentSettlementRoutes } from "./student-settlements.ts";
@@ -71,7 +72,12 @@ export function createStudentAttemptRoutes(db: Db, dataDir: string) {
       })
       .route("/", createStudentLearningContextRoutes(db))
       .route("/", createStudentSettlementRoutes(db))
-      .route("/", createStudentAnswerSaveRoutes(db))
+      .route(
+        "/",
+        createStudentAnswerSaveRoutes(db, (db, ...args) =>
+          saveAssignmentDraftAnswer(db, dataDir, ...args),
+        ),
+      )
       // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
       .put("/attempts/:id/flags/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptFlagRequestSchema);

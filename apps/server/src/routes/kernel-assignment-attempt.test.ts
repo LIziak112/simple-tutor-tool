@@ -231,18 +231,13 @@ it("教师重导后，两名学生的开卷各指向自己真正冻结的版本"
   ]);
 });
 
-it("内核卷的普通草稿、整卷、逐题和批次入口均拒绝旧写入", async () => {
+it("内核卷的整卷、逐题和批次入口均拒绝旧写入", async () => {
   const world = await fixture();
   const { id } = await world.open();
   const detail = await world.detail(id);
   const question = detail.units[0]?.questions[0];
   if (!question) throw new Error("冻结题缺失");
   const requests = [
-    [
-      `/answers/${question.id}`,
-      "PUT",
-      { answer: { kind: "choice", index: 1 } },
-    ],
     [
       "/submit",
       "POST",

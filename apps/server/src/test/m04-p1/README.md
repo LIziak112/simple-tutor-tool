@@ -14,7 +14,7 @@ pnpm exec vitest run apps/server/src/routes/m04-p1-assembly.test.ts
 pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts
 ```
 
-归档来自已验收的内核修订 `e9311e9357f384e495c1b539c8b1a5c6df43958f` 的干净构建，SHA-256 为 `d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42`。仓内保留原字节，文件名登记摘要，pnpm 锁定归档完整性和 Zod 版本。
+当前归档来自已验收的内核修订 `7e9b0df1c921cad307a362f762ad9d70c3fd37b3` 的干净构建，SHA-256 为 `3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d`。仓内保留原字节，pnpm 锁定归档与 Zod。先前 K6 来源为 `e9311e9357f384e495c1b539c8b1a5c6df43958f`，SHA-256 为 `d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42`。
 
 默认探针要求重复开卷获得同一个真实内核回执、本人在既有详情 URL 读到相同冻结题、另一个学生被拒绝。关闭重开内核 SQLite 后复验本人读取。教师移出作业名单后本人仍可取回已有作答，新开卷被拒。真实注销与教师归档后，旧 Cookie 无法读取。探针输出各库路径和实际行数。Vitest 的独占路由用例使用候选替身。
 
@@ -91,3 +91,14 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/receipt-originals-probe.mjs $k4I
 真实 PUT 复用产品的鉴权、请求校验和冻结行。带修订与操作标识的请求携带两项凭据，只有答案的请求由内核按旧客户端语义写入。首次和同文重发各增加一次修订，现代客户端同文接管不增加修订，接管后旧客户端收到 `409 ANSWER_REVISION_CONFLICT` 和本人当前稿。接管一题后，另一题仍能以旧客户端请求保存。他人始终被拒绝。无评分试验卷经权威确认和两库重启后沿原作业 URL 返回同一活动，确认后新旧两种 PUT 都收到 `409 ALREADY_SUBMITTED`，两库作答事实无变化。试验中的详情阶段和记录列表仍待产品正式接线。
 
 确认成功后、产品原稿索引尚未接收确认时，原样重发已完成的现代接管请求也收到 `409 ALREADY_SUBMITTED`。内核公开接口仍可取回这次历史保存的版本 2，产品的保存入口遵循作业终态。重启两库后重复验证。
+
+## 普通草稿保存与跨进程恢复
+
+普通学生 PUT 在宿主授权后调用内核的当前保存接口。超宽限使用仅允许最近操作重放的模式。详情从同一活动绑定取两题当前稿和修订。激活与最近活动采用内核实际变化时间和原宿主触笔时间的最早、最晚值。宿主响应行继续用于冻结题身份。未限时冻结卷的条件读取将内核当前修订纳入原有 ETag。
+
+```powershell
+pnpm exec vitest run apps/server/src/routes/kernel-assignment-drafts.test.ts apps/server/src/routes/kernel-assignment-attempt.test.ts --maxWorkers=1
+pnpm --dir apps/server exec tsx src/test/m04-p1/current-draft-restart-probe.mjs
+```
+
+跨进程探针先让内核保存落库，再用合成数据库触发器中断宿主活动投影。以相同数据目录重启服务后，详情恢复原题身份和草稿，并补回首次活动。详情前直接打开记录列表仍遗漏该卷，列表独立恢复留待 P4。另一次中断以同请求重试补回投影。产品提交仍由后续工单接入。旧包历史回执反例保存在 `fd237076`。

@@ -54,17 +54,14 @@ const [mode] = process.argv.slice(2);
 assert.ok(mode === undefined || mode === "--all-withheld");
 const allWithheld = mode === "--all-withheld";
 const dependency = serverPackage.dependencies["learning-kernel"];
-const archive = /^file:(vendor\/learning-kernel-[0-9a-f]{64}\.tgz)$/u.exec(
+const archive = /^file:(vendor\/learning-kernel-([0-9a-f]{64})\.tgz)$/u.exec(
   dependency,
 );
 assert.ok(archive?.[1]);
 const sha = createHash("sha256")
   .update(readFileSync(new URL(`../../../${archive[1]}`, import.meta.url)))
   .digest("hex");
-assert.equal(
-  sha,
-  "d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42",
-);
+assert.equal(sha, archive[2]);
 const entry = import.meta.resolve("learning-kernel");
 const dataDir = createTestDir();
 const productPath = join(dataDir, "ownclass.sqlite");

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { ATTEMPT_SNAPSHOT_PROOF_HEADER } from "@tutor/contract";
+import {
+  ATTEMPT_SNAPSHOT_PROOF_HEADER,
+  assignmentCreateOkSchema,
+} from "@tutor/contract";
 import type { Db } from "../../db/client.ts";
 import type { TestApp } from "../note-fixtures.ts";
 import {
@@ -79,6 +82,34 @@ export async function setupAssignment(app: TestApp, dueAt?: string) {
     otherStudentId,
     teacher,
   };
+}
+
+export async function assignKernelFixture(
+  app: TestApp,
+  {
+    teacher,
+    unitId,
+    studentId,
+    otherStudentId,
+  }: Awaited<ReturnType<typeof setupAssignment>>,
+) {
+  const assigned = await app.request("/api/teacher/assignments", {
+    method: "POST",
+    headers: { cookie: teacher, "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "两道内核单选",
+      unitIds: [unitId],
+      studentIds: [studentId, otherStudentId],
+      executionBackend: "kernel",
+      allowRedo: false,
+    }),
+  });
+  assert.equal(assigned.status, 201, await assigned.clone().text());
+  const {
+    assignments: [assignment],
+  } = assignmentCreateOkSchema.parse(await assigned.json()).data;
+  assert.ok(assignment);
+  return assignment.id;
 }
 
 export async function assignFixture(

@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
 import { readConditionalAttemptDetail } from "../services/attempt-detail-cache";
-import { verifyKernelStudentAttempt } from "../services/kernel-assignment-attempt.ts";
+import { readKernelAssignmentDetail } from "../services/kernel-assignment-drafts.ts";
 
 export function respondAttemptDetail(
   c: Context,
@@ -17,14 +17,25 @@ export function respondAttemptDetail(
   if (!ownedAttemptId.success) {
     throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
   }
-  if (dataDir)
-    verifyKernelStudentAttempt(db, dataDir, studentId, ownedAttemptId.data);
-  const { etag, detail } = readConditionalAttemptDetail(
-    db,
-    studentId,
-    ownedAttemptId.data,
-    c.req.header("If-None-Match"),
-  );
+  const ifNoneMatch = c.req.header("If-None-Match");
+  const kernel =
+    dataDir === undefined
+      ? undefined
+      : readKernelAssignmentDetail(
+          db,
+          dataDir,
+          studentId,
+          ownedAttemptId.data,
+          ifNoneMatch,
+        );
+  const { etag, detail } =
+    kernel ??
+    readConditionalAttemptDetail(
+      db,
+      studentId,
+      ownedAttemptId.data,
+      ifNoneMatch,
+    );
   if (etag !== null) c.header("ETag", etag);
   return detail === null
     ? c.body(null, 304)
