@@ -15,6 +15,11 @@ import {
   attemptAnswerSavePath,
   createStudentAnswerSaveRoutes,
 } from "../../routes/student-attempt-routes.ts";
+import {
+  attemptSubmitPath,
+  createStudentAttemptSubmitRoutes,
+  type StudentAttemptSubmit,
+} from "../../routes/student-batch-submission.ts";
 import { createAssignmentAttemptStartRoutes } from "../../routes/student-create.ts";
 import type { saveDraftAnswer } from "../../services/attempt-answer.ts";
 import type { startAttempt } from "../../services/attempt-start.ts";
@@ -24,6 +29,7 @@ export function createTrialApp(
   start: typeof startAttempt,
   read?: (studentId: string, activityId: string) => unknown,
   save?: typeof saveDraftAnswer,
+  submit?: StudentAttemptSubmit<unknown>,
 ) {
   const logger = options.logger ?? pino({ enabled: false });
   const requireStudent = createRequireStudent(options.db, options.publicUrl);
@@ -62,6 +68,18 @@ export function createTrialApp(
         requireStudent,
       )
       .route("/api/student", createStudentAnswerSaveRoutes(options.db, save));
+  }
+  if (submit) {
+    app
+      .use(
+        `/api/student${attemptSubmitPath}`,
+        requestDiagnostics(logger),
+        requireStudent,
+      )
+      .route(
+        "/api/student",
+        createStudentAttemptSubmitRoutes(options.db, submit),
+      );
   }
   return app.route("/", createApp(options));
 }

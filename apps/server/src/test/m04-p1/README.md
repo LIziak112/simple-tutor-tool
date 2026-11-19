@@ -14,7 +14,7 @@ pnpm exec vitest run apps/server/src/routes/m04-p1-assembly.test.ts
 pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts
 ```
 
-归档来自已验收的内核修订 `fbe7cc11aadb51cd767154b232278d86acb3e4d5` 的干净构建，SHA-256 为 `0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0`。仓内保留原字节，文件名登记摘要，pnpm 锁定归档完整性和 Zod 版本。
+归档来自已验收的内核修订 `e9311e9357f384e495c1b539c8b1a5c6df43958f` 的干净构建，SHA-256 为 `d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42`。仓内保留原字节，文件名登记摘要，pnpm 锁定归档完整性和 Zod 版本。
 
 默认探针要求重复开卷获得同一个真实内核回执、本人在既有详情 URL 读到相同冻结题、另一个学生被拒绝。关闭重开内核 SQLite 后复验本人读取。教师移出作业名单后本人仍可取回已有作答，新开卷被拒。真实注销与教师归档后，旧 Cookie 无法读取。探针输出各库路径和实际行数。Vitest 的独占路由用例使用候选替身。
 
@@ -24,11 +24,11 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts
 
 已有原归档时，可在独立目录执行 `npm install --offline --ignore-scripts --no-audit --no-fund ./learning-kernel-0.1.0.tgz ./zod-4.6.5.tgz`，从产品根执行 `pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts --historical-k1 <安装目录>`。探针核对原包和 Zod 摘要后重验拒绝与两库空白。
 
-活动与作业的关联只保存在本次隔离进程。隔离详情输出内核公开只读结果，题目冻结身份、草稿版本与整卷确认仍需实证。固定产物只有 `publish`、`start`、`read`、`close`，探针记录实际方法供后续对照。
+本节开卷探针的活动与作业关联只保存在隔离进程。旧 K2 开卷产物的公开方法是 `publish`、`start`、`read`、`close`，其取证基线为 `fbe7cc11aadb51cd767154b232278d86acb3e4d5`、SHA-256 `0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0`。
 
 ## 草稿写入试验
 
-草稿试验读取内核修订 `15c03a1` 的固定预览包，保持产品锁使用开卷产物。将预览包与 `zod-4.6.5.tgz` 按上节命令离线装到独立目录，再执行 `pnpm --dir apps/server exec tsx src/test/m04-p1/draft-probe.ts <安装目录>`。探针核对预览包 SHA-256，使用真实草稿 PUT 与同一两题的实际冻结行，保存后在原详情 URL 回读草稿。
+草稿历史试验读取内核修订 `15c03a1` 的固定预览包。将预览包与 `zod-4.6.5.tgz` 按上节命令离线装到独立目录，再执行 `pnpm --dir apps/server exec tsx src/test/m04-p1/draft-probe.ts <安装目录>`。探针核对预览包 SHA-256，使用真实草稿 PUT 与同一两题的实际冻结行，保存后在原详情 URL 回读草稿。
 
 同一保存标识改选另一项时，旧行为返回 409 `ANSWER_REVISION_CONFLICT` 和本人 `_current`，原预览包 `0f946a65…` 返回 409 `OPERATION_CONFLICT`。本地修复包 `b3fd31c5…` 随同一异常给出当前稿，试验适配从该异常构造旧响应。两边均对不同保存标识的陈旧写入返回本人 `_current`。名单移出后新开卷被拒，但已建卷可续读写；注销或归档后旧 Cookie 的读写均被拒。
 
@@ -36,7 +36,7 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts
 
 ## 同卷原稿试验
 
-从产品仓根执行下列命令，使用上文正式锁定的 K2。探针只在隔离装配中接管已有作业开卷，产品详情、笔记与会话走现有产品路由。两库分别保存同一个真实内核活动 ID 下的各自事实。
+从产品仓根执行下列命令，使用正式锁定的内核。探针只在隔离装配中接管已有作业开卷，产品详情、笔记与会话走现有产品路由。两库分别保存同一个真实内核活动 ID 下的各自事实。
 
 ```powershell
 pnpm --dir apps/server exec tsx src/test/m04-p1/original-probe.ts
@@ -50,7 +50,7 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/original-probe.ts
 
 ## K4 权威回执移交原稿
 
-使用内核修订 `1269cbe421af9ec4f378e60bae0a143bde8ed8ca` 的固定试装归档，SHA-256 为 `62221d38e30bff8c64dccfca3e9c8075dd98a57a824984daa8fb07d16084063e`。产品锁仍使用 K2。用试装目录的公开 Node 入口调用 `confirmChoices` 和 `recoverChoiceConfirmation`。隔离装配的作业开卷、产品冻结题和笔记存取沿用上一节。
+使用内核修订 `1269cbe421af9ec4f378e60bae0a143bde8ed8ca` 的固定试装归档，SHA-256 为 `62221d38e30bff8c64dccfca3e9c8075dd98a57a824984daa8fb07d16084063e`。用试装目录的公开 Node 入口调用 `confirmChoices` 和 `recoverChoiceConfirmation`。隔离装配的作业开卷、产品冻结题和笔记存取沿用上一节。
 
 在已执行过产品离线安装的仓根，用固定归档创建试装目录后执行探针。解包保留归档原字节，Zod 解析到产品锁中的 4.6.5。
 
@@ -80,7 +80,13 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/receipt-originals-probe.mjs $k4I
 
 ## K5 旧客户端保存
 
-使用内核修订 `67a35573f7bf9b161200ec5c80c612fb78ba4f5b` 的干净试装归档，SHA-256 为 `fd44d13b3707c6f68bee845663493b72f9c64ce4e3ef8c03ac81861abc2c9843`。按上节方式装入独立目录后运行 `pnpm --dir apps/server exec tsx src/test/m04-p1/receipt-originals-probe.mjs <安装目录>`。脚本按归档摘要选择旧客户端保存对照和真实评分发布拒绝检查。产品锁仍使用 K2。
+使用内核修订 `67a35573f7bf9b161200ec5c80c612fb78ba4f5b` 的干净试装归档，SHA-256 为 `fd44d13b3707c6f68bee845663493b72f9c64ce4e3ef8c03ac81861abc2c9843`。按上节方式装入独立目录后运行 `pnpm --dir apps/server exec tsx src/test/m04-p1/receipt-originals-probe.mjs <安装目录>`。脚本按归档摘要选择旧客户端保存对照和真实评分发布拒绝检查。
+
+## K6 宿主判分
+
+从产品根执行 `pnpm --dir apps/server exec tsx src/test/m04-p1/scored-choice-probe.mjs`。探针使用正式锁定的公开包，通过同一教师和两名学生的真实开卷、保存、交卷与详情请求验四卷。宿主注册 `ownclass-choice@1`，核对可信回执作用域、产品冻结行和评分键后，将实际答案交给 `gradeResponseRow`。整卷确认、逐题判定保存在内核，产品用 `prepareChoiceOriginals` 和 `projectConfirmedChoiceEvidence` 移交原稿证据。
+
+默认按 P0 的公布设置运行。乙旧卷、甲全空和甲部分交卷后可读汇总，甲完整卷的截止由教师从未来调整到已过后，同一卷重新读取才可见汇总。四卷为 100、50、0、50，均按两题计分。甲完整卷第一题改选后提交答案修订 2。乙第一题使用第二版真实存稿，确认后保留正文与 PNG 的字节回读。以 `--all-withheld` 再跑四份仍未公布的对照。当前验证覆盖隔离请求和宿主接口，正式作业的分配、持久映射和完整结果视图属于后续接线。
 
 真实 PUT 复用产品的鉴权、请求校验和冻结行。带修订与操作标识的请求携带两项凭据，只有答案的请求由内核按旧客户端语义写入。首次和同文重发各增加一次修订，现代客户端同文接管不增加修订，接管后旧客户端收到 `409 ANSWER_REVISION_CONFLICT` 和本人当前稿。接管一题后，另一题仍能以旧客户端请求保存。他人始终被拒绝。无评分试验卷经权威确认和两库重启后沿原作业 URL 返回同一活动，确认后新旧两种 PUT 都收到 `409 ALREADY_SUBMITTED`，两库作答事实无变化。试验中的详情阶段和记录列表仍待产品正式接线。
 

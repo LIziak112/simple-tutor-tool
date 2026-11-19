@@ -2,7 +2,7 @@ import {
   attemptAnswerConflictCurrentSchema,
   attemptAnswerSaveDataSchema,
 } from "@tutor/contract";
-import type { StudentPrincipal } from "learning-kernel";
+import type { openLearningRuntime, StudentPrincipal } from "learning-kernel";
 import { z } from "zod";
 import type { Db } from "../../db/client.ts";
 import type { Attempt } from "../../db/schema.ts";
@@ -14,20 +14,9 @@ import { attemptResponseRows } from "../../services/attempt-freeze.ts";
 import { assertFrozenAnswerShape } from "../../services/attempt-question-projection.ts";
 import { snapshotOfRow } from "../../services/snapshot.ts";
 
-export type TrialSaveChoiceDraft = (
-  principal: StudentPrincipal,
-  activityId: string,
-  input: {
-    protocolVersion: 1;
-    stepAttemptId: string;
-    slotId: string;
-    questionId: string;
-    questionVersion: number;
-    choice: string;
-    operationId?: string;
-    baseRevision?: number;
-  },
-) => unknown;
+export type TrialSaveChoiceDraft = ReturnType<
+  typeof openLearningRuntime
+>["saveChoiceDraft"];
 
 const draftConflictSchema = z.object({
   status: z.literal(409),

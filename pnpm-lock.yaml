@@ -221,8 +221,8 @@ importers:
         specifier: ^4.13.9
         version: 4.13.9
       learning-kernel:
-        specifier: file:vendor/learning-kernel-0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0.tgz
-        version: file:apps/server/vendor/learning-kernel-0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0.tgz
+        specifier: file:vendor/learning-kernel-d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42.tgz
+        version: file:apps/server/vendor/learning-kernel-d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42.tgz
       pino:
         specifier: ^10.3.1
         version: 10.3.1
@@ -5340,8 +5340,8 @@ packages:
     resolution: {integrity: sha512-b94GiNHQNy6JNTrt5w6zNyffMrNkXZb3KTkCZJb2V1xaEGCk093vkZ2jk3tpaeP33/OiXC+WvK9AxUebnf5nbw==}
     engines: {node: '>= 0.6.3'}
 
-  learning-kernel@file:apps/server/vendor/learning-kernel-0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0.tgz:
-    resolution: {integrity: sha512-AowKCFopz5NMHgLXFrHdvjIjOnNc/Yk3w6a/bhVkaSeZw4TWew2FLwSW14j/LYs/QNkoPSBngWIfOwvsbEsA5A==, tarball: file:apps/server/vendor/learning-kernel-0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0.tgz}
+  learning-kernel@file:apps/server/vendor/learning-kernel-d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42.tgz:
+    resolution: {integrity: sha512-D2odB55VgpxGE5vD5RL8ss1XaW7ubEZP0DZ13wJNSsZasr0/bV+kte6BY+/X3toxCJpvYXzHago93WYqRb8Utg==, tarball: file:apps/server/vendor/learning-kernel-d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42.tgz}
     version: 0.1.0
     engines: {node: 24.19.x}
 
@@ -12027,7 +12027,7 @@ snapshots:
     dependencies:
       readable-stream: 2.3.8
 
-  learning-kernel@file:apps/server/vendor/learning-kernel-0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0.tgz:
+  learning-kernel@file:apps/server/vendor/learning-kernel-d3c3f4d907987405ebfbb590bc125797b79ef752c48e17477cf34b2f1314ef42.tgz:
     dependencies:
       zod: 4.6.5
 
