@@ -556,13 +556,11 @@ it("撤回公布保留整卷任务和操作，所有公开回执只返回空统�
     200,
   );
   const hidden = (payload: unknown) => {
-    expect
-      .soft(payload)
-      .toMatchObject({
-        id: taskId,
-        counts: null,
-        snapshotVersion: preview.opaquePreviewVersion,
-      });
+    expect.soft(payload).toMatchObject({
+      id: taskId,
+      counts: null,
+      snapshotVersion: preview.opaquePreviewVersion,
+    });
     assertNoLeak(payload, {
       forbid: [
         "correctCount",
