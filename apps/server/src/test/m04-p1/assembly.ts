@@ -11,13 +11,19 @@ import {
   requestDiagnostics,
   requestErrorHandler,
 } from "../../lib/request-diagnostics.ts";
+import {
+  attemptAnswerSavePath,
+  createStudentAnswerSaveRoutes,
+} from "../../routes/student-attempt-routes.ts";
 import { createAssignmentAttemptStartRoutes } from "../../routes/student-create.ts";
+import type { saveDraftAnswer } from "../../services/attempt-answer.ts";
 import type { startAttempt } from "../../services/attempt-start.ts";
 
 export function createTrialApp(
   options: CreateAppOptions,
   start: typeof startAttempt,
   read?: (studentId: string, activityId: string) => unknown,
+  save?: typeof saveDraftAnswer,
 ) {
   const logger = options.logger ?? pino({ enabled: false });
   const requireStudent = createRequireStudent(options.db, options.publicUrl);
@@ -47,6 +53,15 @@ export function createTrialApp(
         return c.json({ ok: true, data: read(c.var.student.id, id.data) });
       },
     );
+  }
+  if (save) {
+    app
+      .use(
+        `/api/student${attemptAnswerSavePath}`,
+        requestDiagnostics(logger),
+        requireStudent,
+      )
+      .route("/api/student", createStudentAnswerSaveRoutes(options.db, save));
   }
   return app.route("/", createApp(options));
 }

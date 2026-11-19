@@ -27,6 +27,26 @@ import { respondAttemptDetail } from "./student-attempt-detail.ts";
 import { createStudentLearningContextRoutes } from "./student-learning-context";
 import { createStudentSettlementRoutes } from "./student-settlements.ts";
 
+export const attemptAnswerSavePath = "/attempts/:id/answers/:questionId";
+
+/** 保存请求的校验与已认证学生身份由同一个 HTTP 处理器提供。 */
+export function createStudentAnswerSaveRoutes(db: Db, save = saveDraftAnswer) {
+  return new Hono<StudentEnv>().put(attemptAnswerSavePath, async (c) => {
+    const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
+    return c.json({
+      ok: true,
+      data: save(
+        db,
+        c.var.student.id,
+        c.req.param("id"),
+        c.req.param("questionId"),
+        body.answer,
+        body,
+      ),
+    });
+  });
+}
+
 /** 作答详情、冻结上下文、公开试卷，以及草稿保存、标记、提示这几条带冻结凭据写入的契约出口。 */
 export function createStudentAttemptRoutes(db: Db) {
   return (
@@ -50,20 +70,7 @@ export function createStudentAttemptRoutes(db: Db) {
       })
       .route("/", createStudentLearningContextRoutes(db))
       .route("/", createStudentSettlementRoutes(db))
-      .put("/attempts/:id/answers/:questionId", async (c) => {
-        const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
-        return c.json({
-          ok: true,
-          data: saveDraftAnswer(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            c.req.param("questionId"),
-            body.answer,
-            body,
-          ),
-        });
-      })
+      .route("/", createStudentAnswerSaveRoutes(db))
       // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
       .put("/attempts/:id/flags/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptFlagRequestSchema);

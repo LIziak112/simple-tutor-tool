@@ -22,6 +22,7 @@ import {
   attemptFacts,
   postAssignment,
   setupAssignment,
+  verifyInactiveOwnerCookies,
 } from "./product-fixture.ts";
 import { draftForAssignment, publicationForAssignment } from "./publication.ts";
 
@@ -133,7 +134,7 @@ const productZero = {
   evidence: 0,
   settlements: 0,
 };
-const assignmentByActivity = new Map<string, string>();
+const openActivities = new Set<string>();
 const receipts: z.infer<typeof receiptSchema>[] = [];
 let publishInput: ReturnType<typeof publicationForAssignment> | undefined;
 let publishError: unknown;
@@ -192,7 +193,7 @@ const trial = createTrialApp(
       ),
     );
     receipts.push(receipt);
-    assignmentByActivity.set(receipt.activityId, assignmentId);
+    openActivities.add(receipt.activityId);
     return withAllowRedo(
       attemptSummaryOf(
         draftForAssignment(
@@ -206,10 +207,9 @@ const trial = createTrialApp(
     );
   },
   (studentId, activityId) => {
-    const assignmentId = assignmentByActivity.get(activityId);
-    if (!assignmentId)
+    if (!openActivities.has(activityId))
       throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
-    requireAssignmentVisible(db, studentId, assignmentId);
+    // 已开的作业卷按当前学生会话和卷归属读取。
     try {
       return runtime.read({ role: "student", id: studentId }, activityId);
     } catch (error) {
@@ -287,6 +287,7 @@ function inspectKernel() {
 }
 
 try {
+  const world = await setupAssignment(trial);
   const {
     assignmentId,
     ownerCookie,
@@ -294,7 +295,7 @@ try {
     studentId,
     otherStudentId,
     teacher,
-  } = await setupAssignment(trial);
+  } = world;
   for (const [cookie, status, error] of [
     [undefined, 401, "UNAUTHORIZED"],
     [teacher, 401, "UNAUTHORIZED"],
@@ -417,7 +418,7 @@ try {
       "FORBIDDEN",
     );
     assert.ok(!Object.hasOwn(otherBody as object, "data"));
-    assert.equal(kernelReadDenials, 0);
+    assert.equal(kernelReadDenials, 1);
 
     runtime.close();
     runtime = openLearningRuntime({ databasePath: kernelDatabase });
@@ -449,26 +450,45 @@ try {
       error: "FORBIDDEN",
       message: "无权读取此作答",
     });
-    assert.equal(kernelReadDenials, 1);
+    assert.equal(kernelReadDenials, 2);
     await updateRoster({ removeStudentIds: [studentId] });
-    const revoked = await checkResponse(
+    const retained = await checkResponse(
       await trial.request(detailUrl, { headers: { cookie: ownerCookie } }),
+      200,
+    );
+    assert.deepEqual(retained, ownerBody);
+    const noNewAttempt = await checkResponse(
+      await postAssignment(trial, assignmentId, ownerCookie),
       403,
     );
     assert.equal(
-      z.object({ error: z.string() }).parse(revoked).error,
+      z.object({ error: z.string() }).parse(noNewAttempt).error,
       "FORBIDDEN",
     );
-    assert.ok(!Object.hasOwn(revoked as object, "data"));
-    assert.equal(kernelReadDenials, 1);
+    assert.ok(!Object.hasOwn(noNewAttempt as object, "data"));
+    await verifyInactiveOwnerCookies(trial, world, async (cookie) => {
+      const rejected = await checkResponse(
+        await trial.request(detailUrl, { headers: { cookie } }),
+        401,
+      );
+      assert.equal(
+        z.object({ error: z.string() }).parse(rejected).error,
+        "UNAUTHORIZED",
+      );
+      assert.ok(!Object.hasOwn(rejected as object, "data"));
+    });
+    assert.equal(kernelReadDenials, 2);
     outcome = {
       start: 200,
       repeat: 200,
       ownerRead: 200,
       otherRead: 403,
       otherMemberRead: 403,
-      readAfterRosterRemoval: 403,
+      readAfterRosterRemoval: 200,
+      startAfterRosterRemoval: 403,
       readAfterKernelReopen: 200,
+      readAfterLogout: 401,
+      readAfterArchive: 401,
       receipt: receipts[0],
     };
   }

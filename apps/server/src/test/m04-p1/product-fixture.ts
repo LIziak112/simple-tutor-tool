@@ -13,6 +13,7 @@ const markdown = readFileSync(
   new URL("./fixtures/P0-单选夹具.md", import.meta.url),
   "utf8",
 );
+const ownerName = "合成甲";
 
 export function attemptFacts(db: Db) {
   return db.$client
@@ -52,9 +53,9 @@ export async function setupAssignment(app: TestApp) {
   };
   assert.equal(units.length, 1);
 
-  const studentId = await createStudent(app, teacher, "合成甲");
+  const studentId = await createStudent(app, teacher, ownerName);
   const otherStudentId = await createStudent(app, teacher, "合成乙");
-  const ownerCookie = await loginStudent(app, "合成甲");
+  const ownerCookie = await loginStudent(app, ownerName);
   const otherCookie = await loginStudent(app, "合成乙");
   const assigned = await app.request("/api/teacher/assignments", {
     method: "POST",
@@ -85,6 +86,31 @@ export async function setupAssignment(app: TestApp) {
     otherStudentId,
     teacher,
   };
+}
+
+export async function verifyInactiveOwnerCookies(
+  app: TestApp,
+  {
+    ownerCookie,
+    teacher,
+    studentId,
+  }: Awaited<ReturnType<typeof setupAssignment>>,
+  reject: (cookie: string) => Promise<void>,
+) {
+  const logout = await app.request("/api/student/logout", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(logout.status, 200, await logout.text());
+  await reject(ownerCookie);
+  const activeCookie = await loginStudent(app, ownerName);
+  const archive = await app.request(`/api/teacher/students/${studentId}`, {
+    method: "PATCH",
+    headers: { cookie: teacher, "content-type": "application/json" },
+    body: JSON.stringify({ archived: true }),
+  });
+  assert.equal(archive.status, 200, await archive.text());
+  await reject(activeCookie);
 }
 
 export function postAssignment(
