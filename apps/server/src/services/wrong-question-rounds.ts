@@ -18,8 +18,8 @@ import {
 } from "../db/schema.ts";
 import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
 import { releaseGateSql } from "./answer-publication-sql.ts";
+import { hasKernelAssignmentTables } from "./kernel-assignment-routing.ts";
 import {
-  hasKernelAssignmentTables,
   readPublishedKernelWrongRounds,
   type WrongRoundScope,
 } from "./kernel-student-wrong-rounds.ts";

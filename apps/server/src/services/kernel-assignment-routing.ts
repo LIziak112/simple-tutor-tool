@@ -4,6 +4,14 @@ import type { Attempt } from "../db/schema.ts";
 import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
 
+export function hasKernelAssignmentTables(db: Db): boolean {
+  return (
+    db.$client
+      .prepare("select 1 from sqlite_master where type = 'table' and name = ?")
+      .get("kernel_assignments") !== undefined
+  );
+}
+
 export function isKernelAssignment(
   db: Pick<Db, "select">,
   assignmentId: string,

@@ -45,7 +45,6 @@ import {
   type AnalyticsContext,
   buildContext,
   DAY_MS,
-  loadAnalyticsResponses,
   medianOf,
 } from "./analytics-context";
 import { timeCohortStats, timeSeconds } from "./analytics-time";
@@ -55,7 +54,7 @@ import { attemptTraceRowsByAttempt } from "./attempt-trace-rows";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
-import { pendingMarkCounts, practiceSubmittedCounts } from "./pending-mark";
+import { practiceSubmittedCounts } from "./pending-mark";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { snapshotOfRow } from "./snapshot";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
@@ -586,31 +585,7 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
   const fromIso = new Date(
     ctx.nowMs - ctx.query.focusDays * DAY_MS,
   ).toISOString();
-  const focusAttempts = ctx.allAttempts.filter(
-    (attempt) =>
-      attempt.status !== "draft" &&
-      attempt.submittedAt !== null &&
-      attempt.submittedAt >= fromIso &&
-      attempt.submittedAt <= ctx.range.to &&
-      attempt.sourceType !== "wrong" &&
-      (attempt.sourceType === "assignment" || attempt.attemptNo === 1),
-  );
-  // 重点窗口可能更宽，只补取统计窗口尚未装载的作答。
-  const qualifyingIds = new Set(ctx.qualifying.map(({ id }) => id));
-  const extra = loadAnalyticsResponses(
-    db,
-    focusAttempts
-      .filter(({ id }) => !qualifyingIds.has(id))
-      .map(({ id }) => id),
-  );
-  const scopedResponses: ScopedResponse[] = [];
-  for (const attempt of focusAttempts) {
-    for (const response of ctx.responsesByAttempt.get(attempt.id) ??
-      extra.get(attempt.id) ??
-      []) {
-      scopedResponses.push({ response, attempt });
-    }
-  }
+  const scopedResponses = scopedResponsesOf(ctx, ctx.focusAttempts);
 
   interface PointTally {
     correct: number;
@@ -1136,6 +1111,7 @@ export function getAnalyticsOverview(
   teacherId: string,
   query: AnalyticsQuery,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): AnalyticsOverviewData {
   // 查询归一化（路由层已解析过，幂等；直接调 service 的测试与后续 MCP 复用同默认值）
   const ctx = buildContext(
@@ -1143,9 +1119,9 @@ export function getAnalyticsOverview(
     teacherId,
     analyticsQuerySchema.parse(query),
     now,
-    { kind: "overview" },
+    { kind: "overview", dataDir },
   );
-  const pendingByAttempt = pendingMarkCounts(db, ctx.allAttempts);
+  const pendingByAttempt = ctx.pendingByAttempt;
   const matrix = buildMatrix(db, ctx, pendingByAttempt);
   const trend = buildTrend(ctx, ctx.qualifying);
   const focus = buildFocusCard(db, ctx);
@@ -1213,6 +1189,7 @@ export function getAnalyticsStudent(
   studentId: string,
   query: AnalyticsQuery,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): AnalyticsStudentData {
   query = analyticsQuerySchema.parse(query);
   const row = db
@@ -1231,6 +1208,7 @@ export function getAnalyticsStudent(
   const ctx = buildContext(db, teacherId, query, now, {
     kind: "student",
     studentId,
+    dataDir,
   });
   const scoped = ctx.qualifying;
   const responses = scopedResponsesOf(ctx, scoped);
@@ -1280,13 +1258,14 @@ export function getAnalyticsQuestions(
   teacherId: string,
   query: AnalyticsQuery,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): AnalyticsQuestionsData {
   const ctx = buildContext(
     db,
     teacherId,
     analyticsQuerySchema.parse(query),
     now,
-    { kind: "questions" },
+    { kind: "questions", dataDir },
   );
   return { range: ctx.range, questions: buildQuestionRows(ctx) };
 }

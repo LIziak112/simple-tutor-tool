@@ -241,7 +241,7 @@ export function createTeacherRoutes(
       .route("/", createTeacherAttemptRoutes(db, publicUrl, dataDir))
       // T4.1：学情分析（总览/学生画像/题目视角，业务在 analytics-service；
       // 查询参数 courseId/days/focusDays，口径见契约 analytics-api.ts 的 D1–D7 注释）
-      .route("/", createTeacherAnalyticsRoutes(db))
+      .route("/", createTeacherAnalyticsRoutes(db, dataDir))
       // T4.3：AI 学情数据包导出（preview 清单 + zip 直出，业务在 export-service；
       // 请求体/口径见契约 learning-pack.ts 的 D14–D19 注释）
       .route("/", createTeacherExportRoutes(db, dataDir))

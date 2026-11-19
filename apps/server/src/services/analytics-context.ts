@@ -3,24 +3,10 @@ import type {
   AnalyticsRange,
   AnalyticsStudentRow,
 } from "@tutor/contract";
-import {
-  and,
-  asc,
-  eq,
-  exists,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
-  assignments,
   attempts,
   courseStudents,
   courses,
@@ -33,8 +19,12 @@ import {
   units,
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
+import {
+  type AnalyticsView,
+  loadAnalyticsAttempts,
+} from "./analytics-attempts.ts";
 import { analyticsTimesOf } from "./analytics-time";
-import { recordableAttemptWhere } from "./attempt-recordability.ts";
+import { pendingMarkCounts } from "./pending-mark.ts";
 import { attemptResultCounts } from "./result-counts";
 
 export const DAY_MS = 86_400_000;
@@ -53,6 +43,8 @@ export function medianOf(values: readonly number[]): number | null {
 
 export interface AnalyticsContext {
   readonly resultCounts: ReturnType<typeof attemptResultCounts>;
+  readonly pendingByAttempt: ReadonlyMap<string, number>;
+  readonly focusAttempts: readonly Attempt[];
   readonly teacherId: string;
   readonly query: AnalyticsQuery;
   readonly range: AnalyticsRange;
@@ -102,9 +94,20 @@ export function buildContext(
   teacherId: string,
   query: AnalyticsQuery,
   now: Date | string,
-  view:
-    | { kind: "overview" | "questions" }
-    | { kind: "student"; studentId: string },
+  view: AnalyticsView,
+): AnalyticsContext {
+  const build = () => readContext(db, teacherId, query, now, view);
+  return view.dataDir === undefined
+    ? build()
+    : db.$client.transaction(build).immediate();
+}
+
+function readContext(
+  db: Db,
+  teacherId: string,
+  query: AnalyticsQuery,
+  now: Date | string,
+  view: AnalyticsView,
 ): AnalyticsContext {
   const nowMs = typeof now === "string" ? Date.parse(now) : now.getTime();
   const nowIso = new Date(nowMs).toISOString();
@@ -181,67 +184,37 @@ export function buildContext(
       .map((row) => [row.id, row.title] as const),
   );
 
-  // 旧作业卷的 courseId 为空时才回看作业所属课程。快照归属优先。
-  const courseId = query.courseId;
-  const courseCondition =
-    courseId === undefined
-      ? undefined
-      : or(
-          eq(attempts.courseId, courseId),
-          and(
-            isNull(attempts.courseId),
-            exists(
-              db
-                .select({ id: assignments.id })
-                .from(assignments)
-                .where(
-                  and(
-                    eq(assignments.id, attempts.assignmentId),
-                    eq(assignments.teacherId, teacherId),
-                    eq(assignments.courseId, courseId),
-                  ),
-                ),
-            ),
-          ),
-        );
-  const timeCondition = and(
-    ne(attempts.status, "draft"),
-    isNotNull(attempts.submittedAt),
-    fromIso === null ? undefined : gte(attempts.submittedAt, fromIso),
-    lte(attempts.submittedAt, nowIso),
-    ne(attempts.sourceType, "wrong"),
-    or(eq(attempts.sourceType, "assignment"), eq(attempts.attemptNo, 1)),
+  const { allAttempts, qualifying, confirmed } = loadAnalyticsAttempts(
+    db,
+    teacherId,
+    query,
+    fromIso,
+    nowIso,
+    view,
+    courseScopeValid,
   );
-  const rows = courseScopeValid
-    ? db
-        .select({
-          attempt: attempts,
-          qualifies: sql<number>`case when ${timeCondition} then 1 else 0 end`,
-        })
-        .from(attempts)
-        .innerJoin(students, eq(attempts.studentId, students.id))
-        .where(
-          and(
-            eq(students.teacherId, teacherId),
-            recordableAttemptWhere(),
-            courseCondition,
-            view.kind === "student"
-              ? eq(attempts.studentId, view.studentId)
-              : undefined,
-            view.kind === "questions" ? timeCondition : undefined,
-          ),
+  const focusFrom = new Date(nowMs - query.focusDays * DAY_MS).toISOString();
+  const focusAttempts =
+    view.kind === "overview"
+      ? allAttempts.filter(
+          (attempt) =>
+            attempt.status !== "draft" &&
+            attempt.submittedAt !== null &&
+            attempt.submittedAt >= focusFrom &&
+            attempt.submittedAt <= nowIso &&
+            attempt.sourceType !== "wrong" &&
+            (attempt.sourceType === "assignment" || attempt.attemptNo === 1),
         )
-        .orderBy(asc(attempts.submittedAt), asc(attempts.id))
-        .all()
-    : [];
-  const allAttempts = rows.map(({ attempt }) => attempt);
-  const qualifying = rows
-    .filter(({ qualifies }) => qualifies === 1)
-    .map(({ attempt }) => attempt);
+      : [];
+  const responseAttemptIds = new Set(
+    [...qualifying, ...focusAttempts].map(({ id }) => id),
+  );
   const responsesByAttempt = loadAnalyticsResponses(
     db,
-    qualifying.map(({ id }) => id),
+    [...responseAttemptIds].filter((id) => !confirmed.has(id)),
   );
+  for (const [id, { rows }] of confirmed)
+    if (responseAttemptIds.has(id)) responsesByAttempt.set(id, rows);
   const questionIds = new Set<string>();
   if (view.kind !== "overview") {
     for (const rows of responsesByAttempt.values()) {
@@ -304,13 +277,30 @@ export function buildContext(
     else list.push(row.name);
   }
 
+  const legacyAttempts = allAttempts.filter(({ id }) => !confirmed.has(id));
+  const resultCounts: AnalyticsContext["resultCounts"] =
+    view.kind === "questions"
+      ? new Map()
+      : attemptResultCounts(db, legacyAttempts);
+  if (view.kind !== "questions") {
+    for (const [id, { rows }] of confirmed)
+      resultCounts.set(id, {
+        correctCount: rows.filter((r) => r.finalCorrect === true).length,
+        totalCount: rows.length,
+        pendingCount: 0,
+        pendingSelfReviewCount: 0,
+      });
+  }
+
   return {
     teacherId,
     query,
-    resultCounts:
-      view.kind === "questions"
-        ? new Map()
-        : attemptResultCounts(db, allAttempts),
+    resultCounts,
+    pendingByAttempt:
+      view.kind === "overview"
+        ? pendingMarkCounts(db, legacyAttempts)
+        : new Map(),
+    focusAttempts,
     range: { days: query.days, from: fromIso, to: nowIso },
     nowMs,
     studentRows,
@@ -327,7 +317,7 @@ export function buildContext(
 }
 
 /** 以作答 ID 批取响应，供统计窗口和重点窗口共用。 */
-export function loadAnalyticsResponses(
+function loadAnalyticsResponses(
   db: Db,
   attemptIds: readonly string[],
 ): Map<string, ResponseRow[]> {

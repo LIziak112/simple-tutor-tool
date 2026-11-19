@@ -31,14 +31,6 @@ export interface WrongRoundScope {
   readonly questionIds?: readonly string[];
 }
 
-export function hasKernelAssignmentTables(db: Db): boolean {
-  return (
-    db.$client
-      .prepare("select 1 from sqlite_master where type = 'table' and name = ?")
-      .get("kernel_assignments") !== undefined
-  );
-}
-
 function matchingQuestionIds(
   db: Db,
   studentId: string,

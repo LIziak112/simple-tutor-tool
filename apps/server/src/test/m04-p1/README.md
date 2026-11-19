@@ -134,3 +134,12 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/student-wrong-questions-restart-
 ```
 
 用同一组 P0 冻结题验证内核确认后的重启、公布与重新收紧。保留独立课程和旧作业轮次，核对题版本、目录分页、普通与目录组卷、内核离线范围和跨账号授权。
+
+
+### P4 教师学情跨进程恢复
+
+```powershell
+pnpm --dir apps/server exec tsx src/test/m04-p1/teacher-analytics-restart-probe.mjs
+```
+
+同一组 P0 冻结题分布在旧作业与内核作业，用教师真实会话验证总览、学生画像和题目视角。覆盖公布前读取、确认后宿主投影失败和重启、课程及学生隔离、内核离线和不依赖内核的旧课。
