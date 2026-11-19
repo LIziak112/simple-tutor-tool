@@ -182,7 +182,7 @@ try {
       const { version } = db
         .prepare("SELECT MAX(version) AS version FROM schema_migrations")
         .get();
-      assert.equal(version, 14);
+      assert.equal(version, 15);
       console.log(
         JSON.stringify({
           restoreHttp: restored.status,

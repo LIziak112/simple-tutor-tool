@@ -17,15 +17,16 @@ const restorablePredecessors = new Set([
   "3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d",
   "c78a36d1812d3e2d337177dbdb79d50af7c43cf9d0621ffd80f8be0b03d7ae73",
   "922ec7f9091aea01506a725754830765a9c394edaf1753d680210b883d8b1413",
+  "1968b032742f9626b5d8270984965b39c27ea67541c36ec51a8e12ed9c40d5d5",
 ]);
 
-/** K11 支持已实测的 K8/K9/K10 归档。归档中的包仅用于离线比对。 */
+/** K12 支持已实测的 K8–K11 归档。归档中的包仅用于离线比对。 */
 export function supportsBackupArtifact(sha256: string): boolean {
   const current = lockedArtifact().sha256;
   return (
     sha256 === current ||
     (current ===
-      "1968b032742f9626b5d8270984965b39c27ea67541c36ec51a8e12ed9c40d5d5" &&
+      "7bc836b57ec9140d3ee898a489e03b414490c89de491690c981580548a87c1f3" &&
       restorablePredecessors.has(sha256))
   );
 }

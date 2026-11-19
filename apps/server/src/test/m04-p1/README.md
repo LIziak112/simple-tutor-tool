@@ -163,10 +163,21 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/tes
 
 旧库演练读取合成目录的原数据库和对应产品修订中的固定内核包，在隔离目录恢复并走原学生与教师详情。K8 语料是一份已交两题、教师 50 分的试卷。K9 语料是混代反例的完整较晚截面，甲正在作答，乙已经交卷且教师评分为 0。混代测试将甲开卷后的主库与乙交卷后的内核库组合，修复前下载和恢复均返回 200。修复后下载返回 500，恢复返回 400，现有乙卷仍可读取。开卷意图测试保留内核尚未开卷和已开卷待绑两种截面，验证正常恢复沿用已生成的活动。
 
-K10 升级演练以 `963c0bd8` 经正常管理员下载产生的合成归档为输入，SHA-256 为 `91bb913d0441f6d37036345c98af65b7cd132e9e29321774259569e90d091329`。在 PowerShell 中将合成站点口令提供给 `OWNCLASS_BACKUP_FIXTURE_TEACHER_PASSWORD` 和 `OWNCLASS_BACKUP_FIXTURE_STUDENT_PASSWORD`，`$currentKernelSha256` 取当前锁定包实测指纹。探针在两个隔离目录先后恢复 K10 与当前运行时下载的 ZIP，查验原成绩、V2 文档和 PNG 的原字节，并续写原旧草稿。指纹一致但未登记的内核工件仍被拒绝。
+K12 来自内核修订 `cbec8df3cb84372539cf33ecb8c3379770e2ba50`，固定包 SHA-256 为 `7bc836b57ec9140d3ee898a489e03b414490c89de491690c981580548a87c1f3`，数据库版本为 15。官方 ZIP 演练在两个隔离目录先后恢复历史下载和 K12 下载。K10 和 K11 均查验原成绩、V2 文档和 PNG 的原字节，并续写原旧草稿。带勘误的 K11 还查验历史成绩、原学生所见的修订、教师审计及学生写次数，随后从教师修订继续作答。三个来源均检查下载授权并拒绝未知和摘要错配的内核工件。
+
+| 探针参数 | 下载所用的产品基线 | 本次历史合成 ZIP 的 SHA-256 |
+| --- | --- | --- |
+| `K10` | `963c0bd861e451557d5c1f776d8bc739036db797` | `91bb913d0441f6d37036345c98af65b7cd132e9e29321774259569e90d091329` |
+| `K11` | `cb6ca8c18e4a64007e69cb65d0007a4a6dace3e6` | `89d76b6e50b6be1977490271323f23040a776f0b1c94ced38b7b93e97ad4d846` |
+| `K11-amended` | `74a1471bfad391735eea4ebf3dfe250267c6ad95` | `5729bbd966c6761fffc645c443d9782527203bf0e170841f519f4b232abea9bc` |
+
+要生成新的输入，在对应旧基线冻结安装并以独立合成 `DATA_DIR` 运行。沿用 `product-fixture.ts` 的合成师生与两道冻结题。K10 建立甲的 50 分已交内核卷并冻结带 PNG 的 V2 原稿，乙正常交出 100 分卷，甲另开一份传统草稿。K11 可恢复同一 K10 下载后再下载。带勘误的 K11 使用同一甲账号正常交出 50 分旧卷，再开内核草稿，按 `kernel-teacher-draft-amendment.test.ts` 的教师 SDK 操作把第一题从空改为 B@1。按部署文档配置 `INSTANCE_BACKUP_OPERATOR_ID`，由已登录管理员访问 `/api/teacher/backup/download` 取得 ZIP。
+
+使用每次下载实测的 ZIP 指纹作为 `$inputZipSha256`。探针分别核对 ZIP 指纹、历史基线的固定 `.tgz` 指纹、清单与双库字节。临时 ZIP 和合成口令保存在仓外。用环境变量 `OWNCLASS_BACKUP_FIXTURE_TEACHER_PASSWORD` 和 `OWNCLASS_BACKUP_FIXTURE_STUDENT_PASSWORD` 提供源站口令。`$currentKernelSha256` 取当前固定 `.tgz` 的实测指纹。
 
 ```powershell
-node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/test/fixtures/backup-official-upgrade.mjs $k10OfficialZip $currentKernelSha256
+$inputZipSha256 = (Get-FileHash -LiteralPath $officialZip -Algorithm SHA256).Hash.ToLowerInvariant()
+node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/test/fixtures/backup-official-upgrade.mjs $officialZip $fixture $inputZipSha256 $currentKernelSha256
 ```
 
 
