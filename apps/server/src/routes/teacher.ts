@@ -109,6 +109,7 @@ export function createTeacherRoutes(
   /** 规范目录覆盖（T7.8 教学包快照经 library 路由透传，与 /api/public/spec 同源） */
   specDir?: string | undefined,
   backupOperatorId?: string,
+  kernelAssignmentCreationEnabled?: boolean,
 ) {
   const requireTeacher = createRequireTeacher(db, publicUrl);
   return (
@@ -229,7 +230,10 @@ export function createTeacherRoutes(
       // T2B.7：共享发布与导入（发布/列表/预览/导入/删除，业务在 shared-service）
       .route("/", createSharedRoutes(db, dataDir))
       .route("/", createStudentTeacherRoutes(db))
-      .route("/", createAssignmentTeacherRoutes(db))
+      .route(
+        "/",
+        createAssignmentTeacherRoutes(db, kernelAssignmentCreationEnabled),
+      )
       // T3.1：教师端作答数据页（列表 + 详情，业务在 teacher-attempt-service）
       // T3.4：/export/csv CSV 导出（业务在 export-csv；publicUrl 供笔迹绝对链接）
       // T6R.13：/attempts/:id/questions/:qid/review-pack 单题完整导出（业务在

@@ -42,7 +42,10 @@ import {
  * 业务逻辑在 AssignmentService（api-endpoint 技能约定）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
-export function createAssignmentTeacherRoutes(db: Db) {
+export function createAssignmentTeacherRoutes(
+  db: Db,
+  kernelAssignmentCreationEnabled = false,
+) {
   return new Hono<TeacherEnv>()
     .get("/assignments", (c) => {
       // GET 无 JSON body：查询参数手工过契约 schema（stringbool 解析 "true"/"false"；
@@ -85,6 +88,7 @@ export function createAssignmentTeacherRoutes(db: Db) {
         c.var.teacher.id,
         body,
         () => body,
+        kernelAssignmentCreationEnabled,
       );
       return c.json({ ok: true, data }, 201);
     })

@@ -65,7 +65,7 @@ function seedTestTeacher(db: Db): void {
     .run();
 }
 
-/** 仅遗留兼容用例：旧0075 schema造数后再正式迁移0076，不删除或放松新guard。 */
+/** 仅遗留兼容用例：旧0075 schema造数后再正式迁移0076，临时视图仅为旧侧测试提供空的内核名单。 */
 export function createTestDbBeforeActivationGuards(): Db {
   const db = createDb(":memory:");
   const prefix = makeMigrationsFolderUpTo("0075_hard_zodiak");
@@ -78,6 +78,9 @@ export function createTestDbBeforeActivationGuards(): Db {
   }
   runBackfills(db);
   seedTestTeacher(db);
+  db.$client.exec(
+    "CREATE TEMP VIEW kernel_assignments AS SELECT id AS assignment_id FROM assignments WHERE 0",
+  );
   return db;
 }
 

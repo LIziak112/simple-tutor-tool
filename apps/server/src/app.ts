@@ -48,6 +48,7 @@ export interface CreateAppOptions {
   /** 生产模式：托管 apps/web/dist 并对未命中的非 /api 路径回退 index.html */
   isProduction: boolean;
   questionProcessEnabled?: boolean;
+  kernelAssignmentCreationEnabled?: boolean | undefined;
   /** 数据库实例（教师鉴权等业务路由使用；测试注入 createTestDb() 内存库） */
   db: Db;
   /**
@@ -294,6 +295,7 @@ export function createApp(options: CreateAppOptions) {
         options.dbHandle,
         options.specDir,
         options.backupOperatorId,
+        options.kernelAssignmentCreationEnabled,
       ),
     )
     .route("/api/public/ai-reply-checker", createAiReplyCheckerRoutes())

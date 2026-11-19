@@ -108,6 +108,8 @@ const studentDataCleanup = setInterval(
 const app = createApp({
   buildVersion,
   questionProcessEnabled: process.env.QUESTION_PROCESS_ENABLED === "1",
+  kernelAssignmentCreationEnabled:
+    process.env.OWNCLASS_KERNEL_ASSIGNMENTS_ENABLED === "1",
   isProduction: config.isProduction,
   logger,
   db,

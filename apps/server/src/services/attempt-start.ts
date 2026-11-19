@@ -28,6 +28,7 @@ import { withAllowRedo } from "./attempt-redo-policy";
 import { attemptSummaryOf } from "./attempt-summary.ts";
 import { timedColumnsOf } from "./attempt-timing.ts";
 import { requireVisibleCourseUnit } from "./course-service";
+import { isKernelAssignment } from "./kernel-assignment-ownership.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
@@ -133,6 +134,13 @@ export function startAttempt(
   client: AttemptStartClient = {},
 ): AttemptStartData {
   const assignment = requireAssignmentVisible(db, studentId, assignmentId);
+  if (isKernelAssignment(db, assignment.id)) {
+    throw new HttpError(
+      503,
+      "KERNEL_ATTEMPT_UNAVAILABLE",
+      "内核作业暂时无法开卷",
+    );
+  }
 
   const existing = db
     .select()
