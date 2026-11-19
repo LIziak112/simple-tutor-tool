@@ -21,6 +21,7 @@ export const kernelOpeningDraftSchema = z.strictObject({
   courseId: z.string().nullable(),
   timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
   workflowVersion: z.literal(1).optional(),
+  prepared: z.literal(true).optional(),
   responses: z
     .array(
       z.strictObject({

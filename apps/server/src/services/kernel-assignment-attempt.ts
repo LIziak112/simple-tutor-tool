@@ -1,36 +1,42 @@
-import { createHash } from "node:crypto";
 import type {
   AttemptStartData,
   PracticeWorkflowStartOptions,
 } from "@tutor/contract";
-import { and, eq, max } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { type Assignment, type Attempt, attempts } from "../db/schema.ts";
 import {
   kernelAssignmentOpenings,
-  kernelAssignmentVersions,
   kernelAttemptBindings,
 } from "../db/schema-kernel-assignments.ts";
-import { canonicalJsonOf } from "../lib/canonical-json.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   requireAssignmentVisible,
   requireOwnAttempt,
 } from "./attempt-access.ts";
-import { insertFrozenResponse } from "./attempt-freeze.ts";
+import type { AttemptStartClient } from "./attempt-opened-refresh.ts";
 import { withAllowRedo } from "./attempt-redo-policy.ts";
 import { attemptSummaryOf } from "./attempt-summary.ts";
 import { startOpenedAttemptTimer } from "./attempt-timing.ts";
+import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
+import {
+  insertKernelFrozenResponses,
+  reserveKernelAssignmentVersion,
+} from "./kernel-assignment-freeze.ts";
 import {
   assertKernelAssignmentPolicy,
   kernelDraftForAssignment,
   kernelOpeningDraftSchema,
   loadKernelAssignmentChoices,
 } from "./kernel-assignment-input.ts";
-import { kernelAssignmentPublication } from "./kernel-assignment-publication.ts";
+import {
+  finishKernelRefreeze,
+  reserveKernelRefreeze,
+  resolveKernelRefreezeForRead,
+} from "./kernel-assignment-refreeze.ts";
+import { pendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
-  ensureKernelRuntimeStorage,
   kernelAttemptUnavailable,
   withBoundKernelActivity,
   withKernelRuntime,
@@ -50,17 +56,18 @@ export function verifyKernelStudentAttempt(
   attemptId: string,
 ): void {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
-  if (isKernelAttempt(db, attempt)) verifyKernelBinding(db, dataDir, attempt);
+  if (isKernelAttempt(db, attempt)) {
+    resolveKernelRefreezeForRead(db, dataDir, attempt);
+    verifyKernelBinding(db, dataDir, attempt);
+  }
 }
 
-function existingKernelAttempt(
+function findKernelAttempt(
   db: Db,
-  dataDir: string,
   studentId: string,
   assignmentId: string,
-  timeLimitMinutes: number | undefined,
-): AttemptStartData | undefined {
-  const attempt = db
+): Attempt | undefined {
+  return db
     .select()
     .from(attempts)
     .where(
@@ -70,8 +77,13 @@ function existingKernelAttempt(
       ),
     )
     .get();
-  if (!attempt) return undefined;
-  verifyKernelBinding(db, dataDir, attempt);
+}
+
+function summarize(
+  db: Db,
+  attempt: Attempt,
+  timeLimitMinutes: number | undefined,
+): AttemptStartData {
   return withAllowRedo(
     attemptSummaryOf(startOpenedAttemptTimer(db, attempt, timeLimitMinutes)),
     false,
@@ -121,66 +133,25 @@ function reserveKernelOpening(
       );
   }
 
-  const { questions, responses } = loadKernelAssignmentChoices(
+  const choices = loadKernelAssignmentChoices(db, assignment, studentId);
+  const version = reserveKernelAssignmentVersion(
     db,
+    tx,
+    dataDir,
     assignment,
-    studentId,
+    choices,
   );
-  const publication = kernelAssignmentPublication(assignment, 1, questions);
-  const fingerprint = createHash("sha256")
-    .update(
-      canonicalJsonOf({
-        publication,
-        frozen: responses.map(({ question, unitId, questionVersion }) => ({
-          id: question.id,
-          unitId,
-          version: questionVersion,
-        })),
-      }),
-    )
-    .digest("hex");
-  const known = tx
-    .select()
-    .from(kernelAssignmentVersions)
-    .where(
-      and(
-        eq(kernelAssignmentVersions.assignmentId, assignmentId),
-        eq(kernelAssignmentVersions.fingerprint, fingerprint),
-      ),
-    )
-    .get();
-  const latest = known
-    ? undefined
-    : tx
-        .select({ version: max(kernelAssignmentVersions.practiceVersion) })
-        .from(kernelAssignmentVersions)
-        .where(eq(kernelAssignmentVersions.assignmentId, assignmentId))
-        .get();
-  const practiceVersion = known?.practiceVersion ?? (latest?.version ?? 0) + 1;
-  const canInitialize = !tx
-    .select({ assignmentId: kernelAssignmentVersions.assignmentId })
-    .from(kernelAssignmentVersions)
-    .limit(1)
-    .get();
-  ensureKernelRuntimeStorage(db, dataDir, canInitialize);
-  if (!known)
-    tx.insert(kernelAssignmentVersions)
-      .values({ assignmentId, practiceVersion, fingerprint })
-      .run();
   tx.insert(kernelAssignmentOpenings)
     .values({
       assignmentId,
       studentId,
-      practiceVersion,
-      publication:
-        practiceVersion === 1
-          ? publication
-          : kernelAssignmentPublication(assignment, practiceVersion, questions),
+      ...version,
       draft: kernelOpeningDraftSchema.parse({
         courseId: assignment.courseId,
         timeLimitMinutes: options.timeLimitMinutes,
         workflowVersion: options.workflowVersion,
-        responses,
+        responses: choices.responses,
+        prepared: options.timeLimitMinutes === undefined ? true : undefined,
       }),
     })
     .run();
@@ -192,19 +163,40 @@ export function startKernelAssignmentAttempt(
   studentId: string,
   assignmentId: string,
   options: PracticeWorkflowStartOptions,
+  client: AttemptStartClient,
 ): AttemptStartData {
   const { timeLimitMinutes } = options;
   const existing = db.transaction(
     (tx) => {
       const assignment = requireAssignmentVisible(db, studentId, assignmentId);
-      const attempt = existingKernelAttempt(
-        db,
-        dataDir,
-        studentId,
-        assignmentId,
-        timeLimitMinutes,
-      );
-      if (attempt) return attempt;
+      const attempt = findKernelAttempt(db, studentId, assignmentId);
+      if (attempt) {
+        if (pendingKernelRefreeze(tx, attempt.id)) return undefined;
+        return withBoundKernelActivity(
+          db,
+          dataDir,
+          attempt,
+          (runtime, activity) => {
+            const fresh =
+              attempt.activatedAt === null
+                ? projectKernelDraftActivity(db, attempt, runtime)
+                : attempt;
+            if (
+              client.snapshotProof === true &&
+              reserveKernelRefreeze(
+                db,
+                tx,
+                dataDir,
+                assignment,
+                fresh,
+                activity,
+              )
+            )
+              return undefined;
+            return summarize(db, fresh, timeLimitMinutes);
+          },
+        );
+      }
       reserveKernelOpening(db, tx, dataDir, assignment, studentId, options);
       return undefined;
     },
@@ -215,14 +207,32 @@ export function startKernelAssignmentAttempt(
   return db.transaction(
     (tx) => {
       requireAssignmentVisible(db, studentId, assignmentId);
-      const attempt = existingKernelAttempt(
-        db,
-        dataDir,
-        studentId,
-        assignmentId,
-        timeLimitMinutes,
-      );
-      if (attempt) return attempt;
+      const attempt = findKernelAttempt(db, studentId, assignmentId);
+      if (attempt) {
+        const ticket = pendingKernelRefreeze(tx, attempt.id);
+        if (ticket)
+          return summarize(
+            db,
+            finishKernelRefreeze(
+              db,
+              tx,
+              dataDir,
+              attempt,
+              ticket,
+              client.snapshotProof === true,
+            ),
+            timeLimitMinutes,
+          );
+        return withBoundKernelActivity(db, dataDir, attempt, (runtime) =>
+          summarize(
+            db,
+            attempt.activatedAt === null
+              ? projectKernelDraftActivity(db, attempt, runtime)
+              : attempt,
+            timeLimitMinutes,
+          ),
+        );
+      }
       const key = openingKey(assignmentId, studentId);
       const opening = tx
         .select()
@@ -238,7 +248,8 @@ export function startKernelAssignmentAttempt(
       const draft = kernelOpeningDraftSchema.parse(opening.draft);
       const receipt = withKernelRuntime(db, dataDir, false, (runtime) => {
         runtime.publish(opening.publication);
-        return runtime.start(
+        const start = draft.prepared ? runtime.prepare : runtime.start;
+        return start(
           { role: "student", id: studentId },
           {
             protocolVersion: 1,
@@ -263,20 +274,7 @@ export function startKernelAssignmentAttempt(
         },
       );
       tx.insert(attempts).values(projected).run();
-      for (const {
-        question,
-        questionVersion,
-        unitId,
-        gradingPolicy,
-      } of draft.responses)
-        insertFrozenResponse(tx, {
-          attemptId: projected.id,
-          questionId: question.id,
-          questionVersion,
-          unitId,
-          gradingPolicy,
-          questionSnapshotJson: JSON.stringify(question),
-        });
+      insertKernelFrozenResponses(tx, projected.id, draft.responses);
       freezeAttemptContextSnapshotsWithin(
         tx,
         projected.id,

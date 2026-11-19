@@ -102,6 +102,9 @@ export function withBoundKernelActivity<T>(
         activity.activityId !== attempt.id ||
         !("stepAttemptId" in activity) ||
         activity.stepAttemptId !== binding.stepAttemptId ||
+        ("practiceVersion" in activity &&
+          activity.practiceVersion !== undefined &&
+          activity.practiceVersion !== binding.practiceVersion) ||
         !("startedAt" in activity) ||
         activity.startedAt !== attempt.startedAt
       )

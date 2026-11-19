@@ -3,6 +3,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, attempts } from "../db/schema";
 import { HttpError } from "../lib/http-error.ts";
+import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 
 /** 请求到达前发生的重冻，必须由实际渲染/本机正文携带的身份证明。 */
 export function assertAttemptWriteProof(
@@ -59,6 +60,7 @@ export function assertAttemptWriteVersion(
   if (!fresh) throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
   if (fresh.abandonedAt !== null)
     throw new HttpError(409, "ATTEMPT_ABANDONED", "这份作答已作废");
+  requireNoPendingKernelRefreeze(db, fresh);
   if (fresh.frozenAt !== expected.frozenAt)
     throw new HttpError(
       409,

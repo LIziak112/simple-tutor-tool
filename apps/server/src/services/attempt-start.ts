@@ -114,6 +114,7 @@ export function startAttempt(
       studentId,
       assignmentId,
       options,
+      client,
     );
   }
 

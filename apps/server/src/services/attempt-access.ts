@@ -11,6 +11,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { ensureAttemptFrozen } from "./attempt-freeze.ts";
+import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { assertDraftCourseVisible } from "./practice-workflow-wiring";
 
 /** 作业行（含已删除——作答记录不随作业软删消失）；不存在 → 404 ASSIGNMENT_NOT_FOUND */
@@ -111,6 +112,7 @@ export function requireUsableAttempt(
     );
   }
   assertDraftCourseVisible(db, studentId, attempt);
+  requireNoPendingKernelRefreeze(db, attempt);
   return ensureAttemptFrozen(db, attempt);
 }
 

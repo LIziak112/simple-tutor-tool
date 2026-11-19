@@ -575,6 +575,13 @@
       "when": 1795087249503,
       "tag": "0081_kernel_attempt_confirmations",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "6",
+      "when": 1795089212054,
+      "tag": "0082_kernel_attempt_refreezes",
+      "breakpoints": true
     }
   ]
 }

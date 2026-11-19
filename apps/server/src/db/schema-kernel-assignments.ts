@@ -100,3 +100,21 @@ export const kernelAttemptConfirmations = sqliteTable(
       .notNull(),
   },
 );
+
+export const kernelAttemptRefreezes = sqliteTable("kernel_attempt_refreezes", {
+  attemptId: text("attempt_id")
+    .primaryKey()
+    .notNull()
+    .references(() => kernelAttemptBindings.attemptId),
+  operationId: text("operation_id").notNull().unique(),
+  stepAttemptId: text("step_attempt_id").notNull(),
+  expectedPracticeVersion: integer("expected_practice_version").notNull(),
+  practiceVersion: integer("practice_version").notNull(),
+  frozenAt: text("frozen_at").notNull(),
+  publication: text("publication_json", { mode: "json" })
+    .$type<PublicationInput>()
+    .notNull(),
+  responses: text("responses_json", { mode: "json" })
+    .$type<KernelOpeningDraft["responses"]>()
+    .notNull(),
+});

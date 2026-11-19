@@ -25,7 +25,7 @@
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.3",
     "hono": "^4.13.9",
-    "learning-kernel": "file:vendor/learning-kernel-3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d.tgz",
+    "learning-kernel": "file:vendor/learning-kernel-c78a36d1812d3e2d337177dbdb79d50af7c43cf9d0621ffd80f8be0b03d7ae73.tgz",
     "pino": "^10.3.1",
     "saxes": "6.0.0",
     "zod": "^4.6.5"

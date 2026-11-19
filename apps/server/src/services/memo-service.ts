@@ -28,6 +28,7 @@ import {
   touchAttemptActivity,
 } from "./attempt-activity.ts";
 import { requireDevice } from "./device-service";
+import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { resolveAgentMemoAnchor } from "./memo-anchor";
 import { assertMemoMetadataBudget } from "./memo-budget";
 import { memoAnchorFromContext, resolveMemoContext } from "./memo-context";
@@ -137,6 +138,8 @@ function insertMemoRow(
       .get();
     if (!attempt)
       throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
+
+    requireNoPendingKernelRefreeze(db, attempt);
     assertAttemptWriteProof(
       attempt,
       undefined,

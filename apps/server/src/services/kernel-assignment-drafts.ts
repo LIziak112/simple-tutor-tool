@@ -29,6 +29,7 @@ import {
 import { assertAttemptNotTimedOut, attemptTimingOf } from "./attempt-timing.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import { readKernelConfirmationResult } from "./kernel-assignment-confirmation.ts";
+import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   kernelAttemptUnavailable,
@@ -180,8 +181,9 @@ export function readKernelAssignmentDetail(
   attemptId: string,
   ifNoneMatch: string | undefined,
 ): ConditionalAttemptDetail | undefined {
-  if (!isKernelAttempt(db, requireOwnAttempt(db, studentId, attemptId)))
-    return undefined;
+  const ownAttempt = requireOwnAttempt(db, studentId, attemptId);
+  if (!isKernelAttempt(db, ownAttempt)) return undefined;
+  resolveKernelRefreezeForRead(db, dataDir, ownAttempt);
   return db.$client
     .transaction(() => {
       const attempt = requireUsableAttempt(db, studentId, attemptId);
