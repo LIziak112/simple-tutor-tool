@@ -3,17 +3,21 @@ import { renameSync } from "node:fs";
 import { join } from "node:path";
 import {
   analyticsOverviewOkSchema,
+  analyticsQuestionsDataSchema,
   analyticsQuestionsOkSchema,
   analyticsStudentOkSchema,
   assignmentCreateOkSchema,
   attemptStartOkSchema,
 } from "@tutor/contract";
 import { createDb } from "../../db/client.ts";
+import { callToolJson, connectMcpClientViaApp } from "../mcp-test-utils.ts";
 import { extractSessionToken } from "../note-world.ts";
 import { submitAttemptRequest } from "../submit-revisions.ts";
 import { postAssignment, setupAssignment } from "./product-fixture.ts";
 import { createRealServiceFixture } from "./real-service-fixture.mjs";
 
+// 默认仍由 HTTP 首读；指定此参数时验证同一中断场景由实际教师 SDK 首读。
+const useQuestionStats = process.argv.includes("--question-stats");
 const service = await createRealServiceFixture();
 const { app, dataDir, boot, stop } = service;
 const dbRead = (f) => {
@@ -150,10 +154,6 @@ try {
   const student = (course, id = world.studentId, days) =>
     load(`student/${id}`, analyticsStudentOkSchema, course, teacher, days);
 
-  const question = await questionView(kernelCourse);
-  const kOverview = await overview(kernelCourse);
-  const kStudent = await student(kernelCourse);
-  const old = await overview(independentCourse);
   const answers = ({ questions }) =>
     questions.map(
       ({
@@ -170,6 +170,66 @@ try {
         wrongAnswers,
       }),
     );
+  async function tool(cookie, query) {
+    const issued = await status(
+      await call("/api/teacher/api-token", cookie, "POST"),
+      200,
+    );
+    const client = await connectMcpClientViaApp(
+      app,
+      "/mcp",
+      (await issued.json()).data.token,
+      "question-stats-acceptance",
+    );
+    try {
+      return await callToolJson(client, "get_question_stats", query);
+    } finally {
+      await client.close();
+    }
+  }
+  async function stats(
+    courseId,
+    cookie = teacher,
+    days = "all",
+    focusDays = 14,
+  ) {
+    const result = await tool(cookie, { courseId, days, focusDays });
+    assert.equal(result.isError, false, JSON.stringify(result.data));
+    return analyticsQuestionsDataSchema.parse(result.data);
+  }
+
+  const firstStats = useQuestionStats ? await stats(kernelCourse) : undefined;
+  if (firstStats !== undefined) {
+    const beforeHttp = host();
+    const oldStats = await stats(independentCourse);
+    console.log(
+      JSON.stringify({
+        sdkFirstRead: answers(firstStats),
+        legacy: answers(oldStats),
+        beforeHttp,
+      }),
+    );
+    assert.deepEqual(answers(firstStats), answers(oldStats));
+    assert.equal(beforeHttp.status, "graded");
+    assert.equal(firstStats.range.days, "all");
+    assert.equal(firstStats.range.from, null);
+    assert.deepEqual((await stats(kernelCourse, otherTeacher)).questions, []);
+  }
+  const question = await questionView(kernelCourse);
+  const kOverview = await overview(kernelCourse);
+  const kStudent = await student(kernelCourse);
+  const old = await overview(independentCourse);
+  if (firstStats !== undefined) {
+    assert.deepEqual(firstStats.questions, question.questions);
+    const recent = await stats(kernelCourse, teacher, 1, 1);
+    const recentHttp = await questionView(kernelCourse, teacher, "1");
+    assert.deepEqual(recent.questions, recentHttp.questions);
+    assert.equal(recent.range.days, 1);
+    assert.equal(
+      Date.parse(recent.range.to) - Date.parse(recent.range.from),
+      86_400_000,
+    );
+  }
   console.log(
     JSON.stringify({
       firstPid,
@@ -278,6 +338,21 @@ try {
       [],
     );
     await status(await call(endpoint("questions", kernelCourse, "all")), 503);
+    if (useQuestionStats) {
+      const unavailable = await tool(teacher, {
+        courseId: kernelCourse,
+        days: "all",
+      });
+      assert.equal(unavailable.isError, true);
+      assert.equal(unavailable.data.error, "KERNEL_ATTEMPT_UNAVAILABLE");
+      assert.ok(!Object.hasOwn(unavailable.data, "questions"));
+      assert.deepEqual((await stats(kernelCourse, teacher, 1)).questions, []);
+      assert.deepEqual((await stats(kernelCourse, otherTeacher)).questions, []);
+      assert.deepEqual(
+        answers(await stats(independentCourse)),
+        answers(question),
+      );
+    }
     await status(await call(endpoint("overview", kernelCourse, "1")), 503);
   } finally {
     renameSync(offline, path);

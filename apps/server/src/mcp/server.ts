@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
-  ANALYTICS_DAYS_DEFAULT,
-  ANALYTICS_FOCUS_DAYS_DEFAULT,
+  analyticsQuerySchema,
   attemptSourceSchema,
   attemptStatusSchema,
   courseCatalogCommandSchema,
@@ -113,7 +112,7 @@ export interface McpServerDeps {
   readonly teacherId: string;
   /** DSL 规范目录覆盖（createApp options.specDir 透传；缺省按候选顺序解析） */
   readonly specDir?: string | undefined;
-  /** learning-pack now 注入（测试确定性；默认当前时刻） */
+  /** 学情统计与学情包的测试时钟，默认当前时刻。 */
   readonly now?: Date | string | undefined;
 }
 
@@ -289,7 +288,7 @@ export function registerTeacherTools(
   server: McpServer,
   deps: McpServerDeps,
 ): void {
-  const { db, dataDir, teacherId, specDir } = deps;
+  const { db, dataDir, teacherId, specDir, now } = deps;
 
   server.registerTool(
     "get_course_catalog",
@@ -763,11 +762,8 @@ export function registerTeacherTools(
       annotations: { readOnlyHint: true },
     },
     guard(({ courseId, days, focusDays }) => {
-      const data = getAnalyticsQuestions(db, teacherId, {
-        ...(courseId !== undefined ? { courseId } : {}),
-        days: days ?? ANALYTICS_DAYS_DEFAULT,
-        focusDays: focusDays ?? ANALYTICS_FOCUS_DAYS_DEFAULT,
-      });
+      const query = analyticsQuerySchema.parse({ courseId, days, focusDays });
+      const data = getAnalyticsQuestions(db, teacherId, query, now, dataDir);
       return jsonContent(data);
     }),
   );
