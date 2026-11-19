@@ -273,7 +273,13 @@ export function createTeacherAttemptRoutes(
             `查询参数不合法：${first}`,
           );
         }
-        const csv = exportCsv(db, c.var.teacher.id, publicUrl, parsed.data);
+        const csv = exportCsv(
+          db,
+          c.var.teacher.id,
+          publicUrl,
+          parsed.data,
+          dataDir,
+        );
         const filename = `tutor-export-${beijingExportStampOf()}.csv`;
         return new Response(`${CSV_UTF8_BOM}${csv}`, {
           status: 200,

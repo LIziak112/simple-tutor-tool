@@ -143,3 +143,12 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/teacher-analytics-restart-probe.
 ```
 
 同一组 P0 冻结题分布在旧作业与内核作业，用教师真实会话验证总览、学生画像和题目视角。覆盖公布前读取、确认后宿主投影失败和重启、课程及学生隔离、内核离线和不依赖内核的旧课。
+
+
+### P4 教师逐题 CSV 跨进程恢复
+
+```powershell
+pnpm --dir apps/server exec tsx src/test/m04-p1/teacher-csv-restart-probe.mjs
+```
+
+对照同一组 P0 冻结题的旧、内核作业。首个内核 CSV 请求直接恢复正式确认，验证 24 列和 BOM、精确提交时间筛选、公布前后及撤回、域隔离和内核离线范围。
