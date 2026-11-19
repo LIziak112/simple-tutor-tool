@@ -1,7 +1,10 @@
 import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
-import type { kernelAttemptConfirmations } from "../db/schema-kernel-assignments.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
+import {
+  assertConfirmationBinding,
+  type KernelConfirmationTicket,
+} from "./kernel-assignment-confirmation-ticket.ts";
 import { projectKernelChoiceFacts } from "./kernel-assignment-confirmed-detail.ts";
 import {
   type KernelAttemptBinding,
@@ -9,9 +12,6 @@ import {
   kernelAttemptUnavailable,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
-
-export type KernelConfirmationTicket =
-  typeof kernelAttemptConfirmations.$inferSelect;
 
 type ConfirmationScope = ReturnType<typeof confirmationScopeOf>;
 
@@ -55,17 +55,6 @@ export function permitsRecovery(
     request.stepAttemptId === scope.stepAttemptId &&
     request.operationId === scope.operationId
   );
-}
-
-export function assertConfirmationBinding(
-  scope: ConfirmationScope,
-  binding: Pick<KernelAttemptBinding, "stepAttemptId" | "practiceVersion">,
-) {
-  if (
-    scope.stepAttemptId !== binding.stepAttemptId ||
-    scope.practiceVersion !== binding.practiceVersion
-  )
-    kernelAttemptUnavailable();
 }
 
 export function recoverKernelConfirmation(

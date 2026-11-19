@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { attemptResultOkSchema, attemptStartOkSchema } from "@tutor/contract";
 import { openLearningRuntime } from "learning-kernel";
 import { createDb } from "../../db/client.ts";
-import { putNoteReceipt } from "../note-fixtures.ts";
+import { putNoteForm, putNoteReceipt } from "../note-fixtures.ts";
 import { fetchSubmitRevisions } from "../submit-revisions.ts";
 import {
   assignKernelFixture,
@@ -37,24 +37,27 @@ async function waitForStage(attemptId) {
   }
   throw new Error("未观察到宿主已提交的预留阶段");
 }
-function readProduct(attemptId) {
+function withProduct(read) {
   const db = createDb(join(first.dataDir, "tutor.db"));
   try {
-    return {
-      ticket: db.$client
-        .prepare(
-          "SELECT operation_id FROM kernel_attempt_confirmations WHERE attempt_id=?",
-        )
-        .get(attemptId),
-      reserves: db.$client
-        .prepare(
-          "SELECT operation_id, state, version_id, pending_version_id FROM attempt_original_reservations WHERE attempt_id=?",
-        )
-        .all(attemptId),
-    };
+    return read(db.$client);
   } finally {
     db.$client.close();
   }
+}
+function readProduct(attemptId) {
+  return withProduct((db) => ({
+    ticket: db
+      .prepare(
+        "SELECT operation_id FROM kernel_attempt_confirmations WHERE attempt_id=?",
+      )
+      .get(attemptId),
+    reserves: db
+      .prepare(
+        "SELECT operation_id, state, version_id, pending_version_id FROM attempt_original_reservations WHERE attempt_id=?",
+      )
+      .all(attemptId),
+  }));
 }
 function requireKActive(studentId, attemptId) {
   const runtime = openLearningRuntime({
@@ -147,7 +150,13 @@ try {
         headers: { cookie, "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-    return { id, body, submit, v2 };
+    const writeNote = (app, cookie, strokes, options) =>
+      app.request(`${path}/notes/${q1.questionId}`, {
+        method: "PUT",
+        headers: { cookie },
+        body: putNoteForm(strokes, options),
+      });
+    return { id, body, submit, v2, writeNote };
   }
 
   const overlap = await makeAttempt();
@@ -212,6 +221,108 @@ try {
     },
   ]);
 
+  const writing = await makeAttempt();
+  const submitBeforeWrite = writing.submit(first.app, world.ownerCookie);
+  const writeStage = await waitForStage(writing.id);
+  const writingTicket = readProduct(writing.id);
+  requireKActive(world.studentId, writing.id);
+  const noteVersions = () =>
+    withProduct((db) =>
+      db
+        .prepare(
+          "SELECT revision FROM note_versions WHERE note_id=? ORDER BY revision",
+        )
+        .all(writing.v2.noteId)
+        .map(({ revision }) => revision),
+    );
+  const files = () =>
+    readdirSync(
+      join(first.dataDir, "blobs", "notes", writing.v2.noteId),
+    ).sort();
+  const beforeFiles = files();
+  const nextWrite = (options = { baseRevision: 2 }) =>
+    writing.writeNote(other.app, secondCookie, 3, options);
+  const kernelPath = join(first.dataDir, "learning-kernel.sqlite");
+  const offlinePath = `${kernelPath}.missing`;
+  renameSync(kernelPath, offlinePath);
+  try {
+    await expectResponse(await nextWrite(), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
+  } finally {
+    renameSync(offlinePath, kernelPath);
+  }
+  withProduct((db) =>
+    db.exec(`
+    CREATE TRIGGER fail_note_during_pending_confirmation BEFORE INSERT ON note_versions
+    BEGIN SELECT RAISE(ABORT, 'interrupted scratch install'); END
+  `),
+  );
+  try {
+    await expectResponse(await nextWrite(), 500);
+  } finally {
+    withProduct((db) =>
+      db.exec("DROP TRIGGER fail_note_during_pending_confirmation"),
+    );
+  }
+  assert.deepEqual(files(), beforeFiles);
+  assert.deepEqual(noteVersions(), [1, 2]);
+  assert.deepEqual(readProduct(writing.id), writingTicket);
+
+  const wrote = await expectResponse(await nextWrite(), 200);
+  assert.equal(wrote.data.revision, 3);
+  assert.deepEqual(readProduct(writing.id), writingTicket);
+  writeFileSync(`${gate}.${writeStage.operationId}.release`, "");
+  await expectResponse(await submitBeforeWrite, 409, "NOTE_EVIDENCE_MISMATCH");
+  requireKActive(world.studentId, writing.id);
+  assert.equal(readProduct(writing.id).ticket, undefined);
+  assert.deepEqual(noteVersions(), [1, 2, 3]);
+
+  // 两个独立进程争同一个版本。共享 mutation 返回同一回执，其他 mutation 只准一个切头。
+  const same = { baseRevision: 3, mutationId: randomUUID() };
+  const replays = await Promise.all([
+    writing.writeNote(first.app, world.ownerCookie, 4, same),
+    writing.writeNote(other.app, secondCookie, 4, same),
+  ]);
+  const receipts = await Promise.all(
+    replays.map((item) => expectResponse(item, 200)),
+  );
+  assert.deepEqual(receipts[0], receipts[1]);
+  assert.equal(receipts[0].data.revision, 4);
+  const edits = await Promise.all([
+    writing.writeNote(first.app, world.ownerCookie, 5, { baseRevision: 4 }),
+    writing.writeNote(other.app, secondCookie, 5, { baseRevision: 4 }),
+  ]);
+  assert.deepEqual(edits.map(({ status }) => status).sort(), [200, 409]);
+  const losingEdit = await expectResponse(
+    edits.find(({ status }) => status === 409),
+    409,
+    "NOTE_REVISION_CONFLICT",
+  );
+  const lastNote = await expectResponse(
+    edits.find(({ status }) => status === 200),
+    200,
+  );
+  assert.equal(losingEdit._current.versionId, lastNote.data.versionId);
+  assert.deepEqual(noteVersions(), [1, 2, 3, 4, 5]);
+  assert.equal(files().length, beforeFiles.length + 3);
+  const latest = {
+    ...writing.body,
+    evidence: writing.body.evidence.map((item) =>
+      item.state === "frozen"
+        ? { ...item, versionId: lastNote.data.versionId, revision: 5 }
+        : item,
+    ),
+  };
+  await expectResponse(
+    await writing.submit(other.app, secondCookie, latest),
+    200,
+  );
+  await expectResponse(
+    await nextWrite({ baseRevision: 5 }),
+    409,
+    "ALREADY_SUBMITTED",
+  );
+  assert.deepEqual(noteVersions(), [1, 2, 3, 4, 5]);
+
   const interrupted = await makeAttempt();
   const dropped = interrupted.submit(first.app, world.ownerCookie).then(
     (response) => ({ http: response.status }),
@@ -260,6 +371,13 @@ try {
           replaced: replacedStage.operationId,
           winner: afterReplacement.ticket.operation_id,
           retired: afterReplacement.reserves[0].state,
+        },
+        scratchDuringConfirmation: {
+          pendingRevision: wrote.data.revision,
+          resumedSubmissionRevision: lastNote.data.revision,
+          replayedRevision: receipts[0].data.revision,
+          conflictingMutation: losingEdit.error,
+          finalRevisions: noteVersions(),
         },
         restartedBeforeConfirmation: {
           preserved: held.operationId,

@@ -24,11 +24,15 @@ import { assertSavedAnswersConfirmed } from "./attempt-timing.ts";
 import { submitAttempt } from "./attempt-whole-submit.ts";
 import type { RecoveryRequest } from "./kernel-assignment-confirmation-recovery.ts";
 import {
-  assertConfirmationBinding,
   confirmationScopeOf,
   permitsRecovery,
   recoverKernelConfirmation,
 } from "./kernel-assignment-confirmation-recovery.ts";
+import {
+  assertConfirmationBinding,
+  kernelConfirmationTicketFor,
+  type KernelConfirmationTicket as Ticket,
+} from "./kernel-assignment-confirmation-ticket.ts";
 import { buildKernelChoiceResult } from "./kernel-assignment-confirmed-detail.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
@@ -37,20 +41,11 @@ import {
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 
-type Ticket = typeof kernelAttemptConfirmations.$inferSelect;
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type OriginalQuestion = ChoiceConfirmationInput["questions"][number];
 
 function alreadySubmitted(): never {
   throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
-}
-
-function ticketFor(db: Db, attemptId: string): Ticket | undefined {
-  return db
-    .select()
-    .from(kernelAttemptConfirmations)
-    .where(eq(kernelAttemptConfirmations.attemptId, attemptId))
-    .get();
 }
 
 function discardTicket(db: Db, ticket: Ticket): void {
@@ -110,7 +105,7 @@ export function readKernelConfirmationFacts(
   dataDir: string,
   attempt: Attempt,
 ) {
-  const ticket = ticketFor(db, attempt.id);
+  const ticket = kernelConfirmationTicketFor(db, attempt.id);
   if (!ticket) return undefined;
   return withTicket(db, dataDir, attempt, ticket, (runtime, status, scope) =>
     status === "completed"
@@ -173,13 +168,12 @@ function stage(
             now,
             request.confirmedSavedAnswers,
           );
-          const previous = ticketFor(db, attemptId);
+          const previous = kernelConfirmationTicketFor(db, attemptId);
           if (previous) {
-            if (
-              previous.stepAttemptId !== stepAttemptId ||
-              previous.practiceVersion !== practiceVersion
-            )
-              kernelAttemptUnavailable();
+            assertConfirmationBinding(previous, {
+              stepAttemptId,
+              practiceVersion,
+            });
             if (
               confirmationIntentOf(previous.request) ===
               confirmationIntentOf(request)
@@ -250,7 +244,7 @@ function confirm(
     .transaction(() => {
       const attempt = requireUsableAttempt(db, studentId, ticket.attemptId);
       if (attempt.status !== "draft") alreadySubmitted();
-      const current = ticketFor(db, ticket.attemptId);
+      const current = kernelConfirmationTicketFor(db, ticket.attemptId);
       if (current?.operationId !== ticket.operationId) return undefined;
       return withTicket(
         db,

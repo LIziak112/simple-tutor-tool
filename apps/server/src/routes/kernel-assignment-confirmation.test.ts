@@ -20,6 +20,7 @@ import {
 import {
   makeNotePng,
   postNoteImage,
+  putNoteForm,
   putNoteReceipt,
 } from "../test/note-fixtures.ts";
 import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
@@ -427,4 +428,73 @@ it("两份不同原稿声明争交全空卷，只确认赢家，已有稿的 mis
     })),
   );
   authorityFacts(work.id, true);
+});
+
+it("内核已确认而宿主仍是草稿时拒绝新原稿，只重发已保存的同一版本回执", async () => {
+  const work = await open(
+    await assignKernelFixture(app, world),
+    world.ownerCookie,
+  );
+  const questionId = work.first.questionId;
+  const mutationId = randomUUID();
+  const original = await putNoteReceipt(
+    app,
+    work.cookie,
+    work.id,
+    questionId,
+    1,
+    {
+      mutationId,
+    },
+  );
+  const request = {
+    revisions: await work.revisions(),
+    evidence: [
+      {
+        questionId,
+        state: "frozen",
+        versionId: original.versionId,
+        revision: 1,
+      },
+      { questionId: work.second.questionId, state: "none" },
+    ],
+  } satisfies AttemptSubmitRequest;
+  db.$client.exec(`
+    CREATE TRIGGER interrupt_before_note_guard_projection BEFORE UPDATE OF status ON attempts
+    WHEN NEW.status = 'graded'
+    BEGIN SELECT RAISE(ABORT, 'interrupted original guard projection'); END
+  `);
+  try {
+    expect((await work.submit(request)).status).toBe(500);
+  } finally {
+    db.$client.exec("DROP TRIGGER interrupt_before_note_guard_projection");
+  }
+
+  expect(
+    db.$client.prepare("SELECT status FROM attempts WHERE id=?").get(work.id),
+  ).toEqual({ status: "draft" });
+  const save = (
+    strokes: number,
+    options: { baseRevision: number; mutationId?: string },
+  ) =>
+    app.request(`${work.root}/notes/${questionId}`, {
+      method: "PUT",
+      headers: { cookie: work.cookie },
+      body: putNoteForm(strokes, options),
+    });
+  await denied(await save(2, { baseRevision: 1 }), 409, "ALREADY_SUBMITTED");
+  const replay = await save(1, { baseRevision: 0, mutationId });
+  expect(replay.status).toBe(200);
+  expect(await replay.json()).toEqual({ ok: true, data: original });
+  expect(
+    db.$client
+      .prepare("SELECT revision FROM note_versions WHERE note_id=?")
+      .all(original.noteId),
+  ).toEqual([{ revision: 1 }]);
+  await result(await call(work.root, work.cookie));
+  expect(evidence(work.id)).toContainEqual({
+    question_id: questionId,
+    state: "frozen",
+    version_id: original.versionId,
+  });
 });

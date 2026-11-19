@@ -10,7 +10,7 @@
   "apps/server/src/services/course-service.ts": 1472,
   "apps/server/src/services/export-service.ts": 2746,
   "apps/server/src/services/library-service.ts": 1610,
-  "apps/server/src/services/note-service.ts": 1818,
+  "apps/server/src/services/note-service.ts": 1722,
   "apps/server/src/services/question-evidence.ts": 1005,
   "apps/server/src/services/reparse-service.ts": 1035,
   "apps/server/src/services/seed-demo.ts": 1101,

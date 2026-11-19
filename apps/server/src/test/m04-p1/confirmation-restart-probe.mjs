@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { renameSync } from "node:fs";
+import { readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { attemptResultOkSchema, attemptStartOkSchema } from "@tutor/contract";
@@ -9,6 +9,7 @@ import { createDb } from "../../db/client.ts";
 import {
   makeNotePng,
   postNoteImage,
+  putNoteForm,
   putNoteReceipt,
 } from "../note-fixtures.ts";
 import { fetchSubmitRevisions } from "../submit-revisions.ts";
@@ -129,13 +130,14 @@ try {
   }
 
   const v1 = await putNoteReceipt(app, world.ownerCookie, id, q1.questionId, 1);
+  const originalMutation = randomUUID();
   const v2 = await putNoteReceipt(
     app,
     world.ownerCookie,
     id,
     q1.questionId,
     2,
-    { baseRevision: 1 },
+    { baseRevision: 1, mutationId: originalMutation },
   );
   const png = Buffer.from(makeNotePng());
   const attached = await postNoteImage(
@@ -157,6 +159,42 @@ try {
     return Buffer.from(await response.arrayBuffer());
   };
   const document = await bytes(documentPath);
+  const scratchAt = (
+    questionId,
+    strokes,
+    options,
+    cookie = world.ownerCookie,
+  ) =>
+    app.request(`${root}/notes/${questionId}`, {
+      method: "PUT",
+      headers: { cookie },
+      body: putNoteForm(strokes, options),
+    });
+  const newScratch = (questionId = q1.questionId, baseRevision = 2) =>
+    scratchAt(questionId, 3, { baseRevision });
+  const replayScratch = async () => {
+    const replay = await scratchAt(q1.questionId, 2, {
+      baseRevision: 1,
+      mutationId: originalMutation,
+    });
+    await expectStatus(replay, 200);
+    assert.deepEqual((await replay.json()).data, v2);
+  };
+  const scratchFacts = () => ({
+    rows: productRead((db) =>
+      db
+        .prepare(`
+      SELECT n.question_id,n.current_revision,n.current_version_id,v.revision,v.id
+      FROM notes n JOIN note_versions v ON v.note_id=n.id
+      WHERE n.attempt_id=? AND n.phase='scratch' ORDER BY n.question_id,v.revision
+    `)
+        .all(id),
+    ),
+    blobs: readdirSync(join(dataDir, "blobs", "notes", v2.noteId)).sort(),
+  });
+  const initialScratch = scratchFacts();
+  assert.equal(initialScratch.rows.length, 2);
+
   const body = {
     revisions: await fetchSubmitRevisions(app, world.ownerCookie, id),
     evidence: [
@@ -216,6 +254,39 @@ try {
   await stop();
   const restartedPid = await boot(false);
   assert.notEqual(firstPid, restartedPid);
+  const late = await newScratch();
+  const scratchProtection = {
+    interruptedHost: held.lifecycle.status,
+    lateScratch: late.status,
+    scratchRows: scratchFacts().rows.length,
+  };
+  if (late.status !== 409) console.log(JSON.stringify(scratchProtection));
+  await expectStatus(late, 409, "ALREADY_SUBMITTED");
+  await expectStatus(
+    await newScratch(q2.questionId, 0),
+    409,
+    "ALREADY_SUBMITTED",
+  );
+  await expectStatus(
+    await newScratch(q1.questionId, 0),
+    409,
+    "ALREADY_SUBMITTED",
+  );
+  await expectStatus(
+    await scratchAt(
+      q1.questionId,
+      2,
+      {
+        baseRevision: 1,
+        mutationId: originalMutation,
+      },
+      world.otherCookie,
+    ),
+    403,
+    "FORBIDDEN",
+  );
+  await replayScratch();
+  assert.deepEqual(scratchFacts(), initialScratch);
   await expectStatus(await call(root, world.otherCookie), 403, "FORBIDDEN");
   await expectStatus(
     await submit(different, world.otherCookie),
@@ -227,6 +298,9 @@ try {
   try {
     await expectStatus(await call(root), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
     await expectStatus(await submit(), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
+    await expectStatus(await newScratch(), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
+    await replayScratch();
+    assert.deepEqual(scratchFacts(), initialScratch);
     assert.deepEqual(inspect(id), held);
     assert.deepEqual(await bytes(documentPath), document);
   } finally {
@@ -266,6 +340,30 @@ try {
   assert.deepEqual(recover(id, world.studentId, projected.prepared), durable);
   assert.deepEqual(await bytes(documentPath), document);
   assert.deepEqual(await bytes(imagePath), png);
+  await expectStatus(await newScratch(), 409, "ALREADY_SUBMITTED");
+  await replayScratch();
+  const supplement = await (() => {
+    const form = putNoteForm(1);
+    form.append("phase", "supplement");
+    return app.request(`${root}/notes/${q1.questionId}`, {
+      method: "PUT",
+      headers: { cookie: world.ownerCookie },
+      body: form,
+    });
+  })();
+  await expectStatus(supplement, 200);
+  await expectStatus(
+    await call(
+      `${root}/notes/${q1.questionId}/corrections`,
+      world.ownerCookie,
+      "POST",
+      {
+        copyFromOriginal: true,
+      },
+    ),
+    201,
+  );
+  assert.deepEqual(scratchFacts(), initialScratch);
   using kernel = new DatabaseSync(kernelPath, { readOnly: true });
   const counts = kernel
     .prepare(`SELECT
@@ -366,6 +464,7 @@ try {
         firstPid,
         restartedPid,
         interrupted: first.status,
+        scratchProtection,
         score: detail.attempt.scoreAuto,
         notes: {
           first: v1.revision,

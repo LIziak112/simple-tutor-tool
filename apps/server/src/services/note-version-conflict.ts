@@ -1,7 +1,14 @@
-import { noteRevisionConflictCurrentSchema } from "@tutor/contract";
+import {
+  type NoteVersionReceipt,
+  noteRevisionConflictCurrentSchema,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { type NoteRow, noteVersions } from "../db/schema.ts";
+import {
+  type NoteRow,
+  type NoteVersionRow,
+  noteVersions,
+} from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 
 // ---------- CAS 冲突错误构造 ----------
@@ -46,4 +53,39 @@ export function noteVersionHashOf(
         .from(noteVersions)
         .where(eq(noteVersions.id, id))
         .get()?.hash;
+}
+
+/** 版本行 → 回执（预检幂等命中与跨进程约束兜底共用一处组装） */
+export function receiptOf(row: NoteVersionRow): NoteVersionReceipt {
+  return {
+    noteId: row.noteId,
+    revision: row.revision,
+    versionId: row.id,
+    hash: row.hash,
+    savedAt: row.serverSavedAt,
+  };
+}
+
+/**
+ * SQLITE_CONSTRAINT 唯一索引冲突的表内定位（跨进程兜底判定用）：
+ * "mutation" = note_versions.mutation_id（幂等键竞争）；"revision" =
+ * (note_id, revision)（CAS 竞争）；null = 非目标冲突/非约束错误。
+ * 依据 better-sqlite3 的错误形态：code 为 SQLITE_CONSTRAINT 基码或其
+ * 扩展码（如 SQLITE_CONSTRAINT_UNIQUE，13.x 实测），message 含
+ * "UNIQUE constraint failed: <表.列>…"。
+ */
+export function sqliteUniqueViolationOn(
+  err: unknown,
+): "mutation" | "revision" | null {
+  const e = err as { code?: string; message?: string };
+  if (!e?.code?.startsWith("SQLITE_CONSTRAINT")) return null;
+  const message = String(e.message ?? "");
+  if (message.includes("note_versions.mutation_id")) return "mutation";
+  if (
+    message.includes("note_versions.note_id") &&
+    message.includes("note_versions.revision")
+  ) {
+    return "revision";
+  }
+  return null;
 }
