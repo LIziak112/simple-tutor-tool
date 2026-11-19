@@ -33,6 +33,7 @@ import {
   structuresOfSnapshot,
 } from "./attempt-service";
 import { responseTimeOf } from "./attempt-time-projection";
+import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
 import { pendingMarkCount, submittedTeacherPendingSql } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -203,6 +204,7 @@ export function markResponse(
         throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答题目快照不可用");
       }
 
+      requireLegacyAttemptWrite(tx, row.attempt);
       const attemptId = row.attempt.id;
       const finalCorrect = finalCorrectOf(req.mark, row.response.autoCorrect);
       tx.update(responses)

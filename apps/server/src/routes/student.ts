@@ -255,7 +255,7 @@ export function createStudentRoutes(
       .route("/", createStudentRubricRoutes(db))
       .route("/", createStudentAttachmentRoutes(db, dataDir))
       .route("/", createStudentPersonalRoutes(db, dataDir))
-      .route("/", createStudentBatchSubmissionRoutes(db))
+      .route("/", createStudentBatchSubmissionRoutes(db, dataDir))
       .route("/", createStudentAttemptRoutes(db, dataDir))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });

@@ -101,4 +101,18 @@ pnpm exec vitest run apps/server/src/routes/kernel-assignment-drafts.test.ts app
 pnpm --dir apps/server exec tsx src/test/m04-p1/current-draft-restart-probe.mjs
 ```
 
-跨进程探针先让内核保存落库，再用合成数据库触发器中断宿主活动投影。以相同数据目录重启服务后，详情恢复原题身份和草稿，并补回首次活动。详情前直接打开记录列表仍遗漏该卷，列表独立恢复留待 P4。另一次中断以同请求重试补回投影。产品提交仍由后续工单接入。旧包历史回执反例保存在 `fd237076`。
+跨进程探针先让内核保存落库，再用合成数据库触发器中断宿主活动投影。以相同数据目录重启服务后，详情恢复原题身份和草稿，并补回首次活动。详情前直接打开记录列表仍遗漏该卷，列表独立恢复留待 P4。另一次中断以同请求重试补回投影。旧包历史回执反例保存在 `fd237076`。
+
+## 普通整卷确认与恢复
+
+宿主迁移 `0081` 为每份内核卷保留一个当前确认操作及冻结题、原稿和答案修订引用。正常整卷 POST 先提交预留，再以原绑定和冻结行授权内核确认与评分。权威端明确拒绝时释放预留。回执已存在时按原操作恢复，投影卷状态和原稿索引。本人结果使用同一套公布规则，正文、逐题判定和成绩来自内核。
+
+```powershell
+pnpm exec vitest run apps/server/src/routes/kernel-assignment-confirmation.test.ts apps/server/src/routes/attempt-submit-evidence.test.ts --maxWorkers=1
+pnpm --dir apps/server exec tsx src/test/m04-p1/confirmation-stage-race-probe.mjs
+pnpm --dir apps/server exec tsx src/test/m04-p1/confirmation-restart-probe.mjs
+```
+
+第一条进程探针在宿主提交预留后、调用内核前暂停真实进程。另一进程的相同意图沿用原操作和原稿，随后恢复时原进程收到已交卷。不同意图仅在内核尚未确认时替换。确认前被终止的进程能由同一授权学生重启后继续原操作。
+
+第二条进程探针在内核确认落库后中断宿主投影。独立进程重启后先验证跨账户拒绝及内核暂缺保稿，再从同一权威回执恢复 V2 正文、PNG 和成绩。另测普通 PUT 落库但活动投影中断，重启后直接交卷仍保留首次改答时刻。列表、导出涉及的汇总投影留在 P4。

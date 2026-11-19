@@ -19,7 +19,7 @@ import {
   stageAttemptSubmissionBatch,
   startAttemptBatchSubmission,
 } from "../services/attempt-batch-submission.ts";
-import { submitAttempt } from "../services/attempt-service.ts";
+import { submitAssignmentAttempt } from "../services/kernel-assignment-confirmation.ts";
 
 export const attemptSubmitPath = "/attempts/:id/submit";
 export type StudentAttemptSubmit<Result> = (
@@ -49,7 +49,7 @@ export function createStudentAttemptSubmitRoutes<Result>(
   });
 }
 
-export function createStudentBatchSubmissionRoutes(db: Db) {
+export function createStudentBatchSubmissionRoutes(db: Db, dataDir: string) {
   const limitBatch = (method: "POST" | "PUT") => {
     const guard = guardBodyLimit({
       method,
@@ -61,7 +61,12 @@ export function createStudentBatchSubmissionRoutes(db: Db) {
       guard(c, next);
   };
   return new Hono<StudentEnv>()
-    .route("/", createStudentAttemptSubmitRoutes(db, submitAttempt))
+    .route(
+      "/",
+      createStudentAttemptSubmitRoutes(db, (db, ...args) =>
+        submitAssignmentAttempt(db, dataDir, ...args),
+      ),
+    )
     .post("/attempts/:id/submit-batches", limitBatch("POST"), async (c) => {
       const input = await parseJsonBody(c, attemptBatchSubmissionStartSchema);
       c.header("Cache-Control", "private, no-store");

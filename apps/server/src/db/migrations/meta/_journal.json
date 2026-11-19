@@ -568,6 +568,13 @@
       "when": 1795084712432,
       "tag": "0080_kernel_assignment_openings",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1795087249503,
+      "tag": "0081_kernel_attempt_confirmations",
+      "breakpoints": true
     }
   ]
 }

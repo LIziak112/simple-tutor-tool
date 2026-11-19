@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  type AssignmentCreateRequest,
   ATTEMPT_SNAPSHOT_PROOF_HEADER,
   assignmentCreateOkSchema,
 } from "@tutor/contract";
@@ -92,6 +93,7 @@ export async function assignKernelFixture(
     studentId,
     otherStudentId,
   }: Awaited<ReturnType<typeof setupAssignment>>,
+  release: Pick<AssignmentCreateRequest, "dueAt" | "answerRelease"> = {},
 ) {
   const assigned = await app.request("/api/teacher/assignments", {
     method: "POST",
@@ -101,6 +103,7 @@ export async function assignKernelFixture(
       unitIds: [unitId],
       studentIds: [studentId, otherStudentId],
       executionBackend: "kernel",
+      ...release,
       allowRedo: false,
     }),
   });

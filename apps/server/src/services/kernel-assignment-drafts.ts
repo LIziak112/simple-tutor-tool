@@ -5,14 +5,13 @@ import {
   choiceStudentAnswerSchema,
   type StudentAnswer,
 } from "@tutor/contract";
-import { eq } from "drizzle-orm";
 import {
   ChoiceDraftConflict,
   LearningError,
   type openLearningRuntime,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
-import { type Attempt, attempts, responses } from "../db/schema.ts";
+import { type Attempt, responses } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   buildAttemptQuestionWhere,
@@ -28,9 +27,12 @@ import {
   draftEtag,
 } from "./attempt-detail-cache.ts";
 import { assertAttemptNotTimedOut, attemptTimingOf } from "./attempt-timing.ts";
+import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
+import { readKernelConfirmationResult } from "./kernel-assignment-confirmation.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   kernelAttemptUnavailable,
+  ownClassChoiceAnswerOf,
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 import { snapshotOfRow } from "./snapshot.ts";
@@ -41,58 +43,12 @@ type DraftProof = Pick<
   "baseRevision" | "mutationId" | "expectedFrozenAt" | "questionRevisionId"
 >;
 
-function projectDraftActivity(
-  db: Db,
-  attempt: Attempt,
-  runtime: Runtime,
-): Attempt {
-  if (attempt.status !== "draft") return attempt;
-  const times = runtime.readChoiceDraftActivity(
-    { role: "student", id: attempt.studentId },
-    attempt.id,
-  );
-  if (times === undefined) return attempt;
-  const { firstChangedAt, lastChangedAt } = times;
-  const activatedAt =
-    firstChangedAt !== null &&
-    (attempt.activatedAt === null || firstChangedAt < attempt.activatedAt)
-      ? firstChangedAt
-      : attempt.activatedAt;
-  const previousActivity = attempt.lastActivityAt ?? attempt.startedAt;
-  const lastActivityAt =
-    lastChangedAt === null
-      ? attempt.lastActivityAt
-      : lastChangedAt > previousActivity
-        ? lastChangedAt
-        : previousActivity;
-  if (
-    activatedAt === attempt.activatedAt &&
-    lastActivityAt === attempt.lastActivityAt
-  )
-    return attempt;
-  db.update(attempts)
-    .set({ activatedAt, lastActivityAt })
-    .where(eq(attempts.id, attempt.id))
-    .run();
-  return { ...attempt, activatedAt, lastActivityAt };
-}
-
 function alreadySubmitted(): never {
   throw new HttpError(
     409,
     "ALREADY_SUBMITTED",
     "这份练习已交卷，不能再修改答案",
   );
-}
-
-function choiceAnswerOf(choice: string) {
-  const parsed = choiceStudentAnswerSchema.safeParse({
-    kind: "choice",
-    index: Number(choice),
-  });
-  if (!parsed.success || String(parsed.data.index) !== choice)
-    kernelAttemptUnavailable();
-  return parsed.data;
 }
 
 function invalidAnswer(): never {
@@ -113,7 +69,7 @@ function throwDraftError(
       {
         _current: attemptAnswerConflictCurrentSchema.parse({
           revision,
-          draft: choice === null ? null : choiceAnswerOf(choice),
+          draft: choice === null ? null : ownClassChoiceAnswerOf(choice),
         }),
       },
     );
@@ -209,7 +165,7 @@ export function saveAssignmentDraftAnswer(
           } catch (error) {
             throwDraftError(error, attempt, authorizedAt);
           }
-          projectDraftActivity(db, attempt, runtime);
+          projectKernelDraftActivity(db, attempt, runtime);
           return attemptAnswerSaveDataSchema.parse(receipt);
         },
       );
@@ -229,36 +185,40 @@ export function readKernelAssignmentDetail(
   return db.$client
     .transaction(() => {
       const attempt = requireUsableAttempt(db, studentId, attemptId);
+      const now = new Date();
+      const confirmed = readKernelConfirmationResult(db, dataDir, attempt, now);
+      if (confirmed !== undefined) return { etag: null, detail: confirmed };
+      if (attempt.status !== "draft") kernelAttemptUnavailable();
       return withBoundKernelActivity(
         db,
         dataDir,
         attempt,
         (runtime, activity) => {
-          if (attempt.status === "draft" && activity.status !== "active")
-            kernelAttemptUnavailable();
-          const projected = projectDraftActivity(db, attempt, runtime);
+          if (activity.status !== "active") kernelAttemptUnavailable();
+          const projected = projectKernelDraftActivity(db, attempt, runtime);
           const heads =
             ("choiceDrafts" in activity ? activity.choiceDrafts : undefined) ??
             [];
-          const now = new Date();
+
           const etag = draftEtag(db, projected, now, heads);
           if (etag !== null && etag === ifNoneMatch)
             return { etag, detail: null };
           const detail = detailOfAuthorizedAttempt(db, projected, now);
-          if (!("drafts" in detail)) return { etag, detail };
+          if (!("drafts" in detail)) kernelAttemptUnavailable();
 
           const questions = new Map(
             detail.units.flatMap(({ questions }) =>
               questions.map((question) => [question.id, question] as const),
             ),
           );
-          const drafts: [string, ReturnType<typeof choiceAnswerOf>][] = [];
+          const drafts: [string, ReturnType<typeof ownClassChoiceAnswerOf>][] =
+            [];
           const draftRevisions = new Map(
             [...questions.keys()].map((id) => [id, 0]),
           );
           for (const draft of heads) {
             const question = questions.get(draft.questionId);
-            const answer = choiceAnswerOf(draft.choice);
+            const answer = ownClassChoiceAnswerOf(draft.choice);
             if (
               draft.slotId !== "answers" ||
               !question ||

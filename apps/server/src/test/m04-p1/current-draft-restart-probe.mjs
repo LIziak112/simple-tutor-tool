@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
-import { createServer } from "node:net";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 import {
   attemptDraftOkSchema,
   attemptStartOkSchema,
@@ -13,61 +8,16 @@ import {
 } from "@tutor/contract";
 import { openLearningRuntime } from "learning-kernel";
 import { createDb } from "../../db/client.ts";
-import { createTestDir } from "../../db/test-utils.ts";
-import { removeDataDirWithRetry, serverDir } from "../child-server.ts";
 import {
   assignKernelFixture,
   postAssignment,
   setupAssignment,
 } from "./product-fixture.ts";
 
-const dataDir = createTestDir();
-const probe = createServer().listen(0, "127.0.0.1");
-await once(probe, "listening");
-const address = probe.address();
-assert.ok(address && typeof address !== "string");
-const port = address.port;
-const closed = once(probe, "close");
-probe.close();
-await closed;
-const base = `http://127.0.0.1:${port}`;
-const app = { request: (path, init) => fetch(base + path, init) };
-let server;
-async function boot(enabled) {
-  const loader = join(serverDir, "node_modules", "tsx", "dist", "loader.mjs");
-  server = spawn(
-    process.execPath,
-    ["--import", pathToFileURL(loader).href, "src/index.ts"],
-    {
-      cwd: serverDir,
-      windowsHide: true,
-      env: {
-        ...process.env,
-        NODE_ENV: "development",
-        PORT: String(port),
-        PUBLIC_URL: base,
-        DATA_DIR: dataDir,
-        OWNCLASS_KERNEL_ASSIGNMENTS_ENABLED: enabled ? "1" : "0",
-      },
-      stdio: ["ignore", "ignore", "inherit"],
-    },
-  );
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (server.exitCode !== null)
-      throw new Error(`服务提前退出 ${server.exitCode}`);
-    const health = await app.request("/api/public/health").catch(() => null);
-    if (health?.ok) return server.pid;
-    await sleep(150);
-  }
-  throw new Error("服务未就绪");
-}
-async function stop() {
-  if (!server || server.exitCode !== null || server.signalCode !== null) return;
-  const exited = once(server, "exit", { signal: AbortSignal.timeout(10_000) });
-  server.kill("SIGTERM");
-  await exited;
-}
+import { createRealServiceFixture } from "./real-service-fixture.mjs";
+
+const service = await createRealServiceFixture();
+const { app, dataDir, boot, stop } = service;
 
 async function interruptProjection(put, inspect) {
   const product = createDb(join(dataDir, "tutor.db"));
@@ -255,6 +205,5 @@ try {
     ),
   );
 } finally {
-  await stop();
-  await removeDataDirWithRetry(dataDir);
+  await service.close();
 }

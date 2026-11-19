@@ -17,10 +17,7 @@ import {
   reserveSubmissionOriginals,
   settleSubmissionOriginalReservation,
 } from "./attempt-original-reservation.ts";
-import {
-  buildSingleQuestionEvidence,
-  buildSubmissionEvidence,
-} from "./attempt-submit-evidence.ts";
+import { buildSubmissionEvidence } from "./attempt-submit-evidence.ts";
 import {
   assertExactQuestionSet,
   validateSubmitRevisions,
@@ -140,12 +137,7 @@ export function prepareChoiceOriginals(
       const declared = new Map(
         request.evidence?.map((item) => [item.questionId, item]),
       );
-      if (request.evidence === undefined) {
-        buildSubmissionEvidence(db, attempt.id, rows, undefined);
-      } else {
-        assertExactQuestionSet(rows, request.evidence, mismatch);
-      }
-
+      buildSubmissionEvidence(db, attempt.id, rows, request.evidence);
       const selected = [];
       for (const declaration of declared.values()) {
         if (declaration.state === "frozen") {
@@ -153,13 +145,6 @@ export function prepareChoiceOriginals(
           if (versionId === undefined || revision === undefined || revision < 1)
             throw mismatch();
           selected.push({ questionId, versionId, revision });
-        } else {
-          buildSingleQuestionEvidence(
-            db,
-            attempt.id,
-            declaration.questionId,
-            declaration,
-          );
         }
       }
       const byQuestion = new Map(

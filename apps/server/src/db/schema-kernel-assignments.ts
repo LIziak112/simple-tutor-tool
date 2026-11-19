@@ -1,3 +1,4 @@
+import type { AttemptSubmitRequest } from "@tutor/contract";
 import {
   foreignKey,
   integer,
@@ -79,4 +80,23 @@ export const kernelAssignmentOpenings = sqliteTable(
       ],
     }),
   ],
+);
+
+/** 保存可授权恢复的确认操作与冻结引用，不存答案正文或判定。 */
+export const kernelAttemptConfirmations = sqliteTable(
+  "kernel_attempt_confirmations",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .notNull()
+      .references(() => kernelAttemptBindings.attemptId, {
+        onDelete: "cascade",
+      }),
+    operationId: text("operation_id").notNull().unique(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    practiceVersion: integer("practice_version").notNull(),
+    request: text("request_json", { mode: "json" })
+      .$type<AttemptSubmitRequest>()
+      .notNull(),
+  },
 );
