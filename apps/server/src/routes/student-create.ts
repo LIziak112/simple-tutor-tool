@@ -130,6 +130,7 @@ export function createStudentCreateRoutes(db: Db, dataDir: string) {
           },
           body.scope,
           body.operationId,
+          dataDir,
         );
         return c.json({ ok: true, data: attempt }, 201);
       })

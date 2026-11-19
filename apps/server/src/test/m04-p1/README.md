@@ -125,3 +125,12 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/student-records-restart-probe.mj
 ```
 
 用同一 P0 两题混排旧卷和内核卷。只中断宿主投影，重启后首个学生请求直接读记录列表，验证状态筛选和总数、草稿进度、时间排序、截止公布、名单和会话权限。暂移内核库时，旧作业记录仍可读，本人已公布的内核记录返回 503。
+
+
+### P4 学生错题轮次跨进程恢复
+
+```powershell
+pnpm --dir apps/server exec tsx src/test/m04-p1/student-wrong-questions-restart-probe.mjs
+```
+
+用同一组 P0 冻结题验证内核确认后的重启、公布与重新收紧。保留独立课程和旧作业轮次，核对题版本、目录分页、普通与目录组卷、内核离线范围和跨账号授权。

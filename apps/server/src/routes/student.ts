@@ -903,6 +903,7 @@ export function createStudentRoutes(
             c.var.student.id,
             parsed.data,
             new Date(),
+            { dataDir },
           ),
         });
       })

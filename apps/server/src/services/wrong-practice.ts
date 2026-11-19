@@ -20,7 +20,7 @@ import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import { snapshotOfRow } from "./snapshot";
 import { wrongAttemptContextPlan } from "./wrong-attempt-context.ts";
-import { latestJudgedResponsesByQuestion } from "./wrong-questions";
+import { latestJudgedResponsesByQuestion } from "./wrong-question-rounds.ts";
 
 /**
  * 错题重练组卷（2026-10 学生端闭环的最后一块）——POST /api/student/wrong-practice
@@ -66,6 +66,7 @@ export function startWrongPractice(
   /** 建卷范围快照（#6980-2）：随卷落 practice_scope_json，展示「练的是什么」 */
   scope?: WrongPracticeScope | undefined,
   operationId?: string,
+  dataDir?: string,
 ): { attempt: AttemptStartData; includedCount: number } {
   if (operationId) {
     const saved = createOnce(
@@ -82,6 +83,8 @@ export function startWrongPractice(
           questionIds,
           options,
           scope,
+          undefined,
+          dataDir,
         );
         return { id: attempt.id, includedCount };
       },
@@ -95,7 +98,10 @@ export function startWrongPractice(
   const uniqueIds = [...new Set(questionIds)];
 
   // 该生错题本聚合内的题 → 最近一次判定作答行（快照来源）
-  const latestByQuestion = latestJudgedResponsesByQuestion(db, studentId);
+  const latestByQuestion = latestJudgedResponsesByQuestion(db, studentId, {
+    questionIds: uniqueIds,
+    ...(dataDir === undefined ? {} : { dataDir }),
+  });
 
   /** 逐题校验：在聚合内且快照可用，否则剔除 */
   const pickOf = (questionId: string): ResponseRow | null => {
