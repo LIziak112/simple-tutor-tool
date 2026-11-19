@@ -7,8 +7,10 @@ import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { attemptStartOkSchema } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
+import { openLearningRuntime as openInstalledRuntime } from "learning-kernel";
 import pino from "pino";
 import { z } from "zod";
+import serverPackage from "../../../package.json" with { type: "json" };
 import { createDb } from "../../db/client.ts";
 import { createTestDb, createTestDir } from "../../db/test-utils.ts";
 import { HttpError } from "../../lib/http-error.ts";
@@ -23,59 +25,69 @@ import {
 } from "./product-fixture.ts";
 import { draftForAssignment, publicationForAssignment } from "./publication.ts";
 
-const zodSha =
-  "8015321552bb45f46999a161ae91317b6a46c54f42e92effae74f1db6aabbc04";
-const [candidatePath, expectation, expectedHash] = process.argv.slice(2);
-assert.ok(
-  candidatePath &&
-    expectedHash &&
-    (expectation === "reject-material" || expectation === "open"),
-  "用法：probe.ts <已安装候选目录> <reject-material|open> <候选 SHA-256>",
-);
-assert.match(expectedHash, /^[0-9a-f]{64}$/u, "请提供小写十六进制 SHA-256");
-const candidateRoot = realpathSync(candidatePath);
-const sha256 = (file: string) =>
-  createHash("sha256")
-    .update(readFileSync(join(candidateRoot, file)))
-    .digest("hex");
-const candidateHash = sha256("learning-kernel-0.1.0.tgz");
-assert.equal(candidateHash, expectedHash, "候选包哈希不匹配");
-assert.equal(sha256("zod-4.6.5.tgz"), zodSha, "Zod 固定依赖哈希不匹配");
-const candidateEntry = realpathSync(
-  createRequire(join(candidateRoot, "package.json")).resolve("learning-kernel"),
-);
-const candidateRelativeEntry = relative(candidateRoot, candidateEntry);
-assert.ok(
-  !candidateRelativeEntry.startsWith("..") &&
-    !isAbsolute(candidateRelativeEntry),
-  "候选必须从安装目录加载",
-);
+function sha256(archive: string | URL) {
+  return createHash("sha256").update(readFileSync(archive)).digest("hex");
+}
 
-type Principal = { role: "student"; id: string };
+async function selectRuntime(args: string[]) {
+  if (args.length === 0) {
+    const dependency = serverPackage.dependencies["learning-kernel"];
+    const match = /^file:(vendor\/learning-kernel-([0-9a-f]{64})\.tgz)$/u.exec(
+      dependency,
+    );
+    assert.ok(match?.[1] && match[2], "内核依赖必须按内容寻址");
+    const candidateHash = sha256(
+      new URL(`../../../${match[1]}`, import.meta.url),
+    );
+    assert.equal(candidateHash, match[2], "内核归档哈希不匹配");
+    return {
+      candidateHash,
+      candidateEntry: import.meta.resolve("learning-kernel"),
+      blocked: false,
+      openLearningRuntime: openInstalledRuntime,
+    };
+  }
+
+  const [flag, candidatePath] = args;
+  assert.ok(
+    args.length === 2 && flag === "--historical-k1" && candidatePath,
+    "用法：probe.ts [--historical-k1 <已离线安装 K1 的目录>]",
+  );
+  const candidateRoot = realpathSync(candidatePath);
+  const candidateHash = sha256(
+    join(candidateRoot, "learning-kernel-0.1.0.tgz"),
+  );
+  assert.equal(
+    candidateHash,
+    "4f24ba26cda0f0b2688cbd8057189186f55bc88e783470346acc4f20df4937b8",
+  );
+  assert.equal(
+    sha256(join(candidateRoot, "zod-4.6.5.tgz")),
+    "8015321552bb45f46999a161ae91317b6a46c54f42e92effae74f1db6aabbc04",
+  );
+  const candidateEntry = realpathSync(
+    createRequire(join(candidateRoot, "package.json")).resolve(
+      "learning-kernel",
+    ),
+  );
+  const candidateRelativeEntry = relative(candidateRoot, candidateEntry);
+  assert.ok(
+    !candidateRelativeEntry.startsWith("..") &&
+      !isAbsolute(candidateRelativeEntry),
+  );
+  const { openLearningRuntime } = (await import(
+    pathToFileURL(candidateEntry).href
+  )) as Pick<typeof import("learning-kernel"), "openLearningRuntime">;
+  return { candidateHash, candidateEntry, blocked: true, openLearningRuntime };
+}
+
+const { candidateHash, candidateEntry, blocked, openLearningRuntime } =
+  await selectRuntime(process.argv.slice(2));
 const receiptSchema = z.object({
   activityId: z.uuid(),
   stepAttemptId: z.uuid(),
   startedAt: z.iso.datetime(),
 });
-type ReadRuntime = {
-  publish(input: unknown): void;
-  start(
-    principal: Principal,
-    input: {
-      protocolVersion: 1;
-      operationId: string;
-      practiceId: string;
-      practiceVersion: number;
-    },
-  ): unknown;
-  read(principal: Principal, activityId: string): unknown;
-  close(): void;
-};
-const { openLearningRuntime } = (await import(
-  pathToFileURL(candidateEntry).href
-)) as {
-  openLearningRuntime(options: { databasePath: string }): ReadRuntime;
-};
 
 const expected = z
   .object({
@@ -105,7 +117,6 @@ const publicQuestions = expected.questions.map(({ id, stemMd, options }) => ({
     options.map((text, index) => [String(index), text]),
   ),
 }));
-const blocked = expectation === "reject-material";
 const dataDir = createTestDir();
 const productDatabase = join(dataDir, "ownclass.sqlite");
 const kernelDatabase = join(dataDir, "learning-kernel.sqlite");

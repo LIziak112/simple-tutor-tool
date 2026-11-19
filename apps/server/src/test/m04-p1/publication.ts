@@ -1,4 +1,5 @@
 import { studentStemMd } from "@tutor/md-dsl";
+import type { PublicationInput } from "learning-kernel";
 import type { Db } from "../../db/client.ts";
 import type { Assignment } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
@@ -151,6 +152,6 @@ export function publicationForAssignment(
         },
       },
       scoringKey,
-    },
+    } satisfies PublicationInput,
   };
 }

@@ -6,34 +6,22 @@
 
 ## 本地复跑
 
-产品使用锁定依赖，需有 Node 24.19.x、pnpm 12.6.0，以及已固定的 `learning-kernel-0.1.0.tgz` 与 `zod-4.6.5.tgz`。在产品根目录执行下列命令，将包路径、受信 SHA-256 和期望模式替换为本次候选。每个候选使用独立安装目录。
+使用 Node 24.19.x 和 pnpm 12.6.0，在产品根目录执行下列命令。离线安装需要已有 pnpm 缓存。内核由 `server` 直接从产品锁文件安装，探针通过包名及公开类型使用它。
 
 ```powershell
 pnpm install --frozen-lockfile --offline
 pnpm exec vitest run apps/server/src/routes/m04-p1-assembly.test.ts
-
-$m04KernelTar = 'C:/local-candidates/learning-kernel-0.1.0.tgz'
-$m04ZodTar = 'C:/local-candidates/zod-4.6.5.tgz'
-$m04Sha = 'c8a47328ae6f38e01e1f4b109fc4fab95971b0c0a382fd0b411ec8003caec0bb'
-$m04Mode = 'open'
-$m04Install = Join-Path $PWD.Path ("node_modules/.ownclass-m04-" + $m04Sha.Substring(0, 8))
-New-Item -ItemType Directory -Path $m04Install | Out-Null
-Copy-Item -LiteralPath $m04KernelTar -Destination (Join-Path $m04Install 'learning-kernel-0.1.0.tgz')
-Copy-Item -LiteralPath $m04ZodTar -Destination (Join-Path $m04Install 'zod-4.6.5.tgz')
-Push-Location -LiteralPath $m04Install
-try {
-  '{"private":true}' | Set-Content -Encoding utf8NoBOM package.json
-  npm install --offline --ignore-scripts --no-audit --no-fund ./learning-kernel-0.1.0.tgz ./zod-4.6.5.tgz
-  if ($LASTEXITCODE -ne 0) { throw '离线安装未通过' }
-} finally {
-  Pop-Location
-}
-pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts $m04Install $m04Mode $m04Sha
-if ($LASTEXITCODE -ne 0) { throw 'P1 探针未通过' }
+pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts
 ```
 
-K1 原包 SHA-256 为 `4f24ba26cda0f0b2688cbd8057189186f55bc88e783470346acc4f20df4937b8`，使用 `reject-material` 模式。此模式预期同一个正常开卷请求返回 `500 M04_PUBLISH_REJECTED`，候选内部拒绝 `material` 与 `practice.material`。产品没有作答、成绩、证据和结算，内核没有练法或活动。
+归档来自已验收的内核修订 `fbe7cc11aadb51cd767154b232278d86acb3e4d5` 的干净构建，SHA-256 为 `0333e20083867c65060c0345542b277b7ad965cc5883eb129c2d4ef79b3bc4d0`。仓内保留原字节，文件名登记摘要，pnpm 锁定归档完整性和 Zod 版本。
 
-`open` 模式要求重复开卷获得同一个真实内核回执、本人在既有详情 URL 读到相同冻结题、另一个学生被拒绝。关闭重开内核 SQLite 后复验本人读取，并用真实教师请求更换作业名单验证当前授权。产物输出各库路径和实际行数。Vitest 的独占路由用例使用候选替身，无需安装内核候选。
+默认探针要求重复开卷获得同一个真实内核回执、本人在既有详情 URL 读到相同冻结题、另一个学生被拒绝。关闭重开内核 SQLite 后复验本人读取，并用真实教师请求更换作业名单验证当前授权。产物输出各库路径和实际行数。Vitest 的独占路由用例使用候选替身。
 
-活动与作业的关联只保存在本次隔离进程。隔离详情输出内核公开只读结果，题目冻结身份、草稿版本与整卷确认仍需实证。P1 两个固定包只有 `publish`、`start`、`read`、`close`。可运行的保存、完整／全空／部分交卷和原样重发需等公开接口；探针记录包实际暴露的方法，供后续对照。
+## 历史拒绝证据
+
+早期 K1 原包 SHA-256 为 `4f24ba26cda0f0b2688cbd8057189186f55bc88e783470346acc4f20df4937b8`。同一个正常开卷请求返回 `500 M04_PUBLISH_REJECTED`，包内部拒绝 `material` 与 `practice.material`。产品没有作答、成绩、证据和结算，内核没有练法或活动。
+
+已有原归档时，可在独立目录执行 `npm install --offline --ignore-scripts --no-audit --no-fund ./learning-kernel-0.1.0.tgz ./zod-4.6.5.tgz`，从产品根执行 `pnpm --dir apps/server exec tsx src/test/m04-p1/probe.ts --historical-k1 <安装目录>`。探针核对原包和 Zod 摘要后重验拒绝与两库空白。
+
+活动与作业的关联只保存在本次隔离进程。隔离详情输出内核公开只读结果，题目冻结身份、草稿版本与整卷确认仍需实证。固定产物只有 `publish`、`start`、`read`、`close`，探针记录实际方法供后续对照。
