@@ -23,12 +23,11 @@ type Recovery = ReturnType<
 type Scope = OwnClassChoiceEvaluationScope & { operationId: string };
 
 /** 从内核确认重建结果，只落宿主卷生命周期和原稿索引。 */
-export function projectKernelChoiceResult(
+export function projectKernelChoiceFacts(
   db: Db,
   attempt: Attempt,
   scope: Scope,
   recovery: Recovery,
-  now: Date,
 ) {
   const { evaluation, confirmation } = recovery;
   const rows = attemptResponseRows(db, attempt.id);
@@ -105,18 +104,22 @@ export function projectKernelChoiceResult(
   ) {
     kernelAttemptUnavailable();
   }
+  return {
+    attempt: {
+      ...lifecycle,
+      scoreAuto: scoreAutoOf(projectedRows),
+      scoreFinal: outcome.scoreFinal,
+    },
+    rows: projectedRows,
+  };
+}
+
+export function buildKernelChoiceResult(
+  db: Db,
+  { attempt, rows }: ReturnType<typeof projectKernelChoiceFacts>,
+  now: Date,
+) {
   return attemptResultDataSchema.parse(
-    buildResultData(
-      db,
-      {
-        ...lifecycle,
-        scoreAuto: scoreAutoOf(projectedRows),
-        scoreFinal: outcome.scoreFinal,
-      },
-      now,
-      undefined,
-      projectedRows,
-      0,
-    ),
+    buildResultData(db, attempt, now, undefined, rows, 0),
   );
 }

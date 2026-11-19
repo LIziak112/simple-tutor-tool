@@ -23,7 +23,10 @@ import { revisionStale } from "./attempt-submit-revisions.ts";
 import { assertSavedAnswersConfirmed } from "./attempt-timing.ts";
 import { submitAttempt } from "./attempt-whole-submit.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
-import { projectKernelChoiceResult } from "./kernel-assignment-confirmed-detail.ts";
+import {
+  buildKernelChoiceResult,
+  projectKernelChoiceFacts,
+} from "./kernel-assignment-confirmed-detail.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   kernelAttemptUnavailable,
@@ -138,7 +141,6 @@ function recover(
   attempt: Attempt,
   runtime: Runtime,
   scope: ReturnType<typeof scopeOf>,
-  now: Date,
 ) {
   const recovered = runtime.recoverChoiceConfirmation(
     { role: "student", id: attempt.studentId },
@@ -150,23 +152,32 @@ function recover(
     },
   );
   const projected = projectKernelDraftActivity(db, attempt, runtime);
-  return projectKernelChoiceResult(db, projected, scope, recovered, now);
+  return projectKernelChoiceFacts(db, projected, scope, recovered);
 }
 
-/** 调用方已在宿主写事务内核实本人权限。保留完成后可重建结果的原操作。 */
+/** 调用方已在宿主写事务内核实读取权限。按原确认操作补齐宿主投影。 */
+export function readKernelConfirmationFacts(
+  db: Db,
+  dataDir: string,
+  attempt: Attempt,
+) {
+  const ticket = ticketFor(db, attempt.id);
+  if (!ticket) return undefined;
+  return withTicket(db, dataDir, attempt, ticket, (runtime, status, scope) =>
+    status === "completed" ? recover(db, attempt, runtime, scope) : undefined,
+  );
+}
+
 export function readKernelConfirmationResult(
   db: Db,
   dataDir: string,
   attempt: Attempt,
   now: Date,
 ) {
-  const ticket = ticketFor(db, attempt.id);
-  if (!ticket) return undefined;
-  return withTicket(db, dataDir, attempt, ticket, (runtime, status, scope) =>
-    status === "completed"
-      ? recover(db, attempt, runtime, scope, now)
-      : undefined,
-  );
+  const facts = readKernelConfirmationFacts(db, dataDir, attempt);
+  return facts === undefined
+    ? undefined
+    : buildKernelChoiceResult(db, facts, now);
 }
 
 function confirmationIntentOf(request: AttemptSubmitRequest): string {
@@ -331,7 +342,8 @@ function confirm(
               return { error: rejection };
             }
           }
-          return { data: recover(db, attempt, runtime, scope, now) };
+          const facts = recover(db, attempt, runtime, scope);
+          return { data: buildKernelChoiceResult(db, facts, now) };
         },
       );
     })

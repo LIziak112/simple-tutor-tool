@@ -27,11 +27,9 @@ import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
+import { getTeacherAttemptDetail } from "../services/teacher-attempt-detail.ts";
 import { getTeacherAttemptReplay } from "../services/teacher-attempt-replay";
-import {
-  getTeacherAttemptDetail,
-  listTeacherAttempts,
-} from "../services/teacher-attempt-service";
+import { listTeacherAttempts } from "../services/teacher-attempt-service";
 
 /**
  * 教师端作答数据路由（T3.1 + T3.2b + T3.4，需教师会话），由 teacher.ts 挂在
@@ -103,6 +101,7 @@ export function createTeacherAttemptRoutes(
             db,
             c.var.teacher.id,
             c.req.param("id"),
+            dataDir,
           ),
         });
       })

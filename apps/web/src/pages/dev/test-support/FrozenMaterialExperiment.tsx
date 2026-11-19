@@ -413,7 +413,7 @@ export default function FrozenMaterialExperiment({
         aria-label="材料实验原稿传输"
         value={transport}
         onChange={(event) => setTransport(event.target.value)}
-        className="mb-3 h-20 w-full border font-mono text-xs"
+        className="mb-3 h-20 w-full min-w-64 border font-mono text-xs"
       />
       {error && (
         <p role="alert" className="text-red-700">
