@@ -5,6 +5,7 @@ import {
   mkdtempDisposableSync,
   readFileSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,8 +47,9 @@ const password = "teacher-pass-8";
 const dbName = "tutor.db";
 const kernelName = "learning-kernel.sqlite";
 
-function openInstance() {
+function openInstance(seed?: (dataDir: string) => void) {
   const data = mkdtempDisposableSync(join(tmpdir(), "ownclass-double-backup-"));
+  seed?.(data.path);
   const handle = createDbHandle(join(data.path, dbName), (db) => {
     runMigrations(db);
     runBackfills(db);
@@ -481,6 +483,160 @@ it("归档并恢复 K9 已重冻而主库待投影的合法截面", async () => 
   expect(await reply.text()).toContain("重冻后：2 + 3 是多少？");
   expect(binding()).toEqual({ practice_version: 2 });
 }, 45_000);
+
+it("双库同时存在却截自不同时间时，管理员下载和恢复均拒绝遗漏一份内核作答", async () => {
+  using source = openInstance();
+  const app = source.app();
+  const world = await setupAssignment(app);
+  const teacher = await app.request("/api/teacher/me", {
+    headers: { cookie: world.teacher },
+  });
+  const operator = teacherInfoOkSchema.parse(await teacher.json()).data.id;
+  const admin = source.app(operator);
+  const assignment = await assignKernelFixture(app, world);
+  const first = await openedAttempt(app, assignment, world.ownerCookie);
+  const download = (instance: TestApp) =>
+    instance.request("/api/teacher/backup/download", {
+      headers: { cookie: world.teacher },
+    });
+  const earlyResponse = await download(admin);
+  expect(earlyResponse.status, await earlyResponse.clone().text()).toBe(200);
+  const early = readZipEntriesMap(
+    Buffer.from(await earlyResponse.arrayBuffer()),
+  );
+
+  const second = await openedAttempt(app, assignment, world.otherCookie);
+  await answer(app, second, world.otherCookie, 0, 1);
+  const before = await readResult(
+    await submitAttemptRequest(app, world.otherCookie, second),
+  );
+  expect(before.attempt.scoreAuto).toBe(50);
+  const lateResponse = await download(admin);
+  expect(lateResponse.status, await lateResponse.clone().text()).toBe(200);
+  const late = readZipEntriesMap(Buffer.from(await lateResponse.arrayBuffer()));
+  const earlyProduct = [...early].find(([name]) =>
+    BACKUP_SNAPSHOT_NAME_PATTERN.test(name),
+  )?.[1];
+  const lateKernel = late.get(kernelName);
+  if (!earlyProduct || !lateKernel) throw new Error("样例归档缺少数据库");
+
+  // 组合两次真实下载，从未手改业务行。乙卷的归属只存在于较晚的主库。
+  using mixed = openInstance((dataDir) => {
+    writeFileSync(join(dataDir, dbName), earlyProduct);
+    writeFileSync(join(dataDir, kernelName), lateKernel);
+  });
+  const mixedApp = mixed.app(operator);
+  expect((await readAttempt(mixedApp, first, world.ownerCookie)).status).toBe(
+    200,
+  );
+  expect((await readAttempt(mixedApp, second, world.otherCookie)).status).toBe(
+    404,
+  );
+  const corruptDownload = await download(mixedApp);
+  await corruptDownload.arrayBuffer();
+
+  early.set(kernelName, lateKernel);
+  const metadata = backupKernelManifestSchema.parse(
+    JSON.parse(early.get(BACKUP_KERNEL_MANIFEST)?.toString() ?? "null"),
+  );
+  early.set(
+    BACKUP_KERNEL_MANIFEST,
+    Buffer.from(
+      JSON.stringify({
+        ...metadata,
+        kernelSha256: createHash("sha256").update(lateKernel).digest("hex"),
+      }),
+    ),
+  );
+  const corruptRestore = await restore(
+    admin,
+    world.teacher,
+    await rezip(early),
+  );
+  expect([corruptDownload.status, corruptRestore.status]).toEqual([500, 400]);
+  await expect(corruptRestore.json()).resolves.toMatchObject({
+    error: "BACKUP_ZIP_INVALID",
+  });
+  expect(
+    await readResult(await readAttempt(app, second, world.otherCookie)),
+  ).toEqual(before);
+  expect((await readAttempt(app, first, world.ownerCookie)).status).toBe(200);
+});
+
+it("开卷意图在内核未开卷和内核已开待绑定两种截面均可备份恢复", async () => {
+  using source = openInstance();
+  const app = source.app();
+  const world = await setupAssignment(app);
+  const teacher = await app.request("/api/teacher/me", {
+    headers: { cookie: world.teacher },
+  });
+  const admin = source.app(
+    teacherInfoOkSchema.parse(await teacher.json()).data.id,
+  );
+  const assignment = await assignKernelFixture(app, world);
+  const product = () => source.handle.db.$client;
+  product().exec(`
+    CREATE TRIGGER stop_backup_open_binding BEFORE INSERT ON kernel_attempt_bindings
+    BEGIN SELECT RAISE(ABORT, 'forced backup opening binding failure'); END
+  `);
+  expect(
+    (await postAssignment(app, assignment, world.ownerCookie)).status,
+  ).toBe(500);
+  product().exec("DROP TRIGGER stop_backup_open_binding");
+  const kernelPath = join(source.dataDir, kernelName);
+  const kernel = new Database(kernelPath, { fileMustExist: true });
+  let prepared: { id: string } | undefined;
+  try {
+    kernel.exec(`
+      CREATE TRIGGER stop_backup_kernel_open BEFORE INSERT ON activities
+      BEGIN SELECT RAISE(ABORT, 'forced backup kernel opening failure'); END
+    `);
+    expect(
+      (await postAssignment(app, assignment, world.otherCookie)).status,
+    ).toBe(500);
+    kernel.exec("DROP TRIGGER stop_backup_kernel_open");
+    const rows = kernel
+      .prepare<[], { id: string }>("SELECT id FROM activities")
+      .all();
+    expect(rows).toHaveLength(1);
+    [prepared] = rows;
+  } finally {
+    kernel.close();
+  }
+  if (!prepared) throw new Error("内核未保存防丢开卷凭据");
+  const counts = () =>
+    product()
+      .prepare(
+        "SELECT (SELECT COUNT(*) FROM kernel_assignment_openings) AS intents, (SELECT COUNT(*) FROM kernel_attempt_bindings) AS bound",
+      )
+      .get();
+  expect(counts()).toEqual({ intents: 2, bound: 0 });
+  const download = await admin.request("/api/teacher/backup/download", {
+    headers: { cookie: world.teacher },
+  });
+  expect(download.status, await download.clone().text()).toBe(200);
+  const bytes = new Uint8Array(await download.arrayBuffer());
+  const kBytes = readZipEntriesMap(Buffer.from(bytes)).get(kernelName);
+  if (!kBytes) throw new Error("双库 ZIP 中没有内核库");
+  const archived = new Database(kBytes);
+  try {
+    expect(archived.prepare("SELECT id FROM activities").all()).toEqual([
+      prepared,
+    ]);
+  } finally {
+    archived.close();
+  }
+  const restored = await restore(admin, world.teacher, bytes);
+  expect(restored.status, await restored.clone().text()).toBe(200);
+  expect(counts()).toEqual({ intents: 2, bound: 0 });
+  expect(await openedAttempt(app, assignment, world.ownerCookie)).toBe(
+    prepared.id,
+  );
+  expect(await openedAttempt(app, assignment, world.otherCookie)).not.toBe(
+    prepared.id,
+  );
+  expect(counts()).toEqual({ intents: 0, bound: 2 });
+});
 
 async function prepareBackupOriginals(source: ReturnType<typeof openInstance>) {
   const app = source.app();

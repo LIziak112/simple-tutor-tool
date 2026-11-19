@@ -22,17 +22,34 @@ import { zipToBackupBuffer } from "../backup-fixtures.ts";
 import { nodePeerBindings } from "../node-peer.ts";
 import { extractSessionToken, loginStudent } from "../note-world.ts";
 
-const [sourceDirectory] = process.argv.slice(2);
-assert.ok(sourceDirectory, "请传入独立的 0081/K8 合成数据目录");
-const sourceRevision = "520f7e24f4d67c6f1d200e7d999033efc94052a9";
-const artifactHash =
-  "3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d";
+const [sourceDirectory, generation = "K8"] = process.argv.slice(2);
+assert.ok(sourceDirectory, "请传入独立的 K8 或 K9 合成数据目录");
+const source = {
+  K8: {
+    revision: "520f7e24f4d67c6f1d200e7d999033efc94052a9",
+    artifact:
+      "3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d",
+    schema: 12,
+    student: "合成甲",
+    score: 50,
+  },
+  K9: {
+    revision: "4020ef9fddb70e2832386d08e22895d1fac8cc20",
+    artifact:
+      "c78a36d1812d3e2d337177dbdb79d50af7c43cf9d0621ffd80f8be0b03d7ae73",
+    schema: 13,
+    student: "合成乙",
+    score: 0,
+  },
+}[generation];
+assert.ok(source, "只接受已验的 K8 或 K9 合成来源");
+const archiveName = `synthetic-${generation.toLowerCase()}.zip`;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const artifact = execFileSync("git", [
   "show",
-  `${sourceRevision}:apps/server/vendor/learning-kernel-${artifactHash}.tgz`,
+  `${source.revision}:apps/server/vendor/learning-kernel-${source.artifact}.tgz`,
 ]);
-assert.equal(hash(artifact), artifactHash);
+assert.equal(hash(artifact), source.artifact);
 
 const prepared = mkdtempDisposableSync(join(tmpdir(), "ownclass-k8-archive-"));
 const target = mkdtempDisposableSync(join(tmpdir(), "ownclass-k8-target-"));
@@ -56,13 +73,15 @@ try {
     const db = new Database(path, { readonly: true, fileMustExist: true });
     try {
       return db
-        .prepare("SELECT attempt_id AS id FROM kernel_attempt_bindings")
-        .all();
+        .prepare(`SELECT b.attempt_id AS id FROM kernel_attempt_bindings b
+          JOIN attempts a ON a.id = b.attempt_id JOIN students s ON s.id = a.student_id
+          WHERE s.login_name = ? AND a.status IN ('submitted','graded')`)
+        .get(source.student);
     } finally {
       db.close();
     }
   };
-  const [attempt] = publishedFacts(join(prepared.path, "tutor.db"));
+  const attempt = publishedFacts(join(prepared.path, "tutor.db"));
   assert.ok(attempt);
   const product = readFileSync(join(prepared.path, "tutor.db"));
   const kernel = readFileSync(join(prepared.path, BACKUP_KERNEL_DATABASE));
@@ -79,13 +98,13 @@ try {
         formatVersion: 1,
         productSha256: hash(product),
         kernelSha256: hash(kernel),
-        kernelSchemaVersion: 12,
-        kernelArtifactSha256: artifactHash,
+        kernelSchemaVersion: source.schema,
+        kernelArtifactSha256: source.artifact,
       }),
     ),
     { name: BACKUP_KERNEL_MANIFEST },
   );
-  const archive = zipToBackupBuffer({ stream, filename: "synthetic-k8.zip" });
+  const archive = zipToBackupBuffer({ stream, filename: archiveName });
   await stream.finalize();
   const bytes = new Uint8Array(await archive);
 
@@ -119,7 +138,7 @@ try {
       data: { id: observer },
     } = await bootstrap.clone().json();
     const zip = new FormData();
-    zip.set("zip", new File([bytes], "synthetic-k8.zip"));
+    zip.set("zip", new File([bytes], archiveName));
     zip.set("password", "teacher-pass-8");
     const restored = await app(observer).request(
       "/api/teacher/backup/restore",
@@ -131,14 +150,15 @@ try {
     );
     assert.equal(restored.status, 200, await restored.clone().text());
     const restoredApp = app();
-    const student = await loginStudent(restoredApp, "合成甲");
+    const student = await loginStudent(restoredApp, source.student);
     const read = await restoredApp.request(
       `/api/student/attempts/${attempt.id}`,
       { headers: { cookie: student } },
     );
     assert.equal(read.status, 200, await read.clone().text());
     const { data: studentResult } = await read.json();
-    assert.equal(studentResult.summary.answered, 2);
+    assert.equal(studentResult.summary.total, 2);
+    if (generation === "K8") assert.equal(studentResult.summary.answered, 2);
     const teacher = await restoredApp.request(
       "/api/public/teacher/login",
       { method: "POST", headers, body },
@@ -153,7 +173,7 @@ try {
     const { data: teacherResult } = teacherAttemptDetailOkSchema.parse(
       await detail.json(),
     );
-    assert.equal(teacherResult.scoreAuto, 50);
+    assert.equal(teacherResult.scoreAuto, source.score);
     const db = new Database(join(target.path, BACKUP_KERNEL_DATABASE), {
       readonly: true,
       fileMustExist: true,
@@ -168,10 +188,10 @@ try {
           restoreHttp: restored.status,
           studentHttp: read.status,
           teacherHttp: detail.status,
-          teacherScore: 50,
-          kernelBefore: 12,
+          teacherScore: teacherResult.scoreAuto,
+          kernelBefore: source.schema,
           kernelAfter: version,
-          kernelArtifactSha256: artifactHash,
+          kernelArtifactSha256: source.artifact,
         }),
       );
     } finally {

@@ -152,3 +152,13 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/teacher-csv-restart-probe.mjs
 ```
 
 对照同一组 P0 冻结题的旧、内核作业。首个内核 CSV 请求直接恢复正式确认，验证 24 列和 BOM、精确提交时间筛选、公布前后及撤回、域隔离和内核离线范围。
+
+### P5 双库归档的活动归属
+
+```powershell
+pnpm exec vitest run apps/server/src/routes/teacher-backup-kernel.test.ts --maxWorkers=1
+node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/test/fixtures/backup-k8-upgrade.mjs $k8SyntheticDir K8
+node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/test/fixtures/backup-k8-upgrade.mjs $k9SyntheticDir K9
+```
+
+旧库演练读取合成目录的原数据库和对应产品修订中的固定内核包，在隔离目录恢复并走原学生与教师详情。K8 语料是一份已交两题、教师 50 分的试卷。K9 语料是混代反例的完整较晚截面，甲正在作答，乙已经交卷且教师评分为 0。混代测试将甲开卷后的主库与乙交卷后的内核库组合，修复前下载和恢复均返回 200。修复后下载返回 500，恢复返回 400，现有乙卷仍可读取。开卷意图测试保留内核尚未开卷和已开卷待绑两种截面，验证正常恢复沿用已生成的活动。

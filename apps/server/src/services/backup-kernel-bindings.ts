@@ -6,19 +6,22 @@ import {
 } from "@tutor/contract";
 import type Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
+import { LearningError, verifyActivityBindings } from "learning-kernel";
 import { z } from "zod";
 import { createDb, type Db } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import { attempts } from "../db/schema.ts";
 import {
+  kernelAssignmentOpenings,
   kernelAttemptBindings,
   kernelAttemptConfirmations,
   kernelAttemptRefreezes,
 } from "../db/schema-kernel-assignments.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
+import { kernelOpeningDraftSchema } from "./kernel-assignment-input.ts";
 
-const kernelRefreezePublicationSchema = z.object({
+const publicationIdentitySchema = z.object({
   practice: z.object({ id: z.string(), version: z.number().int().positive() }),
 });
 
@@ -48,16 +51,67 @@ function verifyProjection(db: Db, directory: string): void {
       kernelAttemptRefreezes,
       eq(kernelAttemptRefreezes.attemptId, kernelAttemptBindings.attemptId),
     )
-    .all();
+    .all()
+    .map(({ attempt, binding, confirmation, refreeze }) => {
+      if (!attempt || attempt.assignmentId !== binding.assignmentId) {
+        throw new ZipReadError("主库中的作答归属不一致");
+      }
+      return { attempt, binding, confirmation, refreeze };
+    });
+  const openings = db.select().from(kernelAssignmentOpenings).all();
+  try {
+    verifyActivityBindings(join(directory, BACKUP_KERNEL_DATABASE), {
+      protocolVersion: 1,
+      bindings: bindings.map(({ attempt, binding }) => ({
+        activityId: binding.attemptId,
+        studentId: attempt.studentId,
+        operationId: `open:${binding.assignmentId}`,
+      })),
+      openingIntents: openings.map(({ studentId, assignmentId }) => ({
+        studentId,
+        operationId: `open:${assignmentId}`,
+      })),
+    });
+  } catch (error) {
+    if (
+      error instanceof LearningError &&
+      error.code === "ACTIVITY_BINDINGS_MISMATCH"
+    ) {
+      throw new ZipReadError("主库的开卷记录与内核实际作答不一致");
+    }
+    throw error;
+  }
   const evidenceCount = db.$client.prepare<[string], { count: number }>(
     "SELECT COUNT(*) AS count FROM submission_evidence WHERE attempt_id = ?",
   );
 
   withKernelConfirmationReader(db, directory, (runtime, recover) => {
-    for (const { attempt, binding, confirmation, refreeze } of bindings) {
-      if (!attempt || attempt.assignmentId !== binding.assignmentId) {
-        throw new ZipReadError("主库中的作答归属不一致");
+    for (const opening of openings) {
+      const publication = publicationIdentitySchema.parse(opening.publication);
+      if (
+        publication.practice.id !== opening.assignmentId ||
+        publication.practice.version !== opening.practiceVersion
+      ) {
+        throw new ZipReadError("备份中的开卷意图与练习版本不一致");
       }
+      const draft = kernelOpeningDraftSchema.parse(opening.draft);
+      const actor = { role: "student", id: opening.studentId } as const;
+      runtime.publish(opening.publication);
+      const start = draft.prepared ? runtime.prepare : runtime.start;
+      const receipt = start(actor, {
+        protocolVersion: 1,
+        operationId: `open:${opening.assignmentId}`,
+        practiceId: opening.assignmentId,
+        practiceVersion: opening.practiceVersion,
+      });
+      if (
+        runtime.read(actor, receipt.activityId).status !== "active" ||
+        runtime.readChoiceDraftActivity(actor, receipt.activityId) !== undefined
+      ) {
+        throw new ZipReadError("仍待开卷的作答已在内核产生学习记录");
+      }
+    }
+    for (const { attempt, binding, confirmation, refreeze } of bindings) {
       const actor = { role: "student", id: attempt.studentId } as const;
       const activity = runtime.read(actor, attempt.id);
       const activityVersion =
@@ -85,7 +139,7 @@ function verifyProjection(db: Db, directory: string): void {
         ) {
           throw new ZipReadError("主库和内核库中的作答版本不一致");
         }
-        const publication = kernelRefreezePublicationSchema.parse(
+        const publication = publicationIdentitySchema.parse(
           refreeze.publication,
         );
         if (
@@ -164,7 +218,6 @@ export function verifyBackupBindings(
   directory: string,
   verifyOriginals: (copy: Database.Database) => void,
 ): void {
-  if (!hasBackupTable(product, "kernel_attempt_bindings")) return;
   using space = mkdtempDisposableSync(join(directory, "tutor-verify-kernel-"));
   const productPath = join(space.path, "product-copy.sqlite");
   // 正式恢复可能补写结算与原稿索引。只在双库副本中执行，保留归档的原始截面。
