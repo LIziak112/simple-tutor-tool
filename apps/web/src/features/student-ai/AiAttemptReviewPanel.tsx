@@ -64,6 +64,7 @@ export function AiAttemptReviewPanel(props: {
   );
   const tasksQuery = useAttemptReviewTasks(attemptId, open);
   const tasks = tasksQuery.data?.tasks ?? [];
+  const gradesUnpublished = tasks.some((task) => task.counts === null);
   const [loading, setLoading] = useState(false);
   const [purpose, setPurpose] = useState(DEFAULT_PURPOSE);
   const [submitting, setSubmitting] = useState(false);
@@ -74,10 +75,14 @@ export function AiAttemptReviewPanel(props: {
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshTick 是手动重新取数的触发器，不是遗漏
   useEffect(() => {
     if (!open) return;
+    setPreview(null);
+    if (gradesUnpublished) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setPreview(null);
     fetchStudentAiAttemptReviewPreviewApi(attemptId)
       .then((data) => {
         if (!cancelled) setPreview(data);
@@ -93,7 +98,7 @@ export function AiAttemptReviewPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [open, attemptId, refreshTick]);
+  }, [open, attemptId, refreshTick, gradesUnpublished]);
 
   /** 面板里改了任务：顶栏入口、提示条、求助记录与角标一起按最新状态刷新 */
   const refreshEntry = () => {
@@ -109,7 +114,7 @@ export function AiAttemptReviewPanel(props: {
   };
 
   const confirmCreate = async () => {
-    if (preview === null) return;
+    if (preview === null || gradesUnpublished) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -205,6 +210,9 @@ export function AiAttemptReviewPanel(props: {
                   {task.archivedAt !== null && "（已归档）"} · 覆盖{" "}
                   {task.questionCount} 题 · {formatCnTime(task.createdAt)} 发起
                 </p>
+                {task.counts === null && (
+                  <p className="text-sm text-muted-foreground">成绩未公布</p>
+                )}
                 {task.errorText !== null && (
                   <p className="text-sm text-muted-foreground">
                     {task.errorText}
@@ -240,6 +248,7 @@ export function AiAttemptReviewPanel(props: {
         {preview !== null &&
           counts !== undefined &&
           tasksQuery.isSuccess &&
+          !gradesUnpublished &&
           !hasActiveTask && (
             <div className="flex flex-col gap-3">
               <p className="text-sm">

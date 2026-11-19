@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   aiAttemptReviewCreateOkSchema,
   aiAttemptReviewDetailOkSchema,
   aiAttemptReviewListOkSchema,
   aiAttemptReviewMcpClaimViewSchema,
   aiAttemptReviewPreviewOkSchema,
+  aiAttemptReviewTaskPublicSchema,
   attemptResultOkSchema,
   attemptStartOkSchema,
 } from "@tutor/contract";
@@ -48,7 +50,10 @@ async function expectDenied(response: Response, status: number, error: string) {
   assertNoLeak(body);
 }
 
-async function world(backend: "legacy" | "kernel") {
+async function world(
+  backend: "legacy" | "kernel",
+  mode: "confirmed" | "interrupt" | "draft" = "confirmed",
+) {
   const dataDir = createTestDir();
   resources.push(() => rmSync(dataDir, { recursive: true, force: true }));
   const file = join(dataDir, "product.sqlite");
@@ -118,13 +123,31 @@ async function world(backend: "legacy" | "kernel") {
       200,
     );
   }
-  const submitted = await call(`${attempt}/submit`, "POST", {
-    revisions: await revisions(),
-  });
-  expect(
-    attemptResultOkSchema.parse(await expectStatus(submitted, 200)).data.attempt
-      .scoreAuto,
-  ).toBe(50);
+  if (mode !== "draft") {
+    if (mode === "interrupt") {
+      db.$client.exec(`
+        CREATE TRIGGER interrupt_ai_review_projection BEFORE UPDATE OF status ON attempts
+        WHEN NEW.status = 'graded'
+        BEGIN SELECT RAISE(ABORT, 'interrupted AI review projection'); END
+      `);
+    }
+    try {
+      const submitted = await call(`${attempt}/submit`, "POST", {
+        revisions: await revisions(),
+      });
+      const result = await expectStatus(
+        submitted,
+        mode === "interrupt" ? 500 : 200,
+      );
+      if (mode === "confirmed")
+        expect(attemptResultOkSchema.parse(result).data.attempt.scoreAuto).toBe(
+          50,
+        );
+    } finally {
+      if (mode === "interrupt")
+        db.$client.exec("DROP TRIGGER interrupt_ai_review_projection");
+    }
+  }
   if (backend === "kernel") {
     expect(
       db.$client
@@ -151,6 +174,7 @@ async function world(backend: "legacy" | "kernel") {
   }
   const owner = await newConnection(ownerCookie);
   return {
+    dataDir,
     assignmentId,
     start,
     frozen,
@@ -205,7 +229,7 @@ async function createReview(env: Awaited<ReturnType<typeof world>>) {
     created: false,
     task: { id: created.task.id },
   });
-  return { preview, taskId: created.task.id };
+  return { preview, taskId: created.task.id, body };
 }
 
 function reportOf(
@@ -508,4 +532,173 @@ it("领取前撤回公布会暂停，重新公布后可按原授权快照领取"
   } finally {
     await client.close();
   }
+});
+
+it("撤回公布保留整卷任务和操作，所有公开回执只返回空统计，重新公布恢复原快照", async () => {
+  const env = await world("kernel");
+  const { taskId, preview, body } = await createReview(env);
+  const stored = () =>
+    env.db.$client
+      .prepare(
+        "SELECT counts_json, context_snapshot_json, snapshot_version FROM ai_attempt_review_tasks WHERE id = ?",
+      )
+      .get(taskId);
+  const before = stored();
+  expect(before).toBeDefined();
+  const assignment = `/api/teacher/assignments/${env.assignmentId}`;
+  await expectStatus(
+    await env.call(
+      assignment,
+      "PATCH",
+      { answerRelease: "after_due", dueAt: "2099-01-01T00:00:00.000Z" },
+      env.teacher,
+    ),
+    200,
+  );
+  const hidden = (payload: unknown) => {
+    expect
+      .soft(payload)
+      .toMatchObject({
+        id: taskId,
+        counts: null,
+        snapshotVersion: preview.opaquePreviewVersion,
+      });
+    assertNoLeak(payload, {
+      forbid: [
+        "correctCount",
+        "incorrectCount",
+        "unansweredCount",
+        "pendingCount",
+        "hasAnswerCount",
+        "missingAnswerCount",
+        "unknownAnswerCount",
+        "gradedCount",
+        "accuracyAmongGraded",
+      ],
+    });
+  };
+  const list = aiAttemptReviewListOkSchema.parse(
+    await expectStatus(await env.call(route), 200),
+  ).data;
+  expect(list.tasks).toHaveLength(1);
+  expect(list.tasks[0]?.allowedActions).toContain("cancel");
+  hidden(list.tasks[0]);
+  const replay = aiAttemptReviewCreateOkSchema.parse(
+    await expectStatus(await env.call(route, "POST", body), 200),
+  ).data;
+  expect(replay.created).toBe(false);
+  hidden(replay.task);
+  const client = await env.connect();
+  try {
+    const sdk = await callToolJson(client, "list_my_attempt_reviews", {});
+    expect(sdk).toMatchObject({
+      isError: false,
+      data: { tasks: [{ taskId, status: "created", questionCount: 2 }] },
+    });
+    assertNoLeak(sdk.data, {
+      forbid: ["counts", "correctCount", "gradedCount", "accuracyAmongGraded"],
+    });
+    for (const action of ["cancel", "archive"]) {
+      const response = (await expectStatus(
+        await env.call(`${route}/${taskId}/actions`, "POST", { action }),
+        200,
+      )) as { data: unknown };
+      hidden(aiAttemptReviewTaskPublicSchema.parse(response.data));
+    }
+  } finally {
+    await client.close();
+  }
+  expect(stored()).toEqual(before);
+  await expectStatus(
+    await env.call(
+      assignment,
+      "PATCH",
+      { answerRelease: "on_submit" },
+      env.teacher,
+    ),
+    200,
+  );
+  const archived = aiAttemptReviewListOkSchema.parse(
+    await expectStatus(await env.call(`${route}?archived=only`), 200),
+  ).data;
+  expect(archived.tasks).toMatchObject([
+    {
+      id: taskId,
+      status: "cancelled",
+      counts: preview.counts,
+      snapshotVersion: preview.opaquePreviewVersion,
+    },
+  ]);
+  expect(stored()).toEqual(before);
+});
+
+it("内核已确认但宿主尚是 draft，重启后的 AI 预览首读恢复一次正式事实", async () => {
+  const env = await world("kernel", "interrupt");
+  env.restart();
+  const host = () =>
+    env.db.$client
+      .prepare(
+        "SELECT status, score_auto, score_final FROM attempts WHERE id = ?",
+      )
+      .get(env.start.id);
+  const authority = () => {
+    using db = new DatabaseSync(join(env.dataDir, "learning-kernel.sqlite"), {
+      readOnly: true,
+    });
+    return db
+      .prepare(
+        `SELECT (SELECT COUNT(*) FROM submissions s JOIN step_attempts a ON a.id=s.step_attempt_id WHERE a.activity_id=?) AS submissions,
+              (SELECT COUNT(*) FROM completions WHERE activity_id=?) AS completions`,
+      )
+      .get(env.start.id, env.start.id);
+  };
+  expect(host()).toEqual({
+    status: "draft",
+    score_auto: null,
+    score_final: null,
+  });
+  expect(authority()).toEqual({ submissions: 1, completions: 1 });
+  const path = `${route}/preview?attemptId=${env.start.id}`;
+  await expectDenied(
+    await env.call(path, "GET", undefined, env.otherCookie),
+    403,
+    "FORBIDDEN",
+  );
+  expect(host()).toMatchObject({ status: "draft" });
+  const preview = aiAttemptReviewPreviewOkSchema.parse(
+    await expectStatus(await env.call(path), 200),
+  ).data;
+  expect(preview.counts).toMatchObject({
+    correctCount: 1,
+    incorrectCount: 1,
+    hasAnswerCount: 2,
+    accuracyAmongGraded: 0.5,
+  });
+  expect(host()).toEqual({
+    status: "graded",
+    score_auto: null,
+    score_final: null,
+  });
+  env.restart();
+  const again = aiAttemptReviewPreviewOkSchema.parse(
+    await expectStatus(await env.call(path), 200),
+  ).data;
+  expect(again.opaquePreviewVersion).toBe(preview.opaquePreviewVersion);
+  expect(again.counts).toEqual(preview.counts);
+  expect(authority()).toEqual({ submissions: 1, completions: 1 });
+});
+
+it("正式答了两道但真正未交的内核草稿保持 409，AI 不代交", async () => {
+  const env = await world("kernel", "draft");
+  env.restart();
+  await expectDenied(
+    await env.call(`${route}/preview?attemptId=${env.start.id}`),
+    409,
+    "AI_ATTEMPT_REVIEW_NOT_SUBMITTED",
+  );
+  expect(
+    env.db.$client
+      .prepare("SELECT status FROM attempts WHERE id = ?")
+      .get(env.start.id),
+  ).toEqual({ status: "draft" });
 });

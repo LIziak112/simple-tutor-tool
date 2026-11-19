@@ -1,5 +1,4 @@
 import type { Db } from "../../db/client.ts";
-import type { Attempt, ResponseRow } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { frozenRowsInDisplayOrder } from "../attempt-rows.ts";
 import { readKernelConfirmationFacts } from "../kernel-assignment-confirmation.ts";
@@ -13,16 +12,36 @@ import {
   resolveAttemptQuestionAiPolicy,
 } from "./teaching-policy-service.ts";
 
+interface AttemptReviewTarget {
+  studentId: string;
+  attemptId: string;
+}
+
+interface AttemptReviewAccessOptions {
+  configSource?: AiPolicyConfigSource;
+  dataDir?: string;
+}
+
 export function requireAttemptReviewAccess(
   db: Db,
-  input: { studentId: string; attemptId: string },
-  configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
+  input: AttemptReviewTarget,
+  {
+    configSource = sqliteAiPolicyConfigSource,
+    dataDir,
+  }: AttemptReviewAccessOptions = {},
 ) {
-  const { attempt } = requireStudentAiAttempt(
+  const owned = requireStudentAiAttempt(
     db,
     input.studentId,
     input.attemptId,
-  );
+  ).attempt;
+  const recovered =
+    owned.status === "draft" &&
+    dataDir !== undefined &&
+    isKernelAttempt(db, owned)
+      ? readKernelConfirmationFacts(db, dataDir, owned)
+      : undefined;
+  const attempt = recovered?.attempt ?? owned;
   if (attempt.status === "draft") {
     throw new HttpError(
       409,
@@ -61,20 +80,29 @@ export function requireAttemptReviewAccess(
       );
     }
   }
-  return { attempt, rows, released };
+  return { attempt, rows, released, recovered };
 }
 
-export function attemptReviewRowsOf(
+export function attemptReviewRangeFactsOf(
   db: Db,
-  attempt: Attempt,
-  hostRows: readonly ResponseRow[],
-  dataDir: string | undefined,
+  input: AttemptReviewTarget,
+  options: AttemptReviewAccessOptions,
 ) {
-  if (!isKernelAttempt(db, attempt)) return hostRows;
-  if (dataDir === undefined) kernelAttemptUnavailable();
-  const facts = readKernelConfirmationFacts(db, dataDir, attempt);
-  if (facts === undefined) kernelAttemptUnavailable();
-  return frozenRowsInDisplayOrder(db, facts.attempt, facts.rows).map(
-    ({ row }) => row,
+  const { attempt, rows, released, recovered } = requireAttemptReviewAccess(
+    db,
+    input,
+    options,
   );
+  if (!isKernelAttempt(db, attempt)) return { attempt, rows, released };
+  if (options.dataDir === undefined) kernelAttemptUnavailable();
+  const facts =
+    recovered ?? readKernelConfirmationFacts(db, options.dataDir, attempt);
+  if (facts === undefined) kernelAttemptUnavailable();
+  return {
+    attempt: facts.attempt,
+    rows: frozenRowsInDisplayOrder(db, facts.attempt, facts.rows).map(
+      ({ row }) => row,
+    ),
+    released,
+  };
 }

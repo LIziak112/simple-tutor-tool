@@ -75,6 +75,7 @@ function ReviewCard({
             : ATTEMPT_REVIEW_STATUS_LABEL[task.status]}
         </span>
         <span>{shortTimeOf(task.createdAt)} 发起</span>
+        {task.counts === null && <span>成绩未公布</span>}
       </div>
       <p className="text-sm break-words">
         {origin !== undefined ? `${attemptOriginLineOf(origin)} · ` : ""}覆盖{" "}

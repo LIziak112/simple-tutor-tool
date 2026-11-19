@@ -1,7 +1,7 @@
 {
   "apps/server/src/db/schema.ts": 2110,
   "apps/server/src/mcp/server.ts": 1230,
-  "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1124,
+  "apps/server/src/services/ai-companion/student-ai-attempt-review.ts": 1123,
   "apps/server/src/services/ai-companion/student-ai-queue.ts": 2141,
   "apps/server/src/services/analytics-service.ts": 1271,
   "apps/server/src/services/annotation-service.ts": 1605,

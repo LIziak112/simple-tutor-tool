@@ -45,7 +45,7 @@ import { timeProjectionsOf } from "../attempt-time-projection";
 import { resolveNowDate } from "../export-service.ts";
 import { snapshotOfRow } from "../snapshot.ts";
 import {
-  attemptReviewRowsOf,
+  attemptReviewRangeFactsOf,
   requireAttemptReviewAccess,
 } from "./attempt-review-access.ts";
 import { FIELD_NOTES, globalNotesOf } from "./attempt-review-time-notes";
@@ -213,12 +213,11 @@ function attemptReviewRangeOf(
   input: { studentId: string; attemptId: string },
   options: AttemptReviewServiceOptions,
 ): AttemptReviewRange {
-  const {
-    attempt,
-    rows: hostRows,
-    released,
-  } = requireAttemptReviewAccess(db, input, options.configSource);
-  const rows = attemptReviewRowsOf(db, attempt, hostRows, options.dataDir);
+  const { attempt, rows, released } = attemptReviewRangeFactsOf(
+    db,
+    input,
+    options,
+  );
   if (rows.length === 0) {
     throw new HttpError(
       500,
@@ -1018,7 +1017,7 @@ export function submitAttemptReviewResult(
       requireAttemptReviewAccess(
         asDb(tx),
         { studentId: task.studentId, attemptId: task.attemptId },
-        options.configSource,
+        options,
       );
       // 证据题号归属复核：越界即拒绝（报告按不可信输入对待）。题号在
       // 装配时即 1..questionCount 连续（快照契约锁定），按行上题数判定

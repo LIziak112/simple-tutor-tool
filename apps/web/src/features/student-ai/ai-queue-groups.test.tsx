@@ -494,6 +494,25 @@ describe("求助记录：整卷复盘", () => {
     );
   });
 
+  it("撤回成绩的整卷任务保留在队列并显示成绩未公布", async () => {
+    mockedReviewQueue.mockResolvedValue({
+      tasks: [
+        reviewTask({
+          status: "created",
+          counts: null,
+          hasResult: false,
+          allowedActions: ["cancel"],
+        }),
+      ],
+      nextCursor: null,
+      origins: { [REVIEW_TASK_ID]: ATTEMPT_ORIGIN },
+    });
+    renderPanel();
+    const tasks = await screen.findByRole("list", { name: "整卷复盘任务列表" });
+    expect(within(tasks).getByText("成绩未公布")).toBeInTheDocument();
+    expect(within(tasks).getByRole("button", { name: "取消" })).toBeEnabled();
+  });
+
   it("「本次练习」让服务端在分页前筛选，归档切换保留作答范围", async () => {
     const otherTasks = Array.from({ length: 50 }, (_, index) =>
       reviewTask({ id: `other-review-${index}`, attemptId: OTHER_ATTEMPT_ID }),
