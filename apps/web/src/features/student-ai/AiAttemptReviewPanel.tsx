@@ -23,6 +23,7 @@ import {
   attemptReviewListKey,
   attemptReviewPreviewKey,
   attemptReviewQueueKey,
+  formatAttemptReviewTaskCounts,
   useAttemptReviewTasks,
 } from "./attempt-review-entry";
 import { errorMessageOf } from "./error-text";
@@ -210,9 +211,9 @@ export function AiAttemptReviewPanel(props: {
                   {task.archivedAt !== null && "（已归档）"} · 覆盖{" "}
                   {task.questionCount} 题 · {formatCnTime(task.createdAt)} 发起
                 </p>
-                {task.counts === null && (
-                  <p className="text-sm text-muted-foreground">成绩未公布</p>
-                )}
+                <p className="text-sm text-muted-foreground">
+                  {formatAttemptReviewTaskCounts(task.counts)}
+                </p>
                 {task.errorText !== null && (
                   <p className="text-sm text-muted-foreground">
                     {task.errorText}

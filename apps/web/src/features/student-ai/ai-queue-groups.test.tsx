@@ -488,6 +488,9 @@ describe("求助记录：整卷复盘", () => {
     });
     renderPanel();
     expect(await screen.findByText("等待领取")).toBeInTheDocument();
+    expect(
+      screen.getByText("判对 20 · 判错 6 · 已判分正确率 77%"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看进度" }));
     expect((await screen.findByTestId("location")).textContent).toBe(
       `/s/attempts/${ATTEMPT_ID}?aiReview=panel&aiFrom=${encodeURIComponent("/s/records")}`,
@@ -509,7 +512,8 @@ describe("求助记录：整卷复盘", () => {
     });
     renderPanel();
     const tasks = await screen.findByRole("list", { name: "整卷复盘任务列表" });
-    expect(within(tasks).getByText("成绩未公布")).toBeInTheDocument();
+    expect(within(tasks).getAllByText(/成绩未公布/)).toHaveLength(1);
+    expect(within(tasks).queryByText(/判对|正确率/)).toBeNull();
     expect(within(tasks).getByRole("button", { name: "取消" })).toBeEnabled();
   });
 

@@ -41,6 +41,16 @@ export const ATTEMPT_REVIEW_STATUS_LABEL = {
   cancelled: "已取消",
 } as const satisfies Record<AiAttemptReviewTaskPublic["status"], string>;
 
+export function formatAttemptReviewTaskCounts(
+  counts: AiAttemptReviewTaskPublic["counts"],
+): string {
+  if (counts === null) return "成绩未公布";
+  const verdicts = `判对 ${counts.correctCount} · 判错 ${counts.incorrectCount}`;
+  if (counts.gradedCount === 0 || counts.accuracyAmongGraded === null)
+    return verdicts;
+  return `${verdicts} · 已判分正确率 ${Math.round(counts.accuracyAmongGraded * 100)}%`;
+}
+
 /** 结果页地址参数：aiReview=<整卷任务 id> 打开报告；aiReview=panel 打开发起 / 进度面板 */
 export const ATTEMPT_REVIEW_PARAM = "aiReview";
 export const ATTEMPT_REVIEW_PANEL_TARGET = "panel";
