@@ -372,7 +372,7 @@ export function createStudentAiRoutes(
           data: attemptReviewPreviewOf(
             db,
             { studentId: c.var.student.id, attemptId: parsed.data.attemptId },
-            { hmacSecret },
+            { hmacSecret, dataDir },
           ),
         });
       })
@@ -390,7 +390,7 @@ export function createStudentAiRoutes(
             expectedPreviewVersion: body.expectedPreviewVersion,
             purpose: body.purpose,
           },
-          { hmacSecret },
+          { hmacSecret, dataDir },
         );
         return c.json(
           {

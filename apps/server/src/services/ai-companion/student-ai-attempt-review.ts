@@ -38,14 +38,16 @@ import {
 import { HttpError } from "../../lib/http-error.ts";
 import {
   answerOf,
-  frozenRowsInDisplayOrder,
   materialSlotOrderOf,
   structuresOfSnapshot,
 } from "../attempt-service.ts";
 import { timeProjectionsOf } from "../attempt-time-projection";
 import { resolveNowDate } from "../export-service.ts";
 import { snapshotOfRow } from "../snapshot.ts";
-import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
+import {
+  attemptReviewRowsOf,
+  requireAttemptReviewAccess,
+} from "./attempt-review-access.ts";
 import { FIELD_NOTES, globalNotesOf } from "./attempt-review-time-notes";
 import {
   ATTEMPT_REVIEW_PROMPT_HASH,
@@ -58,7 +60,6 @@ import {
 } from "./student-ai-attempt-review-public.ts";
 import { insertArFact } from "./student-ai-audit.ts";
 
-import { attemptAnswersReleased } from "./student-ai-batch.ts";
 import { missingNoteOf, studentAnswerTextOf } from "./student-ai-context.ts";
 import {
   asDb,
@@ -67,11 +68,7 @@ import {
   type QueueTx,
   sha256Hex,
 } from "./student-ai-shared.ts";
-import {
-  type AiPolicyConfigSource,
-  requireStudentAiAttempt,
-  resolveAttemptQuestionAiPolicy,
-} from "./teaching-policy-service.ts";
+import type { AiPolicyConfigSource } from "./teaching-policy-service.ts";
 
 /**
  * 本次练习整体复盘服务（任务 1ef854c7；实施依据《批量复盘整体分析与实施
@@ -188,6 +185,7 @@ function requireOwnAttemptReviewTask(
 export interface AttemptReviewServiceOptions {
   /** 快照装配 HMAC 密钥（生产为 DATA_DIR/secret.key；必填无默认） */
   readonly hmacSecret: string;
+  readonly dataDir?: string;
   /** 测试注入时刻（默认当前时间） */
   readonly now?: Date | string;
   /** 配置来源（缺省 sqliteAiPolicyConfigSource；测试可注入） */
@@ -203,61 +201,6 @@ interface AttemptReviewRange {
   readonly previewVersion: string;
 }
 
-/** 全局边界说明（进预览 notes 与快照 notes） */
-function requireAttemptReviewAccess(
-  db: Db | QueueTx,
-  input: { studentId: string; attemptId: string },
-  options: Pick<AttemptReviewServiceOptions, "configSource"> = {},
-) {
-  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
-  const { attempt } = requireStudentAiAttempt(
-    asDb(db),
-    input.studentId,
-    input.attemptId,
-  );
-  if (attempt.status === "draft") {
-    throw new HttpError(
-      409,
-      "AI_ATTEMPT_REVIEW_NOT_SUBMITTED",
-      "这份作答还未交卷，交卷后才能发起整体复盘",
-    );
-  }
-  const released = attemptAnswersReleased(asDb(db), attempt);
-  if (!released) {
-    throw new HttpError(
-      409,
-      "AI_ATTEMPT_REVIEW_NOT_RELEASED",
-      "这份作业的答案未公布，公布后才能发起整体复盘",
-    );
-  }
-  // 题序 = 学生结果视图的展示序（单源 frozenRowsInDisplayOrder：建卷即冻结
-  // 的卷按 rowid 建卷序，存量卷/懒冻结卷按当前题库序回退——直接查表自然序
-  // 会走 (attempt_id, question_id) 唯一索引返回 UUID 序，与学生卷面错位，
-  // 证据题号将指到错误的题）
-  const rows = frozenRowsInDisplayOrder(asDb(db), attempt).map(
-    (entry) => entry.row,
-  );
-  for (const row of rows) {
-    // 逐题当前策略裁决（教师刚改设置立即生效；任一题不可用整体拒绝）。
-    // 裁决入口自身的 HttpError（404/403 等权威码）原样上抛，不吞成策略拒绝
-    const { resolution } = resolveAttemptQuestionAiPolicy(
-      asDb(db),
-      input.studentId,
-      input.attemptId,
-      row.questionId,
-      configSource,
-    );
-    if (!resolution.usable || resolution.mode === undefined) {
-      throw new HttpError(
-        403,
-        "AI_POLICY_DISABLED",
-        "当前教学模式下本次练习暂不能整体复盘（部分题目的 AI 求助被关闭）",
-      );
-    }
-  }
-  return { attempt, rows, released };
-}
-
 /** 内容存在性独立于答案对象存在性；空对象形态不能证明学生已作答。
  * v2 同步合入后走契约登记表 isAnswered 调度（I16 纪律：不手写 kind 分支，
  * 完整度口径全平台单源——judge 空串边缘以登记表为准）。 */
@@ -266,15 +209,16 @@ function hasAnswerContent(answer: StudentAnswer | null): boolean {
 }
 
 function attemptReviewRangeOf(
-  db: Db | QueueTx,
+  db: Db,
   input: { studentId: string; attemptId: string },
   options: AttemptReviewServiceOptions,
 ): AttemptReviewRange {
-  const { attempt, rows, released } = requireAttemptReviewAccess(
-    db,
-    input,
-    options,
-  );
+  const {
+    attempt,
+    rows: hostRows,
+    released,
+  } = requireAttemptReviewAccess(db, input, options.configSource);
+  const rows = attemptReviewRowsOf(db, attempt, hostRows, options.dataDir);
   if (rows.length === 0) {
     throw new HttpError(
       500,
@@ -362,7 +306,7 @@ function attemptReviewRangeOf(
               answer,
               structuresOfSnapshot(
                 snapshot,
-                materialSlotOrderOf(asDb(db), attempt.id),
+                materialSlotOrderOf(db, attempt.id),
                 attempt.unitId,
               ),
             ),
@@ -492,7 +436,10 @@ export function attemptReviewPreviewOf(
   options: AttemptReviewServiceOptions,
 ): AiAttemptReviewPreviewData {
   const nowIso = resolveNowDate(options.now).toISOString();
-  const range = attemptReviewRangeOf(db, input, options);
+  const range = db.transaction(
+    (tx) => attemptReviewRangeOf(asDb(tx), input, options),
+    { behavior: "immediate" },
+  );
   return {
     attemptId: input.attemptId,
     questionCount: range.counts.total,
@@ -727,7 +674,7 @@ export function attemptReviewActionOf(
         insertArFact(tx, updated, "archived", nowIso);
         break;
       case "open":
-        requireAttemptReviewAccess(tx, {
+        requireAttemptReviewAccess(asDb(tx), {
           studentId: task.studentId,
           attemptId: task.attemptId,
         });
@@ -1069,9 +1016,9 @@ export function submitAttemptReviewResult(
       }
       // 租约有效不等于仍有教学授权：写回交付时重新核对当前状态。
       requireAttemptReviewAccess(
-        tx,
+        asDb(tx),
         { studentId: task.studentId, attemptId: task.attemptId },
-        options,
+        options.configSource,
       );
       // 证据题号归属复核：越界即拒绝（报告按不可信输入对待）。题号在
       // 装配时即 1..questionCount 连续（快照契约锁定），按行上题数判定
