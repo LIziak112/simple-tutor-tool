@@ -1,3 +1,4 @@
+import { singleChoiceScoringSourceSchema } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
 import type {
   ChoiceEvaluationInput,
@@ -74,18 +75,17 @@ export function createOwnClassChoiceEvaluator(
       )
         mismatch();
       const question = snapshotOfRow(row);
+      if (question?.id !== input.questionId) mismatch();
+      const source = singleChoiceScoringSourceSchema.safeParse(question);
       if (
-        question?.id !== input.questionId ||
-        question.type !== "choice" ||
-        question.answers?.kind !== "choice" ||
-        !question.options?.[question.answers.index] ||
-        String(question.answers.index) !== input.acceptedChoice
+        !source.success ||
+        String(source.data.answers.index) !== input.acceptedChoice
       )
         mismatch();
       const index = input.choice === null ? undefined : Number(input.choice);
       if (
         index !== undefined &&
-        (String(index) !== input.choice || !question.options[index])
+        (String(index) !== input.choice || !source.data.options[index])
       )
         mismatch();
       const verdict = gradeResponseRow(

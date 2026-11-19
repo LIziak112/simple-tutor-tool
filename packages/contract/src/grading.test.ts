@@ -8,6 +8,7 @@ import {
   RESPONSE_BODY_MAX_CHARS,
   RESPONSE_TITLE_MAX_CHARS,
   responseStudentAnswerSchema,
+  singleChoiceScoringSourceSchema,
   studentAnswerSchema,
 } from "./grading";
 
@@ -166,6 +167,31 @@ describe("StudentAnswer：各题型学生答案（T2.5）", () => {
     ).toBe(true);
     expect(
       studentAnswerSchema.safeParse({ kind: "essay", text: "…" }).success,
+    ).toBe(false);
+  });
+});
+
+describe("单选评分来源", () => {
+  const source = {
+    type: "choice",
+    options: [{ text: "甲" }, { text: "乙" }],
+    answers: { kind: "choice", index: 1 },
+  };
+
+  it("接受实际存在的正确选项", () => {
+    expect(singleChoiceScoringSourceSchema.parse(source)).toEqual(source);
+  });
+
+  it.each([
+    ["题型不符", { type: "judge" }],
+    ["标准答案 kind 不符", { answers: { kind: "multi", indexes: [1] } }],
+    ["缺标准答案", { answers: undefined }],
+    ["缺选项", { options: undefined }],
+    ["正确项越界", { answers: { kind: "choice", index: 2 } }],
+  ])("拒绝%s", (_case, changes) => {
+    expect(
+      singleChoiceScoringSourceSchema.safeParse({ ...source, ...changes })
+        .success,
     ).toBe(false);
   });
 });

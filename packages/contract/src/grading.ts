@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  choiceAnswersSchema,
+  optionSchema,
+  questionTypeSchema,
+} from "./content.ts";
 
 /**
  * 判分输入契约（T2.5 起为权威定义）：学生答案的形态，与 content.ts 的
@@ -33,6 +38,18 @@ export const choiceStudentAnswerSchema = z.object({
   /** 所选项下标（0 起，A=0）；越界由判分函数处理（false 而非异常） */
   index: z.number().int().min(0),
 });
+
+/** 单选评分来源须有标准答案，且正确下标指向实际存在的选项。 */
+export const singleChoiceScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["choice"]),
+    options: optionSchema.array(),
+    answers: choiceAnswersSchema,
+  })
+  .refine(({ options, answers }) => options[answers.index] !== undefined, {
+    path: ["answers", "index"],
+    message: "单选题的正确下标超出选项范围",
+  });
 
 export const multiStudentAnswerSchema = z.object({
   kind: z.literal("multi"),
