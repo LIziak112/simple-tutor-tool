@@ -22,11 +22,14 @@ import { settleSubmissionOriginalReservation } from "./attempt-original-reservat
 import { revisionStale } from "./attempt-submit-revisions.ts";
 import { assertSavedAnswersConfirmed } from "./attempt-timing.ts";
 import { submitAttempt } from "./attempt-whole-submit.ts";
-import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
+import type { RecoveryRequest } from "./kernel-assignment-confirmation-recovery.ts";
 import {
-  buildKernelChoiceResult,
-  projectKernelChoiceFacts,
-} from "./kernel-assignment-confirmed-detail.ts";
+  assertConfirmationBinding,
+  confirmationScopeOf,
+  permitsRecovery,
+  recoverKernelConfirmation,
+} from "./kernel-assignment-confirmation-recovery.ts";
+import { buildKernelChoiceResult } from "./kernel-assignment-confirmed-detail.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   kernelAttemptUnavailable,
@@ -37,8 +40,6 @@ import {
 type Ticket = typeof kernelAttemptConfirmations.$inferSelect;
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type OriginalQuestion = ChoiceConfirmationInput["questions"][number];
-
-const slotId = "answers";
 
 function alreadySubmitted(): never {
   throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
@@ -59,26 +60,6 @@ function discardTicket(db: Db, ticket: Ticket): void {
     .run();
 }
 
-function scopeOf(attempt: Attempt, ticket: Ticket) {
-  if (attempt.assignmentId === null || ticket.attemptId !== attempt.id)
-    kernelAttemptUnavailable();
-  return {
-    attemptId: attempt.id,
-    studentId: attempt.studentId,
-    assignmentId: attempt.assignmentId,
-    operationId: ticket.operationId,
-    stepAttemptId: ticket.stepAttemptId,
-    practiceVersion: ticket.practiceVersion,
-    slotId,
-    questionRevisions: new Map(
-      ticket.request.revisions.map(({ questionId, questionRevisionId }) => [
-        questionId,
-        questionRevisionId,
-      ]),
-    ),
-  };
-}
-
 function withTicket<T>(
   db: Db,
   dataDir: string,
@@ -87,32 +68,19 @@ function withTicket<T>(
   operate: (
     runtime: Runtime,
     status: string,
-    scope: ReturnType<typeof scopeOf>,
+    scope: ReturnType<typeof confirmationScopeOf>,
     authorizeOriginals: (questions: readonly OriginalQuestion[]) => void,
   ) => T,
 ): T {
-  const scope = scopeOf(attempt, ticket);
+  const scope = confirmationScopeOf(attempt, ticket);
   let originals: ReadonlyMap<string, OriginalQuestion> | undefined;
-  const permits = (request: {
-    studentId: string;
-    activityId: string;
-    stepAttemptId: string;
-    operationId: string;
-  }) =>
-    request.studentId === scope.studentId &&
-    request.activityId === scope.attemptId &&
-    request.stepAttemptId === scope.stepAttemptId &&
-    request.operationId === scope.operationId;
+  const permits = (request: RecoveryRequest) => permitsRecovery(scope, request);
   return withBoundKernelActivity(
     db,
     dataDir,
     attempt,
     (runtime, activity, stepAttemptId, practiceVersion) => {
-      if (
-        stepAttemptId !== ticket.stepAttemptId ||
-        practiceVersion !== ticket.practiceVersion
-      )
-        kernelAttemptUnavailable();
+      assertConfirmationBinding(scope, { stepAttemptId, practiceVersion });
       return operate(runtime, activity.status, scope, (questions) => {
         originals = new Map(
           questions.map((question) => [question.questionId, question]),
@@ -120,13 +88,13 @@ function withTicket<T>(
       });
     },
     {
-      evaluateScope: scope,
+      evaluateScope: () => scope,
       authorizeConfirmationRecovery: permits,
       verifyOriginal(request) {
         const selected = originals?.get(request.questionId);
         return (
           permits(request) &&
-          request.slotId === slotId &&
+          request.slotId === scope.slotId &&
           selected?.questionVersion === request.questionVersion &&
           canonicalJsonOf(selected.original) ===
             canonicalJsonOf(request.original)
@@ -134,25 +102,6 @@ function withTicket<T>(
       },
     },
   );
-}
-
-function recover(
-  db: Db,
-  attempt: Attempt,
-  runtime: Runtime,
-  scope: ReturnType<typeof scopeOf>,
-) {
-  const recovered = runtime.recoverChoiceConfirmation(
-    { role: "student", id: attempt.studentId },
-    attempt.id,
-    {
-      protocolVersion: 1,
-      stepAttemptId: scope.stepAttemptId,
-      operationId: scope.operationId,
-    },
-  );
-  const projected = projectKernelDraftActivity(db, attempt, runtime);
-  return projectKernelChoiceFacts(db, projected, scope, recovered);
 }
 
 /** 调用方已在宿主写事务内核实读取权限。按原确认操作补齐宿主投影。 */
@@ -164,7 +113,9 @@ export function readKernelConfirmationFacts(
   const ticket = ticketFor(db, attempt.id);
   if (!ticket) return undefined;
   return withTicket(db, dataDir, attempt, ticket, (runtime, status, scope) =>
-    status === "completed" ? recover(db, attempt, runtime, scope) : undefined,
+    status === "completed"
+      ? recoverKernelConfirmation(db, attempt, runtime, scope)
+      : undefined,
   );
 }
 
@@ -247,7 +198,7 @@ function stage(
           prepareChoiceOriginals(
             db,
             dataDir,
-            scopeOf(attempt, ticket),
+            confirmationScopeOf(attempt, ticket),
             request,
           );
           db.insert(kernelAttemptConfirmations).values(ticket).run();
@@ -331,7 +282,7 @@ function confirm(
                   protocolVersion: 1,
                   stepAttemptId: current.stepAttemptId,
                   operationId: current.operationId,
-                  slotId,
+                  slotId: scope.slotId,
                   questions,
                 },
               );
@@ -342,7 +293,7 @@ function confirm(
               return { error: rejection };
             }
           }
-          const facts = recover(db, attempt, runtime, scope);
+          const facts = recoverKernelConfirmation(db, attempt, runtime, scope);
           return { data: buildKernelChoiceResult(db, facts, now) };
         },
       );

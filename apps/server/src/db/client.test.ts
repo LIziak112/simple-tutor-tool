@@ -1,6 +1,15 @@
-import { existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { fork } from "node:child_process";
+import { on, once } from "node:events";
+import {
+  existsSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import DatabaseCtor from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -185,4 +194,110 @@ describe("createDbFromBuffer（模板克隆）", () => {
     ).toBeDefined();
     second.$client.close();
   });
+});
+
+async function backupWithWriterLock() {
+  const filename = join(dir, "restored.db");
+  const source = createDb(":memory:");
+  try {
+    expect(source.$client.pragma("journal_mode", { simple: true })).toBe(
+      "memory",
+    );
+    source.$client.exec(
+      "CREATE TABLE backup_probe (value INTEGER); INSERT INTO backup_probe VALUES (42)",
+    );
+    await source.$client.backup(filename);
+  } finally {
+    source.$client.close();
+  }
+
+  const holder = new DatabaseCtor(filename, { fileMustExist: true });
+  try {
+    expect(holder.pragma("journal_mode", { simple: true })).toBe("delete");
+    holder.exec("BEGIN IMMEDIATE");
+    return { filename, holder };
+  } catch (error) {
+    holder.close();
+    throw error;
+  }
+}
+
+async function withColdOpenWorker(
+  filename: string,
+  check: (next: () => Promise<unknown>) => Promise<void>,
+  timeout?: number,
+) {
+  const child = fork(
+    new URL("../test/db-cold-open-worker.ts", import.meta.url),
+    [filename, ...(timeout === undefined ? [] : [String(timeout)])],
+    {
+      execArgv: ["--import", import.meta.resolve("tsx")],
+      stdio: ["ignore", "ignore", "inherit", "ipc"],
+    },
+  );
+  const closed = once(child, "close");
+  const messages = on(child, "message", { close: ["disconnect", "close"] });
+  try {
+    await check(async () => (await messages.next()).value?.[0]);
+    expect(await closed).toEqual([0, null]);
+  } finally {
+    await messages.return?.();
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await closed;
+  }
+}
+
+it("普通备份第一次切 WAL 提前遇到真实锁时，两进程都能打开", async () => {
+  const { filename, holder } = await backupWithWriterLock();
+  try {
+    await withColdOpenWorker(filename, async (next) => {
+      expect(await next()).toMatchObject({ busy: "SQLITE_BUSY" });
+      holder.exec("ROLLBACK");
+      holder.close();
+      const peer = createDb(filename);
+      try {
+        expect(peer.$client.pragma("journal_mode", { simple: true })).toBe(
+          "wal",
+        );
+        expect(peer.$client.pragma("foreign_keys", { simple: true })).toBe(1);
+        expect(await next()).toEqual({
+          ok: true,
+          journalMode: "wal",
+          foreignKeys: 1,
+          busyTimeout: peer.$client.pragma("busy_timeout", { simple: true }),
+          row: 42,
+        });
+      } finally {
+        peer.$client.close();
+      }
+    });
+  } finally {
+    if (holder.open) holder.close();
+  }
+}, 20000);
+
+it("普通备份的锁超过连接等待预算，仍返回 SQLITE_BUSY", async () => {
+  const { filename, holder } = await backupWithWriterLock();
+  try {
+    await withColdOpenWorker(
+      filename,
+      async (next) => {
+        expect(await next()).toMatchObject({ busy: "SQLITE_BUSY" });
+        expect(await next()).toMatchObject({ ok: false, code: "SQLITE_BUSY" });
+      },
+      80,
+    );
+    expect(holder.pragma("journal_mode", { simple: true })).toBe("delete");
+  } finally {
+    holder.close();
+  }
+}, 20000);
+
+it("损坏文件仍返回 SQLite 错误且释放句柄", () => {
+  const filename = join(dir, "corrupt.db");
+  writeFileSync(filename, Buffer.alloc(512, 0x78));
+  expect(() => createDb(filename)).toThrow(
+    expect.objectContaining({ code: "SQLITE_NOTADB" }),
+  );
+  renameSync(filename, join(dir, "corrupt-renamed.db"));
 });

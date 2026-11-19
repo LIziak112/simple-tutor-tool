@@ -4,11 +4,13 @@ import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, ink, responses } from "../db/schema";
 import { answerOf, attemptQuestionRows } from "./attempt-service";
+import type { KernelRecordDraftChoices } from "./kernel-student-record-facts.ts";
 
 /** 已核验归属的进行中记录，只返回已做/总题数，不计算或输出判定。 */
 export function recordAnswerProgress(
   db: Db,
   attempts: readonly Attempt[],
+  draftChoices?: KernelRecordDraftChoices,
 ): Map<string, AttemptAnswerProgress> {
   const result = new Map<string, AttemptAnswerProgress>();
   const drafts = attempts.filter(
@@ -57,12 +59,14 @@ export function recordAnswerProgress(
               .filter((row) => row.hasSnapshot !== 0)
               .map((row) => row.questionId),
       );
+      const chosen = draftChoices?.get(attempt.id);
       const answeredCount = answers.filter(
         (row) =>
           questionIds.has(row.questionId) &&
           (row.submittedAt !== null ||
             row.formalInkId !== null ||
-            !isUnanswered(answerOf(row.answerJson))),
+            (chosen?.has(row.questionId) ??
+              !isUnanswered(answerOf(row.answerJson)))),
       ).length;
       result.set(attempt.id, { answeredCount, totalCount: questionIds.size });
     }

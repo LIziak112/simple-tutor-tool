@@ -40,10 +40,49 @@ export function createDbFromBuffer(template: Buffer): Db {
   return wrapWithPragmas(new DatabaseCtor(template));
 }
 
+const walRetryWait = new Int32Array(
+  new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+);
+
+function enableWal(sqlite: Database): void {
+  const startedAt = performance.now();
+  let busyTimeout: number | undefined;
+  for (;;) {
+    try {
+      sqlite.pragma("journal_mode = WAL");
+    } catch (error) {
+      if (
+        sqlite.memory ||
+        !(error instanceof DatabaseCtor.SqliteError) ||
+        error.code !== "SQLITE_BUSY"
+      )
+        throw error;
+      if (busyTimeout === undefined) {
+        const configured = sqlite.pragma("busy_timeout", { simple: true });
+        if (typeof configured !== "number") throw error;
+        busyTimeout = configured;
+      }
+
+      // SQLite 避免锁升级死锁时可能跳过 busy handler；只重用原连接剩余等待时间。
+      const deadline = startedAt + busyTimeout;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw error;
+      Atomics.wait(walRetryWait, 0, 0, Math.min(10, remaining));
+      const nextTimeout = Math.floor(deadline - performance.now());
+      if (nextTimeout <= 0) throw error;
+      sqlite.pragma(`busy_timeout = ${nextTimeout}`);
+      continue;
+    }
+    if (busyTimeout !== undefined)
+      sqlite.pragma(`busy_timeout = ${busyTimeout}`);
+    return;
+  }
+}
+
 /** 统一执行逐连接 pragma 并包装 drizzle；pragma 失败先关句柄再抛，不泄漏 Windows 文件锁 */
 function wrapWithPragmas(sqlite: Database): Db {
   try {
-    sqlite.pragma("journal_mode = WAL");
+    enableWal(sqlite);
     sqlite.pragma("foreign_keys = ON");
     sqlite.function(
       "ownclass_question_snapshot_valid",

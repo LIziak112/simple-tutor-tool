@@ -34,17 +34,19 @@ export function ownClassChoiceAnswerOf(choice: string) {
   return parsed.data;
 }
 
-type Runtime = ReturnType<typeof openLearningRuntime>;
+export type KernelRuntime = ReturnType<typeof openLearningRuntime>;
+export type KernelAttemptBinding = typeof kernelAttemptBindings.$inferSelect;
+
 type ConfirmationHooks = Pick<
   Parameters<typeof openLearningRuntime>[0],
   "verifyOriginal" | "authorizeConfirmationRecovery"
-> & { evaluateScope?: OwnClassChoiceEvaluationScope };
+> & { evaluateScope?: () => OwnClassChoiceEvaluationScope | undefined };
 
 export function withKernelRuntime<T>(
   db: Db,
   dataDir: string,
   allowCreate: boolean,
-  run: (runtime: Runtime) => T,
+  run: (runtime: KernelRuntime) => T,
   hooks: ConfirmationHooks = {},
 ): T {
   const databasePath = kernelDatabasePath(dataDir);
@@ -55,7 +57,7 @@ export function withKernelRuntime<T>(
       ...authorization,
       databasePath,
       choiceEvaluators: [
-        createOwnClassChoiceEvaluator(db, () => evaluateScope),
+        createOwnClassChoiceEvaluator(db, evaluateScope ?? (() => undefined)),
       ],
     });
     try {
@@ -74,7 +76,7 @@ export function withBoundKernelActivity<T>(
   dataDir: string,
   attempt: Attempt,
   run: (
-    runtime: Runtime,
+    runtime: KernelRuntime,
     activity: StudentActivity,
     stepAttemptId: string,
     practiceVersion: number,
@@ -86,38 +88,52 @@ export function withBoundKernelActivity<T>(
     .from(kernelAttemptBindings)
     .where(eq(kernelAttemptBindings.attemptId, attempt.id))
     .get();
-  if (!binding || binding.assignmentId !== attempt.assignmentId)
-    kernelAttemptUnavailable();
+  if (!binding) kernelAttemptUnavailable();
 
   return withKernelRuntime(
     db,
     dataDir,
     false,
-    (runtime) => {
-      const activity = runtime.read(
-        { role: "student", id: attempt.studentId },
-        attempt.id,
-      );
-      if (
-        activity.activityId !== attempt.id ||
-        !("stepAttemptId" in activity) ||
-        activity.stepAttemptId !== binding.stepAttemptId ||
-        ("practiceVersion" in activity &&
-          activity.practiceVersion !== undefined &&
-          activity.practiceVersion !== binding.practiceVersion) ||
-        !("startedAt" in activity) ||
-        activity.startedAt !== attempt.startedAt
-      )
-        kernelAttemptUnavailable();
-      return run(
+    (runtime) =>
+      run(
         runtime,
-        activity,
+        readBoundKernelActivity(runtime, attempt, binding),
         binding.stepAttemptId,
         binding.practiceVersion,
-      );
-    },
+      ),
     hooks,
   );
+}
+
+/** 调用方已核实作答归属。单卷与列表使用同一绑定判定。 */
+export function readBoundKernelActivity(
+  runtime: KernelRuntime,
+  attempt: Attempt,
+  binding: KernelAttemptBinding,
+) {
+  if (
+    binding.attemptId !== attempt.id ||
+    binding.assignmentId !== attempt.assignmentId
+  )
+    kernelAttemptUnavailable();
+
+  const activity = runtime.read(
+    { role: "student", id: attempt.studentId },
+    attempt.id,
+  );
+  if (
+    activity.activityId !== attempt.id ||
+    !("stepAttemptId" in activity) ||
+    activity.stepAttemptId !== binding.stepAttemptId ||
+    ("practiceVersion" in activity &&
+      activity.practiceVersion !== undefined &&
+      activity.practiceVersion !== binding.practiceVersion) ||
+    !("startedAt" in activity) ||
+    activity.startedAt !== attempt.startedAt
+  )
+    kernelAttemptUnavailable();
+
+  return activity;
 }
 
 function kernelDatabasePath(dataDir: string): string {
