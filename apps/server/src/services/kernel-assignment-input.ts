@@ -1,14 +1,42 @@
-import { singleChoiceScoringSourceSchema } from "@tutor/contract";
+import {
+  attemptTimeLimitMinutesSchema,
+  frozenGradingPolicySchema,
+  questionSchema,
+  singleChoiceScoringSourceSchema,
+} from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
+import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import type { Assignment, Attempt } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { liveAttemptContextClosure } from "./attempt-context.ts";
+import {
+  frozenGradingPolicyOf,
+  liveAttemptContextClosure,
+} from "./attempt-context.ts";
 import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
+import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
+
+export const kernelOpeningDraftSchema = z.strictObject({
+  courseId: z.string().nullable(),
+  timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
+  workflowVersion: z.literal(1).optional(),
+  responses: z
+    .array(
+      z.strictObject({
+        question: questionSchema,
+        questionVersion: z.int().positive(),
+        unitId: z.string(),
+        gradingPolicy: frozenGradingPolicySchema,
+      }),
+    )
+    .min(1),
+});
+
+export type KernelOpeningDraft = z.infer<typeof kernelOpeningDraftSchema>;
 
 export function kernelDraftForAssignment(
-  assignment: Assignment,
+  assignment: Pick<Assignment, "id" | "courseId">,
   studentId: string,
   id: string,
   startedAt: string,
@@ -72,12 +100,19 @@ export function loadKernelAssignmentChoices(
   );
   if (context.materials.length || context.groups.length) ineligible();
 
-  const questions = liveRows.map((row) => {
+  const selfReview = studentSelfReviewEnabledOf(db, teacherId);
+  const rows = liveRows.map((row) => {
     const snapshot = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
     const scoring = singleChoiceScoringSourceSchema.safeParse(snapshot);
     if (!scoring.success || snapshot.hints?.length) ineligible();
     const { options, answers } = scoring.data;
-    return {
+    const frozen = {
+      question: snapshot,
+      questionVersion: row.version,
+      unitId: row.unitId,
+      gradingPolicy: frozenGradingPolicyOf(snapshot, selfReview),
+    };
+    const question = {
       id: snapshot.id,
       version: row.version,
       prompt: studentStemMd(snapshot),
@@ -86,6 +121,10 @@ export function loadKernelAssignmentChoices(
       ),
       acceptedChoice: String(answers.index),
     };
+    return { frozen, question };
   });
-  return { freeze, questions };
+  return {
+    responses: rows.map(({ frozen }) => frozen),
+    questions: rows.map(({ question }) => question),
+  };
 }

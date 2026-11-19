@@ -6,7 +6,9 @@ import {
   text,
   unique,
 } from "drizzle-orm/sqlite-core";
-import { assignments, attempts } from "./schema.ts";
+import type { PublicationInput } from "learning-kernel";
+import type { KernelOpeningDraft } from "../services/kernel-assignment-input.ts";
+import { assignments, attempts, students } from "./schema.ts";
 
 export const kernelAssignments = sqliteTable("kernel_assignments", {
   assignmentId: text("assignment_id")
@@ -42,6 +44,33 @@ export const kernelAttemptBindings = sqliteTable(
     stepAttemptId: text("step_attempt_id").notNull().unique(),
   },
   (table) => [
+    foreignKey({
+      columns: [table.assignmentId, table.practiceVersion],
+      foreignColumns: [
+        kernelAssignmentVersions.assignmentId,
+        kernelAssignmentVersions.practiceVersion,
+      ],
+    }),
+  ],
+);
+
+export const kernelAssignmentOpenings = sqliteTable(
+  "kernel_assignment_openings",
+  {
+    assignmentId: text("assignment_id").notNull(),
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    practiceVersion: integer("practice_version").notNull(),
+    publication: text("publication_json", { mode: "json" })
+      .$type<PublicationInput>()
+      .notNull(),
+    draft: text("draft_json", { mode: "json" })
+      .$type<KernelOpeningDraft>()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.assignmentId, table.studentId] }),
     foreignKey({
       columns: [table.assignmentId, table.practiceVersion],
       foreignColumns: [

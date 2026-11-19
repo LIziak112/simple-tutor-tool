@@ -19,7 +19,7 @@ export function withKernelRuntime<T>(
   allowCreate: boolean,
   run: (runtime: ReturnType<typeof openLearningRuntime>) => T,
 ): T {
-  const databasePath = join(dataDir, "learning-kernel.sqlite");
+  const databasePath = kernelDatabasePath(dataDir);
   if (!allowCreate && !existsSync(databasePath)) kernelAttemptUnavailable();
   try {
     const runtime = openLearningRuntime({
@@ -35,4 +35,17 @@ export function withKernelRuntime<T>(
     if (error instanceof LearningError) kernelAttemptUnavailable();
     throw error;
   }
+}
+
+function kernelDatabasePath(dataDir: string): string {
+  return join(dataDir, "learning-kernel.sqlite");
+}
+
+export function ensureKernelRuntimeStorage(
+  db: Db,
+  dataDir: string,
+  allowCreate: boolean,
+): void {
+  if (!existsSync(kernelDatabasePath(dataDir)))
+    withKernelRuntime(db, dataDir, allowCreate, () => undefined);
 }

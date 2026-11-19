@@ -29,9 +29,9 @@ async function fixture() {
   template.$client.close();
   let db = createDb(path);
   cleanup.add(() => db.$client.close());
-  const mount = (enabled: boolean) =>
+  const mount = (enabled: boolean, dbConnection = db) =>
     createApp({
-      db,
+      db: dbConnection,
       dataDir,
       isProduction: false,
       publicUrl: "http://localhost:8787",
@@ -122,6 +122,11 @@ async function fixture() {
       db.$client.close();
       db = createDb(path);
       app = mount(false);
+    },
+    independentApp: () => {
+      const connection = createDb(path);
+      cleanup.add(() => connection.$client.close());
+      return mount(false, connection);
     },
     database: () => db.$client,
   };
@@ -370,4 +375,258 @@ it("90 分钟内核卷立即激活，权威库暂缺时旧路由补不出第二�
     renameSync(backup, path);
   }
   expect(await world.open()).toEqual(first);
+});
+
+it("跨库中断后原请求恢复旧卷，另一学生按导入后的顺序与版本开新卷", async () => {
+  const world = await fixture();
+  const openIntent = { timeLimitMinutes: 90 };
+  world.database().exec(`
+    CREATE TRIGGER fail_kernel_attempt_projection
+    BEFORE INSERT ON kernel_attempt_bindings
+    BEGIN SELECT RAISE(ABORT, 'forced kernel attempt projection failure'); END
+  `);
+  const failed = await world.plainPost(world.id, world.ownerCookie, openIntent);
+  expect(failed.status).toBe(500);
+  const activityRows = () =>
+    world
+      .kernel()
+      .prepare(
+        "SELECT id, student_id, practice_id, practice_version, start_operation_id, started_at FROM activities ORDER BY practice_version",
+      )
+      .all();
+  const firstFacts = activityRows();
+  expect(firstFacts).toEqual([
+    {
+      id: expect.any(String),
+      student_id: world.studentId,
+      practice_id: world.id,
+      practice_version: 1,
+      start_operation_id: `open:${world.id}`,
+      started_at: expect.any(String),
+    },
+  ]);
+  const first = z
+    .object({ id: z.uuid(), started_at: z.iso.datetime() })
+    .parse(firstFacts[0]);
+  expect(
+    world.database().prepare("SELECT COUNT(*) FROM attempts").pluck().get(),
+  ).toBe(0);
+  expect(
+    world.database().prepare("SELECT COUNT(*) FROM responses").pluck().get(),
+  ).toBe(0);
+  expect(
+    world
+      .database()
+      .prepare("SELECT COUNT(*) FROM kernel_attempt_bindings")
+      .pluck()
+      .get(),
+  ).toBe(0);
+  const pending = () =>
+    world
+      .database()
+      .prepare(
+        "SELECT assignment_id, student_id, practice_version FROM kernel_assignment_openings",
+      )
+      .all();
+  const originalIntent = [
+    {
+      assignment_id: world.id,
+      student_id: world.studentId,
+      practice_version: 1,
+    },
+  ];
+  expect(pending()).toEqual(originalIntent);
+  expect((await world.ownedRequest(first.id)).status).toBe(404);
+  world.database().exec("DROP TRIGGER fail_kernel_attempt_projection");
+  world.restart();
+
+  const markdown = readFileSync(
+    new URL("../test/m04-p1/fixtures/P0-单选夹具.md", import.meta.url),
+    "utf8",
+  );
+  const firstQuestion = markdown.indexOf("::::question{id=m04-p0-q1");
+  const secondQuestion = markdown.indexOf("::::question{id=m04-p0-q2");
+  expect(firstQuestion).toBeGreaterThan(0);
+  expect(secondQuestion).toBeGreaterThan(firstQuestion);
+  const revised =
+    markdown.slice(0, firstQuestion) +
+    markdown.slice(secondQuestion).trimEnd() +
+    "\n\n" +
+    markdown
+      .slice(firstQuestion, secondQuestion)
+      .replace("2 + 3 等于多少？", "恢复试验新版：2 + 3 是多少？")
+      .trimEnd() +
+    "\n";
+  const imported = await world.teacherRequest("import/commit", "POST", {
+    filename: "M04P0.md",
+    markdown: revised,
+  });
+  expect(imported.status).toBe(200);
+
+  const remove = await world.teacherRequest(
+    `assignments/${world.id}`,
+    "PATCH",
+    { removeStudentIds: [world.studentId] },
+  );
+  expect(remove.status).toBe(200);
+  expect(
+    (await world.plainPost(world.id, world.ownerCookie, openIntent)).status,
+  ).toBe(403);
+  expect(activityRows()).toEqual(firstFacts);
+  expect(pending()).toEqual(originalIntent);
+
+  const other = await world.open(world.otherCookie);
+  const otherDetail = await world.detail(other.id, world.otherCookie);
+  const otherQuestions = otherDetail.units.flatMap((unit) => unit.questions);
+  expect(otherQuestions.map((question) => question.id)).toEqual([
+    "m04-p0-q2",
+    "m04-p0-q1",
+  ]);
+  expect(otherQuestions[1]?.stemMd).toContain("恢复试验新版");
+  expect(
+    (
+      await world.ownedRequest(
+        first.id,
+        "",
+        "GET",
+        undefined,
+        world.otherCookie,
+      )
+    ).status,
+  ).toBe(404);
+
+  const restore = await world.teacherRequest(
+    `assignments/${world.id}`,
+    "PATCH",
+    { addStudentIds: [world.studentId] },
+  );
+  expect(restore.status).toBe(200);
+  const recovered = await world.plainPost(
+    world.id,
+    world.ownerCookie,
+    openIntent,
+  );
+  expect(recovered.status, await recovered.clone().text()).toBe(200);
+  const recoveredStart = attemptStartOkSchema.parse(
+    await recovered.json(),
+  ).data;
+  expect(recoveredStart).toMatchObject({
+    id: first.id,
+    startedAt: first.started_at,
+    frozenAt: first.started_at,
+    activatedAt: first.started_at,
+    phase: "active",
+    timeLimitSec: 5400,
+    deadlineAt: new Date(Date.parse(first.started_at) + 5400_000).toISOString(),
+  });
+  const oldDetail = await world.detail(first.id);
+  const oldQuestions = oldDetail.units.flatMap((unit) => unit.questions);
+  expect(oldQuestions.map((question) => question.id)).toEqual([
+    "m04-p0-q1",
+    "m04-p0-q2",
+  ]);
+  expect(oldQuestions[0]?.stemMd).toContain("2 + 3 等于多少？");
+  expect(oldQuestions[0]?.questionRevisionId).not.toBe(
+    otherQuestions[1]?.questionRevisionId,
+  );
+  expect(
+    (
+      await world.ownedRequest(
+        first.id,
+        "",
+        "GET",
+        undefined,
+        world.otherCookie,
+      )
+    ).status,
+  ).toBe(403);
+
+  world.restart();
+  expect(await world.open()).toEqual(recoveredStart);
+  expect(await world.open(world.otherCookie)).toEqual(other);
+  const independent = world.independentApp();
+  for (const [cookie, expected] of [
+    [world.ownerCookie, recoveredStart],
+    [world.otherCookie, other],
+  ] as const) {
+    const response = await postAssignment(independent, world.id, cookie);
+    expect(response.status).toBe(200);
+    expect(attemptStartOkSchema.parse(await response.json()).data).toEqual(
+      expected,
+    );
+  }
+  expect(pending()).toEqual([]);
+  const ownerRestart = await world.detail(first.id);
+  const otherRestart = await world.detail(other.id, world.otherCookie);
+  expect(ownerRestart.units).toEqual(oldDetail.units);
+  expect(otherRestart.units).toEqual(otherDetail.units);
+  const frozenQuestions = world
+    .database()
+    .prepare(
+      "SELECT question_id, question_version FROM responses WHERE attempt_id=? ORDER BY rowid",
+    );
+  expect(frozenQuestions.all(first.id)).toEqual([
+    { question_id: "m04-p0-q1", question_version: 1 },
+    { question_id: "m04-p0-q2", question_version: 1 },
+  ]);
+  const newerFrozen = z
+    .array(z.object({ question_id: z.string(), question_version: z.int() }))
+    .parse(frozenQuestions.all(other.id));
+  expect(newerFrozen.map(({ question_id }) => question_id)).toEqual([
+    "m04-p0-q2",
+    "m04-p0-q1",
+  ]);
+  expect(newerFrozen[1]?.question_version).toBeGreaterThan(1);
+  expect(
+    world
+      .kernel()
+      .prepare(
+        "SELECT version, json_extract(definition, '$.questions[0].id') AS first_question FROM practices WHERE id=? ORDER BY version",
+      )
+      .all(world.id),
+  ).toEqual([
+    { version: 1, first_question: "m04-p0-q1" },
+    { version: 2, first_question: "m04-p0-q2" },
+  ]);
+  expect(activityRows()).toEqual([
+    firstFacts[0],
+    {
+      id: other.id,
+      student_id: world.otherStudentId,
+      practice_id: world.id,
+      practice_version: 2,
+      start_operation_id: `open:${world.id}`,
+      started_at: other.startedAt,
+    },
+  ]);
+  expect(
+    world
+      .database()
+      .prepare(
+        "SELECT attempt_id, practice_version FROM kernel_attempt_bindings ORDER BY practice_version",
+      )
+      .all(),
+  ).toEqual([
+    { attempt_id: first.id, practice_version: 1 },
+    { attempt_id: other.id, practice_version: 2 },
+  ]);
+  expect(
+    world
+      .database()
+      .prepare(
+        "SELECT COUNT(*) AS total, COUNT(score_auto) AS auto, COUNT(score_final) AS final FROM attempts",
+      )
+      .get(),
+  ).toEqual({ total: 2, auto: 0, final: 0 });
+  expect(
+    world
+      .database()
+      .prepare(
+        "SELECT COUNT(*) AS total, COUNT(answer_json) AS answers, COUNT(auto_correct) AS auto, COUNT(final_correct) AS final FROM responses",
+      )
+      .get(),
+  ).toEqual({ total: 4, answers: 0, auto: 0, final: 0 });
+  expect(
+    world.kernel().prepare("SELECT COUNT(*) FROM submissions").get(),
+  ).toEqual({ "COUNT(*)": 0 });
 });
