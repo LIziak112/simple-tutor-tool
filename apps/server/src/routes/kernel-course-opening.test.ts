@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   ATTEMPT_SNAPSHOT_PROOF_HEADER,
+  ATTEMPT_TIME_UP_GRACE_SEC,
   attemptDraftOkSchema,
   attemptResultOkSchema,
   attemptStartOkSchema,
@@ -27,7 +28,7 @@ import {
 import { ZipArchive } from "archiver";
 import { openLearningRuntime } from "learning-kernel";
 import pino from "pino";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createApp } from "../app.ts";
 import { runBackfills } from "../db/backfill.ts";
@@ -138,14 +139,6 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     const [first, replay] = await Promise.all([open(), open()]);
     expect(replay).toEqual(first);
     expect(first.attemptNo).toBe(1);
-    expect(
-      (
-        await owner(`${unitPath}/attempts`, "POST", {
-          ...whole,
-          timeLimitMinutes: 5,
-        })
-      ).status,
-    ).toBe(503);
     const database = join(data.path, BACKUP_KERNEL_DATABASE);
     expect(existsSync(database), "正常开卷须在 K25 创建权威活动").toBe(true);
     const actor = { role: "student" as const, id: studentId };
@@ -308,6 +301,21 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
       expectedFrozenAt: refreshed.frozenAt,
       questionRevisionId: question.questionRevisionId,
     };
+    sql.exec(`CREATE TRIGGER break_course_activation BEFORE UPDATE OF activated_at ON attempts
+      WHEN NEW.source_type = 'course' BEGIN SELECT RAISE(ABORT, '测试中断首次作答投影'); END`);
+    expect(
+      (await owner(`${path}/answers/${question.id}`, "PUT", save)).status,
+    ).toBe(500);
+    expect(readKernel().questionDeliveryDrafts).toHaveLength(1);
+    sql.exec("DROP TRIGGER break_course_activation");
+    const alreadySaved = await owner(`${unitPath}/attempts`, "POST", {
+      ...whole,
+      timeLimitMinutes: 5,
+    });
+    expect(alreadySaved.status).toBe(201);
+    expect(attemptStartOkSchema.parse(await alreadySaved.json()).data).toEqual(
+      refreshed,
+    );
     expect(
       (await owner(`${path}/answers/${question.id}`, "PUT", save)).status,
     ).toBe(200);
@@ -632,29 +640,69 @@ it("开卷在内核提交后中断可重放，同代双库恢复且跨代拒绝"
     const open = (
       app: ReturnType<typeof createApp>,
       cookie = world.ownerCookie,
-    ) => request(app, cookie, `${world.unitPath}/attempts`, "POST", whole);
-    expect((await open(app)).status).toBe(500);
+      options: object = whole,
+    ) => request(app, cookie, `${world.unitPath}/attempts`, "POST", options);
+    expect(
+      (await open(app, world.ownerCookie, { ...whole, timeLimitMinutes: 5 }))
+        .status,
+    ).toBe(500);
     expect(
       sql
         .prepare(
-          "SELECT attempt_id, step_attempt_id FROM kernel_course_openings",
+          "SELECT attempt_id, step_attempt_id, json_extract(draft_json, '$.timeLimitMinutes') AS minutes FROM kernel_course_openings",
         )
         .all(),
-    ).toEqual([{ attempt_id: null, step_attempt_id: null }]);
+    ).toEqual([{ attempt_id: null, step_attempt_id: null, minutes: 5 }]);
     const kernel = new DatabaseSync(join(data.path, BACKUP_KERNEL_DATABASE), {
       readOnly: true,
     });
-    let originalId: string;
+    let original: { id: string; started_at: string; step_id: string };
     try {
-      const ids = z
-        .array(z.object({ id: z.uuid() }))
-        .parse(kernel.prepare("SELECT id FROM activities").all());
-      expect(ids).toHaveLength(1);
-      originalId = ids[0]?.id ?? "";
+      const activities = z
+        .array(
+          z.object({
+            id: z.uuid(),
+            started_at: z.iso.datetime(),
+            step_id: z.uuid(),
+          }),
+        )
+        .parse(
+          kernel
+            .prepare(
+              "SELECT id, started_at, initial_prepared_step_attempt_id AS step_id FROM activities",
+            )
+            .all(),
+        );
+      expect(activities).toHaveLength(1);
+      if (!activities[0]) throw new Error("没有已预备的内核活动");
+      original = activities[0];
     } finally {
       kernel.close();
     }
     sql.exec("DROP TRIGGER break_course_projection");
+    const frozen = z
+      .object({ id: z.string(), version: z.number() })
+      .parse(
+        sql
+          .prepare(
+            "SELECT json_extract(draft_json, '$.responses[0].question.id') AS id, json_extract(draft_json, '$.responses[0].questionVersion') AS version FROM kernel_course_openings",
+          )
+          .get(),
+      );
+    const questionPath = `/api/teacher/questions/${encodeURIComponent(frozen.id)}`;
+    const question = await request(app, world.teacher, questionPath);
+    const {
+      data: { sourceMd },
+    } = z
+      .object({ data: z.object({ sourceMd: z.string() }) })
+      .parse(await question.json());
+    expect(
+      (
+        await request(app, world.teacher, questionPath, "PUT", {
+          sourceMd: sourceMd.replace("\n", "\n开卷准备中改变题面。"),
+        })
+      ).status,
+    ).toBe(200);
     const profile = await request(app, world.teacher, "/api/teacher/me");
     const operator = teacherInfoOkSchema.parse(await profile.json()).data.id;
     const disabled = appWith(false, operator);
@@ -668,14 +716,43 @@ it("开卷在内核提交后中断可重放，同代双库恢复且跨代拒绝"
       return new Uint8Array(await response.arrayBuffer());
     };
     const preparedBackup = await download();
-    const recovered = await open(disabled);
+    const recovered = await open(disabled, world.ownerCookie, {
+      ...whole,
+      timeLimitMinutes: 10,
+    });
     expect(recovered.status, await recovered.clone().text()).toBe(201);
-    expect(attemptStartOkSchema.parse(await recovered.json()).data.id).toBe(
-      originalId,
-    );
+    const timed = attemptStartOkSchema.parse(await recovered.json()).data;
+    expect(timed).toMatchObject({
+      id: original.id,
+      phase: "active",
+      startedAt: original.started_at,
+      frozenAt: original.started_at,
+      activatedAt: original.started_at,
+      timeLimitSec: 300,
+      deadlineAt: new Date(
+        Date.parse(original.started_at) + 300_000,
+      ).toISOString(),
+    });
     expect(
-      sql.prepare("SELECT attempt_id FROM kernel_course_openings").all(),
-    ).toEqual([{ attempt_id: originalId }]);
+      sql
+        .prepare(
+          "SELECT attempt_id, step_attempt_id FROM kernel_course_openings",
+        )
+        .all(),
+    ).toEqual([{ attempt_id: original.id, step_attempt_id: original.step_id }]);
+    const resumed = await request(
+      disabled,
+      world.ownerCookie,
+      `/api/student/attempts/${original.id}`,
+    );
+    expect(resumed.status).toBe(200);
+    const resumedDraft = attemptDraftOkSchema.parse(await resumed.json()).data;
+    expect(
+      resumedDraft.units.flatMap(({ questions }) => questions)[0],
+    ).toMatchObject({
+      id: frozen.id,
+      questionVersion: frozen.version,
+    });
     expect(
       (
         await request(app, world.teacher, `${world.course}/members`, "POST", {
@@ -731,14 +808,12 @@ it("开卷在内核提交后中断可重放，同代双库恢复且跨代拒绝"
     expect(restored.status, await restored.clone().text()).toBe(200);
     const again = await open(disabled);
     expect(again.status, await again.clone().text()).toBe(201);
-    expect(attemptStartOkSchema.parse(await again.json()).data.id).toBe(
-      originalId,
-    );
+    expect(attemptStartOkSchema.parse(await again.json()).data).toEqual(timed);
     expect(
       handle.db.$client
         .prepare("SELECT attempt_id FROM kernel_course_openings")
         .all(),
-    ).toEqual([{ attempt_id: originalId }]);
+    ).toEqual([{ attempt_id: original.id }]);
   } finally {
     handle.close();
   }
@@ -1503,7 +1578,287 @@ it("课程冻结原稿经双库断点和两设备核对后仍以同一回执落�
   }
 });
 
-it("明确选择限时或逐题的新课程请求沿原策略处理", async () => {
+it.each(["首次选择", "空卷后选择"] as const)(
+  "课程整卷%s时限生效，跨设备重开并按权威答案完成",
+  async (mode) => {
+    using data = mkdtempDisposableSync(
+      join(tmpdir(), "ownclass-course-timed-"),
+    );
+    const database = join(data.path, "tutor.db");
+    let handle = createDbHandle(database, runMigrations);
+    const appWith = (kernelCourseOpeningEnabled: boolean) =>
+      createApp({
+        db: handle.db,
+        dbHandle: handle,
+        dataDir: data.path,
+        kernelCourseOpeningEnabled,
+        isProduction: false,
+        publicUrl: "http://localhost:8787",
+        logger: pino({ enabled: false }),
+      });
+    try {
+      let app = appWith(true);
+      const world = await setupCourse(app);
+      const secondDevice = await loginAssignmentOwner(app);
+      const owner = (path: string, method?: string, body?: object) =>
+        request(app, world.ownerCookie, path, method, body);
+      const unit = `${world.unitPath}/attempts`;
+      const open = async (options: object, cookie = world.ownerCookie) => {
+        const response = await request(app, cookie, unit, "POST", options);
+        expect(response.status, await response.clone().text()).toBe(201);
+        const raw = await response.json();
+        assertNoLeak(raw);
+        return attemptStartOkSchema.parse(raw).data;
+      };
+      expect((await owner(world.unitPath)).status).toBe(200);
+      expect(secondDevice).not.toBe(world.ownerCookie);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const initially = new Date();
+      const blank = mode === "空卷后选择" ? await open(whole) : undefined;
+      if (blank) {
+        expect(blank).toMatchObject({
+          activatedAt: null,
+          phase: "opened",
+          deadlineAt: null,
+        });
+        app = appWith(false);
+        vi.setSystemTime(initially.getTime() + 20_000);
+      }
+      const selected = new Date();
+      const timed = await open({ ...whole, timeLimitMinutes: 5 });
+      const deadline = selected.getTime() + 300_000;
+      expect(timed).toMatchObject({
+        activatedAt: selected.toISOString(),
+        phase: "active",
+        timeLimitSec: 300,
+        deadlineAt: new Date(deadline).toISOString(),
+        startedAt: initially.toISOString(),
+      });
+      if (blank)
+        expect(timed).toMatchObject({ id: blank.id, frozenAt: blank.frozenAt });
+      const kernelDb = join(data.path, BACKUP_KERNEL_DATABASE);
+      const readKernel = () => {
+        const runtime = openLearningRuntime({ databasePath: kernelDb });
+        try {
+          const view = runtime.read(
+            { role: "student", id: world.studentId },
+            timed.id,
+          );
+          if (!("questionDeliveries" in view))
+            throw new Error("限时整卷缺少内核权威");
+          return view;
+        } finally {
+          runtime.close();
+        }
+      };
+      const tables = () => ({
+        opening: handle.db.$client
+          .prepare(
+            "SELECT attempt_id, step_attempt_id, practice_version FROM kernel_course_openings",
+          )
+          .all(),
+        settlements: handle.db.$client
+          .prepare("SELECT kind FROM attempt_settlements WHERE attempt_id=?")
+          .all(timed.id),
+      });
+      expect(existsSync(kernelDb)).toBe(true);
+      const initial = readKernel();
+      expect(initial).toMatchObject({
+        activityId: timed.id,
+        startedAt: timed.startedAt,
+        questionDeliveryDrafts: [],
+      });
+      expect(tables()).toEqual({
+        opening: [
+          {
+            attempt_id: timed.id,
+            step_attempt_id: initial.stepAttemptId,
+            practice_version: 1,
+          },
+        ],
+        settlements: [],
+      });
+      const path = `/api/student/attempts/${timed.id}`;
+      const detail = async (cookie = world.ownerCookie) => {
+        const response = await request(app, cookie, path);
+        expect(response.status, await response.clone().text()).toBe(200);
+        const raw = await response.json();
+        assertNoLeak(raw);
+        return attemptDraftOkSchema.parse(raw).data;
+      };
+      const running = await detail();
+      expect(running.timing).toMatchObject({
+        deadlineAt: timed.deadlineAt,
+        phase: "running",
+      });
+      const [first, second] = running.units.flatMap((item) => item.questions);
+      if (!first || !second) throw new Error("整卷需要两道冻结题");
+      const questionPath = `/api/teacher/questions/${encodeURIComponent(first.id)}`;
+      const question = await request(app, world.teacher, questionPath);
+      const {
+        data: { sourceMd },
+      } = z
+        .object({ data: z.object({ sourceMd: z.string() }) })
+        .parse(await question.json());
+      expect(
+        (
+          await request(app, world.teacher, questionPath, "PUT", {
+            sourceMd: sourceMd.replace("\n", "\n计时开始后改题。"),
+          })
+        ).status,
+      ).toBe(200);
+      vi.setSystemTime(selected.getTime() + 30_000);
+      expect(
+        await open({ ...whole, timeLimitMinutes: 10 }, secondDevice),
+      ).toEqual(timed);
+      handle.close();
+      handle = createDbHandle(database, runMigrations);
+      app = appWith(false);
+      expect(await open({}, secondDevice)).toEqual(timed);
+      expect((await detail(secondDevice)).units).toEqual(running.units);
+      expect(readKernel()).toEqual(initial);
+      const member = (method: string, studentId: string) =>
+        request(app, world.teacher, `${world.course}/members`, method, {
+          studentIds: [studentId],
+        });
+      expect((await member("POST", world.otherStudentId)).status).toBe(200);
+      const unbound = await open(
+        { ...whole, timeLimitMinutes: 5 },
+        world.otherCookie,
+      );
+      expect(unbound).toMatchObject({ timeLimitSec: 300, phase: "active" });
+      expect(tables().opening).toHaveLength(1);
+      expect((await request(app, world.otherCookie, path)).status).toBe(403);
+
+      vi.setSystemTime(deadline + 1000);
+      expect((await detail()).timing?.phase).toBe("grace");
+      const save = {
+        answer: { kind: "choice", index: 1 },
+        baseRevision: 0,
+        mutationId: randomUUID(),
+        expectedFrozenAt: timed.frozenAt,
+        questionRevisionId: first.questionRevisionId,
+      };
+      const answerPath = `${path}/answers/${encodeURIComponent(first.id)}`;
+      const saved = await owner(answerPath, "PUT", save);
+      expect(saved.status, await saved.clone().text()).toBe(200);
+      const receipt = await saved.json();
+      expect(readKernel().questionDeliveryDrafts).toEqual([
+        expect.objectContaining({
+          questionId: first.id,
+          revision: 1,
+          value: "1",
+        }),
+      ]);
+      const hostAnswer = handle.db.$client.prepare(
+        "SELECT answer_json FROM responses WHERE attempt_id=? AND question_id=?",
+      );
+      expect(hostAnswer.get(timed.id, first.id)).toEqual({ answer_json: null });
+      const activity = handle.db.$client.prepare(
+        "SELECT last_activity_at FROM attempts WHERE id=?",
+      );
+      const lastActivity = activity.get(timed.id);
+      vi.setSystemTime(deadline + (ATTEMPT_TIME_UP_GRACE_SEC + 1) * 1000);
+      const locked = await detail(secondDevice);
+      expect(locked.timing?.phase).toBe("locked");
+      const replay = await request(app, secondDevice, answerPath, "PUT", save);
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual(receipt);
+      const reject = async (
+        response: Response,
+        status: number,
+        error: string,
+      ) => {
+        expect(response.status, await response.clone().text()).toBe(status);
+        expect(await response.json()).toMatchObject({ error });
+      };
+      const unsaved = {
+        ...save,
+        answer: { kind: "choice", index: 2 },
+        mutationId: randomUUID(),
+        questionRevisionId: second.questionRevisionId,
+      };
+      await reject(
+        await owner(
+          `${path}/answers/${encodeURIComponent(second.id)}`,
+          "PUT",
+          unsaved,
+        ),
+        409,
+        "ATTEMPT_TIME_UP",
+      );
+      expect(activity.get(timed.id)).toEqual(lastActivity);
+      const submitPath = `${path}/submit`;
+      const submission = {
+        revisions: [first, second].map((question) => ({
+          questionId: question.id,
+          questionRevisionId: question.questionRevisionId,
+          expectedAnswerRevision: locked.draftRevisions?.[question.id] ?? 0,
+        })),
+      };
+      await reject(
+        await owner(submitPath, "POST", submission),
+        409,
+        "ATTEMPT_TIME_UP",
+      );
+      const confirmed = { ...submission, confirmedSavedAnswers: true };
+      expect((await member("DELETE", world.studentId)).status).toBe(200);
+      expect((await owner(unit, "POST", whole)).status).toBe(403);
+      expect((await owner(path)).status).toBe(403);
+      expect((await owner(answerPath, "PUT", save)).status).toBe(403);
+      expect((await owner(submitPath, "POST", confirmed)).status).toBe(403);
+      expect(tables().settlements).toEqual([]);
+      expect(readKernel().questionDeliveries).toEqual([]);
+      expect((await member("POST", world.studentId)).status).toBe(200);
+      const submitted = await request(
+        app,
+        secondDevice,
+        submitPath,
+        "POST",
+        confirmed,
+      );
+      expect(submitted.status, await submitted.clone().text()).toBe(200);
+      const result = attemptResultOkSchema.parse(await submitted.json()).data;
+      expect(result.attempt).toMatchObject({
+        id: timed.id,
+        frozenAt: timed.frozenAt,
+        deadlineAt: timed.deadlineAt,
+        scoreAuto: 50,
+      });
+      expect(
+        result.units.flatMap(({ questions }) =>
+          questions.map(({ answer, answered }) => ({ answer, answered })),
+        ),
+      ).toEqual([
+        { answer: save.answer, answered: true },
+        { answer: null, answered: false },
+      ]);
+      const finished = readKernel();
+      expect(finished.status).toBe("completed");
+      expect(finished.questionDeliveries).toHaveLength(1);
+      expect(
+        handle.db.$client
+          .prepare(
+            "SELECT receipt_id FROM kernel_question_deliveries WHERE attempt_id=?",
+          )
+          .all(timed.id),
+      ).toEqual([{ receipt_id: finished.questionDeliveries[0]?.receipt?.id }]);
+      expect(tables().settlements).toEqual([{ kind: "final" }]);
+      await reject(
+        await owner(submitPath, "POST", confirmed),
+        409,
+        "ALREADY_SUBMITTED",
+      );
+      expect(readKernel()).toEqual(finished);
+      expect(tables().settlements).toEqual([{ kind: "final" }]);
+    } finally {
+      vi.useRealTimers();
+      handle.close();
+    }
+  },
+);
+
+it("明确选择逐题的新课程请求沿原策略处理", async () => {
   using data = mkdtempDisposableSync(join(tmpdir(), "ownclass-course-modes-"));
   const handle = createDbHandle(join(data.path, "tutor.db"), runMigrations);
   try {
@@ -1528,17 +1883,6 @@ it("明确选择限时或逐题的新课程请求沿原策略处理", async () =
       expect(opened.status, await opened.clone().text()).toBe(201);
       return attemptStartOkSchema.parse(await opened.json()).data;
     };
-    const timed = await start(world.ownerCookie, {
-      ...whole,
-      timeLimitMinutes: 5,
-    });
-    expect(timed).toMatchObject({ timeLimitSec: 300, phase: "active" });
-    const restarted = await start(world.ownerCookie, {
-      ...whole,
-      restartAttemptId: timed.id,
-    });
-    expect(restarted.attemptNo).toBe(2);
-    expect(restarted.id).not.toBe(timed.id);
     const added = await request(
       app,
       world.teacher,

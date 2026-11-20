@@ -77,7 +77,6 @@ export function questionDeliveryBinding(db: Db, attempt: Attempt) {
       binding.attemptNo !== attempt.attemptNo ||
       binding.teacherId !== attemptTeacherId(db, attempt) ||
       attempt.feedbackMode !== "after_attempt" ||
-      attempt.timeLimitSec !== null ||
       !binding.stepAttemptId
     )
       kernelAttemptUnavailable();

@@ -112,6 +112,8 @@ export function kernelCourseDraftFor(
     courseId: attempt.courseId,
     workflowVersion: 1,
     restartAttemptId,
+    timeLimitMinutes:
+      attempt.timeLimitSec === null ? undefined : attempt.timeLimitSec / 60,
     responses,
     context: contextEntriesOf(context),
   });

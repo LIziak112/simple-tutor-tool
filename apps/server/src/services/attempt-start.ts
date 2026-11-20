@@ -298,10 +298,12 @@ export function startCourseAttempt(
   kernel?: { dataDir: string; enabled: boolean },
 ): AttemptStartData {
   const { restartAttemptId, timeLimitMinutes, feedbackMode } = options;
-  const canOpenInKernel =
+  const openingDir =
     kernel?.enabled &&
-    timeLimitMinutes === undefined &&
-    feedbackMode !== "per_question";
+    feedbackMode !== "per_question" &&
+    (restartAttemptId === undefined || timeLimitMinutes === undefined)
+      ? kernel.dataDir
+      : undefined;
   const decide = (tx: Tx) => {
     const item = requireVisibleCourseUnit(db, studentId, courseId, unitId);
     const existing = tx
@@ -343,24 +345,20 @@ export function startCourseAttempt(
     if (draft && restartAttemptId === undefined) {
       if (!bound)
         return attemptSummaryOf(resumeDraftAttempt(db, draft, options, client));
-      if (
-        !kernel ||
-        (draft.activatedAt === null && timeLimitMinutes !== undefined)
-      )
-        kernelAttemptUnavailable();
+      if (!kernel) kernelAttemptUnavailable();
       if (
         client.snapshotProof !== false &&
         reserveKernelCourseRefreeze(db, tx, kernel.dataDir, draft, item.title)
       )
         return { refreeze: draft };
       return attemptSummaryOf(
-        resumeBoundKernelCourse(db, kernel.dataDir, draft),
+        resumeBoundKernelCourse(db, kernel.dataDir, draft, timeLimitMinutes),
       );
     }
     if (bound && draft) {
-      if (!canOpenInKernel || !kernel) kernelAttemptUnavailable();
+      if (!openingDir) kernelAttemptUnavailable();
       // 先补落已被内核接受的旧交卷，提交主库事务后再返回过期错误。
-      if (resumeBoundKernelCourse(db, kernel.dataDir, draft).status !== "draft")
+      if (resumeBoundKernelCourse(db, openingDir, draft).status !== "draft")
         return { error: courseRestartStale() };
     }
     const attempt = newDraftAttempt({
@@ -391,9 +389,7 @@ export function startCourseAttempt(
       tx,
       attempt,
       item.title,
-      canOpenInKernel && (bound || restartAttemptId === undefined)
-        ? kernel?.dataDir
-        : undefined,
+      bound || restartAttemptId === undefined ? openingDir : undefined,
       bound ? restartAttemptId : undefined,
     );
     if (opening) return { opening };
@@ -418,7 +414,13 @@ export function startCourseAttempt(
     );
   if ("refreeze" in start)
     return attemptSummaryOf(
-      resumeBoundKernelCourse(db, kernel?.dataDir, start.refreeze, true),
+      resumeBoundKernelCourse(
+        db,
+        kernel?.dataDir,
+        start.refreeze,
+        timeLimitMinutes,
+        true,
+      ),
     );
   return start;
 }

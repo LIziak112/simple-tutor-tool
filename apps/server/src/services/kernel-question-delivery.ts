@@ -27,7 +27,7 @@ import {
 } from "./attempt-activity.ts";
 import { prepareKernelOriginals } from "./attempt-choice-evidence.ts";
 import { revisionStale } from "./attempt-submit-revisions.ts";
-import { attemptTimingOf } from "./attempt-timing.ts";
+import { assertAttemptNotTimedOut, attemptTimingOf } from "./attempt-timing.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import { readBoundQuestionDelivery } from "./kernel-question-delivery-binding.ts";
 import { deliverySlotId } from "./kernel-question-delivery-publication.ts";
@@ -126,6 +126,7 @@ export function saveQuestionDeliveryAnswer(
             );
           const value = deliveryValueOf(db, row, answer);
           const now = new Date();
+          const locked = attemptTimingOf(attempt, now)?.phase === "locked";
           try {
             const result = runtime.saveQuestionDeliveryDraft(
               actorOf(attempt),
@@ -140,13 +141,17 @@ export function saveQuestionDeliveryAnswer(
                 baseRevision: proof.baseRevision,
                 operationId: proof.mutationId,
               },
-              attemptTimingOf(attempt, now)?.phase === "locked"
-                ? "replayLatestOnly"
-                : "save",
+              locked ? "replayLatestOnly" : "save",
             );
-            touchAttemptActivity(db, attempt.id, now.toISOString());
+            if (!locked)
+              touchAttemptActivity(db, attempt.id, now.toISOString());
             return { data: attemptAnswerSaveDataSchema.parse(result) };
           } catch (error) {
+            if (
+              error instanceof LearningError &&
+              error.code === "DRAFT_REPLAY_REQUIRED"
+            )
+              assertAttemptNotTimedOut(attempt, now);
             return saveProofError(error, row);
           }
         },

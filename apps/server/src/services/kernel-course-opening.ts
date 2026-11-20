@@ -4,6 +4,7 @@ import { type Attempt, attempts, courses } from "../db/schema.ts";
 import { kernelCourseOpenings } from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { requireOwnAttempt } from "./attempt-access.ts";
+import { startOpenedAttemptTimer } from "./attempt-timing.ts";
 import { requireVisibleCourseUnit } from "./course-service.ts";
 import {
   canInitializeKernelStorage,
@@ -63,12 +64,7 @@ export function reserveKernelCourseOpening(
 ): Opening | undefined {
   const { courseId, unitId, studentId, attemptNo } = attempt;
   if (courseId === null || unitId === null) kernelAttemptUnavailable();
-  if (
-    !dataDir ||
-    attempt.practiceWorkflowVersion !== 1 ||
-    attempt.timeLimitSec !== null
-  )
-    return undefined;
+  if (!dataDir || attempt.practiceWorkflowVersion !== 1) return undefined;
   const course = tx
     .select({ teacherId: courses.teacherId })
     .from(courses)
@@ -198,7 +194,6 @@ export function replayKernelCourseOpening(
     practice.version !== opening.practiceVersion ||
     draft.courseId !== opening.courseId ||
     draft.workflowVersion !== 1 ||
-    draft.timeLimitMinutes !== undefined ||
     draft.responses.some(({ unitId }) => unitId !== opening.unitId)
   )
     kernelAttemptUnavailable();
@@ -312,6 +307,7 @@ export function finishKernelCourseOpening(
         attemptNo: current.attemptNo,
         id: receipt.activityId,
         startedAt: receipt.startedAt,
+        timeLimitMinutes: draft.timeLimitMinutes,
         practiceWorkflowVersion: 1,
         feedbackMode: "after_attempt",
       });
@@ -348,6 +344,7 @@ export function resumeBoundKernelCourse(
   db: Db,
   dataDir: string | undefined,
   attempt: Attempt,
+  timeLimitMinutes?: number,
   allowPendingRefreeze = false,
 ): Attempt {
   if (!dataDir) kernelAttemptUnavailable();
@@ -370,7 +367,16 @@ export function resumeBoundKernelCourse(
         : current;
       const delivery = readQuestionDeliveryFacts(db, dataDir, resolved);
       if (!delivery) kernelAttemptUnavailable();
-      return delivery.attempt;
+      const reopened = delivery.attempt;
+      // 内核已收草稿而宿主激活投影中断时，仍沿用原卷的时钟。
+      if (
+        timeLimitMinutes === undefined ||
+        !isOpenEmptyForKernelRefreeze(db, reopened) ||
+        delivery.rows.some(({ answerRevision }) => answerRevision > 0)
+      )
+        return reopened;
+      if (pendingKernelRefreeze(tx, reopened.id)) kernelAttemptUnavailable();
+      return startOpenedAttemptTimer(db, reopened, timeLimitMinutes);
     },
     { behavior: "immediate" },
   );
