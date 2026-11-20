@@ -391,6 +391,31 @@ describe("整卷配对的冻结来源与原值", () => {
     }
   });
 
+  it("整卷可冻结有材料槽位的无参考配对，且不会把坏参考降级为无参考", () => {
+    const { answers: _reference, ...options } = source;
+    const unkeyed = {
+      ...options,
+      materialRefs: [{ material: "听力材料", slots: "slot-1..slot-5" }],
+    };
+    expect(wholeQuestionDeliveryScoringSourcesSchema.parse([unkeyed])).toEqual([
+      unkeyed,
+    ]);
+    for (const invalid of [
+      { ...unkeyed, answers: null },
+      { ...unkeyed, answers: { kind: "matching", pairs: {} } },
+      { ...unkeyed, answers: { kind: "choice", index: 0 } },
+      { ...unkeyed, matchingOptions: undefined },
+      { ...unkeyed, materialRefs: [{ material: "听力材料" }] },
+    ]) {
+      expect(
+        wholeQuestionDeliveryScoringSourcesSchema.safeParse([invalid]).success,
+      ).toBe(false);
+    }
+    expect(
+      questionDeliveryScoringSourcesSchema.safeParse([unkeyed]).success,
+    ).toBe(false);
+  });
+
   it("按槽位确定编码，保留原值、重复选项和空映射，拒绝损坏的槽位序列", () => {
     const pairs = { "slot=乙": "opt,共同", "slot,甲": "opt=干扰" };
     const value = matchingDeliveryValueOf(pairs);

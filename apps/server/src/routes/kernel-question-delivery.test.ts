@@ -3664,9 +3664,14 @@ it.each([false, true])(
   },
 );
 
-it.each([true, false])(
-  "普通整卷配对经原入口保存冻结映射，自评开启=%s",
-  async (selfReview) => {
+it.each([
+  { selfReview: true, unkeyed: false, mixed: false },
+  { selfReview: false, unkeyed: false, mixed: true },
+  { selfReview: true, unkeyed: true, mixed: false },
+  { selfReview: true, unkeyed: true, mixed: true },
+])(
+  "普通整卷配对经原入口保存冻结映射，自评=$selfReview，无参考=$unkeyed，混卷=$mixed",
+  async ({ selfReview, unkeyed, mixed }) => {
     using data = mkdtempDisposableSync(join(tmpdir(), "m05-matching-host-"));
     const instance = openInstance(data.path);
     try {
@@ -3729,7 +3734,7 @@ it.each([true, false])(
         ...questionIds.map((id) => `::ref{question=${id}}`),
         "::::",
         "",
-        ...(selfReview ? [] : choices.slice(0, 6)),
+        ...(mixed ? choices.slice(0, 6) : []),
         ...questionIds.flatMap((id) => [
           `:::::question{id=${id} type=matching difficulty=3}`,
           "从选项中为文中空白处选择内容。",
@@ -3738,18 +3743,22 @@ it.each([true, false])(
           "",
           id === ids.repeat ? "::::options{allow-repeat=true}" : "::::options",
           ...publicOptions.flatMap(({ id, text }) => [
-            `:::option{id=${id}}`,
+            `:::option{id=${id}${id === "opt-7" ? " distractor=true" : ""}}`,
             text,
             ":::",
           ]),
           "::::",
           "",
-          ":::answer",
-          ...Object.entries(answerFor(id).pairs).map(
-            ([slot, option]) => `${slot} = ${option}`,
-          ),
-          ":::",
-          "",
+          ...(unkeyed
+            ? []
+            : [
+                ":::answer",
+                ...Object.entries(answerFor(id).pairs).map(
+                  ([slot, option]) => `${slot} = ${option}`,
+                ),
+                ":::",
+                "",
+              ]),
           ":::solution",
           solution,
           ":::",
@@ -3758,6 +3767,88 @@ it.each([true, false])(
         ]),
       ]);
       if (!unit) throw new Error("未导入合成配对题");
+      if (unkeyed && !mixed) {
+        const db = instance.db().$client;
+        const stored = z
+          .object({
+            source_md: z.string(),
+            answers_json: z.null(),
+            material_refs_json: z.string(),
+          })
+          .parse(
+            db
+              .prepare(
+                "SELECT source_md,answers_json,material_refs_json FROM questions WHERE id=?",
+              )
+              .get(ids.partial),
+          );
+        const replace = db.prepare(
+          "UPDATE questions SET source_md=?,answers_json=?,material_refs_json=? WHERE id=?",
+        );
+        for (const [source, answers, refs] of [
+          [stored.source_md, "无效 JSON", stored.material_refs_json],
+          [stored.source_md, "null", stored.material_refs_json],
+          [
+            stored.source_md,
+            '{"kind":"matching","pairs":{"slot-1":"unknown"}}',
+            stored.material_refs_json,
+          ],
+          [
+            stored.source_md.replace(
+              ":::solution",
+              ":::answer\n::: \n\n:::solution",
+            ),
+            null,
+            stored.material_refs_json,
+          ],
+          [
+            stored.source_md.replace(
+              ":::solution",
+              ":::answer\n非法参考\n:::\n\n:::solution",
+            ),
+            null,
+            stored.material_refs_json,
+          ],
+          [
+            stored.source_md,
+            null,
+            '[{"material":"mat-1","slots":"slot-1,unknown"}]',
+          ],
+          [
+            stored.source_md,
+            null,
+            '[{"material":"mat-1","slots":"slot-1,slot-5..slot-2"}]',
+          ],
+        ] as const) {
+          replace.run(source, answers, refs, ids.partial);
+          try {
+            const corrupted = await jsonCall(
+              app,
+              "/api/teacher/assignments",
+              world.teacher,
+              "POST",
+              {
+                title: "坏配对冻结来源",
+                unitIds: [unit.id],
+                studentIds: [world.studentId],
+                executionBackend: "kernel",
+                allowRedo: false,
+              },
+            );
+            expect(corrupted.status, await corrupted.clone().text()).toBe(422);
+            expect(await corrupted.json()).toMatchObject({
+              error: "M04_PRACTICE_INELIGIBLE",
+            });
+          } finally {
+            replace.run(
+              stored.source_md,
+              stored.answers_json,
+              stored.material_refs_json,
+              ids.partial,
+            );
+          }
+        }
+      }
       const setReview = (enabled: boolean) =>
         jsonCall(
           app,
@@ -3901,10 +3992,29 @@ it.each([true, false])(
           allow: ["answer"],
         });
       }
+      const automaticDraft =
+        unkeyed && mixed ? { "k17-one": { kind: "choice", index: 0 } } : {};
+      if (unkeyed && mixed) {
+        const automatic = await jsonCall(
+          app,
+          `${path}/answers/k17-one`,
+          world.ownerCookie,
+          "PUT",
+          {
+            answer: automaticDraft["k17-one"],
+            baseRevision: 0,
+            mutationId: randomUUID(),
+            expectedFrozenAt: attempt.frozenAt,
+            questionRevisionId: questions.find(({ id }) => id === "k17-one")
+              ?.questionRevisionId,
+          },
+        );
+        expect(automatic.status, await automatic.clone().text()).toBe(200);
+      }
       instance.reopen();
       app = instance.open(false);
       const saved = await readDraft();
-      expect(saved.drafts).toEqual(written);
+      expect(saved.drafts).toEqual({ ...written, ...automaticDraft });
       const submit = () =>
         jsonCall(app, `${path}/submit`, world.ownerCookie, "POST", {
           revisions: questions.map(({ id, questionRevisionId }) => ({
@@ -3913,9 +4023,46 @@ it.each([true, false])(
             expectedAnswerRevision: saved.draftRevisions?.[id] ?? 0,
           })),
         });
-      const confirmed = await submit();
-      expect(confirmed.status, await confirmed.clone().text()).toBe(200);
-      const raw: unknown = await confirmed.json();
+      let raw: unknown;
+      if (unkeyed && !mixed) {
+        const db = instance.db().$client;
+        db.exec(
+          "CREATE TEMP TRIGGER stop_matching_settlement BEFORE INSERT ON attempt_settlements BEGIN SELECT RAISE(ABORT, '中断配对结算'); END",
+        );
+        expect((await submit()).status).toBe(500);
+        expect(
+          db
+            .prepare(
+              "SELECT receipt_id FROM kernel_question_deliveries WHERE attempt_id=?",
+            )
+            .get(attempt.id),
+        ).toEqual({ receipt_id: null });
+        expect(
+          db
+            .prepare(
+              "SELECT count(*) n FROM attempt_settlements WHERE attempt_id=?",
+            )
+            .get(attempt.id),
+        ).toEqual({ n: 0 });
+        using kernel = new DatabaseSync(
+          join(data.path, BACKUP_KERNEL_DATABASE),
+          { readOnly: true },
+        );
+        expect(
+          kernel
+            .prepare(
+              "SELECT submission_id FROM completions WHERE activity_id=?",
+            )
+            .get(attempt.id),
+        ).toEqual({ submission_id: expect.any(String) });
+        instance.reopen();
+        app = instance.open(false);
+        raw = await readPublic("", ["answer", "answers", "solutionMd"]);
+      } else {
+        const confirmed = await submit();
+        expect(confirmed.status, await confirmed.clone().text()).toBe(200);
+        raw = await confirmed.json();
+      }
       assertNoLeak(raw, {
         forbid: privateKeys,
         allow: ["answer", "answers", "solutionMd"],
@@ -4010,12 +4157,26 @@ it.each([true, false])(
             version: 1,
             paragraphs: [{ id: "content", text: material }],
           });
-        const recovery = runtime.recoverQuestionDelivery(actor, attempt.id, {
-          protocolVersion: 1,
+        const key = {
+          protocolVersion: 1 as const,
           operationId: ticket.operation_id,
           stepAttemptId: ticket.step_attempt_id,
-        });
+        };
+        const recovery = runtime.recoverQuestionDelivery(
+          actor,
+          attempt.id,
+          key,
+          "declared",
+        );
         expect(recovery.receipt.id).toBe(ticket.receipt_id);
+        expect(
+          runtime.confirmQuestionDelivery(actor, attempt.id, {
+            ...key,
+            source: "whole",
+            slotId: ticket.slot_id,
+            questions: recovery.requestQuestions,
+          }),
+        ).toEqual(recovery.receipt);
         expect(
           recovery.confirmation.questions
             .filter(({ questionId }) => questionIds.includes(questionId))
@@ -4034,26 +4195,48 @@ it.each([true, false])(
           [ids.empty, [], 1],
           [ids.missing, null, 0],
         ]);
-        expect(
-          recovery.evaluation.questions
-            .filter(({ questionId }) => questionIds.includes(questionId))
-            .map(({ result }) => result),
-        ).toEqual(questionIds.map(() => ({ status: "needsReview" })));
+        if (unkeyed) {
+          expect(recovery.assessment).toBe(
+            mixed ? "automatic" : "teacherReview",
+          );
+          expect(recovery.review?.questions).toEqual(
+            questionIds.map((questionId) => ({
+              questionId,
+              questionVersion: 1,
+              status: "needsReview",
+            })),
+          );
+          if (recovery.assessment === "automatic")
+            expect(recovery.evaluation.questions).toEqual([
+              {
+                questionId: "k17-one",
+                questionVersion: 1,
+                result: { status: "judged", correct: true },
+              },
+            ]);
+        } else {
+          if (recovery.assessment !== "automatic")
+            throw new Error("有参考配对须保留原评估通道");
+          expect(
+            recovery.evaluation.questions
+              .filter(({ questionId }) => questionIds.includes(questionId))
+              .map(({ result }) => result),
+          ).toEqual(questionIds.map(() => ({ status: "needsReview" })));
+        }
       } finally {
         runtime.close();
       }
       using kernelDb = new DatabaseSync(databasePath, { readOnly: true });
       const parseDefinition = (row: unknown): unknown =>
         JSON.parse(z.object({ definition: z.string() }).parse(row).definition);
-      expect(
-        parseDefinition(
-          kernelDb
-            .prepare(
-              "SELECT p.definition FROM practices p JOIN activities a ON p.id=a.practice_id AND p.version=a.practice_version WHERE a.id=?",
-            )
-            .get(attempt.id),
-        ),
-      ).toMatchObject({
+      const practice = parseDefinition(
+        kernelDb
+          .prepare(
+            "SELECT p.definition FROM practices p JOIN activities a ON p.id=a.practice_id AND p.version=a.practice_version WHERE a.id=?",
+          )
+          .get(attempt.id),
+      );
+      expect(practice).toMatchObject({
         questionAnswerRules: Object.fromEntries(
           questionIds.map((id) => [
             id,
@@ -4061,27 +4244,51 @@ it.each([true, false])(
           ]),
         ),
       });
-      expect(
-        parseDefinition(
-          kernelDb
-            .prepare(
-              "SELECT k.definition FROM scoring_keys k JOIN evaluation_tasks e ON k.id=e.key_id AND k.version=e.key_version WHERE e.submission_id=?",
-            )
-            .get(ticket.receipt_id),
-        ),
-      ).toMatchObject({
-        acceptedByQuestion: Object.fromEntries(
-          questionIds.map((id) => [
-            id,
-            {
-              response: "orderedTextBlanks",
-              acceptedBlanks: Object.entries(answerFor(id).pairs)
-                .sort()
-                .flatMap(([slot, option]) => [[slot], [option]]),
+      const scoringKey = kernelDb
+        .prepare(
+          "SELECT k.definition FROM scoring_keys k JOIN evaluation_tasks e ON k.id=e.key_id AND k.version=e.key_version WHERE e.submission_id=?",
+        )
+        .get(ticket.receipt_id);
+      if (unkeyed) {
+        expect(practice).toMatchObject({
+          grading: { teacherReview: { questionIds: questionIds.toSorted() } },
+          questions: expect.arrayContaining(
+            questionIds.map((id) =>
+              expect.objectContaining({
+                id,
+                response: "orderedTextBlanks",
+                blankCount: id === ids.repeat ? 6 : 10,
+              }),
+            ),
+          ),
+        });
+        if (mixed)
+          expect(parseDefinition(scoringKey)).toEqual({
+            id: expect.any(String),
+            version: 1,
+            acceptedByQuestion: {
+              "k17-one": { response: "choice", acceptedChoice: "0" },
             },
-          ]),
-        ),
-      });
+          });
+        else {
+          expect(practice).not.toHaveProperty("grading.assessment");
+          expect(scoringKey).toBeUndefined();
+        }
+      } else {
+        expect(parseDefinition(scoringKey)).toMatchObject({
+          acceptedByQuestion: Object.fromEntries(
+            questionIds.map((id) => [
+              id,
+              {
+                response: "orderedTextBlanks",
+                acceptedBlanks: Object.entries(answerFor(id).pairs)
+                  .sort()
+                  .flatMap(([slot, option]) => [[slot], [option]]),
+              },
+            ]),
+          ),
+        });
+      }
       expect(
         kernelDb
           .prepare(
@@ -4089,7 +4296,9 @@ it.each([true, false])(
           )
           .all(ticket.receipt_id),
       ).toEqual(
-        [ids.partial, ids.repeat].map((id) => ({ unit_id: `question:${id}` })),
+        [...(mixed && unkeyed ? ["k17-one"] : []), ids.partial, ids.repeat].map(
+          (id) => ({ unit_id: `question:${id}` }),
+        ),
       );
 
       const teacherView = await jsonCall(
@@ -4101,22 +4310,32 @@ it.each([true, false])(
       const teacher = teacherAttemptDetailOkSchema.parse(
         await teacherView.json(),
       ).data;
-      const gradingPolicy = selfReview ? "reference_self" : "manual_only";
+      const gradingPolicy =
+        selfReview && !unkeyed ? "reference_self" : "manual_only";
       const target = teacher.questions.find(
         ({ questionId }) => questionId === ids.partial,
       );
       expect(target).toMatchObject({
         answer: partial,
-        answers: answerFor(ids.partial),
+        answers: unkeyed ? null : answerFor(ids.partial),
         autoCorrect: null,
         finalCorrect: null,
         gradingPolicy,
       });
       expect(teacher).toMatchObject({
-        pendingCount: selfReview ? 0 : 4,
-        selfReviewPendingCount: selfReview ? 4 : 0,
+        pendingCount: gradingPolicy === "manual_only" ? 4 : 0,
+        selfReviewPendingCount: gradingPolicy === "reference_self" ? 4 : 0,
       });
-      if (!selfReview) {
+      if (unkeyed && mixed)
+        expect(
+          teacher.questions.find(({ questionId }) => questionId === "k17-one"),
+        ).toMatchObject({
+          answer: automaticDraft["k17-one"],
+          autoCorrect: true,
+          finalCorrect: true,
+          gradingPolicy: "auto",
+        });
+      if (gradingPolicy === "manual_only") {
         if (!target) throw new Error("缺少冻结配对评阅行");
         const mark = await jsonCall(
           app,
@@ -4148,6 +4367,127 @@ it.each([true, false])(
           teacherComment: null,
         });
       }
+      if (unkeyed) {
+        if (!target) throw new Error("缺少无参考配对评阅行");
+        const markPath = `/api/teacher/responses/${target.responseId}/mark`;
+        const clear = {
+          mark: null,
+          comment: null,
+          baseRevision: 1,
+          mutationId: randomUUID(),
+        };
+        const mark = (request: MarkRequest, cookie = world.teacher) =>
+          jsonCall(app, markPath, cookie, "POST", request);
+        const checkedMark = async (request: MarkRequest) => {
+          const response = await mark(request);
+          expect(response.status, await response.clone().text()).toBe(200);
+          return wire(markResponseDataSchema).parse(await response.json()).data;
+        };
+        const queue = async () => {
+          const response = await jsonCall(
+            app,
+            `/api/teacher/pending-marks?assignmentId=${assignment}`,
+            world.teacher,
+          );
+          expect(response.status, await response.clone().text()).toBe(200);
+          return wire(pendingMarkListDataSchema)
+            .parse(await response.json())
+            .data.marks.map(({ questionId }) => questionId)
+            .sort();
+        };
+        expect(await queue()).toEqual(
+          questionIds.filter((id) => id !== ids.partial).sort(),
+        );
+        expect((await mark(clear, foreignTeacher)).status).toBe(404);
+        const stale = await mark({ ...clear, baseRevision: 0 });
+        expect(stale.status).toBe(409);
+        expect(await stale.json()).toMatchObject({ error: "VERDICT_CONFLICT" });
+
+        let finishedMark: z.infer<typeof markResponseDataSchema> | undefined;
+        for (const row of teacher.questions.filter(
+          ({ questionId }) =>
+            questionId !== ids.partial && questionIds.includes(questionId),
+        )) {
+          const response = await jsonCall(
+            app,
+            `/api/teacher/responses/${row.responseId}/mark`,
+            world.teacher,
+            "POST",
+            {
+              mark: "correct",
+              comment: null,
+              baseRevision: 0,
+              mutationId: randomUUID(),
+            },
+          );
+          expect(response.status, await response.clone().text()).toBe(200);
+          finishedMark = wire(markResponseDataSchema).parse(
+            await response.json(),
+          ).data;
+        }
+        expect(finishedMark).toMatchObject({
+          attemptStatus: "graded",
+          pendingCount: 0,
+          scoreFinal: mixed ? 80 : 75,
+        });
+        expect(await queue()).toEqual([]);
+        const owner = teacherInfoOkSchema.parse(
+          await (await jsonCall(app, "/api/teacher/me", world.teacher)).json(),
+        ).data.id;
+        const disable = sql.prepare(
+          "UPDATE teachers SET disabled_at=? WHERE id=?",
+        );
+        disable.run(new Date().toISOString(), owner);
+        expect((await mark(clear)).status).toBe(401);
+        disable.run(null, owner);
+        const events = () =>
+          kernelDb
+            .prepare("SELECT id FROM verdict_events WHERE operation_id=?")
+            .all(clear.mutationId);
+        expect(events()).toEqual([]);
+        sql.exec(
+          "CREATE TEMP TRIGGER stop_matching_mark BEFORE UPDATE OF result_json ON kernel_response_marks BEGIN SELECT RAISE(ABORT, '中断配对批改'); END",
+        );
+        expect((await mark(clear)).status).toBe(500);
+        expect(
+          sql
+            .prepare(
+              "SELECT result_json FROM kernel_response_marks WHERE operation_id=?",
+            )
+            .get(clear.mutationId),
+        ).toEqual({ result_json: null });
+        const [accepted] = events();
+        expect(accepted).toEqual({ id: expect.any(String) });
+        instance.reopen();
+        app = instance.open(false);
+        expect(await queue()).toEqual([ids.partial]);
+        const cleared = await checkedMark(clear);
+        expect(cleared).toMatchObject({
+          eventId: accepted?.id,
+          revision: 2,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: null,
+          attemptStatus: "submitted",
+          pendingCount: 1,
+          scoreFinal: null,
+        });
+        expect(await checkedMark(clear)).toEqual(cleared);
+        const reused = await mark({ ...clear, mark: "correct" });
+        expect(reused.status).toBe(409);
+        expect(await reused.json()).toMatchObject({
+          error: "OPERATION_CONFLICT",
+        });
+        expect(events()).toEqual([accepted]);
+        expect(
+          instance
+            .db()
+            .$client.prepare(
+              "SELECT count(*) AS n FROM attempt_settlements WHERE attempt_id=?",
+            )
+            .get(attempt.id),
+        ).toEqual({ n: 1 });
+      }
       const reviewPath = `${path}/questions/${ids.partial}/self-review`;
       const review = (cookie: string) =>
         jsonCall(app, reviewPath, cookie, "POST", {
@@ -4171,19 +4511,27 @@ it.each([true, false])(
       expect(released.answersReleased).toBe(true);
       for (const row of rowsOf(released)) {
         const marked = !selfReview && row.questionId === ids.partial;
+        const unkeyedCorrect = unkeyed && row.questionId !== ids.partial;
         expect(row).toMatchObject({
           snapshot: structureOf(row.questionId),
-          answers: answerFor(row.questionId),
+          answers: unkeyed ? null : answerFor(row.questionId),
           solutionMd: solution,
           autoCorrect: null,
-          finalCorrect: marked ? false : null,
+          finalCorrect: marked ? false : unkeyedCorrect ? true : null,
           gradingPolicy,
-          teacherMark: marked ? "wrong" : null,
+          teacherMark: marked ? "wrong" : unkeyedCorrect ? "correct" : null,
           teacherComment: marked ? comment : null,
         });
       }
       expect((await review(foreignStudent)).status).toBe(403);
-      if (selfReview) {
+      if (unkeyed) {
+        expect((await review(world.ownerCookie)).status).toBe(403);
+        expect(released.summary).toMatchObject({
+          pendingCount: 1,
+          scoreFinal: null,
+        });
+        expect(released.attempt.scoreAuto).toBe(mixed ? 100 : null);
+      } else if (selfReview) {
         const reviewed = await review(world.ownerCookie);
         expect(reviewed.status, await reviewed.clone().text()).toBe(200);
         expect(

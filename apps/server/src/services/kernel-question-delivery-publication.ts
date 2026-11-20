@@ -29,6 +29,7 @@ export function questionDeliveryPublication(
   rows: readonly Frozen[],
   mode: "whole" | "perQuestion",
   materialInputs?: Record<string, MaterialInput>,
+  teacherReviewWidths?: ReadonlyMap<string, number>,
 ) {
   const schema =
     mode === "whole"
@@ -44,6 +45,18 @@ export function questionDeliveryPublication(
       version: questionVersion,
       prompt: studentStemMd(question),
     };
+    if ("materialRefs" in source) {
+      const blankCount = teacherReviewWidths?.get(question.id);
+      if (!blankCount) throw new Error("冻结配对题缺少材料槽位");
+      return {
+        question: {
+          ...base,
+          response: "orderedTextBlanks" as const,
+          blankCount,
+        },
+        answerRule: ownClassMatchingAnswerRuleRef,
+      };
+    }
     if ("acceptedBlanks" in source) {
       const response = "orderedTextBlanks" as const;
       const { acceptedBlanks } = source;
@@ -99,6 +112,12 @@ export function questionDeliveryPublication(
       ? [[item.question.id, item.answerRule] as const]
       : [],
   );
+  const acceptedByQuestion = declared.flatMap(({ question, key }) =>
+    key ? [[question.id, key] as const] : [],
+  );
+  const teacherReviewIds = declared.flatMap(({ question, key }) =>
+    key ? [] : [question.id],
+  );
   const instructions = "完成练习并提交答案。";
   return {
     practice: {
@@ -144,13 +163,18 @@ export function questionDeliveryPublication(
         },
       ],
       grading: {
-        assessment: {
-          from: { stepId: "answer", slotId: deliverySlotId },
-          evaluator: ownClassDeliveryEvaluatorRef,
-          keyRef: key,
-          unit: "question",
-          effectiveVerdictOrder: ["teacherReview", "automatic"],
-        },
+        ...(acceptedByQuestion.length > 0 && {
+          assessment: {
+            from: { stepId: "answer", slotId: deliverySlotId },
+            evaluator: ownClassDeliveryEvaluatorRef,
+            keyRef: key,
+            unit: "question",
+            effectiveVerdictOrder: ["teacherReview", "automatic"],
+          },
+        }),
+        ...(teacherReviewIds.length > 0 && {
+          teacherReview: { questionIds: teacherReviewIds },
+        }),
       },
       policy: {
         offline: "onlineOnly",
@@ -167,11 +191,11 @@ export function questionDeliveryPublication(
         manager: { scope: "assigningTeacher", actions: [] },
       },
     },
-    scoringKey: {
-      ...key,
-      acceptedByQuestion: Object.fromEntries(
-        declared.map((item) => [item.question.id, item.key]),
-      ),
-    },
+    ...(acceptedByQuestion.length > 0 && {
+      scoringKey: {
+        ...key,
+        acceptedByQuestion: Object.fromEntries(acceptedByQuestion),
+      },
+    }),
   } satisfies PublicationInput;
 }

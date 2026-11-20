@@ -1,12 +1,16 @@
 import {
+  type AttemptContextSnapshotEntry,
+  answerDirective,
   assignmentScoringSourcesSchema,
   attemptContextSnapshotEntrySchema,
   attemptTimeLimitMinutesSchema,
   frozenGradingPolicySchema,
+  getDirective,
+  type Question,
   questionSchema,
   wholeQuestionDeliveryScoringSourcesSchema,
 } from "@tutor/contract";
-import { studentStemMd } from "@tutor/md-dsl";
+import { expandSelectionIds, processor, studentStemMd } from "@tutor/md-dsl";
 import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import type { Assignment, Attempt } from "../db/schema.ts";
@@ -91,6 +95,48 @@ export function assertKernelAssignmentPolicy(assignment: Assignment): void {
   if (assignment.allowPerQuestionFeedback || assignment.allowRedo) ineligible();
 }
 
+function matchingReviewWidth(
+  question: Question,
+  entries: readonly AttemptContextSnapshotEntry[],
+  storedAnswers: string | null,
+): number {
+  // 旧投影可能把坏参考字段丢成缺省，原文里的空答案块也不能视为无参考。
+  const [source] = processor.parse(question.sourceMd).children;
+  if (
+    storedAnswers !== null ||
+    source?.type !== "containerDirective" ||
+    source.children.some(
+      (child) =>
+        child.type === "containerDirective" &&
+        getDirective(child.name)?.name === answerDirective.name,
+    )
+  )
+    ineligible();
+  const selected = new Set<string>();
+  for (const ref of question.materialRefs ?? []) {
+    if (ref.slots === undefined) continue;
+    const material = entries.find(
+      (entry) => entry.kind === "material" && entry.sourceId === ref.material,
+    );
+    if (material?.kind !== "material") ineligible();
+    const slots = material.snapshot.slots;
+    const order = slots.map(({ id }) => id);
+    const matchingSlots = new Set(
+      slots.filter(({ slotKind }) => slotKind === "match").map(({ id }) => id),
+    );
+    for (const selection of ref.slots.split(",")) {
+      if (selection.trim() === "") continue;
+      const expanded = expandSelectionIds(selection, order);
+      if (!expanded.length || expanded.some((id) => !matchingSlots.has(id)))
+        ineligible();
+      for (const id of expanded) selected.add(id);
+    }
+  }
+  if (!selected.size) ineligible();
+  // 内核原值的每对两个位置分别保留槽位 id 和选项 id。
+  return selected.size * 2;
+}
+
 export function loadKernelAssignmentQuestions(
   db: Db,
   assignment: Assignment,
@@ -135,15 +181,26 @@ export function loadKernelAssignmentQuestions(
   const frozenQuestions = responses.map(({ question }) => question);
   const parsed = assignmentScoringSourcesSchema.safeParse(frozenQuestions);
   if (!parsed.success) {
-    if (
-      !wholeQuestionDeliveryScoringSourcesSchema.safeParse(frozenQuestions)
-        .success
-    )
-      ineligible();
+    const delivery =
+      wholeQuestionDeliveryScoringSourcesSchema.safeParse(frozenQuestions);
+    if (!delivery.success) ineligible();
+    const teacherReviewWidths = new Map<string, number>();
+    for (const [index, source] of delivery.data.entries()) {
+      if (!("materialRefs" in source)) continue;
+      const row = liveRows[index];
+      const frozen = responses[index];
+      if (!row || !frozen || frozen.gradingPolicy !== "manual_only")
+        ineligible();
+      teacherReviewWidths.set(
+        row.id,
+        matchingReviewWidth(frozen.question, entries, row.answersJson),
+      );
+    }
     return {
       slotType: "questionDelivery" as const,
       responses,
       context: entries,
+      teacherReviewWidths,
     };
   }
   const { slotType, questions: sources } = parsed.data;

@@ -18,6 +18,7 @@ import {
   questionTypeSchema,
   responseAnswersSchema,
 } from "./content.ts";
+import { materialRefSchema } from "./material.ts";
 
 /**
  * 判分输入契约（T2.5 起为权威定义）：学生答案的形态，与 content.ts 的
@@ -152,6 +153,21 @@ export const matchingDeliveryScoringSourceSchema = z
     ]),
   }));
 
+export const matchingTeacherReviewSourceSchema = z.object({
+  type: questionTypeSchema.extract(["matching"]),
+  matchingOptions: matchingOptionsSchema.refine(
+    ({ options }) =>
+      new Set(options.map(({ id }) => id)).size === options.length,
+    { message: "配对选项编号须唯一" },
+  ),
+  materialRefs: materialRefSchema
+    .array()
+    .refine((refs) => refs.some(({ slots }) => slots !== undefined), {
+      message: "无参考配对题须声明材料槽位",
+    }),
+  answers: z.undefined().optional(),
+});
+
 export const responseDeliveryScoringSourceSchema = z.object({
   type: questionTypeSchema.extract(["response"]),
   answers: responseAnswersSchema.optional(),
@@ -178,6 +194,7 @@ export const wholeQuestionDeliveryScoringSourcesSchema = z
     orderedTextDeliveryScoringSourceSchema,
     orderingDeliveryScoringSourceSchema,
     matchingDeliveryScoringSourceSchema,
+    matchingTeacherReviewSourceSchema,
     responseDeliveryScoringSourceSchema,
   ])
   .array()

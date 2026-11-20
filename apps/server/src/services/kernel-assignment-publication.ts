@@ -156,6 +156,7 @@ export function kernelAssignmentPublication(
         definition.responses,
         "whole",
         materialInputs,
+        definition.teacherReviewWidths,
       ),
     } satisfies PublicationInput;
   }

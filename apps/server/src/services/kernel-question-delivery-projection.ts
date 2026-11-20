@@ -1,3 +1,4 @@
+import { matchingTeacherReviewSourceSchema } from "@tutor/contract";
 import { kernelDeliveryOriginalSchema } from "@tutor/contract/kernel-question-delivery";
 import { isUnanswered } from "@tutor/grading";
 import { and, eq, gt } from "drizzle-orm";
@@ -24,9 +25,19 @@ import type { KernelRuntime } from "./kernel-assignment-runtime.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import type { DeliveryTicket } from "./kernel-question-delivery-ticket.ts";
 import { deliveryAnswerOf } from "./kernel-question-delivery-values.ts";
+import { snapshotOfRow } from "./snapshot.ts";
 import { recordedActiveSecTotal } from "./submission-time.ts";
 
-type Recovery = ReturnType<KernelRuntime["recoverQuestionDelivery"]>;
+type Recovery = ReturnType<typeof declaredDeliveryRecovery>;
+
+export function declaredDeliveryRecovery(
+  runtime: KernelRuntime,
+  actor: Parameters<KernelRuntime["recoverQuestionDelivery"]>[0],
+  attemptId: string,
+  key: Parameters<KernelRuntime["recoverQuestionDelivery"]>[2],
+) {
+  return runtime.recoverQuestionDelivery(actor, attemptId, key, "declared");
+}
 
 export function projectDeliveryRows(
   db: Db,
@@ -36,7 +47,14 @@ export function projectDeliveryRows(
   selected: readonly ResponseRow[],
 ) {
   const { activitySeal, source } = ticket.intent;
-  const { receipt, confirmation, evaluation } = recovery;
+  if (
+    recovery.assessment !== "automatic" &&
+    recovery.assessment !== "teacherReview"
+  )
+    kernelAttemptUnavailable();
+  const { receipt, confirmation, review } = recovery;
+  const evaluation =
+    recovery.assessment === "automatic" ? recovery.evaluation : undefined;
   const formalInk = new Set(
     db
       .select({ id: ink.questionId })
@@ -53,7 +71,10 @@ export function projectDeliveryRows(
     confirmation.questions.map((question) => [question.questionId, question]),
   );
   const verdicts = new Map(
-    evaluation.questions.map((question) => [question.questionId, question]),
+    evaluation?.questions.map((question) => [question.questionId, question]),
+  );
+  const required = new Map(
+    review?.questions.map((question) => [question.questionId, question]),
   );
   const seals = new Map(
     activitySeal.responses.map((row) => [row.responseId, row]),
@@ -62,10 +83,14 @@ export function projectDeliveryRows(
     recovery.draftChangeCounts.map((row) => [row.questionId, row.changeCount]),
   );
   if (
-    evaluation.evaluator.id !== ownClassDeliveryEvaluatorRef.id ||
-    evaluation.evaluator.version !== ownClassDeliveryEvaluatorRef.version ||
+    (evaluation &&
+      (evaluation.evaluator.id !== ownClassDeliveryEvaluatorRef.id ||
+        evaluation.evaluator.version !== ownClassDeliveryEvaluatorRef.version ||
+        verdicts.size === 0)) ||
     byQuestion.size !== selected.length ||
-    verdicts.size !== selected.length ||
+    verdicts.size !== (evaluation?.questions.length ?? 0) ||
+    required.size !== (review?.questions.length ?? 0) ||
+    verdicts.size + required.size !== selected.length ||
     seals.size !== selected.length ||
     canonicalJsonOf(recovery.requestQuestions.toSorted(byId)) !==
       canonicalJsonOf(ticket.intent.questions.toSorted(byId))
@@ -74,17 +99,26 @@ export function projectDeliveryRows(
   const rows = selected.map((row) => {
     const question = byQuestion.get(row.questionId);
     const evaluated = verdicts.get(row.questionId);
+    const reviewRequired = required.get(row.questionId);
+    const teacherReview = matchingTeacherReviewSourceSchema.safeParse(
+      snapshotOfRow(row),
+    ).success;
     const seal = seals.get(row.id);
     const revision = ticket.intent.revisions.find(
       (item) => item.questionId === row.questionId,
     );
     if (
       !question ||
-      !evaluated ||
+      (teacherReview
+        ? source !== "whole" ||
+          row.gradingPolicy !== "manual_only" ||
+          reviewRequired?.questionVersion !== row.questionVersion ||
+          evaluated !== undefined
+        : evaluated?.questionVersion !== row.questionVersion ||
+          reviewRequired !== undefined) ||
       !seal ||
       row.id !== revision?.questionRevisionId ||
-      question.questionVersion !== row.questionVersion ||
-      evaluated.questionVersion !== row.questionVersion
+      question.questionVersion !== row.questionVersion
     )
       kernelAttemptUnavailable();
     const answer = deliveryAnswerOf(row, question.value);
@@ -92,7 +126,7 @@ export function projectDeliveryRows(
     const empty =
       isUnanswered(answer ?? undefined) && !formalInk.has(row.questionId);
     const result =
-      evaluated.result.status === "judged" ? evaluated.result.correct : null;
+      evaluated?.result.status === "judged" ? evaluated.result.correct : null;
     const submittedAt =
       attempt.sourceType === "lesson" ||
       attempt.practiceWorkflowVersion !== null
