@@ -31,6 +31,7 @@ import { attemptResponseRows } from "./attempt-freeze.ts";
 import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
 import {
   ownClassJudgeAnswerRule,
+  ownClassMatchingAnswerRule,
   ownClassOrderingAnswerRule,
   ownClassResponseAnswerRule,
 } from "./kernel-question-delivery-values.ts";
@@ -160,6 +161,7 @@ export function withKernelRuntime<T>(
       titledTextEvaluators: [createOwnClassTitledTextEvaluator(db, getScope)],
       questionAnswerRules: [
         ownClassJudgeAnswerRule,
+        ownClassMatchingAnswerRule,
         ownClassOrderingAnswerRule,
         ownClassResponseAnswerRule,
       ],

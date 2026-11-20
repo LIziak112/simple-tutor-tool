@@ -5,6 +5,9 @@ import {
   finalTextDeliveryScoringSourceSchema,
   handwrittenStudentAnswerSchema,
   judgeStudentAnswerSchema,
+  matchingDeliveryAnswerSchema,
+  matchingDeliveryScoringSourceSchema,
+  matchingDeliveryValueOf,
   multiStudentAnswerSchema,
   orderedTextDeliveryScoringSourceSchema,
   questionDeliveryScoringSourcesSchema,
@@ -341,5 +344,77 @@ describe("整卷排序的冻结来源", () => {
         { ...source, answers: { kind: "response", referenceMd: "参考" } },
       ]).success,
     ).toBe(false);
+  });
+});
+
+describe("整卷配对的冻结来源与原值", () => {
+  const source = {
+    type: "matching",
+    matchingOptions: {
+      allowRepeat: true,
+      options: [
+        { id: "opt,共同", text: "共同项", distractor: false },
+        { id: "opt=干扰", text: "可选干扰项", distractor: true },
+      ],
+    },
+    answers: {
+      kind: "matching",
+      pairs: { "slot=乙": "opt,共同", "slot,甲": "opt,共同" },
+    },
+  };
+
+  it("整卷逐位保留冻结参考的原始槽位和选项，讲练范围不变", () => {
+    expect(matchingDeliveryScoringSourceSchema.parse(source)).toEqual({
+      ...source,
+      acceptedBlanks: [["slot,甲"], ["opt,共同"], ["slot=乙"], ["opt,共同"]],
+    });
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.safeParse([source]).success,
+    ).toBe(true);
+    expect(
+      questionDeliveryScoringSourcesSchema.safeParse([source]).success,
+    ).toBe(false);
+  });
+
+  it("拒绝无实际映射、无选项池或参考引用池外选项", () => {
+    for (const changes of [
+      { answers: undefined },
+      { answers: { kind: "matching", pairs: {} } },
+      { answers: { kind: "matching", pairs: { "slot=乙": "未知" } } },
+      { matchingOptions: undefined },
+    ]) {
+      expect(
+        wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+          { ...source, ...changes },
+        ]).success,
+      ).toBe(false);
+    }
+  });
+
+  it("按槽位确定编码，保留原值、重复选项和空映射，拒绝损坏的槽位序列", () => {
+    const pairs = { "slot=乙": "opt,共同", "slot,甲": "opt=干扰" };
+    const value = matchingDeliveryValueOf(pairs);
+    expect(value).toEqual(["slot,甲", "opt=干扰", "slot=乙", "opt,共同"]);
+    expect(matchingDeliveryAnswerSchema.parse(value)).toEqual({
+      kind: "matching",
+      pairs,
+    });
+    for (const answer of [source.answers, { kind: "matching", pairs: {} }]) {
+      expect(
+        matchingDeliveryAnswerSchema.parse(
+          matchingDeliveryValueOf(answer.pairs),
+        ),
+      ).toEqual(answer);
+    }
+    for (const malformed of [
+      ["slot"],
+      ["slot", ""],
+      ["slot", "option", "slot", "other"],
+      [0, "option"],
+    ]) {
+      expect(matchingDeliveryAnswerSchema.safeParse(malformed).success).toBe(
+        false,
+      );
+    }
   });
 });

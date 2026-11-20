@@ -9,6 +9,7 @@ import type { PublicationInput } from "learning-kernel";
 import { ownClassDeliveryEvaluatorRef } from "./attempt-choice-evaluation.ts";
 import {
   ownClassJudgeAnswerRuleRef,
+  ownClassMatchingAnswerRuleRef,
   ownClassOrderingAnswerRuleRef,
   ownClassResponseAnswerRuleRef,
 } from "./kernel-question-delivery-values.ts";
@@ -49,9 +50,12 @@ export function questionDeliveryPublication(
       return {
         question: { ...base, response, blankCount: acceptedBlanks.length },
         key: { response, acceptedBlanks },
-        ...("orderingItems" in source && {
-          answerRule: ownClassOrderingAnswerRuleRef,
-        }),
+        answerRule:
+          "orderingItems" in source
+            ? ownClassOrderingAnswerRuleRef
+            : "matchingOptions" in source
+              ? ownClassMatchingAnswerRuleRef
+              : undefined,
       };
     }
     if (isResponseDeliveryScoringSource(source)) {

@@ -9,6 +9,8 @@ import {
   fillAnswersSchema,
   finalAnswersSchema,
   judgeAnswersSchema,
+  matchingAnswersSchema,
+  matchingOptionsSchema,
   multiAnswersSchema,
   optionSchema,
   orderingAnswersSchema,
@@ -129,6 +131,27 @@ export const orderingDeliveryScoringSourceSchema = z
     acceptedBlanks: source.answers.sequence.map((item) => [item]),
   }));
 
+export const matchingDeliveryScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["matching"]),
+    matchingOptions: matchingOptionsSchema,
+    answers: matchingAnswersSchema,
+  })
+  .refine(
+    ({ matchingOptions, answers }) => {
+      const options = new Set(matchingOptions.options.map(({ id }) => id));
+      const values = Object.values(answers.pairs);
+      return values.length > 0 && values.every((id) => options.has(id));
+    },
+    { path: ["answers", "pairs"], message: "配对参考与冻结选项池不一致" },
+  )
+  .transform((source) => ({
+    ...source,
+    acceptedBlanks: matchingDeliveryValueOf(source.answers.pairs).map((id) => [
+      id,
+    ]),
+  }));
+
 export const responseDeliveryScoringSourceSchema = z.object({
   type: questionTypeSchema.extract(["response"]),
   answers: responseAnswersSchema.optional(),
@@ -154,6 +177,7 @@ export const wholeQuestionDeliveryScoringSourcesSchema = z
     objectiveDeliveryScoringSourceSchema,
     orderedTextDeliveryScoringSourceSchema,
     orderingDeliveryScoringSourceSchema,
+    matchingDeliveryScoringSourceSchema,
     responseDeliveryScoringSourceSchema,
   ])
   .array()
@@ -230,6 +254,39 @@ export const matchingStudentAnswerSchema = z.object({
   kind: z.literal("matching"),
   pairs: z.record(z.string().min(1), z.string().min(1)),
 });
+
+/** 每对占相邻两个原始字符串，按槽位排序以稳定冻结参考和草稿的编码。 */
+export function matchingDeliveryValueOf(
+  pairs: Readonly<Record<string, string>>,
+): string[] {
+  const entries = Object.entries(pairs).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  return entries.flat();
+}
+
+export const matchingDeliveryAnswerSchema = z
+  .array(z.string().min(1))
+  .transform((value, ctx) => {
+    const pairs = new Map<string, string>();
+    for (let index = 0; index < value.length; index += 2) {
+      const slot = value[index];
+      const option = value[index + 1];
+      if (slot === undefined || option === undefined || pairs.has(slot)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [index],
+          message: "配对原值须逐对保留唯一槽位及其选项",
+        });
+        return z.NEVER;
+      }
+      pairs.set(slot, option);
+    }
+    return {
+      kind: matchingStudentAnswerSchema.shape.kind.value,
+      pairs: Object.fromEntries(pairs),
+    };
+  });
 
 /**
  * ordering 学生答案：已放 itemId 序列。部分序列=草稿合法；无重复、干扰项

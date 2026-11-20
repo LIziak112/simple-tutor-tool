@@ -2,6 +2,10 @@ import {
   choiceStudentAnswerSchema,
   judgeBehavior,
   judgeStudentAnswerSchema,
+  matchingBehavior,
+  matchingDeliveryAnswerSchema,
+  matchingDeliveryValueOf,
+  matchingStudentAnswerSchema,
   orderingBehavior,
   questionEvidenceBindings,
   responseBehavior,
@@ -57,6 +61,18 @@ export const ownClassOrderingAnswerRule = {
     orderingBehavior.isAnswered({ kind: "ordering", sequence: [...value] }),
 } satisfies QuestionAnswerRuleRegistration;
 
+export const ownClassMatchingAnswerRuleRef = {
+  id: "ownclass-matching-pairs",
+  version: 1,
+} as const;
+
+export const ownClassMatchingAnswerRule = {
+  ...ownClassMatchingAnswerRuleRef,
+  response: "orderedTextBlanks",
+  isAnswered: (value) =>
+    matchingBehavior.isAnswered(matchingDeliveryAnswerSchema.parse(value)),
+} satisfies QuestionAnswerRuleRegistration;
+
 export function deliveryAnswerOf(
   row: ResponseRow,
   value: Readonly<Value> | null,
@@ -65,22 +81,24 @@ export function deliveryAnswerOf(
   const question = snapshotOfRow(row);
   const kind = question && questionEvidenceBindings[question.type].answerKind;
   const outcome =
-    typeof value === "object"
-      ? Array.isArray(value)
-        ? studentAnswerSchema.safeParse({
-            kind,
-            indexes: value,
-            values: value,
-            sequence: value,
-            finalAnswer: value.length === 1 ? value[0] : undefined,
-          })
-        : responseStudentAnswerSchema.safeParse({ ...value, kind })
-      : kind === judgeStudentAnswerSchema.shape.kind.value
-        ? judgeStudentAnswerSchema.safeParse({ kind, value })
-        : choiceStudentAnswerSchema.safeParse({
-            kind,
-            index: Number(value),
-          });
+    kind === matchingStudentAnswerSchema.shape.kind.value
+      ? matchingDeliveryAnswerSchema.safeParse(value)
+      : typeof value === "object"
+        ? Array.isArray(value)
+          ? studentAnswerSchema.safeParse({
+              kind,
+              indexes: value,
+              values: value,
+              sequence: value,
+              finalAnswer: value.length === 1 ? value[0] : undefined,
+            })
+          : responseStudentAnswerSchema.safeParse({ ...value, kind })
+        : kind === judgeStudentAnswerSchema.shape.kind.value
+          ? judgeStudentAnswerSchema.safeParse({ kind, value })
+          : choiceStudentAnswerSchema.safeParse({
+              kind,
+              index: Number(value),
+            });
   if (
     !outcome.success ||
     ("index" in outcome.data && String(outcome.data.index) !== value)
@@ -103,9 +121,11 @@ export function deliveryValueOf(
   if ("index" in answer) return String(answer.index);
   if ("indexes" in answer) return answer.indexes;
   if ("values" in answer) return answer.values;
-  if ("sequence" in answer) {
+  if ("sequence" in answer || "pairs" in answer) {
     assertFrozenAnswerShape(db, row, question, answer);
-    return answer.sequence;
+    return "pairs" in answer
+      ? matchingDeliveryValueOf(answer.pairs)
+      : answer.sequence;
   }
   if ("finalAnswer" in answer) return [answer.finalAnswer];
   if ("value" in answer) return answer.value;

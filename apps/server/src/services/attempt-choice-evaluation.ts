@@ -1,6 +1,7 @@
 import {
   type GradingPolicy,
   judgeScoringSourceSchema,
+  matchingDeliveryScoringSourceSchema,
   multiChoiceScoringSourceSchema,
   orderedTextDeliveryScoringSourceSchema,
   orderingDeliveryScoringSourceSchema,
@@ -223,10 +224,9 @@ export function createOwnClassMultiEvaluator(
   };
 }
 
-const orderedTextEvaluationSourceSchema =
-  orderedTextDeliveryScoringSourceSchema.or(
-    orderingDeliveryScoringSourceSchema,
-  );
+const orderedTextEvaluationSourceSchema = orderedTextDeliveryScoringSourceSchema
+  .or(orderingDeliveryScoringSourceSchema)
+  .or(matchingDeliveryScoringSourceSchema);
 
 export function createOwnClassOrderedTextEvaluator(
   db: Db,
