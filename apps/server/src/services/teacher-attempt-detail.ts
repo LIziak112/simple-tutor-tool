@@ -132,7 +132,7 @@ function detailOf(
     // assignment/course 的 draft 口径一致）；已交卷快照原文 + 参考答案/详解。
     // 单元列取题目当前归属单元（域内读，软删行仍在——错题「来自哪个练习」的
     // 展示口径，与错题本 originUnit 同源）；题目行缺失回退 questionId 占位。
-    const ownRows = attemptResponseRows(db, attemptId);
+    const ownRows = kernelRows ?? attemptResponseRows(db, attemptId);
     const unitByQuestion = new Map(
       ownRows.length > 0
         ? db

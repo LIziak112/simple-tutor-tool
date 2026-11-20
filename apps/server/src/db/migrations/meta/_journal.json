@@ -624,6 +624,13 @@
       "when": 1795210089623,
       "tag": "0088_kernel_course_workflow",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "6",
+      "when": 1795214184965,
+      "tag": "0089_talented_ogun",
+      "breakpoints": true
     }
   ]
 }

@@ -25,6 +25,7 @@ import {
   kernelCourseOpenings,
   kernelLessonOpenings,
   kernelQuestionDeliveries,
+  kernelWrongOpenings,
 } from "../db/schema-kernel-question-delivery.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
@@ -76,6 +77,7 @@ export function readTeacherKernelFacts(
       ticket: kernelAttemptConfirmations,
       lesson: kernelLessonOpenings.attemptId,
       course: kernelCourseOpenings.attemptId,
+      wrong: kernelWrongOpenings.attemptId,
     })
     .from(attempts)
     .innerJoin(students, eq(students.id, attempts.studentId))
@@ -91,6 +93,10 @@ export function readTeacherKernelFacts(
     .leftJoin(
       kernelCourseOpenings,
       eq(kernelCourseOpenings.attemptId, attempts.id),
+    )
+    .leftJoin(
+      kernelWrongOpenings,
+      eq(kernelWrongOpenings.attemptId, attempts.id),
     )
     .leftJoin(
       kernelAttemptBindings,
@@ -117,6 +123,10 @@ export function readTeacherKernelFacts(
             eq(kernelCourseOpenings.teacherId, teacherId),
             eq(attempts.sourceType, "course"),
           ),
+          and(
+            eq(kernelWrongOpenings.teacherId, teacherId),
+            eq(attempts.sourceType, "wrong"),
+          ),
         ),
         isNull(attempts.abandonedAt),
         includeDrafts
@@ -138,7 +148,7 @@ export function readTeacherKernelFacts(
   if (scopes.length === 0) return { confirmed, drafts };
 
   return withKernelConfirmationReader(db, dataDir, (runtime, recover) => {
-    for (const { attempt, binding, ticket, lesson, course } of scopes) {
+    for (const { attempt, binding, ticket, lesson, course, wrong } of scopes) {
       const shared = readQuestionDeliveryFacts(db, dataDir, attempt);
       if (shared) {
         const rows =
@@ -159,7 +169,12 @@ export function readTeacherKernelFacts(
           drafts.push(...shared.rows.filter((row) => row.submittedAt === null));
         continue;
       }
-      if (binding === null || lesson !== null || course !== null)
+      if (
+        binding === null ||
+        lesson !== null ||
+        course !== null ||
+        wrong !== null
+      )
         kernelAttemptUnavailable();
       if (includeDrafts && attempt.status === "draft") {
         requireNoPendingKernelRefreeze(db, attempt);

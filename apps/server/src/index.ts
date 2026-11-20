@@ -124,6 +124,8 @@ const app = createApp({
   kernelLessonEnabled: process.env.OWNCLASS_KERNEL_LESSONS_ENABLED === "1",
   kernelCourseOpeningEnabled:
     process.env.OWNCLASS_KERNEL_COURSE_OPENING_ENABLED === "1",
+  kernelWrongPracticeEnabled:
+    process.env.OWNCLASS_KERNEL_WRONG_PRACTICE_ENABLED === "1",
   isProduction: config.isProduction,
   logger,
   db,

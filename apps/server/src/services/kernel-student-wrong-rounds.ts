@@ -17,7 +17,10 @@ import {
   kernelAttemptBindings,
   kernelAttemptConfirmations,
 } from "../db/schema-kernel-assignments.ts";
-import { kernelQuestionDeliveries } from "../db/schema-kernel-question-delivery.ts";
+import {
+  kernelQuestionDeliveries,
+  kernelWrongOpenings,
+} from "../db/schema-kernel-question-delivery.ts";
 import { releaseGateSql } from "./answer-publication-sql.ts";
 import {
   type RecoverKernelConfirmation,
@@ -174,6 +177,37 @@ export function readPublishedKernelWrongRounds(
     )
     .all();
   const delivered: ReturnType<RecoverKernelConfirmation>[] = [];
+  const wrongDeliveries = db
+    .select({ attempt: attempts })
+    .from(attempts)
+    .innerJoin(
+      kernelWrongOpenings,
+      eq(kernelWrongOpenings.attemptId, attempts.id),
+    )
+    .innerJoin(
+      kernelQuestionDeliveries,
+      and(
+        eq(kernelQuestionDeliveries.attemptId, attempts.id),
+        eq(
+          kernelQuestionDeliveries.stepAttemptId,
+          kernelWrongOpenings.stepAttemptId,
+        ),
+        eq(kernelQuestionDeliveries.slotId, deliverySlotId),
+      ),
+    )
+    .where(
+      and(
+        eq(attempts.studentId, studentId),
+        eq(attempts.sourceType, "wrong"),
+        isNull(attempts.abandonedAt),
+        matchingQuestions,
+      ),
+    )
+    .all();
+  for (const { attempt } of wrongDeliveries) {
+    const facts = readQuestionDeliveryFacts(db, dataDir, attempt);
+    if (facts && facts.attempt.status !== "draft") delivered.push(facts);
+  }
   const legacy: Parameters<RecoverKernelConfirmation>[] = [];
   for (const { attempt, binding, ticket, delivery } of scopes) {
     if (delivery !== null) {

@@ -9,6 +9,7 @@ import {
 import {
   kernelCourseOpenings,
   kernelLessonOpenings,
+  kernelWrongOpenings,
 } from "../db/schema-kernel-question-delivery.ts";
 import { canonicalJsonOf } from "../lib/canonical-json.ts";
 import { attemptResponseRows, insertFrozenResponse } from "./attempt-freeze.ts";
@@ -39,6 +40,11 @@ export function canInitializeKernelStorage(tx: Pick<Db, "select">): boolean {
     tx
       .select({ id: kernelCourseOpenings.operationId })
       .from(kernelCourseOpenings)
+      .limit(1)
+      .get() ||
+    tx
+      .select({ id: kernelWrongOpenings.id })
+      .from(kernelWrongOpenings)
       .limit(1)
       .get()
   );

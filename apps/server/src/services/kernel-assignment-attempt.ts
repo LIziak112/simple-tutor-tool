@@ -70,7 +70,7 @@ export function verifyKernelStudentAttempt(
       assertDraftCourseVisible(db, studentId, attempt);
       resolveKernelRefreezeForRead(db, dataDir, attempt);
     }
-    if (attempt.sourceType === "lesson" || attempt.sourceType === "course") {
+    if (attempt.sourceType !== "assignment") {
       if (
         !readQuestionDeliveryFacts(
           db,

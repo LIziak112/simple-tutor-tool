@@ -43,6 +43,7 @@ export type OwnClassChoiceEvaluationScope = Readonly<{
   assignmentId: string;
   lectureId?: string;
   course?: { courseId: string; unitId: string };
+  wrong?: true;
   stepAttemptId: string;
   slotId: string;
   practiceVersion: number;
@@ -87,7 +88,9 @@ function frozenQuestionForEvaluation(
     ? "course"
     : scope.lectureId
       ? "lesson"
-      : "assignment";
+      : scope.wrong
+        ? "wrong"
+        : "assignment";
   if (
     attempt.sourceType !== expectedSource ||
     attempt.abandonedAt !== null ||
@@ -102,6 +105,14 @@ function frozenQuestionForEvaluation(
       mismatch();
   } else if (scope.lectureId) {
     if (attempt.lectureId !== scope.lectureId) mismatch();
+  } else if (scope.wrong) {
+    if (
+      attempt.assignmentId !== null ||
+      attempt.courseId !== null ||
+      attempt.unitId !== null ||
+      attempt.lectureId !== null
+    )
+      mismatch();
   } else if (attempt.assignmentId !== scope.assignmentId) mismatch();
   const row = db
     .select()

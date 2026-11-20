@@ -18,7 +18,10 @@ import {
   kernelAssignments,
   kernelAttemptRefreezes,
 } from "./schema-kernel-assignments";
-import { kernelCourseOpenings } from "./schema-kernel-question-delivery";
+import {
+  kernelCourseOpenings,
+  kernelWrongOpenings,
+} from "./schema-kernel-question-delivery";
 
 /**
  * createTestDb 种入的教师行（T2B.1）：固定 id/createdAt，loginName='teacher'、
@@ -75,6 +78,7 @@ const legacyKernelViews = [
   kernelAssignments,
   kernelAttemptRefreezes,
   kernelCourseOpenings,
+  kernelWrongOpenings,
 ];
 
 /** 0075 造数阶段让现行路由读取空的内核名单，保留历史主库结构。 */

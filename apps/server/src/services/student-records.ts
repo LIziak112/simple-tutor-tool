@@ -26,6 +26,7 @@ import { assignmentReleaseByIds } from "./attempt-service";
 import { timeProjectionsOf } from "./attempt-time-projection";
 import { requireVisibleCourseUnit } from "./course-service";
 import { isKernelAssignment } from "./kernel-assignment-routing.ts";
+import { boundWrongAttemptId } from "./kernel-question-delivery-binding.ts";
 import {
   type KernelRecordFacts,
   withKernelStudentRecordFacts,
@@ -190,7 +191,8 @@ export function listStudentRecords(
     dataDir === undefined ||
     (query.sourceType !== undefined &&
       query.sourceType !== "assignment" &&
-      query.sourceType !== "course") ||
+      query.sourceType !== "course" &&
+      query.sourceType !== "wrong") ||
     (query.assignmentId !== undefined &&
       !isKernelAssignment(db, query.assignmentId))
   )
@@ -238,7 +240,7 @@ function listStudentRecordIndex(
       lastActivityAt: lastActivitySql,
       kernelSourceId: sql<
         string | null
-      >`coalesce(${kernelAssignments.assignmentId}, ${kernelLessonOpenings.attemptId}, ${kernelCourseOpenings.attemptId})`,
+      >`coalesce(${kernelAssignments.assignmentId}, ${kernelLessonOpenings.attemptId}, ${kernelCourseOpenings.attemptId}, (${boundWrongAttemptId(db)}))`,
     })
     .from(attempts)
     .leftJoin(

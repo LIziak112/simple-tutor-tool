@@ -22,6 +22,7 @@ import {
   kernelCourseOpenings,
   kernelLessonOpenings,
   kernelQuestionDeliveries,
+  kernelWrongOpenings,
 } from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
@@ -128,6 +129,7 @@ function draftCandidates(
   const questionOpening = or(
     isNotNull(kernelLessonOpenings.attemptId),
     isNotNull(kernelCourseOpenings.attemptId),
+    isNotNull(kernelWrongOpenings.attemptId),
   );
   // 还未投影的正式确认可能仍标作 draft。静态筛选可先做，状态和时间只能在恢复后筛。
   const canAffectPage =
@@ -153,6 +155,10 @@ function draftCandidates(
     .leftJoin(
       kernelCourseOpenings,
       eq(kernelCourseOpenings.attemptId, attempts.id),
+    )
+    .leftJoin(
+      kernelWrongOpenings,
+      eq(kernelWrongOpenings.attemptId, attempts.id),
     )
     .leftJoin(
       kernelAttemptBindings,

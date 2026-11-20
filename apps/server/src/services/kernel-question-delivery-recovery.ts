@@ -114,6 +114,7 @@ export function withDelivery<T>(
           assignmentId: binding.practiceId,
           ...(binding.lectureId && { lectureId: binding.lectureId }),
           ...(binding.course && { course: binding.course }),
+          ...(binding.wrong && { wrong: binding.wrong }),
           practiceVersion: binding.practiceVersion,
           stepAttemptId: binding.stepAttemptId,
           slotId: current.slotId,
@@ -146,8 +147,7 @@ export function wholeDeliveryInkLocked(
   dataDir: string,
   attempt: Attempt,
 ): boolean {
-  if (attempt.sourceType !== "assignment" && attempt.sourceType !== "course")
-    return false;
+  if (attempt.sourceType === "lesson") return false;
   return db.$client
     .transaction(
       () =>

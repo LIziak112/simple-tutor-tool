@@ -39,6 +39,7 @@ const productKernelTables = [
   "kernel_attempt_refreezes",
   "kernel_lesson_openings",
   "kernel_course_openings",
+  "kernel_wrong_openings",
   "kernel_question_deliveries",
 ] as const;
 
@@ -77,6 +78,7 @@ const boundAttemptsForOriginals = `
   SELECT attempt_id FROM kernel_attempt_bindings
   UNION SELECT attempt_id FROM kernel_lesson_openings
   UNION SELECT attempt_id FROM kernel_course_openings
+  UNION SELECT attempt_id FROM kernel_wrong_openings
 `;
 
 function verifyOriginals(product: Database.Database, directory: string): void {

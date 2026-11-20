@@ -6,6 +6,7 @@ import { HttpError } from "../lib/http-error.ts";
 import {
   courseKernelBinding,
   lessonKernelBinding,
+  wrongKernelBinding,
 } from "./kernel-question-delivery-binding.ts";
 
 export function hasKernelAssignmentTables(db: Db): boolean {
@@ -37,6 +38,8 @@ export function isKernelAttempt(
     return lessonKernelBinding(db, attempt.id) !== undefined;
   if (attempt.sourceType === "course")
     return courseKernelBinding(db, attempt.id) !== undefined;
+  if (attempt.sourceType === "wrong")
+    return wrongKernelBinding(db, attempt.id) !== undefined;
   return (
     attempt.sourceType === "assignment" &&
     attempt.assignmentId !== null &&

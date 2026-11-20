@@ -1,11 +1,12 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { StudentActivity } from "learning-kernel";
 import type { Db } from "../db/client.ts";
-import type { Attempt } from "../db/schema.ts";
+import { type Attempt, attempts } from "../db/schema.ts";
 import { kernelAttemptBindings } from "../db/schema-kernel-assignments.ts";
 import {
   kernelCourseOpenings,
   kernelLessonOpenings,
+  kernelWrongOpenings,
 } from "../db/schema-kernel-question-delivery.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
 import { attemptTeacherId } from "./attempt-question-set.ts";
@@ -17,6 +18,43 @@ import {
 } from "./kernel-assignment-runtime.ts";
 import { deliverySlotId } from "./kernel-question-delivery-publication.ts";
 import { snapshotOfRow } from "./snapshot.ts";
+
+export const wrongOpeningOperation = (id: string) => `open:wrong:${id}`;
+export const wrongOpeningPractice = (id: string) => `wrong:${id}`;
+export const wrongOpeningVersion = 1;
+
+export const boundWrongAttemptId = (db: Db) =>
+  db
+    .select({ id: kernelWrongOpenings.attemptId })
+    .from(kernelWrongOpenings)
+    .where(eq(kernelWrongOpenings.attemptId, attempts.id));
+
+export function wrongKernelBinding(db: Pick<Db, "select">, attemptId: string) {
+  return db
+    .select({
+      id: kernelWrongOpenings.id,
+      studentId: kernelWrongOpenings.studentId,
+      teacherId: kernelWrongOpenings.teacherId,
+      attemptNo: kernelWrongOpenings.attemptNo,
+      stepAttemptId: kernelWrongOpenings.stepAttemptId,
+    })
+    .from(kernelWrongOpenings)
+    .where(eq(kernelWrongOpenings.attemptId, attemptId))
+    .get();
+}
+
+export function questionDeliveryRestrictions(db: Db, attempt: Attempt) {
+  const course =
+    attempt.sourceType === "course" &&
+    courseKernelBinding(db, attempt.id) !== undefined;
+  const wrong =
+    attempt.sourceType === "wrong" &&
+    wrongKernelBinding(db, attempt.id) !== undefined;
+  return {
+    fixedWhole: wrong || (course && attempt.timeLimitSec !== null),
+    noPartialSettlement: course || wrong,
+  };
+}
 
 export function lessonKernelBinding(db: Pick<Db, "select">, attemptId: string) {
   return db
@@ -111,7 +149,31 @@ export function questionDeliveryBinding(db: Db, attempt: Attempt) {
       teacherId: binding.teacherId,
     };
   }
-  if (attempt.sourceType !== "assignment") return undefined;
+  if (attempt.sourceType === "wrong") {
+    const binding = wrongKernelBinding(db, attempt.id);
+    if (!binding) return undefined;
+    if (
+      binding.studentId !== attempt.studentId ||
+      binding.teacherId !== attemptTeacherId(db, attempt) ||
+      binding.attemptNo !== attempt.attemptNo ||
+      attempt.assignmentId !== null ||
+      attempt.courseId !== null ||
+      attempt.unitId !== null ||
+      attempt.lectureId !== null ||
+      attempt.practiceWorkflowVersion !== 1 ||
+      attempt.feedbackMode !== "after_attempt" ||
+      attempt.timeLimitSec !== null ||
+      !binding.stepAttemptId
+    )
+      kernelAttemptUnavailable();
+    return {
+      practiceId: wrongOpeningPractice(binding.id),
+      practiceVersion: wrongOpeningVersion,
+      stepAttemptId: binding.stepAttemptId,
+      teacherId: binding.teacherId,
+      wrong: true as const,
+    };
+  }
   const binding = db
     .select()
     .from(kernelAttemptBindings)
@@ -151,7 +213,8 @@ export function readBoundQuestionDelivery(
     attempt.id,
   );
   if (!("questionDeliveries" in activity)) {
-    if (binding.lectureId || binding.course) kernelAttemptUnavailable();
+    if (binding.lectureId || binding.course || binding.wrong)
+      kernelAttemptUnavailable();
     return undefined;
   }
   if (
@@ -167,7 +230,7 @@ export function readBoundQuestionDelivery(
     kernelAttemptUnavailable();
   if (binding.teacherId !== undefined) {
     const rows = attemptResponseRows(db, attempt.id);
-    if (binding.course) {
+    if (binding.course || binding.wrong) {
       const input = activity.inputs.questions;
       if (
         input?.from !== "questions" ||

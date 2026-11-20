@@ -22,6 +22,7 @@ import {
 import {
   kernelCourseOpenings,
   kernelLessonOpenings,
+  kernelWrongOpenings,
 } from "../db/schema-kernel-question-delivery.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
@@ -36,6 +37,7 @@ import {
 import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 import { verifyBackupQuestionDeliveries } from "./kernel-question-delivery-backup.ts";
+import { wrongOpeningOperation } from "./kernel-question-delivery-binding.ts";
 
 const publicationIdentitySchema = z.object({
   practice: z.object({ id: z.string(), version: z.number().int().positive() }),
@@ -109,11 +111,21 @@ function verifyProjection(
   const questionOpenings = [
     ...db.select().from(kernelLessonOpenings).all(),
     ...db.select().from(kernelCourseOpenings).all(),
+    ...db
+      .select()
+      .from(kernelWrongOpenings)
+      .all()
+      .map((opening) => ({
+        ...opening,
+        operationId: wrongOpeningOperation(opening.id),
+      })),
   ];
   const refreezable = new Set([
     ...bindings.map(({ attempt }) => attempt.id),
     ...questionOpenings.flatMap((opening) =>
-      !("lectureId" in opening) && opening.attemptId ? [opening.attemptId] : [],
+      "pendingWorkflow" in opening && opening.attemptId
+        ? [opening.attemptId]
+        : [],
     ),
   ]);
   const invalidRefreezes = db

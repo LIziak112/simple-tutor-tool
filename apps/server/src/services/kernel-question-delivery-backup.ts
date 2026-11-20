@@ -1,3 +1,4 @@
+import type { AttemptSource } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { attempts } from "../db/schema.ts";
@@ -5,6 +6,7 @@ import {
   type kernelCourseOpenings,
   type kernelLessonOpenings,
   kernelQuestionDeliveries,
+  type kernelWrongOpenings,
 } from "../db/schema-kernel-question-delivery.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelRuntime } from "./kernel-assignment-runtime.ts";
@@ -14,10 +16,18 @@ import {
 } from "./kernel-course-opening.ts";
 import { replayKernelLessonOpening } from "./kernel-lesson-opening.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
+import { replayKernelWrongOpening } from "./kernel-wrong-practice-opening.ts";
+import { studentTeacherIdOf } from "./student-course-service.ts";
 
 type Opening =
   | typeof kernelLessonOpenings.$inferSelect
-  | typeof kernelCourseOpenings.$inferSelect;
+  | typeof kernelCourseOpenings.$inferSelect
+  | typeof kernelWrongOpenings.$inferSelect;
+
+function sourceOf(opening: Opening): AttemptSource {
+  if ("id" in opening) return "wrong";
+  return "lectureId" in opening ? "lesson" : "course";
+}
 
 export function verifyBackupQuestionDeliveries(
   db: Db,
@@ -29,18 +39,24 @@ export function verifyBackupQuestionDeliveries(
     const verified = new Set<string>();
     for (const opening of openings) {
       if (opening.attemptId === null) {
-        if (!("lectureId" in opening))
+        if ("pendingWorkflow" in opening)
           verifyKernelCourseRestartSource(
             db,
             directory,
             opening,
             attachmentDir,
           );
-        withKernelRuntime(db, directory, false, (runtime) =>
-          "lectureId" in opening
-            ? replayKernelLessonOpening(runtime, opening)
-            : replayKernelCourseOpening(runtime, opening),
-        );
+        withKernelRuntime(db, directory, false, (runtime) => {
+          if ("id" in opening) {
+            if (studentTeacherIdOf(db, opening.studentId) !== opening.teacherId)
+              throw new Error("错题开卷意图的教师域不一致");
+            replayKernelWrongOpening(runtime, opening);
+          } else if ("lectureId" in opening) {
+            replayKernelLessonOpening(runtime, opening);
+          } else {
+            replayKernelCourseOpening(runtime, opening);
+          }
+        });
         continue;
       }
       const attempt = db
@@ -50,7 +66,7 @@ export function verifyBackupQuestionDeliveries(
         .get();
       if (
         !attempt ||
-        attempt.sourceType !== ("lectureId" in opening ? "lesson" : "course") ||
+        attempt.sourceType !== sourceOf(opening) ||
         !readQuestionDeliveryFacts(db, directory, attempt, attachmentDir)
       )
         throw new Error("题组开卷绑定缺失");

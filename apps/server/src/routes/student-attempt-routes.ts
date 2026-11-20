@@ -18,6 +18,7 @@ import {
 import { studentAttemptContext } from "../services/attempt-context.ts";
 import {
   getStudentAttemptPaper,
+  requireOwnAttempt,
   requireUsableAttempt,
   saveDraftAnswer,
   setStudentFlag,
@@ -81,12 +82,16 @@ export function createStudentAttemptRoutes(db: Db, dataDir: string) {
       // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
       .put("/attempts/:id/flags/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptFlagRequestSchema);
+        const studentId = c.var.student.id;
+        const attemptId = c.req.param("id");
+        if (requireOwnAttempt(db, studentId, attemptId).sourceType === "wrong")
+          verifyKernelStudentAttempt(db, dataDir, studentId, attemptId);
         return c.json({
           ok: true,
           data: setStudentFlag(
             db,
-            c.var.student.id,
-            c.req.param("id"),
+            studentId,
+            attemptId,
             c.req.param("questionId"),
             body.flag,
             body,

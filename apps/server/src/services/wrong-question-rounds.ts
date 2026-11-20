@@ -19,6 +19,7 @@ import {
 import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
 import { releaseGateSql } from "./answer-publication-sql.ts";
 import { hasKernelAssignmentTables } from "./kernel-assignment-routing.ts";
+import { boundWrongAttemptId } from "./kernel-question-delivery-binding.ts";
 import {
   readPublishedKernelWrongRounds,
   type WrongRoundScope,
@@ -157,6 +158,7 @@ function readLegacyJudgedRounds(
         and(
           eq(attempts.studentId, studentId),
           excludeKernelAssignments(db, kernelTables),
+          kernelTables ? notExists(boundWrongAttemptId(db)) : undefined,
           questionIds === undefined
             ? undefined
             : inArray(responses.questionId, questionIds),

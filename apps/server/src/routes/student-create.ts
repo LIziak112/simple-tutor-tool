@@ -51,14 +51,19 @@ export function createAssignmentAttemptStartRoutes(
   });
 }
 
+export interface StudentOpeningOptions {
+  kernelLessonEnabled?: boolean | undefined;
+  kernelCourseOpeningEnabled?: boolean | undefined;
+  kernelWrongPracticeEnabled?: boolean | undefined;
+}
+
 /** 开卷与建卷入口：作业、课程单元、讲练的开始与重开，错题重练组卷。 */
 export function createStudentCreateRoutes(
   db: Db,
   dataDir: string,
-  kernelLessonEnabled = false,
-  kernelCourseOpeningEnabled = false,
+  openings: StudentOpeningOptions,
 ) {
-  const kernel = { dataDir, enabled: kernelLessonEnabled };
+  const kernel = { dataDir, enabled: openings.kernelLessonEnabled ?? false };
   const startAssignment: typeof startAttempt = (
     current,
     student,
@@ -87,7 +92,10 @@ export function createStudentCreateRoutes(
               c.req.param("unitId"),
               options,
               startClientOf(c),
-              { dataDir, enabled: kernelCourseOpeningEnabled },
+              {
+                dataDir,
+                enabled: openings.kernelCourseOpeningEnabled ?? false,
+              },
             ),
           },
           201,
@@ -139,6 +147,7 @@ export function createStudentCreateRoutes(
           body.scope,
           body.operationId,
           dataDir,
+          openings.kernelWrongPracticeEnabled,
         );
         return c.json({ ok: true, data: attempt }, 201);
       })

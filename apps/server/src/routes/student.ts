@@ -96,7 +96,10 @@ import { createStudentAiRoutes } from "./student-ai";
 import { createStudentAttachmentRoutes } from "./student-attachments";
 import { createStudentAttemptRoutes } from "./student-attempt-routes.ts";
 import { createStudentBatchSubmissionRoutes } from "./student-batch-submission.ts";
-import { createStudentCreateRoutes } from "./student-create";
+import {
+  createStudentCreateRoutes,
+  type StudentOpeningOptions,
+} from "./student-create";
 import { createStudentEventRoutes } from "./student-event-routes";
 import { createStudentPersonalRoutes } from "./student-personal";
 import { createStudentQuestionSubmissionRoutes } from "./student-question-submission.ts";
@@ -233,9 +236,8 @@ export function createStudentRoutes(
   db: Db,
   publicUrl: string,
   dataDir: string,
+  openings: StudentOpeningOptions,
   questionProcessEnabled = false,
-  kernelLessonEnabled = false,
-  kernelCourseOpeningEnabled = false,
 ) {
   const requireStudent = createRequireStudent(db, publicUrl);
   return (
@@ -865,15 +867,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      .route(
-        "/",
-        createStudentCreateRoutes(
-          db,
-          dataDir,
-          kernelLessonEnabled,
-          kernelCourseOpeningEnabled,
-        ),
-      )
+      .route("/", createStudentCreateRoutes(db, dataDir, openings))
       // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）；
       // kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null + blocks 切段 +
       // companionUnits 恒空（嵌入单元隐藏，题目已在页内），泄露测试见

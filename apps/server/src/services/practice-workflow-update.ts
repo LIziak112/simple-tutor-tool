@@ -9,7 +9,10 @@ import {
   reserveKernelCourseWorkflow,
   resolveKernelCourseWorkflow,
 } from "./kernel-course-workflow.ts";
-import { courseKernelBinding } from "./kernel-question-delivery-binding.ts";
+import {
+  courseKernelBinding,
+  wrongKernelBinding,
+} from "./kernel-question-delivery-binding.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery-recovery.ts";
 import {
   assertDraftCourseVisible,
@@ -86,16 +89,20 @@ export function updateAttemptWorkflow(
       attempt.sourceType === "course"
         ? courseKernelBinding(db, attempt.id)
         : undefined;
-    if (!course) return { attempt, course };
+    if (
+      !course &&
+      (attempt.sourceType !== "wrong" || !wrongKernelBinding(db, attempt.id))
+    )
+      return { attempt, course };
     const facts = readQuestionDeliveryFacts(db, dataDir, attempt);
     if (!facts) kernelAttemptUnavailable();
     const recovered =
-      course.pendingWorkflow?.workflowRevision === request.workflowRevision &&
+      course?.pendingWorkflow?.workflowRevision === request.workflowRevision &&
       course.pendingWorkflow.feedbackMode === request.feedbackMode &&
       facts.attempt.workflowRevision === request.workflowRevision + 1;
     return {
       attempt: facts.attempt,
-      course: courseKernelBinding(db, attempt.id),
+      course: course ? courseKernelBinding(db, attempt.id) : undefined,
       recovered,
     };
   };

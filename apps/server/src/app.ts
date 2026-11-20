@@ -24,6 +24,7 @@ import { createAdminRoutes } from "./routes/admin";
 import { createAiReplyCheckerRoutes } from "./routes/ai-reply-checker.ts";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
+import type { StudentOpeningOptions } from "./routes/student-create.ts";
 import { MEMO_MEDIA_UPLOAD_CAP } from "./routes/student-memos";
 import { createTeacherRoutes } from "./routes/teacher";
 import { ATTACHMENT_UPLOAD_CAP } from "./services/attachment-upload";
@@ -44,13 +45,11 @@ import { createSpaStatic, defaultWebDistDir } from "./static";
  */
 
 /** createApp 的可注入选项 */
-export interface CreateAppOptions {
+export interface CreateAppOptions extends StudentOpeningOptions {
   /** 生产模式：托管 apps/web/dist 并对未命中的非 /api 路径回退 index.html */
   isProduction: boolean;
   questionProcessEnabled?: boolean;
   kernelAssignmentCreationEnabled?: boolean | undefined;
-  kernelLessonEnabled?: boolean | undefined;
-  kernelCourseOpeningEnabled?: boolean | undefined;
   /** 数据库实例（教师鉴权等业务路由使用；测试注入 createTestDb() 内存库） */
   db: Db;
   /**
@@ -307,9 +306,8 @@ export function createApp(options: CreateAppOptions) {
         options.db,
         options.publicUrl,
         options.dataDir,
+        options,
         options.questionProcessEnabled,
-        options.kernelLessonEnabled,
-        options.kernelCourseOpeningEnabled,
       ),
     )
     // —— 管理端（T2B.6，D7/D19）：整组 requireAdmin（非管理员 403 ADMIN_ONLY） ——

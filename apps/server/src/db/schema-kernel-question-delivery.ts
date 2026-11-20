@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import type { PublicationInput, VerdictCommand } from "learning-kernel";
 import type { KernelOpeningDraft } from "../services/kernel-assignment-input.ts";
+import type { KernelWrongOpeningDraft } from "../services/kernel-wrong-practice-opening.ts";
 import { attempts, responses } from "./schema.ts";
 
 export const kernelLessonOpenings = sqliteTable(
@@ -79,6 +80,33 @@ export const kernelCourseOpenings = sqliteTable(
     primaryKey({ columns: [t.studentId, t.courseId, t.unitId, t.attemptNo] }),
     check(
       "kernel_course_opening_bound",
+      sql`(${t.attemptId} IS NULL) = (${t.stepAttemptId} IS NULL)`,
+    ),
+  ],
+);
+
+export const kernelWrongOpenings = sqliteTable(
+  "kernel_wrong_openings",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id").notNull(),
+    teacherId: text("teacher_id").notNull(),
+    attemptNo: integer("attempt_no").notNull(),
+    publication: text("publication_json", { mode: "json" })
+      .$type<PublicationInput>()
+      .notNull(),
+    draft: text("draft_json", { mode: "json" })
+      .$type<KernelWrongOpeningDraft>()
+      .notNull(),
+    attemptId: text("attempt_id")
+      .unique()
+      .references(() => attempts.id),
+    stepAttemptId: text("step_attempt_id").unique(),
+  },
+  (t) => [
+    unique().on(t.studentId, t.attemptNo),
+    check(
+      "kernel_wrong_opening_bound",
       sql`(${t.attemptId} IS NULL) = (${t.stepAttemptId} IS NULL)`,
     ),
   ],
