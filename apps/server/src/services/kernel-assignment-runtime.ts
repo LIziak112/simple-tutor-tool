@@ -20,9 +20,9 @@ import { HttpError } from "../lib/http-error.ts";
 import { requireAssignmentRow } from "./attempt-access.ts";
 import {
   createOwnClassChoiceEvaluator,
-  createOwnClassFillEvaluator,
   createOwnClassJudgeEvaluator,
   createOwnClassMultiEvaluator,
+  createOwnClassOrderedTextEvaluator,
   createOwnClassTitledTextEvaluator,
   type OwnClassChoiceEvaluationScope,
   ownClassDeliveryEvaluatorRef,
@@ -31,6 +31,7 @@ import { attemptResponseRows } from "./attempt-freeze.ts";
 import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
 import {
   ownClassJudgeAnswerRule,
+  ownClassOrderingAnswerRule,
   ownClassResponseAnswerRule,
 } from "./kernel-question-delivery-values.ts";
 import { listAttemptContextSnapshots } from "./material-repository.ts";
@@ -155,10 +156,11 @@ export function withKernelRuntime<T>(
         ),
       ],
       indexResponseEvaluators: [createOwnClassMultiEvaluator(db, getScope)],
-      orderedTextEvaluators: [createOwnClassFillEvaluator(db, getScope)],
+      orderedTextEvaluators: [createOwnClassOrderedTextEvaluator(db, getScope)],
       titledTextEvaluators: [createOwnClassTitledTextEvaluator(db, getScope)],
       questionAnswerRules: [
         ownClassJudgeAnswerRule,
+        ownClassOrderingAnswerRule,
         ownClassResponseAnswerRule,
       ],
       responseEvaluators: [

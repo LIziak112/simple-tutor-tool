@@ -285,3 +285,61 @@ describe("整卷答问的评分来源", () => {
     }
   });
 });
+
+describe("整卷排序的冻结来源", () => {
+  const source = {
+    type: "ordering",
+    orderingItems: [
+      { id: "option-a", text: "甲", fixedPosition: null, distractor: false },
+      { id: "option-b", text: "乙", fixedPosition: 1, distractor: false },
+      { id: "decoy", text: "干扰项", fixedPosition: null, distractor: true },
+    ],
+    answers: { kind: "ordering", sequence: ["option-b", "option-a"] },
+  };
+
+  it("整卷保留实际冻结项和参考顺序，排序在讲练交付与填空形态之外", () => {
+    expect(wholeQuestionDeliveryScoringSourcesSchema.parse([source])).toEqual([
+      { ...source, acceptedBlanks: [["option-b"], ["option-a"]] },
+    ]);
+    expect(
+      questionDeliveryScoringSourcesSchema.safeParse([source]).success,
+    ).toBe(false);
+    expect(
+      orderedTextDeliveryScoringSourceSchema.safeParse(source).success,
+    ).toBe(false);
+  });
+
+  it("须以完整冻结项和真实顺序声明排序参考", () => {
+    for (const sequence of [
+      [],
+      ["option-b"],
+      ["option-a", "option-b"],
+      ["option-b", "decoy"],
+      ["option-b", "unknown"],
+    ]) {
+      expect(
+        wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+          { ...source, answers: { kind: "ordering", sequence } },
+        ]).success,
+      ).toBe(false);
+    }
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+        { ...source, answers: undefined },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("不接受缺少冻结项的排序或把其他作答形态当成参考", () => {
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+        { ...source, orderingItems: undefined },
+      ]).success,
+    ).toBe(false);
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+        { ...source, answers: { kind: "response", referenceMd: "参考" } },
+      ]).success,
+    ).toBe(false);
+  });
+});

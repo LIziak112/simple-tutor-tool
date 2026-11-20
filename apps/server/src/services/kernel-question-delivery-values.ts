@@ -2,6 +2,7 @@ import {
   choiceStudentAnswerSchema,
   judgeBehavior,
   judgeStudentAnswerSchema,
+  orderingBehavior,
   questionEvidenceBindings,
   responseBehavior,
   responseStudentAnswerSchema,
@@ -12,8 +13,10 @@ import type {
   QuestionAnswerRuleRegistration,
   QuestionDeliveryDraftInput,
 } from "learning-kernel";
+import type { Db } from "../db/client.ts";
 import type { ResponseRow } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { assertFrozenAnswerShape } from "./attempt-question-projection.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
@@ -42,6 +45,18 @@ export const ownClassResponseAnswerRule = {
     responseBehavior.isAnswered({ ...value, kind: "response" }),
 } satisfies QuestionAnswerRuleRegistration;
 
+export const ownClassOrderingAnswerRuleRef = {
+  id: "ownclass-ordering-sequence",
+  version: 1,
+} as const;
+
+export const ownClassOrderingAnswerRule = {
+  ...ownClassOrderingAnswerRuleRef,
+  response: "orderedTextBlanks",
+  isAnswered: (value) =>
+    orderingBehavior.isAnswered({ kind: "ordering", sequence: [...value] }),
+} satisfies QuestionAnswerRuleRegistration;
+
 export function deliveryAnswerOf(
   row: ResponseRow,
   value: Readonly<Value> | null,
@@ -56,6 +71,7 @@ export function deliveryAnswerOf(
             kind,
             indexes: value,
             values: value,
+            sequence: value,
             finalAnswer: value.length === 1 ? value[0] : undefined,
           })
         : responseStudentAnswerSchema.safeParse({ ...value, kind })
@@ -74,6 +90,7 @@ export function deliveryAnswerOf(
 }
 
 export function deliveryValueOf(
+  db: Db,
   row: ResponseRow,
   answer: StudentAnswer,
 ): Value {
@@ -86,6 +103,10 @@ export function deliveryValueOf(
   if ("index" in answer) return String(answer.index);
   if ("indexes" in answer) return answer.indexes;
   if ("values" in answer) return answer.values;
+  if ("sequence" in answer) {
+    assertFrozenAnswerShape(db, row, question, answer);
+    return answer.sequence;
+  }
   if ("finalAnswer" in answer) return [answer.finalAnswer];
   if ("value" in answer) return answer.value;
   if ("body" in answer) {

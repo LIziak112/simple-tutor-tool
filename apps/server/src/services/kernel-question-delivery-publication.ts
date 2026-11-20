@@ -9,6 +9,7 @@ import type { PublicationInput } from "learning-kernel";
 import { ownClassDeliveryEvaluatorRef } from "./attempt-choice-evaluation.ts";
 import {
   ownClassJudgeAnswerRuleRef,
+  ownClassOrderingAnswerRuleRef,
   ownClassResponseAnswerRuleRef,
 } from "./kernel-question-delivery-values.ts";
 
@@ -48,11 +49,18 @@ export function questionDeliveryPublication(
       return {
         question: { ...base, response, blankCount: acceptedBlanks.length },
         key: { response, acceptedBlanks },
+        ...("orderingItems" in source && {
+          answerRule: ownClassOrderingAnswerRuleRef,
+        }),
       };
     }
     if (isResponseDeliveryScoringSource(source)) {
       const response = "textWithOptionalTitle" as const;
-      return { question: { ...base, response }, key: { response } };
+      return {
+        question: { ...base, response },
+        key: { response },
+        answerRule: ownClassResponseAnswerRuleRef,
+      };
     }
     if (!("options" in source)) {
       const response = "booleanOrString" as const;
@@ -63,6 +71,7 @@ export function questionDeliveryPublication(
           options: { true: "正确", false: "错误" },
         },
         key: { response, acceptedResponse: source.answers.value },
+        ...(mode === "whole" && { answerRule: ownClassJudgeAnswerRuleRef }),
       };
     }
     const options = Object.fromEntries(
@@ -81,15 +90,11 @@ export function questionDeliveryPublication(
       key: { response, acceptedIndexes: source.answers.indexes },
     };
   });
-  const answerRules = declared.flatMap(({ question }) => {
-    const rule =
-      question.response === "textWithOptionalTitle"
-        ? ownClassResponseAnswerRuleRef
-        : mode === "whole" && question.response === "booleanOrString"
-          ? ownClassJudgeAnswerRuleRef
-          : undefined;
-    return rule ? [[question.id, rule] as const] : [];
-  });
+  const answerRules = declared.flatMap((item) =>
+    "answerRule" in item && item.answerRule
+      ? [[item.question.id, item.answerRule] as const]
+      : [],
+  );
   const instructions = "完成练习并提交答案。";
   return {
     practice: {

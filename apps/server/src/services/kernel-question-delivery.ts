@@ -124,7 +124,7 @@ export function saveQuestionDeliveryAnswer(
               "VALIDATION_ERROR",
               "本次作答须提供答案版本和操作标识",
             );
-          const value = deliveryValueOf(row, answer);
+          const value = deliveryValueOf(db, row, answer);
           const now = new Date();
           try {
             const result = runtime.saveQuestionDeliveryDraft(

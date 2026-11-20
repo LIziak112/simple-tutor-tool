@@ -3,6 +3,7 @@ import {
   judgeScoringSourceSchema,
   multiChoiceScoringSourceSchema,
   orderedTextDeliveryScoringSourceSchema,
+  orderingDeliveryScoringSourceSchema,
   responseDeliveryScoringSourceSchema,
   singleChoiceScoringSourceSchema,
 } from "@tutor/contract";
@@ -222,7 +223,12 @@ export function createOwnClassMultiEvaluator(
   };
 }
 
-export function createOwnClassFillEvaluator(
+const orderedTextEvaluationSourceSchema =
+  orderedTextDeliveryScoringSourceSchema.or(
+    orderingDeliveryScoringSourceSchema,
+  );
+
+export function createOwnClassOrderedTextEvaluator(
   db: Db,
   currentScope: () => OwnClassChoiceEvaluationScope | undefined,
 ): OrderedTextEvaluatorRegistration {
@@ -235,7 +241,7 @@ export function createOwnClassFillEvaluator(
         "manual_only",
         "reference_self",
       ]);
-      const source = orderedTextDeliveryScoringSourceSchema.safeParse(question);
+      const source = orderedTextEvaluationSourceSchema.safeParse(question);
       if (
         !source.success ||
         JSON.stringify(source.data.acceptedBlanks) !==

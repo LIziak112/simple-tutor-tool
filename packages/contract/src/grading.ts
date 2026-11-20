@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  orderingBehavior,
+  orderingPublicStructureOf,
+} from "./answer-kinds/index.ts";
 import { questionEvidenceBindings } from "./capability.ts";
 import {
   choiceAnswersSchema,
@@ -7,6 +11,8 @@ import {
   judgeAnswersSchema,
   multiAnswersSchema,
   optionSchema,
+  orderingAnswersSchema,
+  orderingItemSchema,
   questionTypeSchema,
   responseAnswersSchema,
 } from "./content.ts";
@@ -101,6 +107,28 @@ export const orderedTextDeliveryScoringSourceSchema = z.union([
   })),
 ]);
 
+export const orderingDeliveryScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["ordering"]),
+    orderingItems: orderingItemSchema.array().min(1),
+    answers: orderingAnswersSchema,
+  })
+  .refine(
+    ({ orderingItems, answers }) =>
+      answers.sequence.length ===
+        orderingItems.filter(({ distractor }) => !distractor).length &&
+      orderingBehavior.inspectShape(
+        answers,
+        orderingPublicStructureOf(orderingItems),
+      ).length === 0,
+    { path: ["answers", "sequence"], message: "排序参考与冻结项不一致" },
+  )
+  .transform((source) => ({
+    ...source,
+    // 冻结参考项逐位编码，评估时据此核对同一题版。
+    acceptedBlanks: source.answers.sequence.map((item) => [item]),
+  }));
+
 export const responseDeliveryScoringSourceSchema = z.object({
   type: questionTypeSchema.extract(["response"]),
   answers: responseAnswersSchema.optional(),
@@ -125,6 +153,7 @@ export const wholeQuestionDeliveryScoringSourcesSchema = z
   .union([
     objectiveDeliveryScoringSourceSchema,
     orderedTextDeliveryScoringSourceSchema,
+    orderingDeliveryScoringSourceSchema,
     responseDeliveryScoringSourceSchema,
   ])
   .array()
