@@ -1,11 +1,24 @@
 import { randomUUID } from "node:crypto";
-import type { ApiErr, RubricReview } from "@tutor/contract";
+import { mkdtempDisposableSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  type ApiErr,
+  attemptResultOkSchema,
+  attemptStartOkSchema,
+  BACKUP_KERNEL_DATABASE,
+  type RubricReview,
+  rubricReviewSchema,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
+import { openLearningRuntime } from "learning-kernel";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
-import type { Db } from "../db/client";
+import { runBackfills } from "../db/backfill.ts";
+import { createDbHandle, type Db } from "../db/client";
+import { runMigrations } from "../db/migrate.ts";
 import { aiMessages, aiTasks } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils";
 import { createStudentAiConnection } from "../services/ai-companion/connection-service.ts";
@@ -19,11 +32,17 @@ import {
   runStudentAiDispatchOnce,
 } from "../services/ai-companion/student-ai-worker.ts";
 import { inappReplyPlanOf } from "../services/rubric-agent-record.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { postAssignment } from "../test/m04-p1/product-fixture.ts";
 import {
   callToolJson,
   connectMcpClientViaApp,
 } from "../test/mcp-test-utils.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import { createStudent, loginStudent } from "../test/note-world.ts";
+import {
+  fetchSubmitRevisions,
+  submitAttemptRequest,
+} from "../test/submit-revisions";
 
 /**
  * 模块 3「通用量表判卷」服务级验收：
@@ -111,15 +130,20 @@ async function makeWorld(
     answerRelease?: "on_submit" | "after_due";
     dueAt?: string;
   } = {},
-): Promise<World> {
-  const db = createTestDb();
-  const app = createApp({
-    isProduction: false,
-    logger: silentLogger,
-    db,
-    publicUrl: "http://localhost:8787",
-    dataDir: createTestDir(),
-  });
+  kernel?: { db: Db; dataDir: string },
+) {
+  const db = kernel?.db ?? createTestDb();
+  const dataDir = kernel?.dataDir ?? createTestDir();
+  const openApp = (db: Db) =>
+    createApp({
+      isProduction: false,
+      logger: silentLogger,
+      db,
+      publicUrl: "http://localhost:8787",
+      dataDir,
+      kernelAssignmentCreationEnabled: kernel !== undefined,
+    });
+  const app = openApp(db);
   const setup = await postJson(app, "/api/public/teacher/setup", undefined, {
     loginName: "teacher",
     password: TEACHER_PASSWORD,
@@ -149,8 +173,9 @@ async function makeWorld(
     unitIds: [unitId],
     studentIds: [studentId],
     ...assignment,
+    ...(kernel && { executionBackend: "kernel", allowRedo: false }),
   });
-  expect(assigned.status).toBe(201);
+  expect(assigned.status, await assigned.clone().text()).toBe(201);
   const assignmentId = (
     (await assigned.json()) as { data: { assignments: { id: string }[] } }
   ).data.assignments[0]?.id;
@@ -161,16 +186,27 @@ async function makeWorld(
   });
   expect(login.status).toBe(200);
   const aCookie = `tutor_student_session=${tokenOf(login, "tutor_student_session")}`;
-  const started = await postJson(
+  const started = kernel
+    ? await postAssignment(app, assignmentId, aCookie)
+    : await postJson(
+        app,
+        `/api/student/assignments/${assignmentId}/attempt`,
+        aCookie,
+        { workflowVersion: 1 },
+      );
+  expect(started.status, await started.clone().text()).toBe(200);
+  const start = attemptStartOkSchema.parse(await started.json()).data;
+  return {
     app,
-    `/api/student/assignments/${assignmentId}/attempt`,
+    db,
     aCookie,
-    { workflowVersion: 1 },
-  );
-  expect(started.status).toBe(200);
-  const attemptId = ((await started.json()) as { data: { id: string } }).data
-    .id;
-  return { app, db, aCookie, attemptId };
+    attemptId: start.id,
+    start,
+    studentId,
+    assignmentId,
+    tCookie,
+    openApp,
+  };
 }
 
 async function questionsOf(
@@ -228,6 +264,345 @@ function rubricPath(w: World, questionId: string, leaf: "self" | "final") {
 async function errOf(res: Response): Promise<ApiErr> {
   return (await res.json()) as ApiErr;
 }
+
+describe("内核普通整卷的量表写入", () => {
+  it.each(["self", "final"] as const)(
+    "宿主待投影时，%s 从同一冻结原答保存并回读",
+    async (first) => {
+      using dataDir = mkdtempDisposableSync(join(tmpdir(), "m08-rubric-"));
+      const reopen = () =>
+        createDbHandle(join(dataDir.path, "tutor.db"), (db) => {
+          runMigrations(db);
+          runBackfills(db);
+        });
+      let handle = reopen();
+      try {
+        const world = await makeWorld(
+          { answerRelease: "after_due", dueAt: "2099-01-01T00:00:00Z" },
+          { db: handle.db, dataDir: dataDir.path },
+        );
+        let app = world.app;
+        const { aCookie, assignmentId, attemptId, start, studentId, tCookie } =
+          world;
+        const root = `/api/student/attempts/${attemptId}`;
+        const answer = {
+          kind: "final",
+          finalAnswer: "  终身学习让人跟上时代。\n\t",
+        };
+        const otherAnswer = {
+          kind: "final",
+          finalAnswer: "还有一道题等老师批改。",
+        };
+        const self = { ratings: FULL_RATINGS, note: "本人量表自评" };
+        const custom = {
+          decision: "custom",
+          ratings: FULL_RATINGS.map(({ id }) => ({ id, level: 1 })),
+          note: "本人自行裁定",
+        };
+        const payload = { self, final: custom };
+        const put = (
+          kind: "self" | "final",
+          body: object = payload[kind],
+          cookie = aCookie,
+          question: string = Q.rubric,
+        ) =>
+          postJson(app, rubricPath(world, question, kind), cookie, body, "PUT");
+        const denied = async (res: Response, status: number, error: string) => {
+          expect(res.status).toBe(status);
+          const body = await errOf(res);
+          expect(body).toMatchObject({ ok: false, error });
+          expect(body).not.toHaveProperty("data");
+          assertNoLeak(body);
+        };
+        const saved = async (res: Response) => {
+          expect(res.status, await res.clone().text()).toBe(200);
+          expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+          const { data } = (await res.json()) as { data: unknown };
+          assertNoLeak(data, {
+            forbid: ["teacherMark", "teacherComment", "studentId"],
+          });
+          return rubricReviewSchema.parse(data);
+        };
+        const db = () => handle.db.$client;
+        const hostStatus = () =>
+          db()
+            .prepare("SELECT status FROM attempts WHERE id=?")
+            .pluck()
+            .get(attemptId);
+        const storedRubric = () =>
+          db()
+            .prepare(`SELECT rubric_self_json, rubric_agent_json, rubric_final_json
+        FROM responses WHERE attempt_id=? AND question_id=?`)
+            .get(attemptId, Q.rubric);
+        const assignmentPath = `/api/teacher/assignments/${assignmentId}`;
+        const release = async (answerRelease: "on_submit" | "after_due") => {
+          const body =
+            answerRelease === "after_due"
+              ? { answerRelease, dueAt: "2099-01-01T00:00:00Z" }
+              : { answerRelease };
+          const res = await postJson(
+            app,
+            assignmentPath,
+            tCookie,
+            body,
+            "PATCH",
+          );
+          expect(res.status, await res.clone().text()).toBe(200);
+        };
+
+        await denied(await put(first), 403, "RUBRIC_NOT_AVAILABLE");
+        const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
+        expect(revisions.map(({ questionId }) => questionId)).toEqual([
+          Q.rubric,
+          Q.plain,
+        ]);
+        for (const item of revisions) {
+          const res = await postJson(
+            app,
+            `${root}/answers/${encodeURIComponent(item.questionId)}`,
+            aCookie,
+            {
+              answer: item.questionId === Q.rubric ? answer : otherAnswer,
+              mutationId: randomUUID(),
+              expectedFrozenAt: start.frozenAt,
+              questionRevisionId: item.questionRevisionId,
+              baseRevision: item.expectedAnswerRevision,
+            },
+            "PUT",
+          );
+          expect(res.status, await res.clone().text()).toBe(200);
+        }
+        const submittedRevisions = await fetchSubmitRevisions(
+          app,
+          aCookie,
+          attemptId,
+        );
+        expect(
+          submittedRevisions.map(
+            ({ expectedAnswerRevision }) => expectedAnswerRevision,
+          ),
+        ).toEqual([1, 1]);
+        db().exec(`CREATE TEMP TRIGGER stop_rubric_projection BEFORE UPDATE OF receipt_id ON kernel_question_deliveries
+        BEGIN SELECT RAISE(ABORT, '中断量表测试的正式投影'); END`);
+        try {
+          const response = await postJson(app, `${root}/submit`, aCookie, {
+            revisions: submittedRevisions,
+            evidence: submittedRevisions.map(({ questionId }) => ({
+              questionId,
+              state: "none",
+            })),
+          });
+          expect(response.status).toBe(500);
+        } finally {
+          db().exec("DROP TRIGGER stop_rubric_projection");
+        }
+        expect(hostStatus()).toBe("draft");
+        expect(storedRubric()).toEqual({
+          rubric_self_json: null,
+          rubric_agent_json: null,
+          rubric_final_json: null,
+        });
+        const runtime = openLearningRuntime({
+          databasePath: join(dataDir.path, BACKUP_KERNEL_DATABASE),
+        });
+        try {
+          const completed = runtime.read(
+            { role: "student", id: studentId },
+            attemptId,
+          );
+          expect(completed.status).toBe("completed");
+          expect(
+            "questionDeliveries" in completed &&
+              completed.questionDeliveries.map(({ receipt }) => receipt?.id),
+          ).toEqual([expect.any(String)]);
+        } finally {
+          runtime.close();
+        }
+
+        const emptyRecords = storedRubric();
+        await denied(await put(first), 403, "RUBRIC_NOT_AVAILABLE");
+        expect(hostStatus()).toBe("draft");
+        expect(storedRubric()).toEqual(emptyRecords);
+        await release("on_submit");
+        expect(hostStatus()).toBe("draft");
+
+        const initialSave = await saved(await put(first));
+        expect(initialSave[first]).toMatchObject(payload[first]);
+        expect(initialSave[first === "self" ? "final" : "self"]).toBeNull();
+        expect(initialSave.agent).toBeNull();
+        expect(initialSave.pendingAgentTaskId).toBeNull();
+
+        const read = async () =>
+          attemptResultOkSchema.parse(
+            await (
+              await app.request(root, { headers: { cookie: aCookie } })
+            ).json(),
+          ).data;
+        const currentQuestion = (result: Awaited<ReturnType<typeof read>>) =>
+          result.units
+            .flatMap(({ questions }) => questions)
+            .find(({ questionId }) => questionId === Q.rubric);
+        const initial = await read();
+        expect(currentQuestion(initial)).toMatchObject({
+          answer,
+          rubricReview: initialSave,
+        });
+        expect(initial.summary).toMatchObject({
+          pendingCount: 1,
+          scoreFinal: null,
+        });
+        const markId = revisions[0]?.questionRevisionId;
+        expect(markId).toBeDefined();
+        const marked = await postJson(
+          app,
+          `/api/teacher/responses/${markId}/mark`,
+          tCookie,
+          { mark: "wrong", comment: "教师原判保留" },
+        );
+        expect(marked.status, await marked.clone().text()).toBe(200);
+        const before = await read();
+        const storedFacts = () => ({
+          settlement: db()
+            .prepare("SELECT * FROM attempt_settlements WHERE attempt_id=?")
+            .all(attemptId),
+          receipt: db()
+            .prepare(
+              "SELECT * FROM kernel_question_deliveries WHERE attempt_id=?",
+            )
+            .all(attemptId),
+          original: db()
+            .prepare(`SELECT id,question_snapshot_json,question_version,answer_json,submitted_at,teacher_mark,teacher_comment,final_correct
+          FROM responses WHERE attempt_id=? ORDER BY id`)
+            .all(attemptId),
+        });
+        const facts = storedFacts();
+        expect(facts.settlement).toHaveLength(1);
+        expect(facts.receipt).toHaveLength(1);
+        const receiptId = db()
+          .prepare(
+            "SELECT receipt_id FROM kernel_question_deliveries WHERE attempt_id=?",
+          )
+          .pluck()
+          .get(attemptId);
+        const replaceReceipt = db().prepare(
+          "UPDATE kernel_question_deliveries SET receipt_id=? WHERE attempt_id=?",
+        );
+        const initialRecords = storedRubric();
+        replaceReceipt.run(randomUUID(), attemptId);
+        try {
+          for (const kind of ["self", "final"] as const)
+            await denied(await put(kind), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
+          expect(storedRubric()).toEqual(initialRecords);
+        } finally {
+          replaceReceipt.run(receiptId, attemptId);
+        }
+
+        await createStudent(app, tCookie, "rubric-other");
+        const other = await loginStudent(app, "rubric-other");
+        for (const kind of ["self", "final"] as const) {
+          await denied(await put(kind, payload[kind], other), 403, "FORBIDDEN");
+          await denied(
+            await put(kind, payload[kind], aCookie, Q.plain),
+            403,
+            "RUBRIC_NOT_AVAILABLE",
+          );
+          await denied(
+            await put(kind, payload[kind], aCookie, "wrong-question"),
+            404,
+            "QUESTION_NOT_FOUND",
+          );
+          await denied(
+            await put(kind, {
+              ...payload[kind],
+              ratings: FULL_RATINGS.slice(1),
+            }),
+            400,
+            "RUBRIC_RATINGS_INVALID",
+          );
+          await denied(
+            await put(kind, {
+              ...payload[kind],
+              ratings: [{ id: "r1", level: 5 }],
+            }),
+            400,
+            "VALIDATION_ERROR",
+          );
+        }
+        const adopt = { decision: "agent", note: "采纳已保存的意见" };
+        await denied(await put("final", adopt), 409, "RUBRIC_RATINGS_INVALID");
+        const opinion = {
+          source: "agent",
+          ratings: FULL_RATINGS.map(({ id }) => ({ id, level: 2 })),
+          note: "既有量表意见夹具",
+          at: new Date().toISOString(),
+        };
+        db()
+          .prepare(
+            "UPDATE responses SET rubric_agent_json=? WHERE attempt_id=? AND question_id=?",
+          )
+          .run(JSON.stringify(opinion), attemptId, Q.rubric);
+
+        const own = await saved(await put("self"));
+        expect(own.self).toMatchObject(self);
+        expect(own.agent).toEqual(opinion);
+        if (first === "final") expect(own.final).toEqual(initialSave.final);
+        const adopted = await saved(await put("final", adopt));
+        expect(adopted).toMatchObject({
+          self: own.self,
+          agent: opinion,
+          final: { ...adopt, ratings: opinion.ratings },
+        });
+        const kept = await saved(
+          await put("final", { decision: "self", note: "保留本人自评" }),
+        );
+        expect(kept).toMatchObject({
+          self: own.self,
+          final: { decision: "self", ratings: FULL_RATINGS },
+        });
+        const overridden = await saved(await put("final"));
+        expect(overridden).toMatchObject({
+          self: own.self,
+          agent: opinion,
+          final: custom,
+        });
+        expect(storedFacts()).toEqual(facts);
+
+        await release("after_due");
+        const lastRecords = storedRubric();
+        for (const kind of ["self", "final"] as const)
+          await denied(await put(kind), 403, "RUBRIC_NOT_AVAILABLE");
+        const restricted = await read();
+        expect(restricted.answersReleased).toBe(false);
+        expect(currentQuestion(restricted)).toMatchObject({
+          rubricReview: null,
+          teacherMark: null,
+          teacherComment: null,
+        });
+        expect(storedRubric()).toEqual(lastRecords);
+        await release("on_submit");
+        handle.close();
+        handle = reopen();
+        app = world.openApp(handle.db);
+        const restored = await read();
+        expect(restored.attempt).toEqual(before.attempt);
+        expect(restored.summary).toEqual(before.summary);
+        expect(currentQuestion(restored)).toEqual({
+          ...currentQuestion(before),
+          rubricReview: overridden,
+        });
+        expect(currentQuestion(restored)).toMatchObject({
+          answer,
+          teacherMark: "wrong",
+          teacherComment: "教师原判保留",
+          finalCorrect: false,
+        });
+        expect(storedFacts()).toEqual(facts);
+      } finally {
+        handle.close();
+      }
+    },
+  );
+});
 
 describe("模块 3：量表随快照公开下发，自评 / 裁定校验链", () => {
   it("作答视图带 rubric（四项 r1–r4、4 档）但不带参考；交卷公布后结果视图带 rubricReview 空记录", async () => {

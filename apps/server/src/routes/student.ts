@@ -246,7 +246,7 @@ export function createStudentRoutes(
         createStudentQuestionProcessRoutes(db, questionProcessEnabled),
       )
       .route("/", createStudentAiRoutes(db, dataDir, publicUrl))
-      .route("/", createStudentRubricRoutes(db))
+      .route("/", createStudentRubricRoutes(db, dataDir))
       .route("/", createStudentAttachmentRoutes(db, dataDir))
       .route("/", createStudentPersonalRoutes(db, dataDir))
       .route("/", createStudentBatchSubmissionRoutes(db, dataDir))
