@@ -23,6 +23,7 @@ import {
   studentRecordsOkSchema,
   teacherAttemptDetailOkSchema,
   teacherInfoOkSchema,
+  wrongQuestionsOkSchema,
 } from "@tutor/contract";
 import { ZipArchive } from "archiver";
 import { openLearningRuntime } from "learning-kernel";
@@ -554,6 +555,25 @@ it.each([false, true])(
       const opened = await postAssignment(app, assignment, world.ownerCookie);
       const attempt = attemptStartOkSchema.parse(await opened.json()).data;
       const path = "/api/student/attempts/" + attempt.id;
+      const wrongCards = async (query = "", cookie = world.ownerCookie) => {
+        const res = await jsonCall(
+          app,
+          `/api/student/wrong-questions${query}`,
+          cookie,
+        );
+        expect(res.status, await res.clone().text()).toBe(200);
+        const body: unknown = await res.json();
+        assertNoLeak(body, {
+          allow: ["answers", "solutionMd"],
+          forbid: [
+            "operationId",
+            "responseId",
+            "teacherComment",
+            "teacherMark",
+          ],
+        });
+        return wrongQuestionsOkSchema.parse(body).data.questions;
+      };
       const draft = async () =>
         attemptDraftOkSchema.parse(
           await (await jsonCall(app, path, world.ownerCookie)).json(),
@@ -653,6 +673,7 @@ it.each([false, true])(
         pendingSelfReviewCount: null,
         resultCounts: null,
       });
+      expect(await wrongCards("?includeResolved=true")).toEqual([]);
       const reviewPath = path + "/questions/k18-extra/self-review";
       const review = (body: SelfReviewRequest, cookie = world.ownerCookie) =>
         jsonCall(app, reviewPath, cookie, "POST", body);
@@ -759,6 +780,17 @@ it.each([false, true])(
               ? null
               : { source: "self", value: verdict === "correct" },
           );
+          const cards = await wrongCards("?includeResolved=true");
+          if (verdict === "wrong") {
+            expect(cards).toEqual([
+              expect.objectContaining({
+                questionId: "k18-extra",
+                rounds: [expect.objectContaining({ reviewSource: "self" })],
+              }),
+            ]);
+          } else {
+            expect(cards).toEqual([]);
+          }
           expect(await receipt(request)).toEqual(saved);
         }
         const stale = await review({ ...correct, mutationId: randomUUID() });
@@ -790,6 +822,8 @@ it.each([false, true])(
         );
         replaceReceipt.run(randomUUID(), attempt.id);
         try {
+          const unmatched = new URLSearchParams({ knowledge: "不相干的考点" });
+          expect(await wrongCards(`?${unmatched}`)).toEqual([]);
           const unavailable = await review({
             verdict: "correct",
             baseRevision: 3,
@@ -838,6 +872,60 @@ it.each([false, true])(
         pendingCount: selfReview ? 0 : 3,
       });
       expect(await markResponse(oldBody)).toEqual(marked);
+      if (selfReview) {
+        const expectedCard = {
+          questionId: "k17-one",
+          answerText: "A",
+          wrongCount: 1,
+          correctCount: 0,
+          rounds: [
+            expect.objectContaining({
+              attemptId: attempt.id,
+              answered: true,
+              correct: false,
+              reviewSource: "teacher",
+            }),
+          ],
+        };
+        expect(await wrongCards()).toEqual([
+          expect.objectContaining(expectedCard),
+        ]);
+        expect(await wrongCards("?includeResolved=true")).toEqual([
+          expect.objectContaining(expectedCard),
+        ]);
+        expect(
+          await wrongCards("?includeResolved=true", world.otherCookie),
+        ).toEqual([]);
+        const release = async (answerRelease: "after_due" | "on_submit") => {
+          const res = await jsonCall(
+            app,
+            `/api/teacher/assignments/${assignment}`,
+            world.teacher,
+            "PATCH",
+            { answerRelease },
+          );
+          expect(res.status, await res.clone().text()).toBe(200);
+        };
+        await release("after_due");
+        expect(await wrongCards("?includeResolved=true")).toEqual([]);
+        const withheld = await finishedResult(app, path, world.ownerCookie);
+        expect(withheld.answersReleased).toBe(false);
+        expect(
+          withheld.units
+            .flatMap((group) => group.questions)
+            .find(({ questionId }) => questionId === "k17-one"),
+        ).toMatchObject({
+          answer: { kind: "choice", index: 0 },
+          answers: null,
+          finalCorrect: null,
+          teacherMark: null,
+          teacherComment: null,
+        });
+        await release("on_submit");
+        expect(await wrongCards()).toEqual([
+          expect.objectContaining(expectedCard),
+        ]);
+      }
       const staleMark = await jsonCall(app, markPath, world.teacher, "POST", {
         mark: null,
         comment: null,
@@ -948,6 +1036,10 @@ it.each([false, true])(
         pendingCount: result.summary.pendingCount,
       });
       expect(await markResponse(clear)).toEqual(cleared);
+      if (selfReview) {
+        expect(await wrongCards()).toEqual([]);
+        expect(await wrongCards("?includeResolved=true")).toEqual([]);
+      }
       const reused = await jsonCall(app, markPath, world.teacher, "POST", {
         ...clear,
         comment: "异内容重用",

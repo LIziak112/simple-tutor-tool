@@ -17,12 +17,15 @@ import {
   kernelAttemptBindings,
   kernelAttemptConfirmations,
 } from "../db/schema-kernel-assignments.ts";
+import { kernelQuestionDeliveries } from "../db/schema-kernel-question-delivery.ts";
 import { releaseGateSql } from "./answer-publication-sql.ts";
 import {
   type RecoverKernelConfirmation,
   withKernelConfirmationReader,
 } from "./kernel-assignment-confirmation-recovery.ts";
 import { readBoundKernelActivity } from "./kernel-assignment-runtime.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
+import { deliverySlotId } from "./kernel-question-delivery-publication.ts";
 
 export interface WrongRoundScope {
   readonly dataDir?: string;
@@ -127,6 +130,7 @@ export function readPublishedKernelWrongRounds(
       attempt: attempts,
       binding: kernelAttemptBindings,
       ticket: kernelAttemptConfirmations,
+      delivery: kernelQuestionDeliveries.attemptId,
     })
     .from(attempts)
     .innerJoin(
@@ -137,9 +141,22 @@ export function readPublishedKernelWrongRounds(
       kernelAttemptBindings,
       eq(kernelAttemptBindings.attemptId, attempts.id),
     )
-    .innerJoin(
+    .leftJoin(
       kernelAttemptConfirmations,
       eq(kernelAttemptConfirmations.attemptId, attempts.id),
+    )
+    .leftJoin(
+      kernelQuestionDeliveries,
+      and(
+        eq(kernelQuestionDeliveries.attemptId, attempts.id),
+        eq(
+          kernelQuestionDeliveries.stepAttemptId,
+          kernelAttemptBindings.stepAttemptId,
+        ),
+        eq(kernelQuestionDeliveries.slotId, deliverySlotId),
+        isNotNull(kernelQuestionDeliveries.receiptId),
+        ne(attempts.status, "draft"),
+      ),
     )
     .leftJoin(assignments, eq(assignments.id, attempts.assignmentId))
     .where(
@@ -147,18 +164,35 @@ export function readPublishedKernelWrongRounds(
         eq(attempts.studentId, studentId),
         eq(attempts.sourceType, "assignment"),
         isNull(attempts.abandonedAt),
+        or(
+          isNotNull(kernelAttemptConfirmations.attemptId),
+          isNotNull(kernelQuestionDeliveries.attemptId),
+        ),
         releaseGateSql(nowIso),
         matchingQuestions,
       ),
     )
     .all();
-  if (scopes.length === 0) return [];
+  const delivered: ReturnType<RecoverKernelConfirmation>[] = [];
+  const legacy: Parameters<RecoverKernelConfirmation>[] = [];
+  for (const { attempt, binding, ticket, delivery } of scopes) {
+    if (delivery !== null) {
+      const facts = readQuestionDeliveryFacts(db, dataDir, attempt);
+      if (facts && facts.attempt.status !== "draft") delivered.push(facts);
+    } else if (ticket !== null) {
+      legacy.push([attempt, binding, ticket]);
+    }
+  }
+  if (legacy.length === 0) return delivered;
 
   return withKernelConfirmationReader(db, dataDir, (runtime, recover) =>
-    scopes.flatMap(({ attempt, binding, ticket }) =>
-      readBoundKernelActivity(runtime, attempt, binding).status === "completed"
-        ? [recover(attempt, binding, ticket)]
-        : [],
+    delivered.concat(
+      legacy.flatMap(([attempt, binding, ticket]) =>
+        readBoundKernelActivity(runtime, attempt, binding).status ===
+        "completed"
+          ? [recover(attempt, binding, ticket)]
+          : [],
+      ),
     ),
   );
 }

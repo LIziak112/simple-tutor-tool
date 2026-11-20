@@ -190,14 +190,11 @@ function groupWrongRounds(
       })
     )
       continue;
-    const list = roundsByQuestion.get(row.questionId) ?? [];
-    // 来源标注走有效判定单一出处（教师判 > 自评 > 自动；无有效判定的防御
-    // 行省略键——契约 optional，历史载荷缺省不冒充客观判断）
+    // 正式题组包含待批或待自评行，只有有效判定才构成轮次。
     const effective = effectiveOfRound(row);
-    list.push({
-      ...row,
-      ...(effective !== null ? { reviewSource: effective.source } : {}),
-    });
+    if (effective === null) continue;
+    const list = roundsByQuestion.get(row.questionId) ?? [];
+    list.push({ ...row, reviewSource: effective.source });
     roundsByQuestion.set(row.questionId, list);
   }
   for (const list of roundsByQuestion.values()) {
