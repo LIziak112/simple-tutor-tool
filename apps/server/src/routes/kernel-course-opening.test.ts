@@ -11,7 +11,10 @@ import {
   BACKUP_KERNEL_DATABASE,
   BACKUP_KERNEL_MANIFEST,
   backupKernelManifestSchema,
+  studentCourseDetailOkSchema,
+  studentCourseListOkSchema,
   studentRecordsOkSchema,
+  studentUnitLandingOkSchema,
   teacherAttemptDetailOkSchema,
   teacherInfoOkSchema,
 } from "@tutor/contract";
@@ -290,7 +293,7 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     );
     expect(readKernel().stepAttemptId).not.toBe(initial.stepAttemptId);
     const save = {
-      answer: { kind: "choice", index: 0 },
+      answer: { kind: "choice", index: 1 },
       baseRevision: 0,
       mutationId: randomUUID(),
       expectedFrozenAt: refreshed.frozenAt,
@@ -392,6 +395,53 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     const result = attemptResultOkSchema.parse(await response.json()).data;
     expect(result.attempt.id).toBe(first.id);
     expect(result.answersReleased).toBe(true);
+    expect(result.attempt.scoreAuto).toBe(50);
+    const counts = {
+      correctCount: 1,
+      totalCount: 2,
+      pendingCount: 0,
+      pendingSelfReviewCount: 0,
+    };
+    const landing = studentUnitLandingOkSchema.parse(
+      await (await owner(unitPath)).json(),
+    ).data;
+    expect(landing.attempts).toEqual([
+      expect.objectContaining({
+        attemptId: first.id,
+        score: 50,
+        resultCounts: counts,
+      }),
+    ]);
+    const summary = {
+      firstScore: 50,
+      latestScore: 50,
+      bestScore: 50,
+      firstResultCounts: counts,
+      latestResultCounts: counts,
+      bestResultCounts: counts,
+    };
+    expect(landing.summary).toMatchObject(summary);
+    const coursePath = unitPath.split("/units/")[0] ?? "";
+    const directory = studentCourseDetailOkSchema.parse(
+      await (await owner(coursePath)).json(),
+    ).data;
+    expect(
+      directory.items.find((item) => item.kind === "unit")?.attempt,
+    ).toMatchObject(summary);
+    const courses = studentCourseListOkSchema.parse(
+      await (await owner("/api/student/courses")).json(),
+    ).data.courses;
+    expect(courses).toEqual([
+      expect.objectContaining({ completedUnitCount: 1 }),
+    ]);
+    expect(
+      sql
+        .prepare("SELECT score_auto, score_final FROM attempts WHERE id=?")
+        .get(first.id),
+    ).toEqual({
+      score_auto: null,
+      score_final: null,
+    });
     const complete = readKernel();
     expect(complete.status).toBe("completed");
     expect(complete.questionDeliveries).toHaveLength(1);

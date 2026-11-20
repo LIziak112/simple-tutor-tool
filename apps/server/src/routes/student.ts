@@ -778,13 +778,19 @@ export function createStudentRoutes(
       .get("/courses", (c) => {
         return c.json({
           ok: true,
-          data: listStudentCourses(db, c.var.student.id),
+          data: listStudentCourses(db, c.var.student.id, undefined, dataDir),
         });
       })
       .get("/courses/:id", (c) => {
         return c.json({
           ok: true,
-          data: getStudentCourseDetail(db, c.var.student.id, c.req.param("id")),
+          data: getStudentCourseDetail(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            undefined,
+            dataDir,
+          ),
         });
       })
       // T2A.6：单元落地页（D10——题数/题型分布/历次作答/首次/最近/最高分/未交卷标记；
@@ -797,6 +803,8 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             c.req.param("unitId"),
+            undefined,
+            dataDir,
           ),
         });
       })
