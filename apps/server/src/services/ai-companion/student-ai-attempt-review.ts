@@ -428,17 +428,16 @@ function snapshotJsonOf(
 
 // ---------- 预览 ----------
 
-/** 整体复盘预览：范围题数、四类计数、发送字段与边界说明、不透明预览版本 */
+/** 复盘范围在原事务内通过根句柄读取，允许确认恢复访问同一 SQLite 连接。 */
 export function attemptReviewPreviewOf(
   db: Db,
   input: { studentId: string; attemptId: string },
   options: AttemptReviewServiceOptions,
 ): AiAttemptReviewPreviewData {
   const nowIso = resolveNowDate(options.now).toISOString();
-  const range = db.transaction(
-    (tx) => attemptReviewRangeOf(asDb(tx), input, options),
-    { behavior: "immediate" },
-  );
+  const range = db.transaction(() => attemptReviewRangeOf(db, input, options), {
+    behavior: "immediate",
+  });
   return {
     attemptId: input.attemptId,
     questionCount: range.counts.total,
@@ -520,7 +519,7 @@ export function createAttemptReviewTask(
   return db.transaction(
     (tx): { task: AiAttemptReviewTaskRow; created: boolean } => {
       // 事务内复算范围（预览版本核对：范围/判分/公布态变化 → 409 要求重新预览）
-      const range = attemptReviewRangeOf(asDb(tx), input, options);
+      const range = attemptReviewRangeOf(db, input, options);
       if (range.previewVersion !== input.expectedPreviewVersion) {
         throw new HttpError(
           409,
@@ -749,7 +748,7 @@ export function claimAttemptReviewTask(
         // 领取时点重校验：范围锚（题单/作答/判分/公布态）与逐题当前策略
         try {
           const range = attemptReviewRangeOf(
-            asDb(tx),
+            db,
             { studentId: task.studentId, attemptId: task.attemptId },
             options,
           );
@@ -1015,7 +1014,7 @@ export function submitAttemptReviewResult(
       }
       // 租约有效不等于仍有教学授权：写回交付时重新核对当前状态。
       requireAttemptReviewAccess(
-        asDb(tx),
+        db,
         { studentId: task.studentId, attemptId: task.attemptId },
         options,
       );
