@@ -46,7 +46,10 @@ import {
 } from "./kernel-assignment-runtime.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
-import { resolveNewAttemptWorkflow } from "./practice-workflow-wiring.ts";
+import {
+  assertDraftCourseVisible,
+  resolveNewAttemptWorkflow,
+} from "./practice-workflow-wiring.ts";
 import type { Tx } from "./question-sync.ts";
 
 function verifyKernelBinding(db: Db, dataDir: string, attempt: Attempt): void {
@@ -63,7 +66,11 @@ export function verifyKernelStudentAttempt(
 ): void {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
   if (attempt.abandonedAt === null && isKernelAttempt(db, attempt)) {
-    if (attempt.sourceType === "lesson") {
+    if (attempt.sourceType === "course") {
+      assertDraftCourseVisible(db, studentId, attempt);
+      resolveKernelRefreezeForRead(db, dataDir, attempt);
+    }
+    if (attempt.sourceType === "lesson" || attempt.sourceType === "course") {
       if (
         !readQuestionDeliveryFacts(
           db,

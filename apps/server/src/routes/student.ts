@@ -235,6 +235,7 @@ export function createStudentRoutes(
   dataDir: string,
   questionProcessEnabled = false,
   kernelLessonEnabled = false,
+  kernelCourseOpeningEnabled = false,
 ) {
   const requireStudent = createRequireStudent(db, publicUrl);
   return (
@@ -855,7 +856,15 @@ export function createStudentRoutes(
           ),
         });
       })
-      .route("/", createStudentCreateRoutes(db, dataDir, kernelLessonEnabled))
+      .route(
+        "/",
+        createStudentCreateRoutes(
+          db,
+          dataDir,
+          kernelLessonEnabled,
+          kernelCourseOpeningEnabled,
+        ),
+      )
       // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）；
       // kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null + blocks 切段 +
       // companionUnits 恒空（嵌入单元隐藏，题目已在页内），泄露测试见

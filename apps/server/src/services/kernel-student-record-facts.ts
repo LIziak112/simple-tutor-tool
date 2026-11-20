@@ -19,6 +19,7 @@ import {
   kernelAttemptRefreezes,
 } from "../db/schema-kernel-assignments.ts";
 import {
+  kernelCourseOpenings,
   kernelLessonOpenings,
   kernelQuestionDeliveries,
 } from "../db/schema-kernel-question-delivery.ts";
@@ -36,6 +37,7 @@ import {
   readBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
+import { assertDraftCourseVisible } from "./practice-workflow-wiring.ts";
 import { attemptResultCountsOfRows } from "./result-counts.ts";
 import { answerOf } from "./snapshot.ts";
 import { requireVisibleStudentLecture } from "./student-course-service.ts";
@@ -123,13 +125,16 @@ function draftCandidates(
         .where(eq(kernelQuestionDeliveries.attemptId, attempts.id)),
     ),
   );
-  const lesson = isNotNull(kernelLessonOpenings.attemptId);
+  const questionOpening = or(
+    isNotNull(kernelLessonOpenings.attemptId),
+    isNotNull(kernelCourseOpenings.attemptId),
+  );
   // 还未投影的正式确认可能仍标作 draft。静态筛选可先做，状态和时间只能在恢复后筛。
   const canAffectPage =
     query.status === "draft"
-      ? or(reachable, lesson)
+      ? or(reachable, questionOpening)
       : query.status === undefined
-        ? or(reachable, hasTicket, lesson)
+        ? or(reachable, hasTicket, questionOpening)
         : hasTicket;
   return db
     .select({
@@ -146,6 +151,10 @@ function draftCandidates(
       eq(kernelLessonOpenings.attemptId, attempts.id),
     )
     .leftJoin(
+      kernelCourseOpenings,
+      eq(kernelCourseOpenings.attemptId, attempts.id),
+    )
+    .leftJoin(
       kernelAttemptBindings,
       eq(kernelAttemptBindings.attemptId, attempts.id),
     )
@@ -160,7 +169,7 @@ function draftCandidates(
     .where(
       and(
         eq(attempts.studentId, studentId),
-        or(isNotNull(kernelAssignments.assignmentId), lesson),
+        or(isNotNull(kernelAssignments.assignmentId), questionOpening),
         eq(attempts.status, "draft"),
         isNull(attempts.abandonedAt),
         studentRecordSourceWhere(query),
@@ -193,9 +202,20 @@ export function withKernelStudentRecordFacts<T>(
     .transaction(() => {
       const hiddenLessons = hiddenBoundLessonAttempts(db, studentId);
       const includedDrafts = () =>
-        draftCandidates(db, studentId, query).filter(
-          ({ attempt }) => !hiddenLessons.has(attempt.id),
-        );
+        draftCandidates(db, studentId, query).filter(({ attempt }) => {
+          if (hiddenLessons.has(attempt.id)) return false;
+          try {
+            assertDraftCourseVisible(db, studentId, attempt);
+            return true;
+          } catch (error) {
+            if (
+              error instanceof HttpError &&
+              (error.status === 403 || error.status === 404)
+            )
+              return false;
+            throw error;
+          }
+        });
       let candidates = includedDrafts();
       const refreezes = candidates.filter(
         (row) => row.pendingRefreeze !== null,

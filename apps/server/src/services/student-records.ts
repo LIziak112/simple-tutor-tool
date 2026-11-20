@@ -16,7 +16,10 @@ import {
 import type { Db } from "../db/client";
 import { attempts } from "../db/schema";
 import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
-import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
+import {
+  kernelCourseOpenings,
+  kernelLessonOpenings,
+} from "../db/schema-kernel-question-delivery.ts";
 import { attemptAnswersPublished } from "./answer-publication.ts";
 import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { assignmentReleaseByIds } from "./attempt-service";
@@ -185,7 +188,9 @@ export function listStudentRecords(
 ): StudentRecordsData {
   if (
     dataDir === undefined ||
-    (query.sourceType !== undefined && query.sourceType !== "assignment") ||
+    (query.sourceType !== undefined &&
+      query.sourceType !== "assignment" &&
+      query.sourceType !== "course") ||
     (query.assignmentId !== undefined &&
       !isKernelAssignment(db, query.assignmentId))
   )
@@ -233,7 +238,7 @@ function listStudentRecordIndex(
       lastActivityAt: lastActivitySql,
       kernelSourceId: sql<
         string | null
-      >`coalesce(${kernelAssignments.assignmentId}, ${kernelLessonOpenings.attemptId})`,
+      >`coalesce(${kernelAssignments.assignmentId}, ${kernelLessonOpenings.attemptId}, ${kernelCourseOpenings.attemptId})`,
     })
     .from(attempts)
     .leftJoin(
@@ -246,6 +251,10 @@ function listStudentRecordIndex(
     .leftJoin(
       kernelLessonOpenings,
       eq(kernelLessonOpenings.attemptId, attempts.id),
+    )
+    .leftJoin(
+      kernelCourseOpenings,
+      eq(kernelCourseOpenings.attemptId, attempts.id),
     )
     .where(where)
     .orderBy(

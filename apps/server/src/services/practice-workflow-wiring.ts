@@ -19,6 +19,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { requireVisibleCourseUnit } from "./course-service";
+import { courseKernelBinding } from "./kernel-question-delivery-binding.ts";
 import { policyOfColumn } from "./practice-feedback-settings-service";
 import {
   type AssignmentFeedbackGrant,
@@ -386,7 +387,9 @@ export function attemptWorkflowView(
       .where(eq(responses.attemptId, attempt.id))
       .all();
   const hasSubmittedQuestion = rows.some((row) => row.submittedAt !== null);
-  const workflow = resolvePracticeWorkflow({
+  const courseOpening =
+    attempt.sourceType === "course" && courseKernelBinding(db, attempt.id);
+  const resolved = resolvePracticeWorkflow({
     sourceType: attempt.sourceType,
     lifecycle: "existing",
     stored: {
@@ -397,6 +400,17 @@ export function attemptWorkflowView(
     },
     ...inputs,
   });
+  const workflow: Omit<
+    PracticeWorkflow,
+    "canSettlePartially" | "partialSettlementRestriction"
+  > = courseOpening
+    ? {
+        ...resolved,
+        canChangeFeedback: false,
+        canSubmitQuestion: false,
+        allowedFeedbackModes: ["after_attempt"],
+      }
+    : resolved;
   // 教师收紧后已提交题重取也按当前 gate 返回受限（计划 §5.4：已下发内容
   // 不宣称重新保密，但后续读取按当前规则；已提交行与成绩本身保留）。
   // feedbackReadable 与题级反馈四态共用同一纯裁决（M2 收敛：此前 wiring 自写

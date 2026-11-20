@@ -3,8 +3,12 @@ import type { StudentActivity } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
 import { kernelAttemptBindings } from "../db/schema-kernel-assignments.ts";
-import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
+import {
+  kernelCourseOpenings,
+  kernelLessonOpenings,
+} from "../db/schema-kernel-question-delivery.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
+import { attemptTeacherId } from "./attempt-question-set.ts";
 import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
 import {
   frozenKernelContextOf,
@@ -22,7 +26,46 @@ export function lessonKernelBinding(db: Pick<Db, "select">, attemptId: string) {
     .get();
 }
 
+export function courseKernelBinding(db: Pick<Db, "select">, attemptId: string) {
+  return db
+    .select({
+      courseId: kernelCourseOpenings.courseId,
+      unitId: kernelCourseOpenings.unitId,
+      studentId: kernelCourseOpenings.studentId,
+      attemptNo: kernelCourseOpenings.attemptNo,
+      practiceId: kernelCourseOpenings.practiceId,
+      practiceVersion: kernelCourseOpenings.practiceVersion,
+      stepAttemptId: kernelCourseOpenings.stepAttemptId,
+      teacherId: kernelCourseOpenings.teacherId,
+    })
+    .from(kernelCourseOpenings)
+    .where(eq(kernelCourseOpenings.attemptId, attemptId))
+    .get();
+}
+
 export function questionDeliveryBinding(db: Db, attempt: Attempt) {
+  if (attempt.sourceType === "course") {
+    const binding = courseKernelBinding(db, attempt.id);
+    if (!binding) return undefined;
+    if (
+      binding.courseId !== attempt.courseId ||
+      binding.unitId !== attempt.unitId ||
+      binding.studentId !== attempt.studentId ||
+      binding.attemptNo !== attempt.attemptNo ||
+      binding.teacherId !== attemptTeacherId(db, attempt) ||
+      attempt.feedbackMode !== "after_attempt" ||
+      attempt.timeLimitSec !== null ||
+      !binding.stepAttemptId
+    )
+      kernelAttemptUnavailable();
+    return {
+      practiceId: binding.practiceId,
+      practiceVersion: binding.practiceVersion,
+      stepAttemptId: binding.stepAttemptId,
+      teacherId: binding.teacherId,
+      course: { courseId: binding.courseId, unitId: binding.unitId },
+    };
+  }
   if (attempt.sourceType === "lesson") {
     const binding = lessonKernelBinding(db, attempt.id);
     if (!binding) return undefined;
@@ -83,7 +126,7 @@ export function readBoundQuestionDelivery(
     attempt.id,
   );
   if (!("questionDeliveries" in activity)) {
-    if (binding.lectureId) kernelAttemptUnavailable();
+    if (binding.lectureId || binding.course) kernelAttemptUnavailable();
     return undefined;
   }
   if (
@@ -96,7 +139,21 @@ export function readBoundQuestionDelivery(
   )
     kernelAttemptUnavailable();
   if (binding.teacherId !== undefined) {
-    const questions = attemptResponseRows(db, attempt.id).map((row) => {
+    const rows = attemptResponseRows(db, attempt.id);
+    if (binding.course) {
+      const input = activity.inputs.questions;
+      if (
+        input?.from !== "questions" ||
+        input.questions.length !== rows.length ||
+        rows.some(
+          (row, index) =>
+            input.questions[index]?.id !== row.questionId ||
+            input.questions[index]?.version !== row.questionVersion,
+        )
+      )
+        kernelAttemptUnavailable();
+    }
+    const questions = rows.map((row) => {
       const question = snapshotOfRow(row);
       if (!question) kernelAttemptUnavailable();
       return question;

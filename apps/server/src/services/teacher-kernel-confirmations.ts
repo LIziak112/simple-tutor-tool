@@ -22,6 +22,7 @@ import {
   kernelAttemptConfirmations,
 } from "../db/schema-kernel-assignments.ts";
 import {
+  kernelCourseOpenings,
   kernelLessonOpenings,
   kernelQuestionDeliveries,
 } from "../db/schema-kernel-question-delivery.ts";
@@ -74,6 +75,7 @@ export function readTeacherKernelFacts(
       binding: kernelAttemptBindings,
       ticket: kernelAttemptConfirmations,
       lesson: kernelLessonOpenings.attemptId,
+      course: kernelCourseOpenings.attemptId,
     })
     .from(attempts)
     .innerJoin(students, eq(students.id, attempts.studentId))
@@ -85,6 +87,10 @@ export function readTeacherKernelFacts(
     .leftJoin(
       kernelLessonOpenings,
       eq(kernelLessonOpenings.attemptId, attempts.id),
+    )
+    .leftJoin(
+      kernelCourseOpenings,
+      eq(kernelCourseOpenings.attemptId, attempts.id),
     )
     .leftJoin(
       kernelAttemptBindings,
@@ -107,6 +113,10 @@ export function readTeacherKernelFacts(
             eq(kernelLessonOpenings.teacherId, teacherId),
             eq(attempts.sourceType, "lesson"),
           ),
+          and(
+            eq(kernelCourseOpenings.teacherId, teacherId),
+            eq(attempts.sourceType, "course"),
+          ),
         ),
         isNull(attempts.abandonedAt),
         includeDrafts
@@ -128,7 +138,7 @@ export function readTeacherKernelFacts(
   if (scopes.length === 0) return { confirmed, drafts };
 
   return withKernelConfirmationReader(db, dataDir, (runtime, recover) => {
-    for (const { attempt, binding, ticket, lesson } of scopes) {
+    for (const { attempt, binding, ticket, lesson, course } of scopes) {
       const shared = readQuestionDeliveryFacts(db, dataDir, attempt);
       if (shared) {
         const rows =
@@ -149,7 +159,8 @@ export function readTeacherKernelFacts(
           drafts.push(...shared.rows.filter((row) => row.submittedAt === null));
         continue;
       }
-      if (binding === null || lesson !== null) kernelAttemptUnavailable();
+      if (binding === null || lesson !== null || course !== null)
+        kernelAttemptUnavailable();
       if (includeDrafts && attempt.status === "draft") {
         requireNoPendingKernelRefreeze(db, attempt);
         recoverKernelChoiceSnapshot(db, dataDir, attempt.id);

@@ -19,7 +19,10 @@ import {
   kernelAttemptRefreezes,
   kernelChoiceAmendments,
 } from "../db/schema-kernel-assignments.ts";
-import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
+import {
+  kernelCourseOpenings,
+  kernelLessonOpenings,
+} from "../db/schema-kernel-question-delivery.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
 import {
@@ -32,7 +35,7 @@ import {
 } from "./kernel-assignment-runtime.ts";
 import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
-import { verifyBackupLessonDeliveries } from "./kernel-question-delivery-backup.ts";
+import { verifyBackupQuestionDeliveries } from "./kernel-question-delivery-backup.ts";
 
 const publicationIdentitySchema = z.object({
   practice: z.object({ id: z.string(), version: z.number().int().positive() }),
@@ -103,7 +106,23 @@ function verifyProjection(
       return { attempt, binding, confirmation, refreeze };
     });
   const openings = db.select().from(kernelAssignmentOpenings).all();
-  const lessons = db.select().from(kernelLessonOpenings).all();
+  const questionOpenings = [
+    ...db.select().from(kernelLessonOpenings).all(),
+    ...db.select().from(kernelCourseOpenings).all(),
+  ];
+  const refreezable = new Set([
+    ...bindings.map(({ attempt }) => attempt.id),
+    ...questionOpenings.flatMap((opening) =>
+      !("lectureId" in opening) && opening.attemptId ? [opening.attemptId] : [],
+    ),
+  ]);
+  const invalidRefreezes = db
+    .select({ id: kernelAttemptRefreezes.attemptId })
+    .from(kernelAttemptRefreezes)
+    .all()
+    .some(({ id }) => !refreezable.has(id));
+  if (invalidRefreezes) throw new ZipReadError("备份中的重冻意图缺少作答绑定");
+
   const pendingAmendments = db
     .select({ ticket: kernelChoiceAmendments, studentId: attempts.studentId })
     .from(kernelChoiceAmendments)
@@ -116,18 +135,18 @@ function verifyProjection(
         ...bindings.map(({ attempt, binding }) => ({
           activityId: binding.attemptId,
           studentId: attempt.studentId,
-          operationId: "open:" + binding.assignmentId,
+          operationId: `open:${binding.assignmentId}`,
         })),
-        ...lessons.flatMap(({ attemptId, studentId, operationId }) =>
+        ...questionOpenings.flatMap(({ attemptId, studentId, operationId }) =>
           attemptId ? [{ activityId: attemptId, studentId, operationId }] : [],
         ),
       ],
       openingIntents: [
         ...openings.map(({ studentId, assignmentId }) => ({
           studentId,
-          operationId: "open:" + assignmentId,
+          operationId: `open:${assignmentId}`,
         })),
-        ...lessons.flatMap(({ attemptId, studentId, operationId }) =>
+        ...questionOpenings.flatMap(({ attemptId, studentId, operationId }) =>
           attemptId ? [] : [{ studentId, operationId }],
         ),
       ],
@@ -178,7 +197,12 @@ function verifyProjection(
     "SELECT COUNT(*) AS count FROM submission_evidence WHERE attempt_id = ?",
   );
 
-  verifyBackupLessonDeliveries(db, directory, lessons, attachmentDir);
+  verifyBackupQuestionDeliveries(
+    db,
+    directory,
+    questionOpenings,
+    attachmentDir,
+  );
   withKernelConfirmationReader(db, directory, (runtime, recover) => {
     for (const opening of openings) {
       const publication = publicationIdentitySchema.parse(opening.publication);

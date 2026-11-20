@@ -3,7 +3,6 @@ import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
 import { kernelAttemptRefreezes } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 
 export function pendingKernelRefreeze(
   db: Pick<Db, "select">,
@@ -28,6 +27,10 @@ export function requireNoPendingKernelRefreeze(
   db: Pick<Db, "select">,
   attempt: Attempt,
 ): void {
-  if (isKernelAttempt(db, attempt) && pendingKernelRefreeze(db, attempt.id))
-    kernelRefreezePending();
+  const pending = db
+    .select({ id: kernelAttemptRefreezes.attemptId })
+    .from(kernelAttemptRefreezes)
+    .where(eq(kernelAttemptRefreezes.attemptId, attempt.id))
+    .get();
+  if (pending) kernelRefreezePending();
 }

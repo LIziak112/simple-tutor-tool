@@ -56,6 +56,7 @@ export function createStudentCreateRoutes(
   db: Db,
   dataDir: string,
   kernelLessonEnabled = false,
+  kernelCourseOpeningEnabled = false,
 ) {
   const kernel = { dataDir, enabled: kernelLessonEnabled };
   const startAssignment: typeof startAttempt = (
@@ -86,6 +87,7 @@ export function createStudentCreateRoutes(
               c.req.param("unitId"),
               options,
               startClientOf(c),
+              { dataDir, enabled: kernelCourseOpeningEnabled },
             ),
           },
           201,

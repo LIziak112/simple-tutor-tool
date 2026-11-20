@@ -22,6 +22,7 @@ import {
 } from "./schema.ts";
 
 export {
+  kernelCourseOpenings,
   kernelLessonOpenings,
   kernelQuestionDeliveries,
   kernelResponseMarks,
@@ -121,7 +122,7 @@ export const kernelAttemptRefreezes = sqliteTable("kernel_attempt_refreezes", {
   attemptId: text("attempt_id")
     .primaryKey()
     .notNull()
-    .references(() => kernelAttemptBindings.attemptId),
+    .references(() => attempts.id),
   operationId: text("operation_id").notNull().unique(),
   stepAttemptId: text("step_attempt_id").notNull(),
   expectedPracticeVersion: integer("expected_practice_version").notNull(),

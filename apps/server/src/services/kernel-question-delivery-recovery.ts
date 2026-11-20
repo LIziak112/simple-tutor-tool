@@ -13,6 +13,7 @@ import {
   assertFormalInkAnchor,
   needsFormalInkAnchor,
 } from "./formal-ink-attachment.ts";
+import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import {
   type KernelRuntime,
   kernelAttemptUnavailable,
@@ -103,6 +104,7 @@ export function withDelivery<T>(
           studentId: attempt.studentId,
           assignmentId: binding.practiceId,
           ...(binding.lectureId && { lectureId: binding.lectureId }),
+          ...(binding.course && { course: binding.course }),
           practiceVersion: binding.practiceVersion,
           stepAttemptId: binding.stepAttemptId,
           slotId: current.slotId,
@@ -136,7 +138,7 @@ export function wholeDeliveryInkLocked(
   attempt: Attempt,
 ): boolean {
   return (
-    attempt.sourceType === "assignment" &&
+    (attempt.sourceType === "assignment" || attempt.sourceType === "course") &&
     withDelivery(
       db,
       dataDir,
@@ -351,24 +353,28 @@ export function readQuestionDeliveryFacts(
   markIntent?: MarkIntent,
 ): DeliveryFacts | undefined {
   return db.$client
-    .transaction(() =>
-      withDelivery(
+    .transaction(() => {
+      const current =
+        attempt.sourceType === "course"
+          ? resolveKernelRefreezeForRead(db, dataDir, attempt)
+          : attempt;
+      return withDelivery(
         db,
         dataDir,
-        attempt,
+        current,
         (runtime, binding, view, activate) =>
           recoverDeliveries(
             db,
             dataDir,
             runtime,
-            attempt,
+            current,
             binding,
             view,
             activate,
             markIntent,
           ),
         attachmentDir,
-      ),
-    )
+      );
+    })
     .immediate();
 }

@@ -3,7 +3,6 @@ import { questionDeliveryScoringSourcesSchema } from "@tutor/contract";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { type Attempt, attempts } from "../db/schema.ts";
-import { kernelAssignmentVersions } from "../db/schema-kernel-assignments.ts";
 import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
@@ -12,7 +11,10 @@ import {
 } from "./attempt-context.ts";
 import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { recordAttemptStartEvent } from "./event-service.ts";
-import { insertKernelFrozenResponses } from "./kernel-assignment-freeze.ts";
+import {
+  canInitializeKernelStorage,
+  insertKernelFrozenResponses,
+} from "./kernel-assignment-freeze.ts";
 import { kernelOpeningDraftSchema } from "./kernel-assignment-input.ts";
 import {
   kernelMaterialPublication,
@@ -319,18 +321,7 @@ export function openKernelLesson(
         draft.context ?? [],
         draft.responses.map(({ question }) => question),
       );
-      const canInitialize =
-        tx
-          .select({ id: kernelAssignmentVersions.assignmentId })
-          .from(kernelAssignmentVersions)
-          .limit(1)
-          .get() === undefined &&
-        tx
-          .select({ id: kernelLessonOpenings.operationId })
-          .from(kernelLessonOpenings)
-          .limit(1)
-          .get() === undefined;
-      ensureKernelRuntimeStorage(db, dataDir, canInitialize);
+      ensureKernelRuntimeStorage(db, dataDir, canInitializeKernelStorage(tx));
       return tx
         .insert(kernelLessonOpenings)
         .values({

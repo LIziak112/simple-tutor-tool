@@ -42,6 +42,7 @@ export type OwnClassChoiceEvaluationScope = Readonly<{
   studentId: string;
   assignmentId: string;
   lectureId?: string;
+  course?: { courseId: string; unitId: string };
   stepAttemptId: string;
   slotId: string;
   practiceVersion: number;
@@ -82,16 +83,26 @@ function frozenQuestionForEvaluation(
   )
     mismatch();
   const attempt = requireOwnAttempt(db, scope.studentId, scope.attemptId);
+  const expectedSource = scope.course
+    ? "course"
+    : scope.lectureId
+      ? "lesson"
+      : "assignment";
   if (
-    (scope.lectureId === undefined
-      ? attempt.sourceType !== "assignment" ||
-        attempt.assignmentId !== scope.assignmentId
-      : attempt.sourceType !== "lesson" ||
-        attempt.lectureId !== scope.lectureId) ||
+    attempt.sourceType !== expectedSource ||
     attempt.abandonedAt !== null ||
     attempt.frozenAt === null
   )
     mismatch();
+  if (scope.course) {
+    if (
+      attempt.courseId !== scope.course.courseId ||
+      attempt.unitId !== scope.course.unitId
+    )
+      mismatch();
+  } else if (scope.lectureId) {
+    if (attempt.lectureId !== scope.lectureId) mismatch();
+  } else if (attempt.assignmentId !== scope.assignmentId) mismatch();
   const row = db
     .select()
     .from(responses)

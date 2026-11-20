@@ -47,6 +47,7 @@ import {
   readQuestionDeliveryFacts,
   saveQuestionDeliveryAnswer,
 } from "./kernel-question-delivery.ts";
+import { assertDraftCourseVisible } from "./practice-workflow-wiring.ts";
 import { answerOf, snapshotOfRow } from "./snapshot.ts";
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
@@ -243,6 +244,7 @@ export function readKernelAssignmentDetail(
 ): ConditionalAttemptDetail | undefined {
   const ownAttempt = requireOwnAttempt(db, studentId, attemptId);
   if (!isKernelAttempt(db, ownAttempt)) return undefined;
+  assertDraftCourseVisible(db, studentId, ownAttempt);
   resolveKernelRefreezeForRead(db, dataDir, ownAttempt);
   return db.$client
     .transaction(() => {

@@ -1,18 +1,48 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq, max } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import type { Assignment } from "../db/schema.ts";
-import { kernelAssignmentVersions } from "../db/schema-kernel-assignments.ts";
-import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
+import type { Assignment, Attempt } from "../db/schema.ts";
+import {
+  kernelAssignmentVersions,
+  kernelAttemptRefreezes,
+} from "../db/schema-kernel-assignments.ts";
+import {
+  kernelCourseOpenings,
+  kernelLessonOpenings,
+} from "../db/schema-kernel-question-delivery.ts";
 import { canonicalJsonOf } from "../lib/canonical-json.ts";
-import { insertFrozenResponse } from "./attempt-freeze.ts";
+import { attemptResponseRows, insertFrozenResponse } from "./attempt-freeze.ts";
 import type {
   KernelOpeningDraft,
   loadKernelAssignmentQuestions,
 } from "./kernel-assignment-input.ts";
 import { kernelAssignmentPublication } from "./kernel-assignment-publication.ts";
-import { ensureKernelRuntimeStorage } from "./kernel-assignment-runtime.ts";
+import {
+  ensureKernelRuntimeStorage,
+  frozenKernelContextOf,
+  kernelAttemptUnavailable,
+} from "./kernel-assignment-runtime.ts";
 import type { Tx } from "./question-sync.ts";
+
+export function canInitializeKernelStorage(tx: Pick<Db, "select">): boolean {
+  return !(
+    tx
+      .select({ id: kernelAssignmentVersions.assignmentId })
+      .from(kernelAssignmentVersions)
+      .limit(1)
+      .get() ||
+    tx
+      .select({ id: kernelLessonOpenings.operationId })
+      .from(kernelLessonOpenings)
+      .limit(1)
+      .get() ||
+    tx
+      .select({ id: kernelCourseOpenings.operationId })
+      .from(kernelCourseOpenings)
+      .limit(1)
+      .get()
+  );
+}
 
 export function reserveKernelAssignmentVersion(
   db: Db,
@@ -55,18 +85,7 @@ export function reserveKernelAssignmentVersion(
         .where(eq(kernelAssignmentVersions.assignmentId, assignmentId))
         .get();
   const practiceVersion = known?.practiceVersion ?? (latest?.version ?? 0) + 1;
-  const canInitialize =
-    !tx
-      .select({ assignmentId: kernelAssignmentVersions.assignmentId })
-      .from(kernelAssignmentVersions)
-      .limit(1)
-      .get() &&
-    !tx
-      .select({ id: kernelLessonOpenings.operationId })
-      .from(kernelLessonOpenings)
-      .limit(1)
-      .get();
-  ensureKernelRuntimeStorage(db, dataDir, canInitialize);
+  ensureKernelRuntimeStorage(db, dataDir, canInitializeKernelStorage(tx));
   if (!known)
     tx.insert(kernelAssignmentVersions)
       .values({ assignmentId, practiceVersion, fingerprint })
@@ -78,6 +97,61 @@ export function reserveKernelAssignmentVersion(
         ? publication
         : kernelAssignmentPublication(assignment, practiceVersion, definition),
   };
+}
+
+type RefreezeTicket = typeof kernelAttemptRefreezes.$inferSelect;
+
+export function sameKernelFrozenDefinition(
+  db: Db,
+  attempt: Attempt,
+  definition: Pick<KernelOpeningDraft, "context" | "responses">,
+): boolean {
+  const current = attemptResponseRows(db, attempt.id);
+  return (
+    canonicalJsonOf(
+      frozenKernelContextOf(db, attempt.id).map(canonicalJsonOf).sort(),
+    ) ===
+      canonicalJsonOf((definition.context ?? []).map(canonicalJsonOf).sort()) &&
+    current.length === definition.responses.length &&
+    current.every((row, index) => {
+      const next = definition.responses[index];
+      return (
+        row.questionId === next?.question.id &&
+        row.questionVersion === next.questionVersion &&
+        row.unitId === next.unitId
+      );
+    })
+  );
+}
+
+export function writeKernelRefreezeIntent(
+  tx: Tx,
+  attempt: Attempt,
+  binding: Pick<
+    RefreezeTicket,
+    | "expectedPracticeVersion"
+    | "stepAttemptId"
+    | "practiceVersion"
+    | "publication"
+  >,
+  frozen: Pick<KernelOpeningDraft, "context" | "responses">,
+) {
+  if (binding.practiceVersion === binding.expectedPracticeVersion)
+    kernelAttemptUnavailable();
+  const frozenAt = new Date(
+    Math.max(Date.now(), Date.parse(attempt.frozenAt ?? attempt.startedAt) + 1),
+  ).toISOString();
+  tx.insert(kernelAttemptRefreezes)
+    .values({
+      attemptId: attempt.id,
+      operationId: `refreeze:${randomUUID()}`,
+      frozenAt,
+      ...binding,
+      responses: frozen.context?.length
+        ? { responses: frozen.responses, context: frozen.context }
+        : frozen.responses,
+    })
+    .run();
 }
 
 export function insertKernelFrozenResponses(

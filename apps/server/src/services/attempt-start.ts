@@ -27,16 +27,21 @@ import { attemptSummaryOf } from "./attempt-summary.ts";
 import { startOpenedAttemptTimer } from "./attempt-timing.ts";
 import { requireVisibleCourseUnit } from "./course-service";
 import { startKernelAssignmentAttempt } from "./kernel-assignment-attempt.ts";
+import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { isKernelAssignment } from "./kernel-assignment-routing.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import {
+  finishKernelCourseOpening,
+  reserveKernelCourseOpening,
+  reserveKernelCourseRefreeze,
+  resumeBoundKernelCourse,
+} from "./kernel-course-opening.ts";
+import { courseKernelBinding } from "./kernel-question-delivery-binding.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import { resolveNewAttemptWorkflow } from "./practice-workflow-wiring";
 import type { Tx } from "./question-sync";
-
-// 快照解析统一走 services/snapshot.ts 的 snapshotOfRow（全服务端唯一实现，
-// 含坏数据 warn 留痕）——本文件经顶部 import 使用，不再留平行 safeParse。
 
 /** 建卷请求的可选工作流选项（M1b；契约 attemptStartOptionsRequestSchema 解析产物） */
 export type AttemptWorkflowStartOptions = PracticeWorkflowStartOptions;
@@ -235,8 +240,15 @@ function createAssignmentAttempt(
       options,
     ),
   });
-  // T6R.3：建卷冻结——题目集合/题序/完整快照/单元归属逐题预插 responses 行
-  //（assignment 单元序 × 题序）；教师改题库只影响之后新建的卷
+  return persistFrozenAttempt(db, tx, attempt);
+}
+
+// 作业与课程宿主卷共用同一套冻结行和依赖闭包。
+function persistFrozenAttempt(
+  db: Db,
+  tx: Tx,
+  attempt: Attempt,
+): AttemptStartData {
   const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
     db,
     attempt,
@@ -288,10 +300,10 @@ export function startCourseAttempt(
   unitId: string,
   options: CourseAttemptStartOptions = {},
   client: AttemptStartClient = {},
+  kernel?: { dataDir: string; enabled: boolean },
 ): AttemptStartData {
-  requireVisibleCourseUnit(db, studentId, courseId, unitId);
-
-  return db.transaction((tx) => {
+  const decide = (tx: Tx) => {
+    const item = requireVisibleCourseUnit(db, studentId, courseId, unitId);
     const existing = tx
       .select()
       .from(attempts)
@@ -307,6 +319,8 @@ export function startCourseAttempt(
     const draft = existing.find(
       (row) => row.status === "draft" && row.abandonedAt === null,
     );
+    const bound = draft && courseKernelBinding(tx, draft.id);
+    if (draft && !bound) requireNoPendingKernelRefreeze(tx, draft);
     if (options.restartAttemptId !== undefined) {
       if (draft?.id !== options.restartAttemptId) {
         throw new HttpError(
@@ -315,12 +329,27 @@ export function startCourseAttempt(
           "当前作答已变化，请关闭确认后查看最新记录。",
         );
       }
+      if (bound) kernelAttemptUnavailable();
       tx.update(attempts)
         .set({ abandonedAt: new Date().toISOString() })
         .where(eq(attempts.id, draft.id))
         .run();
     } else if (draft !== undefined) {
-      return attemptSummaryOf(resumeDraftAttempt(db, draft, options, client));
+      if (!bound)
+        return attemptSummaryOf(resumeDraftAttempt(db, draft, options, client));
+      if (
+        !kernel ||
+        (draft.activatedAt === null && options.timeLimitMinutes !== undefined)
+      )
+        kernelAttemptUnavailable();
+      if (
+        client.snapshotProof !== false &&
+        reserveKernelCourseRefreeze(db, tx, kernel.dataDir, draft, item.title)
+      )
+        return { refreeze: draft };
+      return attemptSummaryOf(
+        resumeBoundKernelCourse(db, kernel.dataDir, draft),
+      );
     }
 
     const maxAttemptNo = existing.reduce(
@@ -343,35 +372,28 @@ export function startCourseAttempt(
       // M5-D2：传该卷 unitId——学生未设置偏好时课程单元的文档推荐参与裁决
       ...workflowStartColumns(db, "course", studentId, null, options, unitId),
     });
-    // T6R.3：建卷冻结——课程单元当前 live 题逐题预插快照行。冻结输入读走外层 db
-    // （同连接同步执行，事务内读写口径一致），写走 tx 与 attempt 行同事务落库
-    const { liveRows, teacherId, knowledgeByQuestion } =
-      freezeInputsOfNewAttempt(db, attempt);
-    // tt-07a（QM-06）：材料/组依赖闭包同事务冻结（读在外层 db，同款口径）
-    const entries =
-      teacherId === null
-        ? []
-        : contextEntriesOf(
-            liveAttemptContextClosure(
-              db,
-              teacherId,
-              liveRows.map((row) => row.id),
-            ),
-          );
-    tx.insert(attempts).values(attempt).run();
-    insertFrozenResponses(
+    const opening = reserveKernelCourseOpening(
+      db,
       tx,
-      attempt.id,
-      liveRows,
-      knowledgeByQuestion,
-      studentSelfReviewEnabledOf(db, teacherId),
+      attempt,
+      item.title,
+      kernel?.enabled &&
+        options.restartAttemptId === undefined &&
+        options.feedbackMode !== "per_question"
+        ? kernel.dataDir
+        : undefined,
     );
-    freezeAttemptContextSnapshotsWithin(
-      tx,
-      attempt.id,
-      entries,
-      attempt.startedAt,
+    if (opening) return { opening };
+    return persistFrozenAttempt(db, tx, attempt);
+  };
+  const start = db.transaction(decide, { behavior: "immediate" });
+  if ("opening" in start)
+    return attemptSummaryOf(
+      finishKernelCourseOpening(db, kernel?.dataDir, start.opening),
     );
-    return attemptSummaryOf(attempt);
-  });
+  if ("refreeze" in start)
+    return attemptSummaryOf(
+      resumeBoundKernelCourse(db, kernel?.dataDir, start.refreeze),
+    );
+  return start;
 }

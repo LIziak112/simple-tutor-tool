@@ -610,6 +610,13 @@
       "when": 1795184186845,
       "tag": "0086_kernel_response_marks",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "6",
+      "when": 1795199931360,
+      "tag": "0087_kernel_course_openings",
+      "breakpoints": true
     }
   ]
 }

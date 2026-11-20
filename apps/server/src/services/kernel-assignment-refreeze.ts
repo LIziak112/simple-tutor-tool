@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { and, eq, isNotNull } from "drizzle-orm";
 import {
   LearningError,
@@ -22,10 +21,12 @@ import {
   kernelAttemptRefreezes,
   kernelChoiceAmendments,
 } from "../db/schema-kernel-assignments.ts";
-import { canonicalJsonOf } from "../lib/canonical-json.ts";
+import {
+  kernelCourseOpenings,
+  kernelQuestionDeliveries,
+} from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { requireOwnAttempt } from "./attempt-access.ts";
-import { attemptResponseRows } from "./attempt-freeze.ts";
 import {
   discardOpenedArtifactsWithin,
   hasPendingOriginals,
@@ -35,25 +36,32 @@ import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   insertKernelFrozenResponses,
   reserveKernelAssignmentVersion,
+  sameKernelFrozenDefinition,
+  writeKernelRefreezeIntent,
 } from "./kernel-assignment-freeze.ts";
 import {
   assertKernelAssignmentPolicy,
+  kernelOpeningDraftSchema,
   kernelRefreezeDraftSchema,
   loadKernelAssignmentQuestions,
 } from "./kernel-assignment-input.ts";
+import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
 import { pendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import {
-  frozenKernelContextOf,
   kernelAttemptUnavailable,
   verifyKernelMaterialContext,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
+import { questionDeliveryBinding } from "./kernel-question-delivery-binding.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import type { Tx } from "./question-sync.ts";
 
 type Ticket = typeof kernelAttemptRefreezes.$inferSelect;
 
-function isOpenEmpty(db: Db, attempt: Attempt): boolean {
+export function isOpenEmptyForKernelRefreeze(
+  db: Db,
+  attempt: Attempt,
+): boolean {
   const id = attempt.id;
   return (
     attempt.status === "draft" &&
@@ -80,6 +88,11 @@ function isOpenEmpty(db: Db, attempt: Attempt): boolean {
       .where(eq(kernelChoiceAmendments.attemptId, id))
       .get() &&
     !db
+      .select({ id: kernelQuestionDeliveries.attemptId })
+      .from(kernelQuestionDeliveries)
+      .where(eq(kernelQuestionDeliveries.attemptId, id))
+      .get() &&
+    !db
       .select()
       .from(attemptBatchSubmissions)
       .where(eq(attemptBatchSubmissions.attemptId, id))
@@ -100,7 +113,7 @@ export function reserveKernelRefreeze(
     !("practiceVersion" in activity) ||
     activity.practiceVersion === undefined ||
     !("stepAttemptId" in activity) ||
-    !isOpenEmpty(db, attempt)
+    !isOpenEmptyForKernelRefreeze(db, attempt)
   )
     return false;
   let definition: ReturnType<typeof loadKernelAssignmentQuestions>;
@@ -121,22 +134,7 @@ export function reserveKernelRefreeze(
     activity.step.submit.slots.answers?.type !== definition.slotType
   )
     return false;
-  const current = attemptResponseRows(db, attempt.id);
-  if (
-    canonicalJsonOf(
-      frozenKernelContextOf(db, attempt.id).map(canonicalJsonOf).sort(),
-    ) === canonicalJsonOf(definition.context.map(canonicalJsonOf).sort()) &&
-    current.length === definition.responses.length &&
-    current.every((row, index) => {
-      const next = definition.responses[index];
-      return (
-        row.questionId === next?.question.id &&
-        row.questionVersion === next.questionVersion &&
-        row.unitId === next.unitId
-      );
-    })
-  )
-    return false;
+  if (sameKernelFrozenDefinition(db, attempt, definition)) return false;
   const target = reserveKernelAssignmentVersion(
     db,
     tx,
@@ -144,25 +142,16 @@ export function reserveKernelRefreeze(
     assignment,
     definition,
   );
-  if (target.practiceVersion === activity.practiceVersion)
-    kernelAttemptUnavailable();
-  const frozenAt = new Date(
-    Math.max(Date.now(), Date.parse(attempt.frozenAt ?? attempt.startedAt) + 1),
-  ).toISOString();
-  tx.insert(kernelAttemptRefreezes)
-    .values({
-      attemptId: attempt.id,
-      operationId: `refreeze:${randomUUID()}`,
-      stepAttemptId: activity.stepAttemptId,
+  writeKernelRefreezeIntent(
+    tx,
+    attempt,
+    {
       expectedPracticeVersion: activity.practiceVersion,
-      frozenAt,
+      stepAttemptId: activity.stepAttemptId,
       ...target,
-      responses:
-        definition.context.length > 0
-          ? { responses: definition.responses, context: definition.context }
-          : definition.responses,
-    })
-    .run();
+    },
+    definition,
+  );
   return true;
 }
 
@@ -191,17 +180,29 @@ export function finishKernelRefreeze(
   allowChange: boolean,
 ): Attempt {
   const key = eq(kernelAttemptRefreezes.attemptId, attempt.id);
-  const binding = tx
-    .select()
-    .from(kernelAttemptBindings)
-    .where(eq(kernelAttemptBindings.attemptId, attempt.id))
-    .get();
+  const course =
+    attempt.sourceType === "course"
+      ? questionDeliveryBinding(db, attempt)
+      : undefined;
+  const assignment =
+    attempt.sourceType === "assignment"
+      ? tx
+          .select()
+          .from(kernelAttemptBindings)
+          .where(eq(kernelAttemptBindings.attemptId, attempt.id))
+          .get()
+      : undefined;
+  const binding = course ?? assignment;
+  const practiceId = course?.practiceId ?? assignment?.assignmentId;
   if (
     !binding ||
-    binding.assignmentId !== attempt.assignmentId ||
+    !practiceId ||
+    ticket.attemptId !== attempt.id ||
+    (assignment && assignment.assignmentId !== attempt.assignmentId) ||
+    (course && !course.course) ||
     binding.stepAttemptId !== ticket.stepAttemptId ||
     binding.practiceVersion !== ticket.expectedPracticeVersion ||
-    ticket.publication.practice.id !== binding.assignmentId ||
+    ticket.publication.practice.id !== practiceId ||
     ticket.publication.practice.version !== ticket.practiceVersion ||
     ticket.practiceVersion === ticket.expectedPracticeVersion
   )
@@ -222,7 +223,7 @@ export function finishKernelRefreeze(
         ? projectKernelDraftActivity(db, attempt, runtime)
         : attempt;
     }
-    if (!isOpenEmpty(db, attempt)) kernelAttemptUnavailable();
+    if (!isOpenEmptyForKernelRefreeze(db, attempt)) kernelAttemptUnavailable();
     if (stillOriginal) runtime.publish(ticket.publication);
     const input = {
       protocolVersion: 1,
@@ -266,12 +267,27 @@ export function finishKernelRefreeze(
       kernelAttemptUnavailable();
 
     const frozen = kernelRefreezeDraftSchema.parse(ticket.responses);
-    verifyKernelMaterialContext(
-      db,
-      runtime.read(principal, attempt.id),
-      binding.assignmentId,
-      frozen,
-    );
+    const activity = runtime.read(principal, attempt.id);
+    if (course?.course) {
+      if (
+        !("questionDeliveries" in activity) ||
+        activity.status !== "active" ||
+        activity.questionDeliveryDrafts.length ||
+        activity.questionDeliveries.length ||
+        frozen.responses.some(
+          ({ unitId }) => unitId !== course.course?.unitId,
+        ) ||
+        !matchesKernelMaterialInputs(
+          activity,
+          course.teacherId,
+          frozen.context ?? [],
+          frozen.responses.map(({ question }) => question),
+        )
+      )
+        kernelAttemptUnavailable();
+    } else {
+      verifyKernelMaterialContext(db, activity, practiceId, frozen);
+    }
     discardOpenedArtifactsWithin(tx, attempt.id);
     tx.delete(attemptContextFreezes)
       .where(eq(attemptContextFreezes.attemptId, attempt.id))
@@ -291,13 +307,29 @@ export function finishKernelRefreeze(
       frozen.context ?? [],
       ticket.frozenAt,
     );
-    tx.update(kernelAttemptBindings)
-      .set({
-        practiceVersion: receipt.practiceVersion,
-        stepAttemptId: receipt.stepAttemptId,
-      })
-      .where(eq(kernelAttemptBindings.attemptId, attempt.id))
-      .run();
+    const replacement = {
+      practiceVersion: receipt.practiceVersion,
+      stepAttemptId: receipt.stepAttemptId,
+    };
+    if (course?.course) {
+      tx.update(kernelCourseOpenings)
+        .set({
+          ...replacement,
+          publication: ticket.publication,
+          draft: kernelOpeningDraftSchema.parse({
+            ...frozen,
+            courseId: course.course.courseId,
+            workflowVersion: 1,
+          }),
+        })
+        .where(eq(kernelCourseOpenings.attemptId, attempt.id))
+        .run();
+    } else {
+      tx.update(kernelAttemptBindings)
+        .set(replacement)
+        .where(eq(kernelAttemptBindings.attemptId, attempt.id))
+        .run();
+    }
     tx.delete(kernelAttemptRefreezes).where(key).run();
     return projectKernelDraftActivity(
       db,
@@ -311,13 +343,22 @@ export function resolveKernelRefreezeForRead(
   db: Db,
   dataDir: string,
   attempt: Attempt,
-): void {
-  if (!pendingKernelRefreeze(db, attempt.id)) return;
-  db.transaction(
+): Attempt {
+  if (!pendingKernelRefreeze(db, attempt.id)) return attempt;
+  return db.transaction(
     (tx) => {
       const current = requireOwnAttempt(db, attempt.studentId, attempt.id);
       const ticket = pendingKernelRefreeze(tx, attempt.id);
-      if (ticket) finishKernelRefreeze(db, tx, dataDir, current, ticket, false);
+      return ticket
+        ? finishKernelRefreeze(
+            db,
+            tx,
+            dataDir,
+            current,
+            ticket,
+            current.sourceType === "course",
+          )
+        : current;
     },
     { behavior: "immediate" },
   );

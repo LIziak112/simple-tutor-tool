@@ -2,17 +2,21 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { attempts } from "../db/schema.ts";
 import {
+  type kernelCourseOpenings,
   type kernelLessonOpenings,
   kernelQuestionDeliveries,
 } from "../db/schema-kernel-question-delivery.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelRuntime } from "./kernel-assignment-runtime.ts";
+import { replayKernelCourseOpening } from "./kernel-course-opening.ts";
 import { replayKernelLessonOpening } from "./kernel-lesson-opening.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 
-type Opening = typeof kernelLessonOpenings.$inferSelect;
+type Opening =
+  | typeof kernelLessonOpenings.$inferSelect
+  | typeof kernelCourseOpenings.$inferSelect;
 
-export function verifyBackupLessonDeliveries(
+export function verifyBackupQuestionDeliveries(
   db: Db,
   directory: string,
   openings: readonly Opening[],
@@ -23,7 +27,9 @@ export function verifyBackupLessonDeliveries(
     for (const opening of openings) {
       if (opening.attemptId === null) {
         withKernelRuntime(db, directory, false, (runtime) =>
-          replayKernelLessonOpening(runtime, opening),
+          "lectureId" in opening
+            ? replayKernelLessonOpening(runtime, opening)
+            : replayKernelCourseOpening(runtime, opening),
         );
         continue;
       }
@@ -34,9 +40,10 @@ export function verifyBackupLessonDeliveries(
         .get();
       if (
         !attempt ||
+        attempt.sourceType !== ("lectureId" in opening ? "lesson" : "course") ||
         !readQuestionDeliveryFacts(db, directory, attempt, attachmentDir)
       )
-        throw new Error("讲练绑定缺失");
+        throw new Error("题组开卷绑定缺失");
       verified.add(attempt.id);
     }
     const tickets = db
@@ -57,6 +64,6 @@ export function verifyBackupLessonDeliveries(
         throw new Error("交付票据缺少匹配绑定");
     }
   } catch {
-    throw new ZipReadError("备份中的内核交付与宿主讲练绑定不一致");
+    throw new ZipReadError("备份中的内核交付与宿主开卷绑定不一致");
   }
 }

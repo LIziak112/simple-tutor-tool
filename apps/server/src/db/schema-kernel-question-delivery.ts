@@ -46,6 +46,37 @@ export const kernelLessonOpenings = sqliteTable(
   ],
 );
 
+export const kernelCourseOpenings = sqliteTable(
+  "kernel_course_openings",
+  {
+    studentId: text("student_id").notNull(),
+    courseId: text("course_id").notNull(),
+    unitId: text("unit_id").notNull(),
+    attemptNo: integer("attempt_no").notNull(),
+    teacherId: text("teacher_id").notNull(),
+    operationId: text("operation_id").notNull().unique(),
+    practiceId: text("practice_id").notNull().unique(),
+    practiceVersion: integer("practice_version").notNull(),
+    publication: text("publication_json", { mode: "json" })
+      .$type<PublicationInput>()
+      .notNull(),
+    draft: text("draft_json", { mode: "json" })
+      .$type<KernelOpeningDraft>()
+      .notNull(),
+    attemptId: text("attempt_id")
+      .unique()
+      .references(() => attempts.id),
+    stepAttemptId: text("step_attempt_id").unique(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.studentId, t.courseId, t.unitId, t.attemptNo] }),
+    check(
+      "kernel_course_opening_bound",
+      sql`(${t.attemptId} IS NULL) = (${t.stepAttemptId} IS NULL)`,
+    ),
+  ],
+);
+
 export const kernelQuestionDeliveries = sqliteTable(
   "kernel_question_deliveries",
   {
