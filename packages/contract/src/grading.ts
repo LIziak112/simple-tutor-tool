@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   choiceAnswersSchema,
   judgeAnswersSchema,
+  multiAnswersSchema,
   optionSchema,
   questionTypeSchema,
 } from "./content.ts";
@@ -56,6 +57,30 @@ export const judgeScoringSourceSchema = z.object({
   type: questionTypeSchema.extract(["judge"]),
   answers: judgeAnswersSchema,
 });
+
+export const multiChoiceScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["multi"]),
+    options: optionSchema.array(),
+    answers: multiAnswersSchema,
+  })
+  .refine(
+    ({ options, answers }) =>
+      answers.indexes.every((index) => options[index] !== undefined),
+    {
+      path: ["answers", "indexes"],
+      message: "多选题的正确下标超出选项范围",
+    },
+  );
+
+export const questionDeliveryScoringSourcesSchema = z
+  .union([
+    singleChoiceScoringSourceSchema,
+    judgeScoringSourceSchema,
+    multiChoiceScoringSourceSchema,
+  ])
+  .array()
+  .min(1);
 
 export const assignmentScoringSourcesSchema = z.union([
   singleChoiceScoringSourceSchema

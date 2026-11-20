@@ -9,6 +9,7 @@ import {
   requireUsableAttempt,
 } from "./attempt-access.ts";
 import { buildSingleQuestionEvidence } from "./attempt-submit-evidence.ts";
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
 import { readNoteVersionDoc } from "./note-service.ts";
 
 type Selection = { questionId: string; versionId: string; revision: number };
@@ -88,7 +89,11 @@ export function reserveSubmissionOriginals(
       }
 
       if (originals.length === 0) return [];
-      if (attempt.sourceType !== "assignment") throw reservationConflict();
+      if (
+        attempt.sourceType !== "assignment" &&
+        !lessonKernelBinding(db, attemptId)
+      )
+        throw reservationConflict();
       if (attempt.status !== "draft") {
         throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
       }

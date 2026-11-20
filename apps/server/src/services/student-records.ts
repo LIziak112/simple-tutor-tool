@@ -16,6 +16,7 @@ import {
 import type { Db } from "../db/client";
 import { attempts } from "../db/schema";
 import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
+import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
 import { attemptAnswersPublished } from "./answer-publication.ts";
 import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { assignmentReleaseByIds } from "./attempt-service";
@@ -207,6 +208,9 @@ function listStudentRecordIndex(
     eq(attempts.studentId, studentId),
     // 作废卷（2026-10 讲练随时重开）不入记录
     recordableAttemptWhere(),
+    kernel && kernel.hiddenLessons.size > 0
+      ? sql`${attempts.id} not in (select value from json_each(${JSON.stringify([...kernel.hiddenLessons])}))`
+      : undefined,
     excluded.size > 0 ? notInArray(attempts.id, [...excluded]) : undefined,
     studentRecordSourceWhere(query),
     query.status !== undefined ? eq(attempts.status, query.status) : undefined,
@@ -225,7 +229,9 @@ function listStudentRecordIndex(
     .select({
       ...getTableColumns(attempts),
       lastActivityAt: lastActivitySql,
-      kernelAssignmentId: kernelAssignments.assignmentId,
+      kernelSourceId: sql<
+        string | null
+      >`coalesce(${kernelAssignments.assignmentId}, ${kernelLessonOpenings.attemptId})`,
     })
     .from(attempts)
     .leftJoin(
@@ -234,6 +240,10 @@ function listStudentRecordIndex(
         eq(attempts.sourceType, "assignment"),
         eq(kernelAssignments.assignmentId, attempts.assignmentId),
       ),
+    )
+    .leftJoin(
+      kernelLessonOpenings,
+      eq(kernelLessonOpenings.attemptId, attempts.id),
     )
     .where(where)
     .orderBy(
@@ -256,7 +266,7 @@ function listStudentRecordIndex(
   const legacyRows =
     kernel === undefined
       ? rows
-      : rows.filter((row) => row.kernelAssignmentId === null);
+      : rows.filter((row) => row.kernelSourceId === null);
   const pendingByAttempt = pendingMarkCounts(db, legacyRows);
   // 待自评徽章（两线收敛接线：v2 记录行来源，改走 QM 口径批量谓词）
   const pendingSelfReviewByAttempt = pendingSelfReviewCounts(db, legacyRows);
@@ -310,7 +320,7 @@ function listStudentRecordIndex(
       .filter(
         ({ attempt, released }) =>
           released &&
-          attempt.kernelAssignmentId !== null &&
+          attempt.kernelSourceId !== null &&
           attempt.status !== "draft",
       )
       .map(({ attempt }) => attempt),
@@ -320,7 +330,7 @@ function listStudentRecordIndex(
       const progress = progressByAttempt.get(attempt.id);
       const result = released ? published?.get(attempt.id) : undefined;
       const kernelAttempt =
-        kernel !== undefined && attempt.kernelAssignmentId !== null;
+        kernel !== undefined && attempt.kernelSourceId !== null;
       return {
         ...sourceOf(db, attempt, teacherId ?? ""),
         time: times.aggregate(attempt.id),

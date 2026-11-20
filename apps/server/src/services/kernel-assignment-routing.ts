@@ -3,6 +3,7 @@ import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
 import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
 
 export function hasKernelAssignmentTables(db: Db): boolean {
   return (
@@ -29,6 +30,8 @@ export function isKernelAttempt(
   db: Pick<Db, "select">,
   attempt: Attempt,
 ): boolean {
+  if (attempt.sourceType === "lesson")
+    return lessonKernelBinding(db, attempt.id) !== undefined;
   return (
     attempt.sourceType === "assignment" &&
     attempt.assignmentId !== null &&

@@ -1,11 +1,14 @@
 import {
   judgeScoringSourceSchema,
+  multiChoiceScoringSourceSchema,
   singleChoiceScoringSourceSchema,
 } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
 import type {
   ChoiceEvaluationInput,
   ChoiceEvaluatorRegistration,
+  IndexResponseEvaluationInput,
+  IndexResponseEvaluatorRegistration,
   ResponseEvaluationInput,
   ResponseEvaluatorRegistration,
   ResponseVerdict,
@@ -28,6 +31,7 @@ export type OwnClassChoiceEvaluationScope = Readonly<{
   attemptId: string;
   studentId: string;
   assignmentId: string;
+  lectureId?: string;
   stepAttemptId: string;
   slotId: string;
   practiceVersion: number;
@@ -50,7 +54,10 @@ export const ownClassJudgeEvaluatorRef = {
 function frozenQuestionForEvaluation(
   db: Db,
   scope: OwnClassChoiceEvaluationScope | undefined,
-  input: ChoiceEvaluationInput | ResponseEvaluationInput,
+  input:
+    | ChoiceEvaluationInput
+    | ResponseEvaluationInput
+    | IndexResponseEvaluationInput,
 ) {
   if (
     scope === undefined ||
@@ -63,8 +70,11 @@ function frozenQuestionForEvaluation(
     mismatch();
   const attempt = requireOwnAttempt(db, scope.studentId, scope.attemptId);
   if (
-    attempt.sourceType !== "assignment" ||
-    attempt.assignmentId !== scope.assignmentId ||
+    (scope.lectureId === undefined
+      ? attempt.sourceType !== "assignment" ||
+        attempt.assignmentId !== scope.assignmentId
+      : attempt.sourceType !== "lesson" ||
+        attempt.lectureId !== scope.lectureId) ||
     attempt.abandonedAt !== null ||
     attempt.frozenAt === null
   )
@@ -90,9 +100,13 @@ function frozenQuestionForEvaluation(
 export function createOwnClassChoiceEvaluator(
   db: Db,
   currentScope: () => OwnClassChoiceEvaluationScope | undefined,
+  reference = ownClassChoiceEvaluatorRef as Readonly<{
+    id: string;
+    version: number;
+  }>,
 ): ChoiceEvaluatorRegistration {
   return {
-    ...ownClassChoiceEvaluatorRef,
+    ...reference,
     evaluate(input: ChoiceEvaluationInput): boolean {
       const { row, question } = frozenQuestionForEvaluation(
         db,
@@ -125,9 +139,13 @@ export function createOwnClassChoiceEvaluator(
 export function createOwnClassJudgeEvaluator(
   db: Db,
   currentScope: () => OwnClassChoiceEvaluationScope | undefined,
+  reference = ownClassJudgeEvaluatorRef as Readonly<{
+    id: string;
+    version: number;
+  }>,
 ): ResponseEvaluatorRegistration {
   return {
-    ...ownClassJudgeEvaluatorRef,
+    ...reference,
     evaluate(input): ResponseVerdict {
       const { row, question } = frozenQuestionForEvaluation(
         db,
@@ -150,6 +168,44 @@ export function createOwnClassJudgeEvaluator(
       return result === null
         ? { status: "needsReview" }
         : { status: "judged", correct: result };
+    },
+  };
+}
+
+export const ownClassDeliveryEvaluatorRef = {
+  id: "ownclass-question-delivery",
+  version: 1,
+} as const;
+
+export function createOwnClassMultiEvaluator(
+  db: Db,
+  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
+): IndexResponseEvaluatorRegistration {
+  return {
+    ...ownClassDeliveryEvaluatorRef,
+    evaluate(input) {
+      const { row, question } = frozenQuestionForEvaluation(
+        db,
+        currentScope(),
+        input,
+      );
+      const source = multiChoiceScoringSourceSchema.safeParse(question);
+      if (
+        !source.success ||
+        JSON.stringify(source.data.answers.indexes) !==
+          JSON.stringify(input.acceptedIndexes) ||
+        input.value?.some((index) => !source.data.options[index])
+      )
+        mismatch();
+      const result = gradeResponseRow(
+        row.gradingPolicy,
+        question,
+        input.value === null
+          ? undefined
+          : { kind: "multi", indexes: [...input.value] },
+      );
+      if (result === null) mismatch();
+      return { status: "judged", correct: result };
     },
   };
 }

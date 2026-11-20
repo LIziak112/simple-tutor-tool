@@ -12,9 +12,11 @@ import {
 import { HttpError } from "../lib/http-error";
 import { ensureAttemptFrozen } from "./attempt-freeze.ts";
 import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
-import { assertDraftCourseVisible } from "./practice-workflow-wiring";
-
 /** 作业行（含已删除——作答记录不随作业软删消失）；不存在 → 404 ASSIGNMENT_NOT_FOUND */
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
+import { assertDraftCourseVisible } from "./practice-workflow-wiring";
+import { requireVisibleStudentLecture } from "./student-course-service.ts";
+
 export function requireAssignmentRow(db: Db, id: string): Assignment {
   const row = db.select().from(assignments).where(eq(assignments.id, id)).get();
   if (!row) {
@@ -112,6 +114,19 @@ export function requireUsableAttempt(
     );
   }
   assertDraftCourseVisible(db, studentId, attempt);
+  if (attempt.sourceType === "lesson") {
+    const binding = lessonKernelBinding(db, attempt.id);
+    if (binding) {
+      const { course, lecture } = requireVisibleStudentLecture(
+        db,
+        studentId,
+        binding.lectureId,
+        binding.courseId,
+      );
+      if (course.teacherId !== binding.teacherId || lecture.kind !== "lesson")
+        throw new HttpError(403, "FORBIDDEN", "这份讲练已不可访问");
+    }
+  }
   requireNoPendingKernelRefreeze(db, attempt);
   return ensureAttemptFrozen(db, attempt);
 }

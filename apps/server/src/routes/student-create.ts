@@ -52,7 +52,12 @@ export function createAssignmentAttemptStartRoutes(
 }
 
 /** 开卷与建卷入口：作业、课程单元、讲练的开始与重开，错题重练组卷。 */
-export function createStudentCreateRoutes(db: Db, dataDir: string) {
+export function createStudentCreateRoutes(
+  db: Db,
+  dataDir: string,
+  kernelLessonEnabled = false,
+) {
+  const kernel = { dataDir, enabled: kernelLessonEnabled };
   const startAssignment: typeof startAttempt = (
     current,
     student,
@@ -111,6 +116,7 @@ export function createStudentCreateRoutes(db: Db, dataDir: string) {
             c.req.param("id"),
             parsed.data.courseId,
             startClientOf(c),
+            kernel,
           ),
         });
       })
@@ -143,6 +149,7 @@ export function createStudentCreateRoutes(db: Db, dataDir: string) {
           c.req.param("id"),
           body,
           startClientOf(c),
+          kernel,
         );
         return c.json({ ok: true, data }, 201);
       })

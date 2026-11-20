@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./choice-amendment-intent": "./src/choice-amendment-intent.ts"
+    "./choice-amendment-intent": "./src/choice-amendment-intent.ts",
+    "./kernel-question-delivery": "./src/kernel-question-delivery.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

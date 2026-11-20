@@ -21,7 +21,9 @@ import { requireAssignmentRow } from "./attempt-access.ts";
 import {
   createOwnClassChoiceEvaluator,
   createOwnClassJudgeEvaluator,
+  createOwnClassMultiEvaluator,
   type OwnClassChoiceEvaluationScope,
+  ownClassDeliveryEvaluatorRef,
 } from "./attempt-choice-evaluation.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
 import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
@@ -132,14 +134,26 @@ export function withKernelRuntime<T>(
   if (!allowCreate && !existsSync(databasePath)) kernelAttemptUnavailable();
   try {
     const { evaluateScope, ...authorization } = hooks;
+    const getScope = evaluateScope ?? (() => undefined);
     const runtime = openLearningRuntime({
       ...authorization,
       databasePath,
       choiceEvaluators: [
-        createOwnClassChoiceEvaluator(db, evaluateScope ?? (() => undefined)),
+        createOwnClassChoiceEvaluator(db, getScope),
+        createOwnClassChoiceEvaluator(
+          db,
+          getScope,
+          ownClassDeliveryEvaluatorRef,
+        ),
       ],
+      indexResponseEvaluators: [createOwnClassMultiEvaluator(db, getScope)],
       responseEvaluators: [
-        createOwnClassJudgeEvaluator(db, evaluateScope ?? (() => undefined)),
+        createOwnClassJudgeEvaluator(db, getScope),
+        createOwnClassJudgeEvaluator(
+          db,
+          getScope,
+          ownClassDeliveryEvaluatorRef,
+        ),
       ],
     });
     try {

@@ -31,6 +31,7 @@ import {
 import { assertAttemptNotTimedOut, attemptTimingOf } from "./attempt-timing.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import { readKernelConfirmationResult } from "./kernel-assignment-confirmation.ts";
+import { buildKernelAssignmentResult } from "./kernel-assignment-confirmed-detail.ts";
 import { kernelDraftRowsOf } from "./kernel-assignment-facts.ts";
 import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
@@ -42,6 +43,10 @@ import {
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 import { recoverKernelChoiceSnapshot } from "./kernel-choice-amendments.ts";
+import {
+  readQuestionDeliveryFacts,
+  saveQuestionDeliveryAnswer,
+} from "./kernel-question-delivery.ts";
 import { answerOf, snapshotOfRow } from "./snapshot.ts";
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
@@ -121,6 +126,17 @@ export function saveAssignmentDraftAnswer(
 ) {
   if (!isKernelAttempt(db, requireOwnAttempt(db, studentId, attemptId)))
     return saveDraftAnswer(db, studentId, attemptId, questionId, answer, proof);
+  const delivery = saveQuestionDeliveryAnswer(
+    db,
+    dataDir,
+    studentId,
+    attemptId,
+    questionId,
+    answer,
+    proof,
+  );
+  if (delivery?.error) throw delivery.error;
+  if (delivery?.data) return delivery.data;
 
   // 与同产品库的开卷、撤销及完成串行。内核独占答案写入，跨库中断后按内核时刻补投影。
   return db.$client
@@ -232,6 +248,31 @@ export function readKernelAssignmentDetail(
     .transaction(() => {
       const attempt = requireUsableAttempt(db, studentId, attemptId);
       const now = new Date();
+      const delivery = readQuestionDeliveryFacts(db, dataDir, attempt);
+      if (delivery) {
+        if (delivery.attempt.status !== "draft")
+          return {
+            etag: null,
+            detail: buildKernelAssignmentResult(db, delivery, now),
+          };
+        const detail = detailOfAuthorizedAttempt(db, delivery.attempt, now);
+        if (!("drafts" in detail)) kernelAttemptUnavailable();
+        return {
+          etag: null,
+          detail: {
+            ...detail,
+            drafts: Object.fromEntries(
+              delivery.rows.flatMap((row) => {
+                const answer = answerOf(row.answerJson);
+                return answer === null ? [] : [[row.questionId, answer]];
+              }),
+            ),
+            draftRevisions: Object.fromEntries(
+              delivery.rows.map((row) => [row.questionId, row.answerRevision]),
+            ),
+          },
+        };
+      }
       const confirmed = readKernelConfirmationResult(db, dataDir, attempt, now);
       if (confirmed !== undefined) return { etag: null, detail: confirmed };
       if (attempt.status !== "draft") kernelAttemptUnavailable();

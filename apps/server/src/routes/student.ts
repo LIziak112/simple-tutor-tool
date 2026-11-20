@@ -9,11 +9,8 @@ import {
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
   inkWriteMetaSchema,
-  lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
   practiceQuestionFeedbackDataSchema,
-  practiceQuestionSubmitDataSchema,
-  practiceQuestionSubmitRequestSchema,
   practiceWorkflowUpdateRequestSchema,
   selfReviewDataSchema,
   selfReviewRequestSchema,
@@ -48,8 +45,6 @@ import {
   HttpError,
   parseJsonBody,
   parseJsonBodyOrEmpty,
-  parseJsonValue,
-  readJsonBody,
 } from "../lib/http-error";
 import {
   annotationBaseImageBytes,
@@ -66,8 +61,6 @@ import {
 import {
   getAttemptMaterialRevisions,
   getPracticeQuestionFeedback,
-  submitLessonQuestion,
-  submitPracticeQuestion,
 } from "../services/attempt-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { getStudentLearningRecord } from "../services/learning-record-service";
@@ -107,6 +100,7 @@ import { createStudentBatchSubmissionRoutes } from "./student-batch-submission.t
 import { createStudentCreateRoutes } from "./student-create";
 import { createStudentEventRoutes } from "./student-event-routes";
 import { createStudentPersonalRoutes } from "./student-personal";
+import { createStudentQuestionSubmissionRoutes } from "./student-question-submission.ts";
 import { createStudentRecordRoutes } from "./student-record-routes.ts";
 import { createStudentRubricRoutes } from "./student-rubric";
 
@@ -241,6 +235,7 @@ export function createStudentRoutes(
   publicUrl: string,
   dataDir: string,
   questionProcessEnabled = false,
+  kernelLessonEnabled = false,
 ) {
   const requireStudent = createRequireStudent(db, publicUrl);
   return (
@@ -295,54 +290,7 @@ export function createStudentRoutes(
           ),
         }),
       )
-      // 2026-10 讲练一体 + M2 新协议分流（2026-10-22 计划 §5.3/§10.1）：
-      // 同一 URL 按请求形态分流——携带 workflowVersion 字段走新协议路径
-      //（practiceQuestionSubmitRequest strict 契约；仅普通来源新协议卷，
-      // 回执四键白名单 + private,no-store）；否则 lesson 旧协议形态沿用既有
-      // 契约与行为。两套契约互不放宽：新协议请求打到 lesson/历史卷、旧协议
-      // 形态打到新协议卷都被服务层 409 拒绝并提示刷新（§5.3 不退回整卷无
-      // 版本写入）；是否允许逐题提交由工作流与教师规则裁决（409
-      // WORKFLOW_RESTRICTED 等，详见 attempt-service.submitPracticeQuestion）
-      .post("/attempts/:id/questions/:questionId/submit", async (c) => {
-        const raw = await readJsonBody(c);
-        if (
-          typeof raw === "object" &&
-          raw !== null &&
-          "workflowVersion" in raw
-        ) {
-          const parsed = parseJsonValue(
-            raw,
-            practiceQuestionSubmitRequestSchema,
-          );
-          return c.json(
-            {
-              ok: true,
-              data: practiceQuestionSubmitDataSchema.parse(
-                submitPracticeQuestion(
-                  db,
-                  c.var.student.id,
-                  c.req.param("id"),
-                  c.req.param("questionId"),
-                  parsed,
-                ),
-              ),
-            },
-            200,
-            { "Cache-Control": "private, no-store" },
-          );
-        }
-        const legacy = parseJsonValue(raw, lessonQuestionSubmitRequestSchema);
-        return c.json({
-          ok: true,
-          data: submitLessonQuestion(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            c.req.param("questionId"),
-            legacy,
-          ),
-        });
-      })
+      .route("/", createStudentQuestionSubmissionRoutes(db, dataDir))
       // M2 题级反馈读取（新增，2026-10-22 计划 §10.1）：归属/作废/课程失权/
       // 当前教师策略全查（与取卷同口径）；data 只承载共用授权投影（与提交回执
       // 的 feedback 字段同一实现，practiceQuestionFeedbackOf）；四态按读取时刻
@@ -907,7 +855,7 @@ export function createStudentRoutes(
           ),
         });
       })
-      .route("/", createStudentCreateRoutes(db, dataDir))
+      .route("/", createStudentCreateRoutes(db, dataDir, kernelLessonEnabled))
       // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）；
       // kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null + blocks 切段 +
       // companionUnits 恒空（嵌入单元隐藏，题目已在页内），泄露测试见
@@ -955,6 +903,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             parsed.data.courseId,
+            dataDir,
           ),
         });
       })

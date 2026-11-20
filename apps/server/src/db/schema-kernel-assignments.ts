@@ -21,6 +21,11 @@ import {
   teachers,
 } from "./schema.ts";
 
+export {
+  kernelLessonOpenings,
+  kernelQuestionDeliveries,
+} from "./schema-kernel-question-delivery.ts";
+
 export const kernelAssignments = sqliteTable("kernel_assignments", {
   assignmentId: text("assignment_id")
     .primaryKey()

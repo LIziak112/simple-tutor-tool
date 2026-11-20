@@ -31,6 +31,8 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { assertAttemptNotTimedOut } from "./attempt-timing";
+import { submissionLocked } from "./kernel-assignment-confirmation-ticket.ts";
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
 
 /**
  * InkService（T2.8）——手写笔迹的文件存储与元数据管理（架构 §5.2/§5.4）。
@@ -227,7 +229,12 @@ export function saveInk(
           ),
         )
         .get();
-      if (latest?.status !== "draft" || submitted?.at != null)
+      if (
+        latest?.status !== "draft" ||
+        submitted?.at != null ||
+        (lessonKernelBinding(db, attemptId) &&
+          submissionLocked(db, dataDir, attempt, questionId))
+      )
         throw new HttpError(
           409,
           "ALREADY_SUBMITTED",

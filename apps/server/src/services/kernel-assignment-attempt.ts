@@ -13,6 +13,7 @@ import { HttpError } from "../lib/http-error.ts";
 import {
   requireAssignmentVisible,
   requireOwnAttempt,
+  requireUsableAttempt,
 } from "./attempt-access.ts";
 import type { AttemptStartClient } from "./attempt-opened-refresh.ts";
 import { withAllowRedo } from "./attempt-redo-policy.ts";
@@ -43,6 +44,7 @@ import {
   withBoundKernelActivity,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { resolveNewAttemptWorkflow } from "./practice-workflow-wiring.ts";
 import type { Tx } from "./question-sync.ts";
@@ -61,6 +63,17 @@ export function verifyKernelStudentAttempt(
 ): void {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
   if (attempt.abandonedAt === null && isKernelAttempt(db, attempt)) {
+    if (attempt.sourceType === "lesson") {
+      if (
+        !readQuestionDeliveryFacts(
+          db,
+          dataDir,
+          requireUsableAttempt(db, studentId, attempt.id),
+        )
+      )
+        kernelAttemptUnavailable();
+      return;
+    }
     resolveKernelRefreezeForRead(db, dataDir, attempt);
     verifyKernelBinding(db, dataDir, attempt);
   }
@@ -156,7 +169,11 @@ function reserveKernelOpening(
         workflowVersion: options.workflowVersion,
         responses: definition.responses,
         ...(definition.context.length > 0 && { context: definition.context }),
-        prepared: options.timeLimitMinutes === undefined ? true : undefined,
+        prepared:
+          definition.slotType === "questionDelivery" ||
+          options.timeLimitMinutes === undefined
+            ? true
+            : undefined,
       }),
     })
     .run();

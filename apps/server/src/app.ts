@@ -49,6 +49,7 @@ export interface CreateAppOptions {
   isProduction: boolean;
   questionProcessEnabled?: boolean;
   kernelAssignmentCreationEnabled?: boolean | undefined;
+  kernelLessonEnabled?: boolean | undefined;
   /** 数据库实例（教师鉴权等业务路由使用；测试注入 createTestDb() 内存库） */
   db: Db;
   /**
@@ -306,6 +307,7 @@ export function createApp(options: CreateAppOptions) {
         options.publicUrl,
         options.dataDir,
         options.questionProcessEnabled,
+        options.kernelLessonEnabled,
       ),
     )
     // —— 管理端（T2B.6，D7/D19）：整组 requireAdmin（非管理员 403 ADMIN_ONLY） ——

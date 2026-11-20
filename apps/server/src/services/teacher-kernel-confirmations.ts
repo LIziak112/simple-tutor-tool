@@ -1,5 +1,14 @@
 import type { AttemptResultCounts } from "@tutor/contract";
-import { and, eq, isNotNull, isNull, ne, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  eq,
+  exists,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  type SQL,
+} from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
   assignments,
@@ -12,6 +21,10 @@ import {
   kernelAttemptBindings,
   kernelAttemptConfirmations,
 } from "../db/schema-kernel-assignments.ts";
+import {
+  kernelLessonOpenings,
+  kernelQuestionDeliveries,
+} from "../db/schema-kernel-question-delivery.ts";
 import { needsTeacherMark } from "./attempt-final-outcome.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
@@ -26,6 +39,7 @@ import {
   readBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 import { recoverKernelChoiceSnapshot } from "./kernel-choice-amendments.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 
 interface TeacherKernelConfirmation
   extends ReturnType<RecoverKernelConfirmation> {
@@ -59,14 +73,19 @@ export function readTeacherKernelFacts(
       attempt: attempts,
       binding: kernelAttemptBindings,
       ticket: kernelAttemptConfirmations,
+      lesson: kernelLessonOpenings.attemptId,
     })
     .from(attempts)
     .innerJoin(students, eq(students.id, attempts.studentId))
-    .innerJoin(
+    .leftJoin(
       kernelAssignments,
       eq(kernelAssignments.assignmentId, attempts.assignmentId),
     )
-    .innerJoin(assignments, eq(assignments.id, attempts.assignmentId))
+    .leftJoin(assignments, eq(assignments.id, attempts.assignmentId))
+    .leftJoin(
+      kernelLessonOpenings,
+      eq(kernelLessonOpenings.attemptId, attempts.id),
+    )
     .leftJoin(
       kernelAttemptBindings,
       eq(kernelAttemptBindings.attemptId, attempts.id),
@@ -78,14 +97,29 @@ export function readTeacherKernelFacts(
     .where(
       and(
         eq(students.teacherId, teacherId),
-        eq(assignments.teacherId, teacherId),
-        eq(attempts.sourceType, "assignment"),
+        or(
+          and(
+            eq(assignments.teacherId, teacherId),
+            eq(attempts.sourceType, "assignment"),
+            isNotNull(kernelAssignments.assignmentId),
+          ),
+          and(
+            eq(kernelLessonOpenings.teacherId, teacherId),
+            eq(attempts.sourceType, "lesson"),
+          ),
+        ),
         isNull(attempts.abandonedAt),
         includeDrafts
           ? undefined
           : or(
               ne(attempts.status, "draft"),
               isNotNull(kernelAttemptConfirmations.attemptId),
+              exists(
+                db
+                  .select({ id: kernelQuestionDeliveries.attemptId })
+                  .from(kernelQuestionDeliveries)
+                  .where(eq(kernelQuestionDeliveries.attemptId, attempts.id)),
+              ),
             ),
         filter,
       ),
@@ -94,8 +128,34 @@ export function readTeacherKernelFacts(
   if (scopes.length === 0) return { confirmed, drafts };
 
   return withKernelConfirmationReader(db, dataDir, (runtime, recover) => {
-    for (const { attempt, binding, ticket } of scopes) {
-      if (binding === null) kernelAttemptUnavailable();
+    for (const { attempt, binding, ticket, lesson } of scopes) {
+      const shared = readQuestionDeliveryFacts(db, dataDir, attempt);
+      if (shared) {
+        const rows =
+          shared.attempt.status === "draft"
+            ? shared.rows.filter((row) => row.submittedAt !== null)
+            : shared.rows;
+        if (rows.length)
+          confirmed.set(attempt.id, {
+            attempt: shared.attempt,
+            rows,
+            resultCounts: {
+              correctCount: rows.filter((row) => row.finalCorrect === true)
+                .length,
+              totalCount: rows.length,
+              pendingCount: rows.filter(needsTeacherMark).length,
+              pendingSelfReviewCount: 0,
+            },
+          });
+        if (
+          includeDrafts &&
+          shared.attempt.status === "draft" &&
+          shared.attempt.activatedAt !== null
+        )
+          drafts.push(...shared.rows.filter((row) => row.submittedAt === null));
+        continue;
+      }
+      if (binding === null || lesson !== null) kernelAttemptUnavailable();
       if (includeDrafts && attempt.status === "draft") {
         requireNoPendingKernelRefreeze(db, attempt);
         recoverKernelChoiceSnapshot(db, dataDir, attempt.id);

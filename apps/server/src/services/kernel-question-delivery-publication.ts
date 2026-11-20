@@ -1,0 +1,130 @@
+import {
+  type Question,
+  questionDeliveryScoringSourcesSchema,
+} from "@tutor/contract";
+import { studentStemMd } from "@tutor/md-dsl";
+import type { PublicationInput } from "learning-kernel";
+import { ownClassDeliveryEvaluatorRef } from "./attempt-choice-evaluation.ts";
+
+export const deliverySlotId = "answers";
+
+type Frozen = { question: Question; questionVersion: number };
+
+export function questionDeliveryPublication(
+  { id, title }: { id: string; title: string },
+  version: number,
+  rows: readonly Frozen[],
+  mode: "whole" | "perQuestion",
+) {
+  const sources = questionDeliveryScoringSourcesSchema.parse(
+    rows.map(({ question }) => question),
+  );
+  const key = { id: `${id}-key`, version };
+  const declared = rows.map(({ question, questionVersion }, index) => {
+    const source = sources[index];
+    if (!source) throw new Error("冻结题与评分来源不齐");
+    const base = {
+      id: question.id,
+      version: questionVersion,
+      prompt: studentStemMd(question),
+    };
+    if (!("options" in source)) {
+      const response = "booleanOrString" as const;
+      return {
+        question: {
+          ...base,
+          response,
+          options: { true: "正确", false: "错误" },
+        },
+        key: { response, acceptedResponse: source.answers.value },
+      };
+    }
+    const options = Object.fromEntries(
+      source.options.map(({ text }, i) => [String(i), text]),
+    );
+    if ("index" in source.answers) {
+      const response = "choice" as const;
+      return {
+        question: { ...base, response, options },
+        key: { response, acceptedChoice: String(source.answers.index) },
+      };
+    }
+    const response = "optionIndexArray" as const;
+    return {
+      question: { ...base, response, options },
+      key: { response, acceptedIndexes: source.answers.indexes },
+    };
+  });
+  const instructions = "完成练习并提交答案。";
+  return {
+    practice: {
+      id,
+      version,
+      formatVersion: 1,
+      title,
+      goals: { answer: instructions },
+      questions: declared.map((item) => item.question),
+      steps: [
+        {
+          id: "answer",
+          instructions,
+          tool: { id: "question-delivery", version: 1 },
+          inputs: { questions: { from: "questions" } },
+          submit: {
+            purpose: "finalAnswer",
+            slots: {
+              [deliverySlotId]: {
+                type: "questionDelivery",
+                source: "questions",
+                targetId: "answer",
+                confirmFromDrafts: { allowUnanswered: true },
+                delivery:
+                  mode === "whole"
+                    ? { mode }
+                    : {
+                        mode,
+                        questionSlots: Object.fromEntries(
+                          rows.map(({ question }, index) => [
+                            question.id,
+                            `question-${index + 1}`,
+                          ]),
+                        ),
+                      },
+              },
+            },
+          },
+          afterConfirmation: "finish",
+        },
+      ],
+      grading: {
+        assessment: {
+          from: { stepId: "answer", slotId: deliverySlotId },
+          evaluator: ownClassDeliveryEvaluatorRef,
+          keyRef: key,
+          unit: "question",
+          effectiveVerdictOrder: ["teacherReview", "automatic"],
+        },
+      },
+      policy: {
+        offline: "onlineOnly",
+        redo: "newInstanceOnAuthorization",
+        externalAi: "disabled",
+        student: {
+          ownSubmission: {
+            scope: "ownConfirmedSubmissions",
+            fields: ["receipt"],
+            onFinal: [],
+          },
+        },
+        reviewer: { scope: "assignedReviewer", fields: [], actions: [] },
+        manager: { scope: "assigningTeacher", actions: [] },
+      },
+    },
+    scoringKey: {
+      ...key,
+      acceptedByQuestion: Object.fromEntries(
+        declared.map((item) => [item.question.id, item.key]),
+      ),
+    },
+  } satisfies PublicationInput;
+}

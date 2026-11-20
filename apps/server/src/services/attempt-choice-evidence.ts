@@ -31,7 +31,7 @@ type Scope = {
   practiceVersion: number;
 };
 
-const originalSchema = z.discriminatedUnion("state", [
+export const kernelOriginalSchema = z.discriminatedUnion("state", [
   z.strictObject({
     state: z.literal("frozen"),
     documentId: z.uuid(),
@@ -42,7 +42,7 @@ const originalSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("missing") }),
   z.strictObject({ state: z.literal("uncollected") }),
 ]);
-type Original = z.infer<typeof originalSchema>;
+type Original = z.infer<typeof kernelOriginalSchema>;
 
 const recoveredEvidenceSchema = z.object({
   receipt: z.object({
@@ -58,7 +58,7 @@ const recoveredEvidenceSchema = z.object({
       z.object({
         questionId: z.string(),
         questionVersion: z.int().positive(),
-        original: originalSchema,
+        original: kernelOriginalSchema,
       }),
     ),
   }),
@@ -126,64 +126,78 @@ export function prepareChoiceOriginals(
       )
         throw mismatch();
 
-      const rows = frozen.map((response) => ({ response }));
-      validateSubmitRevisions(rows, [], request.revisions);
-      const answerRevisions = new Map(
-        request.revisions.map(({ questionId, expectedAnswerRevision }) => [
-          questionId,
-          expectedAnswerRevision ?? 0,
-        ]),
+      validateSubmitRevisions(
+        frozen.map((response) => ({ response })),
+        [],
+        request.revisions,
       );
-      const declared = new Map(
-        request.evidence?.map((item) => [item.questionId, item]),
-      );
-      buildSubmissionEvidence(db, attempt.id, rows, request.evidence);
-      const selected = [];
-      for (const declaration of declared.values()) {
-        if (declaration.state === "frozen") {
-          const { questionId, versionId, revision } = declaration;
-          if (versionId === undefined || revision === undefined || revision < 1)
-            throw mismatch();
-          selected.push({ questionId, versionId, revision });
-        }
-      }
-      const byQuestion = new Map(
-        reserveSubmissionOriginals(db, dataDir, {
-          ...scope,
-          originals: selected,
-        }).map((reserved) => [reserved.questionId, reserved]),
-      );
-
-      return frozen.map((row) => {
-        const { questionId, questionVersion } = row;
-        const revision = answerRevisions.get(questionId);
-        if (revision === undefined) throw mismatch();
-        const held = byQuestion.get(questionId);
-        let original: Original;
-        if (held) {
-          const linked = linkedOriginal(db, row, held.versionId);
-          if (
-            !linked ||
-            linked.hash !== held.hash ||
-            linked.revision !== held.revision
-          )
-            throw mismatch();
-          original = {
-            state: "frozen",
-            documentId: linked.documentId,
-            versionId: linked.versionId,
-            sha256: linked.hash,
-          };
-        } else {
-          const state = declared.get(questionId)?.state ?? "uncollected";
-          if (state === "frozen") throw mismatch();
-          original = { state };
-        }
-        return { questionId, questionVersion, revision, original };
-      });
+      return prepareKernelOriginals(db, dataDir, scope, request, frozen);
     },
     { behavior: "immediate" },
   );
+}
+
+export function prepareKernelOriginals(
+  db: Db,
+  dataDir: string,
+  scope: Scope,
+  request: AttemptSubmitRequest,
+  frozen: readonly ResponseRow[],
+) {
+  const rows = frozen.map((response) => ({ response }));
+  const answerRevisions = new Map(
+    request.revisions.map(({ questionId, expectedAnswerRevision }) => [
+      questionId,
+      expectedAnswerRevision ?? 0,
+    ]),
+  );
+  const declared = new Map(
+    request.evidence?.map((item) => [item.questionId, item]),
+  );
+  buildSubmissionEvidence(db, scope.attemptId, rows, request.evidence);
+  const selected = [];
+  for (const declaration of declared.values()) {
+    if (declaration.state === "frozen") {
+      const { questionId, versionId, revision } = declaration;
+      if (versionId === undefined || revision === undefined || revision < 1)
+        throw mismatch();
+      selected.push({ questionId, versionId, revision });
+    }
+  }
+  const byQuestion = new Map(
+    reserveSubmissionOriginals(db, dataDir, {
+      ...scope,
+      originals: selected,
+    }).map((reserved) => [reserved.questionId, reserved]),
+  );
+
+  return frozen.map((row) => {
+    const { questionId, questionVersion } = row;
+    const revision = answerRevisions.get(questionId);
+    if (revision === undefined) throw mismatch();
+    const held = byQuestion.get(questionId);
+    let original: Original;
+    if (held) {
+      const linked = linkedOriginal(db, row, held.versionId);
+      if (
+        !linked ||
+        linked.hash !== held.hash ||
+        linked.revision !== held.revision
+      )
+        throw mismatch();
+      original = {
+        state: "frozen",
+        documentId: linked.documentId,
+        versionId: linked.versionId,
+        sha256: linked.hash,
+      };
+    } else {
+      const state = declared.get(questionId)?.state ?? "uncollected";
+      if (state === "frozen") throw mismatch();
+      original = { state };
+    }
+    return { questionId, questionVersion, revision, original };
+  });
 }
 
 /** 仅接受可信恢复回调，从已持久的权威确认重建产品原稿索引。 */
@@ -203,15 +217,33 @@ export function projectConfirmedChoiceEvidence(
   )
     throw mismatch();
 
+  return projectKernelEvidence(
+    db,
+    scope,
+    receipt,
+    confirmation.questions,
+    attemptResponseRows(db, scope.attemptId),
+  );
+}
+
+type EvidenceQuestion = z.infer<
+  typeof recoveredEvidenceSchema
+>["confirmation"]["questions"][number];
+
+export function projectKernelEvidence(
+  db: Db,
+  scope: Scope,
+  receipt: { confirmedAt: string },
+  questions: readonly EvidenceQuestion[],
+  frozen: readonly ResponseRow[],
+  requireExisting = false,
+) {
   return db.transaction(
     (tx) => {
-      if (assignmentAttempt(db, scope).assignmentId !== assignmentId)
-        throw mismatch();
-      const frozen = attemptResponseRows(db, scope.attemptId);
       if (frozen.length === 0) throw mismatch();
       assertExactQuestionSet(
         frozen.map((response) => ({ response })),
-        confirmation.questions,
+        questions,
         mismatch,
       );
       const byQuestion = new Map(frozen.map((row) => [row.questionId, row]));
@@ -219,22 +251,18 @@ export function projectConfirmedChoiceEvidence(
       const reserved = new Map(
         reservations.map((row) => [row.questionId, row]),
       );
-      const confirmedFrozen = confirmation.questions.filter(
+      const confirmedFrozen = questions.filter(
         ({ original }) => original.state === "frozen",
       );
       if (reserved.size !== confirmedFrozen.length) throw mismatch();
-      const uncollected = confirmation.questions.filter(
+      const uncollected = questions.filter(
         ({ original }) => original.state === "uncollected",
       );
       if (uncollected.length > 0 && uncollected.length !== frozen.length)
         throw mismatch();
 
       const wanted = [];
-      for (const {
-        questionId,
-        questionVersion,
-        original,
-      } of confirmation.questions) {
+      for (const { questionId, questionVersion, original } of questions) {
         const row = byQuestion.get(questionId);
         if (
           row?.questionVersion !== questionVersion ||
@@ -268,7 +296,8 @@ export function projectConfirmedChoiceEvidence(
         .from(submissionEvidence)
         .where(eq(submissionEvidence.attemptId, scope.attemptId))
         .all();
-      if (current.length === 0) {
+      const inScope = current.filter((row) => byQuestion.has(row.questionId));
+      if (!requireExisting && inScope.length === 0) {
         if (wanted.length > 0) {
           tx.insert(submissionEvidence)
             .values(
@@ -282,9 +311,9 @@ export function projectConfirmedChoiceEvidence(
             .run();
         }
       } else {
-        const byId = new Map(current.map((row) => [row.questionId, row]));
+        const byId = new Map(inScope.map((row) => [row.questionId, row]));
         if (
-          current.length !== wanted.length ||
+          inScope.length !== wanted.length ||
           wanted.some(({ questionId, state, versionId }) => {
             const seen = byId.get(questionId);
             return (

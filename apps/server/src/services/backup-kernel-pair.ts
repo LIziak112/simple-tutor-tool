@@ -37,6 +37,8 @@ const productKernelTables = [
   "kernel_attempt_bindings",
   "kernel_attempt_confirmations",
   "kernel_attempt_refreezes",
+  "kernel_lesson_openings",
+  "kernel_question_deliveries",
 ] as const;
 
 function fileHash(path: string): string {
@@ -75,7 +77,7 @@ function verifyOriginals(product: Database.Database, directory: string): void {
   const frozen = product
     .prepare<[], { versionId: string; owned: number }>(`
     SELECT e.version_id AS versionId, IFNULL(n.attempt_id = e.attempt_id AND n.question_id = e.question_id, 0) AS owned
-    FROM submission_evidence e JOIN kernel_attempt_bindings b ON b.attempt_id = e.attempt_id
+    FROM submission_evidence e JOIN (SELECT attempt_id FROM kernel_attempt_bindings UNION SELECT attempt_id FROM kernel_lesson_openings) b ON b.attempt_id = e.attempt_id
     LEFT JOIN note_versions v ON v.id = e.version_id LEFT JOIN notes n ON n.id = v.note_id
     WHERE e.state = 'frozen'
   `)
@@ -85,7 +87,7 @@ function verifyOriginals(product: Database.Database, directory: string): void {
         .prepare<[], { versionId: string; owned: number }>(`
       SELECT e.pending_version_id AS versionId,
         IFNULL(n.attempt_id = e.attempt_id AND n.question_id = e.question_id AND e.hash = v.hash, 0) AS owned
-      FROM attempt_original_reservations e JOIN kernel_attempt_bindings b ON b.attempt_id = e.attempt_id
+      FROM attempt_original_reservations e JOIN (SELECT attempt_id FROM kernel_attempt_bindings UNION SELECT attempt_id FROM kernel_lesson_openings) b ON b.attempt_id = e.attempt_id
       LEFT JOIN note_versions v ON v.id = e.pending_version_id LEFT JOIN notes n ON n.id = v.note_id
       WHERE e.state = 'pending'
     `)

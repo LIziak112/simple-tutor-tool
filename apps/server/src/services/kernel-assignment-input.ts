@@ -3,6 +3,7 @@ import {
   attemptContextSnapshotEntrySchema,
   attemptTimeLimitMinutesSchema,
   frozenGradingPolicySchema,
+  questionDeliveryScoringSourcesSchema,
   questionSchema,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
@@ -82,7 +83,7 @@ function ineligible(): never {
   throw new HttpError(
     422,
     "M04_PRACTICE_INELIGIBLE",
-    "内核作业仅支持无提示的整卷单选或判断练习，判断题须有参考答案且不带材料和题组",
+    "内核作业须使用已支持的题型与参考答案，混合整卷暂不支持提示、材料和题组",
   );
 }
 
@@ -130,7 +131,17 @@ export function loadKernelAssignmentQuestions(
   const parsed = assignmentScoringSourcesSchema.safeParse(
     responses.map(({ question }) => question),
   );
-  if (!parsed.success) ineligible();
+  if (!parsed.success) {
+    if (
+      context.materials.length ||
+      context.groups.length ||
+      !questionDeliveryScoringSourcesSchema.safeParse(
+        responses.map(({ question }) => question),
+      ).success
+    )
+      ineligible();
+    return { slotType: "questionDelivery" as const, responses, context: [] };
+  }
   const { slotType, questions: sources } = parsed.data;
   const common = (index: number) => {
     const row = responses[index];

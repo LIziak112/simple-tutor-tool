@@ -1,0 +1,243 @@
+import { kernelDeliveryOriginalSchema } from "@tutor/contract/kernel-question-delivery";
+import { isUnanswered } from "@tutor/grading";
+import { and, eq, gt } from "drizzle-orm";
+import type { Db } from "../db/client.ts";
+import {
+  type Attempt,
+  attemptSettlements,
+  attempts,
+  ink,
+  type ResponseRow,
+  responses,
+} from "../db/schema.ts";
+import { canonicalJsonOf } from "../lib/canonical-json.ts";
+import { ownClassDeliveryEvaluatorRef } from "./attempt-choice-evaluation.ts";
+import { projectKernelEvidence } from "./attempt-choice-evidence.ts";
+import { attemptFinalOutcomeOf, scoreAutoOf } from "./attempt-final-outcome.ts";
+import { writeFinalSettlementWithin } from "./attempt-settlement.ts";
+import { sealResponseTimeWithin } from "./attempt-time-seal.ts";
+import {
+  recordConfirmedSubmit,
+  recordQuestionSubmitEvent,
+} from "./event-service.ts";
+import type { KernelRuntime } from "./kernel-assignment-runtime.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import type { DeliveryTicket } from "./kernel-question-delivery-ticket.ts";
+import { deliveryAnswerOf } from "./kernel-question-delivery-values.ts";
+import { recordedActiveSecTotal } from "./submission-time.ts";
+
+type Recovery = ReturnType<KernelRuntime["recoverQuestionDelivery"]>;
+
+export function projectDeliveryRows(
+  db: Db,
+  attempt: Attempt,
+  ticket: DeliveryTicket,
+  recovery: Recovery,
+  selected: readonly ResponseRow[],
+) {
+  const { activitySeal, source } = ticket.intent;
+  const { receipt, confirmation, evaluation } = recovery;
+  const formalInk = new Set(
+    db
+      .select({ id: ink.questionId })
+      .from(ink)
+      .where(and(eq(ink.attemptId, attempt.id), gt(ink.strokeCount, 0)))
+      .all()
+      .map((row) => row.id),
+  );
+  const byQuestion = new Map(
+    confirmation.questions.map((question) => [question.questionId, question]),
+  );
+  const verdicts = new Map(
+    evaluation.questions.map((question) => [question.questionId, question]),
+  );
+  const seals = new Map(
+    activitySeal.responses.map((row) => [row.responseId, row]),
+  );
+  const counts = new Map(
+    recovery.draftChangeCounts.map((row) => [row.questionId, row.changeCount]),
+  );
+  if (
+    evaluation.evaluator.id !== ownClassDeliveryEvaluatorRef.id ||
+    evaluation.evaluator.version !== ownClassDeliveryEvaluatorRef.version ||
+    byQuestion.size !== selected.length ||
+    verdicts.size !== selected.length ||
+    seals.size !== selected.length ||
+    canonicalJsonOf(recovery.requestQuestions.toSorted(byId)) !==
+      canonicalJsonOf(ticket.intent.questions.toSorted(byId))
+  )
+    kernelAttemptUnavailable();
+  const rows = selected.map((row) => {
+    const question = byQuestion.get(row.questionId);
+    const evaluated = verdicts.get(row.questionId);
+    const seal = seals.get(row.id);
+    const revision = ticket.intent.revisions.find(
+      (item) => item.questionId === row.questionId,
+    );
+    if (
+      !question ||
+      !evaluated ||
+      !seal ||
+      row.id !== revision?.questionRevisionId ||
+      question.questionVersion !== row.questionVersion ||
+      evaluated.questionVersion !== row.questionVersion
+    )
+      kernelAttemptUnavailable();
+    const answer = deliveryAnswerOf(row, question.value);
+    const deliberate = source === "question";
+    const empty =
+      isUnanswered(answer ?? undefined) && !formalInk.has(row.questionId);
+    const result =
+      evaluated.result.status === "judged" ? evaluated.result.correct : null;
+    const submittedAt =
+      attempt.sourceType === "lesson" ||
+      attempt.practiceWorkflowVersion !== null
+        ? receipt.confirmedAt
+        : null;
+    const studentFlag =
+      deliberate && empty ? ("unsure" as const) : row.studentFlag;
+    return {
+      ...row,
+      submittedAt,
+      studentFlag,
+      answered: deliberate || !empty,
+      answerJson: answer === null ? null : JSON.stringify(answer),
+      answerRevision: question.revision,
+      autoCorrect: result,
+      finalCorrect: result,
+      activeSec: seal.activeSec,
+      changeCount: Math.max(seal.changeCount, counts.get(row.questionId) ?? 0),
+    };
+  });
+
+  projectKernelEvidence(
+    db,
+    {
+      attemptId: attempt.id,
+      studentId: attempt.studentId,
+      operationId: ticket.operationId,
+      stepAttemptId: ticket.stepAttemptId,
+      practiceVersion: ticket.practiceVersion,
+    },
+    receipt,
+    confirmation.questions.map((q) => ({
+      ...q,
+      original: kernelDeliveryOriginalSchema.parse(q.original),
+    })),
+    selected,
+    ticket.receiptId !== null,
+  );
+
+  if (ticket.receiptId !== null) {
+    if (
+      ticket.receiptId !== receipt.id ||
+      rows.some(
+        (row, index) =>
+          row.submittedAt !== selected[index]?.submittedAt ||
+          row.studentFlag !== selected[index]?.studentFlag ||
+          row.answered !== selected[index]?.answered,
+      )
+    )
+      kernelAttemptUnavailable();
+    return rows;
+  }
+
+  sealResponseTimeWithin(
+    db,
+    attempt.id,
+    rows.map(({ id }) => id),
+    receipt.confirmedAt,
+    activitySeal.receivedThroughSeq,
+  );
+  for (const {
+    id,
+    submittedAt,
+    studentFlag,
+    answered,
+    activeSec,
+    changeCount,
+  } of rows) {
+    db.update(responses)
+      .set({ submittedAt, studentFlag, answered, activeSec, changeCount })
+      .where(eq(responses.id, id))
+      .run();
+  }
+  if (source === "question") {
+    for (const row of rows)
+      recordQuestionSubmitEvent(
+        db,
+        attempt.studentId,
+        attempt.id,
+        row.questionId,
+        receipt.confirmedAt,
+      );
+  }
+  return rows;
+}
+
+function byId(a: { questionId: string }, b: { questionId: string }) {
+  return a.questionId.localeCompare(b.questionId);
+}
+
+export function projectDeliveryCompletion(
+  db: Db,
+  attempt: Attempt,
+  rows: readonly ResponseRow[],
+  confirmedAt: string,
+) {
+  const outcome = attemptFinalOutcomeOf(rows, { finalized: true });
+  let lifecycle = attempt;
+  let seq: number;
+  if (attempt.status === "draft") {
+    const saved = db
+      .update(attempts)
+      .set({
+        submittedAt: confirmedAt,
+        status: outcome.status,
+        activeSec: recordedActiveSecTotal(rows),
+        lastActivityAt: confirmedAt,
+      })
+      .where(eq(attempts.id, attempt.id))
+      .returning()
+      .get();
+    if (!saved) kernelAttemptUnavailable();
+    recordConfirmedSubmit(db, attempt, confirmedAt);
+    seq = writeFinalSettlementWithin(db, attempt.id).seq;
+    lifecycle = saved;
+  } else {
+    if (
+      attempt.status !== outcome.status ||
+      attempt.submittedAt !== confirmedAt
+    )
+      kernelAttemptUnavailable();
+    const settlement = db
+      .select()
+      .from(attemptSettlements)
+      .where(
+        and(
+          eq(attemptSettlements.attemptId, attempt.id),
+          eq(attemptSettlements.kind, "final"),
+        ),
+      )
+      .get();
+    if (
+      !settlement ||
+      settlement.createdAt !== confirmedAt ||
+      settlement.questionCount !== rows.length ||
+      rows.some((row) => row.settlementSeq !== settlement.seq)
+    )
+      kernelAttemptUnavailable();
+    seq = settlement.seq;
+  }
+  return {
+    attempt: {
+      ...lifecycle,
+      scoreAuto: scoreAutoOf(rows),
+      scoreFinal: outcome.scoreFinal,
+    },
+    rows: rows.map((row) => ({
+      ...row,
+      settlementSeq: row.settlementSeq ?? seq,
+    })),
+  };
+}

@@ -7,6 +7,7 @@ import {
   kernelAttemptUnavailable,
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 
 export type KernelConfirmationTicket =
   typeof kernelAttemptConfirmations.$inferSelect;
@@ -39,11 +40,20 @@ export function assertConfirmationBinding(
 }
 
 /** 调用方持有宿主写锁。交卷前必先落持久预留，且确认也要取得同一把锁。 */
-export function hasCompletedKernelConfirmation(
+export function submissionLocked(
   db: Db,
   dataDir: string,
   attempt: Attempt,
+  questionId?: string,
 ): boolean {
+  const delivery = readQuestionDeliveryFacts(db, dataDir, attempt);
+  if (delivery)
+    return (
+      delivery.attempt.status !== "draft" ||
+      delivery.rows.some(
+        (row) => row.questionId === questionId && row.submittedAt !== null,
+      )
+    );
   const ticket = kernelConfirmationTicketFor(db, attempt.id);
   if (ticket === undefined) return false;
   return withBoundKernelActivity(

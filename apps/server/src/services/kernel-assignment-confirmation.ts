@@ -54,6 +54,11 @@ import {
   recoverKernelChoiceSnapshot,
 } from "./kernel-choice-amendments.ts";
 
+import {
+  readQuestionDeliveryFacts,
+  submitQuestionDelivery,
+} from "./kernel-question-delivery.ts";
+
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type OriginalQuestion = ChoiceConfirmationInput["questions"][number];
 
@@ -118,6 +123,9 @@ export function readKernelConfirmationFacts(
   dataDir: string,
   attempt: Attempt,
 ) {
+  const delivery = readQuestionDeliveryFacts(db, dataDir, attempt);
+  if (delivery)
+    return delivery.attempt.status === "draft" ? undefined : delivery;
   recoverKernelChoiceAmendment(db, dataDir, attempt.id);
   const ticket = kernelConfirmationTicketFor(db, attempt.id);
   if (!ticket) return undefined;
@@ -340,8 +348,21 @@ export function submitAssignmentAttempt(
   now: Date,
   request: AttemptSubmitRequest,
 ) {
-  if (!isKernelAttempt(db, requireOwnAttempt(db, studentId, attemptId)))
+  const owned = requireOwnAttempt(db, studentId, attemptId);
+  if (!isKernelAttempt(db, owned))
     return submitAttempt(db, studentId, attemptId, now, request);
+  const delivery = submitQuestionDelivery(
+    db,
+    dataDir,
+    studentId,
+    attemptId,
+    owned.sourceType === "lesson" ? "finish" : "whole",
+    request,
+    now,
+  );
+  if (delivery?.error) throw delivery.error;
+  if (delivery?.facts)
+    return buildKernelAssignmentResult(db, delivery.facts, now);
   // 两阶段之间若另一份有效意图取得预留，重新核验实际权威状态。
   for (let retry = 0; retry < 4; retry++) {
     const ticket = stage(db, dataDir, studentId, attemptId, now, request);

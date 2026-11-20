@@ -19,6 +19,7 @@ import {
   kernelAttemptRefreezes,
   kernelChoiceAmendments,
 } from "../db/schema-kernel-assignments.ts";
+import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
 import {
@@ -30,6 +31,8 @@ import {
   verifyStoredKernelMaterialContext,
 } from "./kernel-assignment-runtime.ts";
 import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
+import { verifyBackupLessonDeliveries } from "./kernel-question-delivery-backup.ts";
 
 const publicationIdentitySchema = z.object({
   practice: z.object({ id: z.string(), version: z.number().int().positive() }),
@@ -96,6 +99,7 @@ function verifyProjection(db: Db, directory: string): void {
       return { attempt, binding, confirmation, refreeze };
     });
   const openings = db.select().from(kernelAssignmentOpenings).all();
+  const lessons = db.select().from(kernelLessonOpenings).all();
   const pendingAmendments = db
     .select({ ticket: kernelChoiceAmendments, studentId: attempts.studentId })
     .from(kernelChoiceAmendments)
@@ -104,15 +108,25 @@ function verifyProjection(db: Db, directory: string): void {
   try {
     verifyActivityBindings(join(directory, BACKUP_KERNEL_DATABASE), {
       protocolVersion: 1,
-      bindings: bindings.map(({ attempt, binding }) => ({
-        activityId: binding.attemptId,
-        studentId: attempt.studentId,
-        operationId: `open:${binding.assignmentId}`,
-      })),
-      openingIntents: openings.map(({ studentId, assignmentId }) => ({
-        studentId,
-        operationId: `open:${assignmentId}`,
-      })),
+      bindings: [
+        ...bindings.map(({ attempt, binding }) => ({
+          activityId: binding.attemptId,
+          studentId: attempt.studentId,
+          operationId: "open:" + binding.assignmentId,
+        })),
+        ...lessons.flatMap(({ attemptId, studentId, operationId }) =>
+          attemptId ? [{ activityId: attemptId, studentId, operationId }] : [],
+        ),
+      ],
+      openingIntents: [
+        ...openings.map(({ studentId, assignmentId }) => ({
+          studentId,
+          operationId: "open:" + assignmentId,
+        })),
+        ...lessons.flatMap(({ attemptId, studentId, operationId }) =>
+          attemptId ? [] : [{ studentId, operationId }],
+        ),
+      ],
       teacherAmendments: {
         completed: completedAmendmentClaims(db),
         pending: pendingAmendments.map(({ ticket, studentId }) => {
@@ -160,6 +174,7 @@ function verifyProjection(db: Db, directory: string): void {
     "SELECT COUNT(*) AS count FROM submission_evidence WHERE attempt_id = ?",
   );
 
+  verifyBackupLessonDeliveries(db, directory, lessons);
   withKernelConfirmationReader(db, directory, (runtime, recover) => {
     for (const opening of openings) {
       const publication = publicationIdentitySchema.parse(opening.publication);
@@ -266,6 +281,15 @@ function verifyProjection(db: Db, directory: string): void {
         }
       }
 
+      if ("questionDeliveries" in activity) {
+        try {
+          if (!readQuestionDeliveryFacts(db, directory, attempt))
+            throw new Error("混合整卷缺少交付投影");
+        } catch {
+          throw new ZipReadError("备份中的内核作答位置和宿主交付票据不一致");
+        }
+        continue;
+      }
       if (activity.status !== "completed") {
         if (attempt.status === "submitted" || attempt.status === "graded") {
           throw new ZipReadError("主库已交卷但内核作答未确认");

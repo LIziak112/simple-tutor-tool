@@ -13,6 +13,7 @@ import {
   ownClassJudgeEvaluatorRef,
 } from "./attempt-choice-evaluation.ts";
 import type { loadKernelAssignmentQuestions } from "./kernel-assignment-input.ts";
+import { questionDeliveryPublication } from "./kernel-question-delivery-publication.ts";
 
 function materialIdentifier(
   prefix: string,
@@ -115,6 +116,14 @@ export function kernelAssignmentPublication(
   version: number,
   definition: ReturnType<typeof loadKernelAssignmentQuestions>,
 ) {
+  if (definition.slotType === "questionDelivery") {
+    return questionDeliveryPublication(
+      assignment,
+      version,
+      definition.responses,
+      "whole",
+    );
+  }
   const { materials, positions } = materialPublicationOf(
     assignment.teacherId,
     definition.context,

@@ -80,7 +80,7 @@ import {
   requireAttemptQuestions,
   requireUsableAttempt,
 } from "./attempt-service";
-import { hasCompletedKernelConfirmation } from "./kernel-assignment-confirmation-ticket.ts";
+import { submissionLocked } from "./kernel-assignment-confirmation-ticket.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import { listAttemptContextSnapshots } from "./material-repository";
 import {
@@ -330,7 +330,7 @@ function persistNoteVersion(
     if (kernelScratch) assertAttemptWriteVersion(db, attempt);
     if (
       attempt.status !== "draft" ||
-      (kernelScratch && hasCompletedKernelConfirmation(db, dataDir, attempt))
+      (kernelScratch && submissionLocked(db, dataDir, attempt, questionId))
     ) {
       throw new HttpError(
         409,

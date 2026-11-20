@@ -57,9 +57,9 @@ const password = "teacher-pass-8";
 const dbName = "tutor.db";
 const kernelName = "learning-kernel.sqlite";
 
-it("K15 归档兼容精确匹配 K8–K14 的已知固定包", () => {
+it("K17 归档兼容精确匹配已知固定包", () => {
   expect(readLockedBackupArtifact().sha256).toBe(
-    "aa78e0410b5b13f35b422e143a46fb045cb3c8b30497835c3217f57198fd3414",
+    "b7bf4ce182647546cc2bd6576af744257a7938100a0486675e2ff7516db11a8f",
   );
   for (const digest of [
     "3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d",
@@ -69,9 +69,15 @@ it("K15 归档兼容精确匹配 K8–K14 的已知固定包", () => {
     "7bc836b57ec9140d3ee898a489e03b414490c89de491690c981580548a87c1f3",
     "baaea5f3ed29fd75f1bc06c3727a2ac311c0bebe6b6188619678cca994a5af07",
     "4576ef7bb755ef71e80deef3d5016a197415e72f26d8fd169bc5de269c32b00e",
+    "aa78e0410b5b13f35b422e143a46fb045cb3c8b30497835c3217f57198fd3414",
   ]) {
     expect(supportsBackupArtifact(digest), digest).toBe(true);
   }
+  expect(
+    supportsBackupArtifact(
+      "aa465ca32c27c25646c0d3b3e3eaba0cc648ead978e7ab6e807d60248b6c942b",
+    ),
+  ).toBe(false);
   expect(supportsBackupArtifact("0".repeat(64))).toBe(false);
 });
 

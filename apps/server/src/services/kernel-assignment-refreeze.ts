@@ -116,6 +116,11 @@ export function reserveKernelRefreeze(
       return false;
     throw error;
   }
+  if (
+    !("submit" in activity.step) ||
+    activity.step.submit.slots.answers?.type !== definition.slotType
+  )
+    return false;
   const current = attemptResponseRows(db, attempt.id);
   if (
     canonicalJsonOf(

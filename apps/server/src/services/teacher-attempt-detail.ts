@@ -10,6 +10,7 @@ import {
   type ResponseRow,
   responses,
 } from "../db/schema.ts";
+import { HttpError } from "../lib/http-error.ts";
 import {
   hasUsableQuestionSnapshotSql,
   needsTeacherMark,
@@ -25,6 +26,7 @@ import { attemptTimeOf, timeProjectionsOf } from "./attempt-time-projection.ts";
 import { readKernelAttemptFacts } from "./kernel-assignment-facts.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
 import { pendingMarkCount, pendingSelfReviewCounts } from "./pending-mark.ts";
 import { countsAsWrong } from "./response-verdict.ts";
 import { attemptResultCounts } from "./result-counts.ts";
@@ -92,6 +94,12 @@ export function getTeacherAttemptDetail(
         teacherId,
         attemptId,
       );
+      const lesson =
+        attempt.sourceType === "lesson"
+          ? lessonKernelBinding(db, attempt.id)
+          : undefined;
+      if (lesson && lesson.teacherId !== teacherId)
+        throw new HttpError(403, "FORBIDDEN", "这份讲练已不可访问");
       const facts = readKernelAttemptFacts(db, dataDir, attempt);
       return detailOf(db, teacherId, studentName, facts.attempt, facts.rows);
     })

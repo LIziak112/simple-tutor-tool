@@ -13,6 +13,7 @@ import {
   ownClassChoiceAnswerOf,
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
 /** 调用方已经核验读取权限。按持久绑定取得当前草稿或正式确认的冻结行。 */
@@ -21,6 +22,8 @@ export function readKernelAttemptFacts(
   dataDir: string,
   attempt: Attempt,
 ) {
+  const delivery = readQuestionDeliveryFacts(db, dataDir, attempt);
+  if (delivery) return delivery;
   const confirmed = readKernelConfirmationFacts(db, dataDir, attempt);
   if (confirmed !== undefined) return confirmed;
   if (attempt.status !== "draft") kernelAttemptUnavailable();
