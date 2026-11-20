@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { choiceStudentAnswerSchema } from "@tutor/contract";
+import {
+  type AttemptContextSnapshotEntry,
+  attemptContextSnapshotEntrySchema,
+  choiceStudentAnswerSchema,
+  type Question,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import {
   LearningError,
@@ -12,11 +17,68 @@ import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
 import { kernelAttemptBindings } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { requireAssignmentRow } from "./attempt-access.ts";
 import {
   createOwnClassChoiceEvaluator,
   createOwnClassJudgeEvaluator,
   type OwnClassChoiceEvaluationScope,
 } from "./attempt-choice-evaluation.ts";
+import { attemptResponseRows } from "./attempt-freeze.ts";
+import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
+import { listAttemptContextSnapshots } from "./material-repository.ts";
+import { jsonOf, snapshotOfRow } from "./snapshot.ts";
+
+export function frozenKernelContextOf(db: Db, attemptId: string) {
+  return listAttemptContextSnapshots(db, attemptId).map((row) => {
+    const entry = attemptContextSnapshotEntrySchema.safeParse({
+      kind: row.kind,
+      sourceId: row.sourceId,
+      sourceVersion: row.sourceVersion,
+      snapshot: jsonOf(row.snapshotJson),
+    });
+    if (!entry.success) kernelAttemptUnavailable();
+    return entry.data;
+  });
+}
+
+export function verifyKernelMaterialContext(
+  db: Db,
+  activity: StudentActivity,
+  assignmentId: string,
+  frozen: {
+    context?: readonly AttemptContextSnapshotEntry[] | undefined;
+    responses: readonly {
+      question: Pick<Question, "id" | "materialRefs">;
+    }[];
+  },
+): void {
+  if (
+    !matchesKernelMaterialInputs(
+      activity,
+      requireAssignmentRow(db, assignmentId).teacherId,
+      frozen.context ?? [],
+      frozen.responses.map(({ question }) => question),
+    )
+  )
+    kernelAttemptUnavailable();
+}
+
+export function verifyStoredKernelMaterialContext(
+  db: Db,
+  activity: StudentActivity,
+  attempt: Attempt,
+): void {
+  if (!attempt.assignmentId) kernelAttemptUnavailable();
+  const responses = attemptResponseRows(db, attempt.id).map((row) => {
+    const question = snapshotOfRow(row);
+    if (!question) kernelAttemptUnavailable();
+    return { question };
+  });
+  verifyKernelMaterialContext(db, activity, attempt.assignmentId, {
+    context: frozenKernelContextOf(db, attempt.id),
+    responses,
+  });
+}
 
 export function kernelAttemptUnavailable(): never {
   throw new HttpError(

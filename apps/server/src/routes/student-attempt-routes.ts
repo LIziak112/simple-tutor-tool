@@ -123,6 +123,12 @@ export function createStudentAttemptRoutes(db: Db, dataDir: string) {
       // requireUsableAttempt（TT-05b 审查 P2-2 记账：快照读取按 attemptId 直查
       // 不过滤 teacherId，归属防线在路由层——跨域同 attempt id 不可见）
       .get("/attempts/:id/context", (c) => {
+        verifyKernelStudentAttempt(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("id"),
+        );
         requireUsableAttempt(db, c.var.student.id, c.req.param("id"));
         return c.json({
           ok: true,

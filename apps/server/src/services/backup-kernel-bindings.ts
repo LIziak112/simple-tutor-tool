@@ -21,7 +21,14 @@ import {
 } from "../db/schema-kernel-assignments.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
-import { kernelOpeningDraftSchema } from "./kernel-assignment-input.ts";
+import {
+  kernelOpeningDraftSchema,
+  kernelRefreezeDraftSchema,
+} from "./kernel-assignment-input.ts";
+import {
+  verifyKernelMaterialContext,
+  verifyStoredKernelMaterialContext,
+} from "./kernel-assignment-runtime.ts";
 import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
 
 const publicationIdentitySchema = z.object({
@@ -172,8 +179,14 @@ function verifyProjection(db: Db, directory: string): void {
         practiceId: opening.assignmentId,
         practiceVersion: opening.practiceVersion,
       });
+      const activity = runtime.read(actor, receipt.activityId);
+      try {
+        verifyKernelMaterialContext(db, activity, opening.assignmentId, draft);
+      } catch {
+        throw new ZipReadError("备份中的开卷意图与内核材料不一致");
+      }
       if (
-        runtime.read(actor, receipt.activityId).status !== "active" ||
+        activity.status !== "active" ||
         runtime.readChoiceDraftActivity(actor, receipt.activityId) !== undefined
       ) {
         throw new ZipReadError("仍待开卷的作答已在内核产生学习记录");
@@ -234,6 +247,22 @@ function verifyProjection(db: Db, directory: string): void {
           replay.practiceVersion !== activityVersion
         ) {
           throw new ZipReadError("内核无法重放已换版回执");
+        }
+        try {
+          verifyKernelMaterialContext(
+            db,
+            activity,
+            binding.assignmentId,
+            kernelRefreezeDraftSchema.parse(refreeze.responses),
+          );
+        } catch {
+          throw new ZipReadError("备份中的重冻意图与内核材料不一致");
+        }
+      } else {
+        try {
+          verifyStoredKernelMaterialContext(db, activity, attempt);
+        } catch {
+          throw new ZipReadError("主库的冻结上下文与内核材料不一致");
         }
       }
 

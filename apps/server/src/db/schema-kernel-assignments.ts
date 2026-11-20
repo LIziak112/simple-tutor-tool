@@ -9,7 +9,10 @@ import {
   unique,
 } from "drizzle-orm/sqlite-core";
 import type { PublicationInput } from "learning-kernel";
-import type { KernelOpeningDraft } from "../services/kernel-assignment-input.ts";
+import type {
+  KernelOpeningDraft,
+  KernelRefreezeDraft,
+} from "../services/kernel-assignment-input.ts";
 import {
   assignments,
   attempts,
@@ -122,7 +125,7 @@ export const kernelAttemptRefreezes = sqliteTable("kernel_attempt_refreezes", {
     .$type<PublicationInput>()
     .notNull(),
   responses: text("responses_json", { mode: "json" })
-    .$type<KernelOpeningDraft["responses"]>()
+    .$type<KernelRefreezeDraft>()
     .notNull(),
 });
 

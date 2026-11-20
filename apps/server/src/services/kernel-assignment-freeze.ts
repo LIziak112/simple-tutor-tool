@@ -27,6 +27,7 @@ export function reserveKernelAssignmentVersion(
     .update(
       canonicalJsonOf({
         publication,
+        ...(definition.context.length > 0 && { context: definition.context }),
         frozen: responses.map(({ question, unitId, questionVersion }) => ({
           id: question.id,
           unitId,

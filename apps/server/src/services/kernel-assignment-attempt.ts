@@ -38,6 +38,8 @@ import { pendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   kernelAttemptUnavailable,
+  verifyKernelMaterialContext,
+  verifyStoredKernelMaterialContext,
   withBoundKernelActivity,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
@@ -46,7 +48,9 @@ import { resolveNewAttemptWorkflow } from "./practice-workflow-wiring.ts";
 import type { Tx } from "./question-sync.ts";
 
 function verifyKernelBinding(db: Db, dataDir: string, attempt: Attempt): void {
-  withBoundKernelActivity(db, dataDir, attempt, () => undefined);
+  withBoundKernelActivity(db, dataDir, attempt, (_, activity) => {
+    verifyStoredKernelMaterialContext(db, activity, attempt);
+  });
 }
 
 export function verifyKernelStudentAttempt(
@@ -56,7 +60,7 @@ export function verifyKernelStudentAttempt(
   attemptId: string,
 ): void {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
-  if (isKernelAttempt(db, attempt)) {
+  if (attempt.abandonedAt === null && isKernelAttempt(db, attempt)) {
     resolveKernelRefreezeForRead(db, dataDir, attempt);
     verifyKernelBinding(db, dataDir, attempt);
   }
@@ -151,6 +155,7 @@ function reserveKernelOpening(
         timeLimitMinutes: options.timeLimitMinutes,
         workflowVersion: options.workflowVersion,
         responses: definition.responses,
+        ...(definition.context.length > 0 && { context: definition.context }),
         prepared: options.timeLimitMinutes === undefined ? true : undefined,
       }),
     })
@@ -249,15 +254,20 @@ export function startKernelAssignmentAttempt(
       const receipt = withKernelRuntime(db, dataDir, false, (runtime) => {
         runtime.publish(opening.publication);
         const start = draft.prepared ? runtime.prepare : runtime.start;
-        return start(
-          { role: "student", id: studentId },
-          {
-            protocolVersion: 1,
-            operationId: `open:${assignmentId}`,
-            practiceId: assignmentId,
-            practiceVersion: opening.practiceVersion,
-          },
+        const actor = { role: "student", id: studentId } as const;
+        const opened = start(actor, {
+          protocolVersion: 1,
+          operationId: `open:${assignmentId}`,
+          practiceId: assignmentId,
+          practiceVersion: opening.practiceVersion,
+        });
+        verifyKernelMaterialContext(
+          db,
+          runtime.read(actor, opened.activityId),
+          assignmentId,
+          draft,
         );
+        return opened;
       });
       const projected = kernelDraftForAssignment(
         { id: assignmentId, courseId: draft.courseId },
@@ -278,7 +288,7 @@ export function startKernelAssignmentAttempt(
       freezeAttemptContextSnapshotsWithin(
         tx,
         projected.id,
-        [],
+        draft.context ?? [],
         projected.startedAt,
       );
       tx.insert(kernelAttemptBindings)

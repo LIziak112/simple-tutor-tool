@@ -1,4 +1,5 @@
 import {
+  attemptContextSnapshotEntrySchema,
   attemptTimeLimitMinutesSchema,
   frozenGradingPolicySchema,
   questionSchema,
@@ -10,6 +11,7 @@ import type { Db } from "../db/client.ts";
 import type { Assignment, Attempt } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
+  contextEntriesOf,
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
@@ -17,11 +19,7 @@ import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 
-export const kernelOpeningDraftSchema = z.strictObject({
-  courseId: z.string().nullable(),
-  timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
-  workflowVersion: z.literal(1).optional(),
-  prepared: z.literal(true).optional(),
+const kernelFrozenAssignmentSchema = z.strictObject({
   responses: z
     .array(
       z.strictObject({
@@ -32,9 +30,26 @@ export const kernelOpeningDraftSchema = z.strictObject({
       }),
     )
     .min(1),
+  context: z.array(attemptContextSnapshotEntrySchema).optional(),
 });
 
+export const kernelOpeningDraftSchema = kernelFrozenAssignmentSchema.extend({
+  courseId: z.string().nullable(),
+  timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
+  workflowVersion: z.literal(1).optional(),
+  prepared: z.literal(true).optional(),
+});
+
+export const kernelRefreezeDraftSchema = z.union([
+  kernelFrozenAssignmentSchema,
+  kernelFrozenAssignmentSchema.shape.responses.transform((responses) => ({
+    responses,
+    context: undefined,
+  })),
+]);
+
 export type KernelOpeningDraft = z.infer<typeof kernelOpeningDraftSchema>;
+export type KernelRefreezeDraft = z.input<typeof kernelRefreezeDraftSchema>;
 
 export function kernelDraftForAssignment(
   assignment: Pick<Assignment, "id" | "courseId">,
@@ -67,7 +82,7 @@ function ineligible(): never {
   throw new HttpError(
     422,
     "M04_PRACTICE_INELIGIBLE",
-    "内核作业仅支持无材料和提示的整卷单选或判断练习，判断题须有参考答案",
+    "内核作业仅支持无提示的整卷单选或判断练习，判断题须有参考答案且不带材料和题组",
   );
 }
 
@@ -99,7 +114,7 @@ export function loadKernelAssignmentQuestions(
     teacherId,
     liveRows.map(({ id }) => id),
   );
-  if (context.materials.length || context.groups.length) ineligible();
+  if (context.materials.length === 0 && context.groups.length > 0) ineligible();
 
   const selfReview = studentSelfReviewEnabledOf(db, teacherId);
   const responses = liveRows.map((row) => {
@@ -121,6 +136,7 @@ export function loadKernelAssignmentQuestions(
     prompt: studentStemMd(question),
   });
   if (responses[0]?.question.type === "judge") {
+    if (context.materials.length) ineligible();
     const questions = responses.map((row) => {
       const { question } = row;
       if (question.type !== "judge" || question.answers?.kind !== "judge")
@@ -131,7 +147,7 @@ export function loadKernelAssignmentQuestions(
         acceptedResponse: question.answers.value,
       };
     });
-    return { kind: "judge" as const, responses, questions };
+    return { kind: "judge" as const, responses, questions, context: [] };
   }
   const questions = responses.map((row) => {
     const parsed = singleChoiceScoringSourceSchema.safeParse(row.question);
@@ -145,5 +161,10 @@ export function loadKernelAssignmentQuestions(
       acceptedChoice: String(answers.index),
     };
   });
-  return { kind: "choice" as const, responses, questions };
+  const entries = z
+    .array(attemptContextSnapshotEntrySchema)
+    .parse(contextEntriesOf(context));
+  if (context.materials.some(({ contentMd }) => contentMd.trim() === ""))
+    ineligible();
+  return { kind: "choice" as const, responses, questions, context: entries };
 }

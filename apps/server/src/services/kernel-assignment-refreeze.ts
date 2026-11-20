@@ -22,6 +22,7 @@ import {
   kernelAttemptRefreezes,
   kernelChoiceAmendments,
 } from "../db/schema-kernel-assignments.ts";
+import { canonicalJsonOf } from "../lib/canonical-json.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { requireOwnAttempt } from "./attempt-access.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
@@ -37,12 +38,14 @@ import {
 } from "./kernel-assignment-freeze.ts";
 import {
   assertKernelAssignmentPolicy,
-  kernelOpeningDraftSchema,
+  kernelRefreezeDraftSchema,
   loadKernelAssignmentQuestions,
 } from "./kernel-assignment-input.ts";
 import { pendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import {
+  frozenKernelContextOf,
   kernelAttemptUnavailable,
+  verifyKernelMaterialContext,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
@@ -115,6 +118,9 @@ export function reserveKernelRefreeze(
   }
   const current = attemptResponseRows(db, attempt.id);
   if (
+    canonicalJsonOf(
+      frozenKernelContextOf(db, attempt.id).map(canonicalJsonOf).sort(),
+    ) === canonicalJsonOf(definition.context.map(canonicalJsonOf).sort()) &&
     current.length === definition.responses.length &&
     current.every((row, index) => {
       const next = definition.responses[index];
@@ -146,7 +152,10 @@ export function reserveKernelRefreeze(
       expectedPracticeVersion: activity.practiceVersion,
       frozenAt,
       ...target,
-      responses: definition.responses,
+      responses:
+        definition.context.length > 0
+          ? { responses: definition.responses, context: definition.context }
+          : definition.responses,
     })
     .run();
   return true;
@@ -251,8 +260,12 @@ export function finishKernelRefreeze(
     )
       kernelAttemptUnavailable();
 
-    const frozen = kernelOpeningDraftSchema.shape.responses.parse(
-      ticket.responses,
+    const frozen = kernelRefreezeDraftSchema.parse(ticket.responses);
+    verifyKernelMaterialContext(
+      db,
+      runtime.read(principal, attempt.id),
+      binding.assignmentId,
+      frozen,
     );
     discardOpenedArtifactsWithin(tx, attempt.id);
     tx.delete(attemptContextFreezes)
@@ -266,8 +279,13 @@ export function finishKernelRefreeze(
       .set({ frozenAt: ticket.frozenAt })
       .where(eq(attempts.id, attempt.id))
       .run();
-    insertKernelFrozenResponses(tx, attempt.id, frozen);
-    freezeAttemptContextSnapshotsWithin(tx, attempt.id, [], ticket.frozenAt);
+    insertKernelFrozenResponses(tx, attempt.id, frozen.responses);
+    freezeAttemptContextSnapshotsWithin(
+      tx,
+      attempt.id,
+      frozen.context ?? [],
+      ticket.frozenAt,
+    );
     tx.update(kernelAttemptBindings)
       .set({
         practiceVersion: receipt.practiceVersion,
