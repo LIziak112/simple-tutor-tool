@@ -111,15 +111,15 @@ export function matchesKernelMaterialInputs(
   return canonicalJsonOf(expected) === canonicalJsonOf(actual);
 }
 
-export function kernelAssignmentPublication(
-  assignment: Assignment,
-  version: number,
-  definition: ReturnType<typeof loadKernelAssignmentQuestions>,
+export function kernelMaterialPublication(
+  teacherId: string | null,
+  context: readonly AttemptContextSnapshotEntry[],
+  questions: readonly QuestionReferences[],
 ) {
   const { materials, positions } = materialPublicationOf(
-    assignment.teacherId,
-    definition.context,
-    definition.responses.map(({ question }) => question),
+    teacherId,
+    context,
+    questions,
   );
   const materialInputs = Object.fromEntries(
     positions.map(({ from, positionId, material }) => [
@@ -131,7 +131,22 @@ export function kernelAssignmentPublication(
       },
     ]),
   );
-  const materialDefinitions = materials.length > 0 ? { materials } : {};
+  return {
+    materialInputs,
+    materialDefinitions: materials.length > 0 ? { materials } : {},
+  };
+}
+
+export function kernelAssignmentPublication(
+  assignment: Assignment,
+  version: number,
+  definition: ReturnType<typeof loadKernelAssignmentQuestions>,
+) {
+  const { materialInputs, materialDefinitions } = kernelMaterialPublication(
+    assignment.teacherId,
+    definition.context,
+    definition.responses.map(({ question }) => question),
+  );
   if (definition.slotType === "questionDelivery") {
     return {
       ...materialDefinitions,

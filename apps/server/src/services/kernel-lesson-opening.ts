@@ -6,18 +6,27 @@ import { type Attempt, attempts } from "../db/schema.ts";
 import { kernelAssignmentVersions } from "../db/schema-kernel-assignments.ts";
 import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { liveAttemptContextClosure } from "./attempt-context.ts";
+import {
+  contextEntriesOf,
+  liveAttemptContextClosure,
+} from "./attempt-context.ts";
 import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { recordAttemptStartEvent } from "./event-service.ts";
 import { insertKernelFrozenResponses } from "./kernel-assignment-freeze.ts";
 import { kernelOpeningDraftSchema } from "./kernel-assignment-input.ts";
+import {
+  kernelMaterialPublication,
+  matchesKernelMaterialInputs,
+} from "./kernel-assignment-publication.ts";
 import {
   ensureKernelRuntimeStorage,
   type KernelRuntime,
   kernelAttemptUnavailable,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
+import { deliveryPolicy } from "./kernel-question-delivery-binding.ts";
 import { questionDeliveryPublication } from "./kernel-question-delivery-publication.ts";
+import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { requireVisibleStudentLecture } from "./student-course-service.ts";
 
@@ -85,8 +94,7 @@ export function replayKernelLessonOpening(
   )
     kernelAttemptUnavailable();
   const draft = kernelOpeningDraftSchema.parse(opening.draft);
-  if (draft.courseId !== opening.courseId || draft.context?.length)
-    kernelAttemptUnavailable();
+  if (draft.courseId !== opening.courseId) kernelAttemptUnavailable();
   const actor = { role: "student", id: opening.studentId } as const;
   runtime.publish(opening.publication);
   const receipt = runtime.prepare(actor, {
@@ -99,8 +107,15 @@ export function replayKernelLessonOpening(
   if (
     !("questionDeliveries" in view) ||
     view.status !== "active" ||
+    deliveryPolicy(view).mode !== "perQuestion" ||
     view.questionDeliveries.length ||
-    view.questionDeliveryDrafts.length
+    view.questionDeliveryDrafts.length ||
+    !matchesKernelMaterialInputs(
+      view,
+      opening.teacherId,
+      draft.context ?? [],
+      draft.responses.map(({ question }) => question),
+    )
   )
     kernelAttemptUnavailable();
   return { receipt, draft };
@@ -157,6 +172,12 @@ function finishOpening(
           .run();
       tx.insert(attempts).values(attempt).run();
       insertKernelFrozenResponses(tx, attempt.id, draft.responses);
+      freezeAttemptContextSnapshotsWithin(
+        tx,
+        attempt.id,
+        draft.context ?? [],
+        attempt.startedAt,
+      );
       tx.update(kernelLessonOpenings)
         .set({ attemptId: attempt.id, stepAttemptId: receipt.stepAttemptId })
         .where(eq(kernelLessonOpenings.operationId, opening.operationId))
@@ -270,7 +291,11 @@ export function openKernelLesson(
         teacherId,
         liveRows.map((row) => row.id),
       );
-      if (context.materials.length || context.groups.length) return undefined;
+      if (
+        (context.materials.length === 0 && context.groups.length > 0) ||
+        context.materials.some(({ contentMd }) => contentMd.trim() === "")
+      )
+        return undefined;
       const responses = liveRows.map((row) => ({
         question: questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []),
         questionVersion: row.version,
@@ -284,6 +309,16 @@ export function openKernelLesson(
         ).success
       )
         return undefined;
+      const draft = kernelOpeningDraftSchema.parse({
+        courseId: scope.courseId,
+        responses,
+        context: contextEntriesOf(context),
+      });
+      const { materialInputs, materialDefinitions } = kernelMaterialPublication(
+        teacherId,
+        draft.context ?? [],
+        draft.responses.map(({ question }) => question),
+      );
       const canInitialize =
         tx
           .select({ id: kernelAssignmentVersions.assignmentId })
@@ -304,16 +339,17 @@ export function openKernelLesson(
           practiceId,
           practiceVersion: 1,
           operationId,
-          publication: questionDeliveryPublication(
-            { id: practiceId, title: scope.title },
-            1,
-            responses,
-            "perQuestion",
-          ),
-          draft: kernelOpeningDraftSchema.parse({
-            courseId: scope.courseId,
-            responses,
-          }),
+          publication: {
+            ...materialDefinitions,
+            ...questionDeliveryPublication(
+              { id: practiceId, title: scope.title },
+              1,
+              draft.responses,
+              "perQuestion",
+              materialInputs,
+            ),
+          },
+          draft,
         })
         .returning()
         .get();

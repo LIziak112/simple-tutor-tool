@@ -267,7 +267,12 @@ export function submitQuestionDelivery(
             removePendingTicket(db, current);
             return { error: rejection };
           }
-          const activity = readBoundQuestionDelivery(runtime, attempt, binding);
+          const activity = readBoundQuestionDelivery(
+            db,
+            runtime,
+            attempt,
+            binding,
+          );
           if (!activity) kernelAttemptUnavailable();
           return {
             facts: recoverDeliveries(

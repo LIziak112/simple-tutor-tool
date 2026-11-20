@@ -4,11 +4,15 @@ import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
 import { kernelAttemptBindings } from "../db/schema-kernel-assignments.ts";
 import { kernelLessonOpenings } from "../db/schema-kernel-question-delivery.ts";
+import { attemptResponseRows } from "./attempt-freeze.ts";
+import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
 import {
+  frozenKernelContextOf,
   type KernelRuntime,
   kernelAttemptUnavailable,
 } from "./kernel-assignment-runtime.ts";
 import { deliverySlotId } from "./kernel-question-delivery-publication.ts";
+import { snapshotOfRow } from "./snapshot.ts";
 
 export function lessonKernelBinding(db: Pick<Db, "select">, attemptId: string) {
   return db
@@ -36,6 +40,7 @@ export function questionDeliveryBinding(db: Db, attempt: Attempt) {
       practiceVersion: binding.practiceVersion,
       stepAttemptId: binding.stepAttemptId,
       lectureId: binding.lectureId,
+      teacherId: binding.teacherId,
     };
   }
   if (attempt.sourceType !== "assignment") return undefined;
@@ -68,6 +73,7 @@ export function deliveryPolicy(activity: QuestionDeliveryActivity) {
 }
 
 export function readBoundQuestionDelivery(
+  db: Db,
   runtime: KernelRuntime,
   attempt: Attempt,
   binding: QuestionDeliveryBinding,
@@ -89,5 +95,21 @@ export function readBoundQuestionDelivery(
       (binding.lectureId !== undefined)
   )
     kernelAttemptUnavailable();
+  if (binding.teacherId !== undefined) {
+    const questions = attemptResponseRows(db, attempt.id).map((row) => {
+      const question = snapshotOfRow(row);
+      if (!question) kernelAttemptUnavailable();
+      return question;
+    });
+    if (
+      !matchesKernelMaterialInputs(
+        activity,
+        binding.teacherId,
+        frozenKernelContextOf(db, attempt.id),
+        questions,
+      )
+    )
+      kernelAttemptUnavailable();
+  }
   return activity;
 }

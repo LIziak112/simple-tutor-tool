@@ -84,7 +84,7 @@ export function withDelivery<T>(
     dataDir,
     false,
     (runtime) => {
-      const view = readBoundQuestionDelivery(runtime, attempt, binding);
+      const view = readBoundQuestionDelivery(db, runtime, attempt, binding);
       return (
         view &&
         run(runtime, binding, view, (ticket) => {

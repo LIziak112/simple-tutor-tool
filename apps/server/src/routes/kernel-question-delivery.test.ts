@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   ATTEMPT_SNAPSHOT_PROOF_HEADER,
+  attemptContextOkSchema,
   attemptDraftOkSchema,
   attemptResultOkSchema,
   attemptStartOkSchema,
@@ -13,6 +14,7 @@ import {
   backupKernelManifestSchema,
   hintOpenOkSchema,
   importCommitDataSchema,
+  lessonQuestionSubmitOkSchema,
   lessonStartOkSchema,
   type MarkRequest,
   markResponseDataSchema,
@@ -1366,6 +1368,456 @@ async function zipBytes(entries: Map<string, Buffer>) {
   await stream.finalize();
   return new Uint8Array(await result);
 }
+
+const lessonMaterialQuestions = (version: number) => [
+  "开课讲解正文。",
+  "",
+  "::::material{id=lesson-material-one}",
+  "合成讲练材料甲 V1",
+  "::::",
+  "",
+  "::::material{id=lesson-material-two}",
+  `合成讲练材料乙 V${version}`,
+  "::::",
+  "",
+  "::::material{id=lesson-material-unused}",
+  "未引用合成材料",
+  "::::",
+  "",
+  "::::group{id=lesson-material-group}",
+  "::ref{material=lesson-material-one}",
+  "::ref{question=lesson-material-choice}",
+  "::ref{question=lesson-material-judge}",
+  "::::",
+  "",
+  "::::question{id=lesson-material-choice type=choice}",
+  "第一道合成材料题。 ::ref{material=lesson-material-two}",
+  "",
+  "- [x] 第一项",
+  "- [ ] 第二项",
+  "",
+  ":::solution",
+  "合成单选解析",
+  ":::",
+  "::::",
+  "",
+  "题间讲解正文。",
+  "",
+  "::::question{id=lesson-material-judge type=judge}",
+  "相邻合成判断题。[[正确]]",
+  "",
+  ":::solution",
+  "相邻合成判断解析",
+  ":::",
+  "::::",
+  "",
+  "讲解结尾正文。",
+];
+
+it("材料讲练由正式学生入口绑定逐题交付并冻结材料位置", async () => {
+  vi.stubEnv("NEW_CONTENT_ENABLED", "true");
+  using data = mkdtempDisposableSync(join(tmpdir(), "k23-lesson-material-"));
+  const instance = openInstance(data.path);
+  try {
+    let app = instance.open(true);
+    const world = await setupAssignment(app);
+    const teacher = teacherInfoOkSchema.parse(
+      await (await jsonCall(app, "/api/teacher/me", world.teacher)).json(),
+    ).data;
+    app = instance.open(true, teacher.id);
+    const owner = world.ownerCookie;
+    const studentCall = (path: string, method = "GET", body?: object) =>
+      jsonCall(app, path, owner, method, body);
+    const course = wire(z.object({ id: z.uuid() })).parse(
+      await (
+        await jsonCall(app, "/api/teacher/courses", world.teacher, "POST", {
+          title: "合成材料讲练班",
+        })
+      ).json(),
+    ).data;
+    expect(
+      (
+        await jsonCall(
+          app,
+          `/api/teacher/courses/${course.id}/members`,
+          world.teacher,
+          "POST",
+          { studentIds: [world.studentId] },
+        )
+      ).status,
+    ).toBe(200);
+    const importLesson = async (version: number) => {
+      const {
+        lectures: [lecture],
+      } = await importQuestions(
+        app,
+        world.teacher,
+        course.id,
+        lessonMaterialQuestions(version),
+      );
+      if (!lecture) throw new Error("未生成讲练");
+      return lecture.id;
+    };
+    const lectureId = await importLesson(1);
+    const lesson = `/api/student/lectures/${lectureId}/lesson`;
+    const start = () =>
+      studentCall(`${lesson}/start?courseId=${course.id}`, "POST");
+    const startView = async () => {
+      const response = await start();
+      expect(response.status, await response.clone().text()).toBe(200);
+      return lessonStartOkSchema.parse(await response.json()).data;
+    };
+    const response = await start();
+    expect(response.status, await response.clone().text()).toBe(200);
+    const raw = await response.json();
+    assertNoLeak(raw);
+    expect(JSON.stringify(raw)).not.toMatch(
+      /\[\[正确\]\]|合成单选解析|相邻合成判断解析|未引用合成材料|\[x\]/,
+    );
+    const view = lessonStartOkSchema.parse(raw).data;
+    const id = view.attempt.id;
+    const root = (attemptId: string) => `/api/student/attempts/${attemptId}`;
+    const path = root(id);
+    const frozenContext = async (attemptId: string) => {
+      const result = await studentCall(`${root(attemptId)}/context`);
+      expect(result.status, await result.clone().text()).toBe(200);
+      const body = await result.json();
+      assertNoLeak(body);
+      return attemptContextOkSchema.parse(body).data;
+    };
+    const oldContext = await frozenContext(id);
+    const binding = (attemptId: string) =>
+      z
+        .object({
+          practice_id: z.string(),
+          practice_version: z.number(),
+          step_attempt_id: z.uuid(),
+        })
+        .parse(
+          instance
+            .db()
+            .$client.prepare(
+              "SELECT practice_id,practice_version,step_attempt_id FROM kernel_lesson_openings WHERE attempt_id=?",
+            )
+            .get(attemptId),
+        );
+    expect(binding(id).practice_version).toBe(1);
+    const [choice, judge] = view.questions;
+    if (!choice || !judge) throw new Error("缺少合成题目");
+    expect(view.blocks).toEqual([
+      { type: "md", md: expect.stringContaining("开课讲解正文。") },
+      { type: "question", questionId: choice.id },
+      { type: "md", md: "题间讲解正文。" },
+      { type: "question", questionId: judge.id },
+      { type: "md", md: "讲解结尾正文。" },
+    ]);
+    expect(choice.materialRefs).toEqual([{ material: "lesson-material-two" }]);
+    expect(oldContext).toMatchObject({
+      freezeState: "frozen",
+      groups: [
+        {
+          id: "lesson-material-group",
+          materialRefs: [{ material: "lesson-material-one" }],
+          questionIds: [choice.id, judge.id],
+        },
+      ],
+    });
+    expect(
+      (await jsonCall(app, `${path}/context`, world.otherCookie)).status,
+    ).toBe(403);
+    const changeCourseMembership = (method: "POST" | "DELETE") =>
+      jsonCall(
+        app,
+        `/api/teacher/courses/${course.id}/members`,
+        world.teacher,
+        method,
+        { studentIds: [world.studentId] },
+      );
+    expect((await changeCourseMembership("DELETE")).status).toBe(200);
+    expect((await studentCall(`${path}/context`)).status).toBe(403);
+    expect((await changeCourseMembership("POST")).status).toBe(200);
+
+    const actor = { role: "student", id: world.studentId } as const;
+    const kernelDb = join(data.path, BACKUP_KERNEL_DATABASE);
+    const kernelMaterials = (attemptId: string) => {
+      const runtime = openLearningRuntime({ databasePath: kernelDb });
+      try {
+        const activity = runtime.read(actor, attemptId);
+        expect(activity).toMatchObject({
+          stepAttemptId: binding(attemptId).step_attempt_id,
+          step: {
+            submit: {
+              slots: {
+                answers: {
+                  delivery: {
+                    mode: "perQuestion",
+                    questionSlots: {
+                      [choice.id]: "question-1",
+                      [judge.id]: "question-2",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        });
+        expect(JSON.stringify(activity)).not.toMatch(
+          /acceptedChoice|acceptedResponse|acceptedByQuestion|scoringKey|合成单选解析|相邻合成判断解析|未引用合成材料|\[\[正确\]\]/,
+        );
+        if (!("inputs" in activity)) throw new Error("缺少内核冻结输入");
+        return Object.entries(activity.inputs)
+          .flatMap(([key, input]) => {
+            if (input.from !== "material" || !input.material) return [];
+            expect(input.positionId).toBe(key);
+            return [{ ...input.material, positionId: input.positionId }];
+          })
+          .sort((a, b) => a.source.localeCompare(b.source));
+      } finally {
+        runtime.close();
+      }
+    };
+    const versionsOf = (context: Awaited<ReturnType<typeof frozenContext>>) =>
+      context.materials.map(({ id, sourceVersion, contentMd }) => [
+        id,
+        sourceVersion,
+        contentMd,
+      ]);
+    const expected = (version: number) => [
+      ["lesson-material-one", 1, "合成讲练材料甲 V1"],
+      ["lesson-material-two", version, `合成讲练材料乙 V${version}`],
+    ];
+    const oldPositions = kernelMaterials(id);
+    expect(versionsOf(oldContext)).toEqual(expected(1));
+    expect(
+      oldPositions.map(({ source, version, paragraphs }) => [
+        source,
+        version,
+        paragraphs[0]?.text,
+      ]),
+    ).toEqual(versionsOf(oldContext));
+    expect(new Set(oldPositions.map(({ positionId }) => positionId)).size).toBe(
+      2,
+    );
+
+    const neighborAnswer = { kind: "judge", value: false } as const;
+    for (const [question, answer] of [
+      [choice, { kind: "choice", index: 0 }],
+      [judge, neighborAnswer],
+    ] as const) {
+      const save = await studentCall(`${path}/answers/${question.id}`, "PUT", {
+        answer,
+        baseRevision: 0,
+        mutationId: randomUUID(),
+        questionRevisionId: question.questionRevisionId,
+        expectedFrozenAt: view.attempt.frozenAt,
+      });
+      expect(save.status, await save.clone().text()).toBe(200);
+    }
+    const confirmChoice = await studentCall(
+      `${path}/questions/${choice.id}/submit`,
+      "POST",
+      {
+        questionRevisionId: choice.questionRevisionId,
+        expectedAnswerRevision: 1,
+        evidence: { questionId: choice.id, state: "none" },
+      },
+    );
+    expect(confirmChoice.status, await confirmChoice.clone().text()).toBe(200);
+    const feedback = await confirmChoice.json();
+    expect(JSON.stringify(feedback)).not.toMatch(
+      /相邻合成判断题|相邻合成判断解析|lesson-material-judge|\[\[正确\]\]|acceptedResponse|scoringKey/,
+    );
+    expect(lessonQuestionSubmitOkSchema.parse(feedback).data).toMatchObject({
+      attempt: { status: "draft" },
+      question: {
+        questionId: choice.id,
+        autoCorrect: true,
+        solutionMd: "合成单选解析",
+      },
+    });
+    const tickets = () =>
+      instance
+        .db()
+        .$client.prepare(
+          "SELECT operation_id,step_attempt_id,slot_id,receipt_id,intent_json FROM kernel_question_deliveries WHERE attempt_id=? ORDER BY slot_id",
+        )
+        .all(id);
+    const [choiceTicket] = tickets();
+    expect(choiceTicket).toMatchObject({
+      slot_id: "question-1",
+      receipt_id: expect.any(String),
+    });
+
+    expect(await importLesson(2)).toBe(lectureId);
+    expect(await frozenContext(id)).toEqual(oldContext);
+    expect(kernelMaterials(id)).toEqual(oldPositions);
+    const resumed = await startView();
+    expect(resumed.blocks).toEqual(view.blocks);
+    expect(Object.keys(resumed.released)).toEqual([choice.id]);
+    expect(resumed.drafts[judge.id]).toEqual(neighborAnswer);
+    expect(resumed.draftRevisions?.[judge.id]).toBe(1);
+    expect(JSON.stringify(resumed)).not.toContain("相邻合成判断解析");
+
+    const finish = () =>
+      studentCall(`${path}/submit`, "POST", {
+        revisions: resumed.questions.map(({ id, questionRevisionId }) => ({
+          questionId: id,
+          questionRevisionId,
+          expectedAnswerRevision: resumed.draftRevisions?.[id] ?? 0,
+        })),
+        evidence: [{ questionId: judge.id, state: "none" }],
+      });
+    const finished = await finish();
+    expect(finished.status, await finished.clone().text()).toBe(200);
+    const final = await finishedResult(app, path, owner);
+    expect(final.summary).toMatchObject({ answered: 2, scoreFinal: 50 });
+    expect(final.units.flatMap(({ questions }) => questions)).toMatchObject([
+      { questionId: choice.id, autoCorrect: true },
+      { questionId: judge.id, autoCorrect: false, answer: neighborAnswer },
+    ]);
+    expect((await finish()).status).toBe(409);
+    const originalTickets = tickets();
+    expect(originalTickets).toHaveLength(2);
+    expect(originalTickets).toContainEqual(choiceTicket);
+    const settlements = () =>
+      instance
+        .db()
+        .$client.prepare(
+          "SELECT id,seq,question_count FROM attempt_settlements WHERE attempt_id=? AND kind='final'",
+        )
+        .all(id);
+    const originalSettlements = settlements();
+    expect(originalSettlements).toMatchObject([{ seq: 1, question_count: 2 }]);
+
+    const restartRequest = { expectedAttemptId: id, operationId: randomUUID() };
+    const restart = () =>
+      studentCall(`${lesson}/restart`, "POST", restartRequest);
+    instance
+      .db()
+      .$client.exec(
+        "CREATE TEMP TRIGGER interrupt_material_lesson BEFORE INSERT ON attempt_context_snapshots " +
+          "BEGIN SELECT RAISE(ABORT,'中断讲练材料投影'); END",
+      );
+    expect((await restart()).status).toBe(500);
+    const pending = z
+      .object({
+        operation_id: z.string(),
+        practice_id: z.string(),
+        practice_version: z.number(),
+        attempt_id: z.null(),
+        draft_json: z.string(),
+      })
+      .parse(
+        instance
+          .db()
+          .$client.prepare(
+            "SELECT operation_id,practice_id,practice_version,attempt_id,draft_json FROM kernel_lesson_openings WHERE lecture_id=? AND attempt_no=2",
+          )
+          .get(lectureId),
+      );
+    let preparedId: string;
+    const runtime = openLearningRuntime({ databasePath: kernelDb });
+    try {
+      const receipt = runtime.prepare(actor, {
+        protocolVersion: 1,
+        operationId: pending.operation_id,
+        practiceId: pending.practice_id,
+        practiceVersion: pending.practice_version,
+      });
+      preparedId = receipt.activityId;
+    } finally {
+      runtime.close();
+    }
+    expect(
+      instance
+        .db()
+        .$client.prepare("SELECT id FROM attempts WHERE id=?")
+        .get(preparedId),
+    ).toBeUndefined();
+
+    instance.reopen();
+    app = instance.open(false, teacher.id);
+    instance
+      .db()
+      .$client.prepare(
+        "UPDATE kernel_lesson_openings SET draft_json=json_set(draft_json,'$.context[1].snapshot.contentMd','待恢复材料错配') WHERE operation_id=?",
+      )
+      .run(pending.operation_id);
+    expect((await restart()).status).toBe(503);
+    expect(
+      instance
+        .db()
+        .$client.prepare("SELECT id FROM attempts WHERE id=?")
+        .get(preparedId),
+    ).toBeUndefined();
+    expect(tickets()).toEqual(originalTickets);
+    instance
+      .db()
+      .$client.prepare(
+        "UPDATE kernel_lesson_openings SET draft_json=? WHERE operation_id=?",
+      )
+      .run(pending.draft_json, pending.operation_id);
+
+    const next = await restart();
+    expect(next.status, await next.clone().text()).toBe(201);
+    const nextView = lessonStartOkSchema.parse(await next.json()).data;
+    expect(nextView.attempt).toMatchObject({
+      id: preparedId,
+      attemptNo: 2,
+      status: "draft",
+    });
+    expect(nextView.drafts).toEqual({});
+    expect((await startView()).attempt.id).toBe(preparedId);
+    expect(versionsOf(await frozenContext(preparedId))).toEqual(expected(2));
+    expect(kernelMaterials(preparedId)).toEqual([
+      oldPositions[0],
+      {
+        ...oldPositions[1],
+        version: 2,
+        paragraphs: [{ id: "content", text: "合成讲练材料乙 V2" }],
+      },
+    ]);
+    expect(await frozenContext(id)).toEqual(oldContext);
+    expect(kernelMaterials(id)).toEqual(oldPositions);
+    expect(await finishedResult(app, path, owner)).toEqual(final);
+    expect(tickets()).toEqual(originalTickets);
+    expect(settlements()).toEqual(originalSettlements);
+
+    const contextRow = instance
+      .db()
+      .$client.prepare(
+        "SELECT id,snapshot_json FROM attempt_context_snapshots " +
+          "WHERE attempt_id=? AND kind='material' AND source_id='lesson-material-two'",
+      );
+    const frozenRow = z
+      .object({ id: z.uuid(), snapshot_json: z.string() })
+      .parse(contextRow.get(id));
+    instance
+      .db()
+      .$client.prepare(
+        "UPDATE attempt_context_snapshots SET snapshot_json=json_set(snapshot_json,'$.contentMd','受控材料错配') WHERE id=?",
+      )
+      .run(frozenRow.id);
+    const mismatched = await studentCall(`${path}/context`);
+    expect(mismatched.status).toBe(503);
+    expect(await mismatched.json()).toMatchObject({
+      error: "KERNEL_ATTEMPT_UNAVAILABLE",
+    });
+    expect(tickets()).toEqual(originalTickets);
+    expect(settlements()).toEqual(originalSettlements);
+    instance
+      .db()
+      .$client.prepare(
+        "UPDATE attempt_context_snapshots SET snapshot_json=? WHERE id=?",
+      )
+      .run(frozenRow.snapshot_json, frozenRow.id);
+    expect(await frozenContext(id)).toEqual(oldContext);
+    expect(kernelMaterials(id)).toEqual(oldPositions);
+  } finally {
+    instance.close();
+    vi.unstubAllEnvs();
+  }
+});
 
 it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备份、重开及早收尾", async () => {
   using data = mkdtempDisposableSync(join(tmpdir(), "k17-host-b-"));
