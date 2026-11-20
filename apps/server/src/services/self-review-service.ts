@@ -118,7 +118,18 @@ export function submitSelfReview(
           "这道题的参考答案不可用，不能自评",
         );
       }
-      if (row.teacherMark !== null) {
+      // 权威交付不可读时不落自评。恢复和回执组装都在同一个写事务内。
+      const isKernelWholeAssignment =
+        attempt.sourceType === "assignment" && isKernelAttempt(db, attempt);
+      const delivery =
+        isKernelWholeAssignment && dataDir !== undefined
+          ? readQuestionDeliveryFacts(db, dataDir, attempt)
+          : undefined;
+      const confirmed = delivery?.rows.find(
+        (projected) => projected.id === row.id,
+      );
+      if (isKernelWholeAssignment && !confirmed) kernelAttemptUnavailable();
+      if ((confirmed ?? row).teacherMark !== null) {
         throw new HttpError(
           409,
           "SELF_REVIEW_TEACHER_MARKED",
@@ -133,15 +144,6 @@ export function submitSelfReview(
       ) {
         throw selfReviewRevisionConflict(row);
       }
-
-      // 权威交付不可读时不落自评。恢复和回执组装都在同一个写事务内。
-      const isKernelWholeAssignment =
-        attempt.sourceType === "assignment" && isKernelAttempt(db, attempt);
-      const delivery =
-        isKernelWholeAssignment && dataDir !== undefined
-          ? readQuestionDeliveryFacts(db, dataDir, attempt)
-          : undefined;
-      if (isKernelWholeAssignment && !delivery) kernelAttemptUnavailable();
 
       const changes = replay
         ? null
@@ -170,8 +172,8 @@ export function submitSelfReview(
 
       const selfReview = selfReviewRecordOf(written);
       const effective: EffectiveVerdict | null = effectiveVerdictOf(
-        written.autoCorrect,
-        teacherMarkOf(written.teacherMark),
+        (confirmed ?? written).autoCorrect,
+        teacherMarkOf((confirmed ?? written).teacherMark),
         selfReview,
       );
       return selfReviewDataSchema.parse({

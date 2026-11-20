@@ -121,6 +121,8 @@ type ConfirmationHooks = Pick<
   | "authorizeConfirmationRecovery"
   | "authorizeChoiceDraftAmendment"
   | "authorizeChoiceSnapshotRevision"
+  | "authorizeQuestionDeliveryReview"
+  | "authorizeQuestionDeliveryVerdict"
   | "hasChoiceSnapshotEvidence"
 > & { evaluateScope?: () => OwnClassChoiceEvaluationScope | undefined };
 

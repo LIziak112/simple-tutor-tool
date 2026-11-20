@@ -33,7 +33,15 @@ import {
   structuresOfSnapshot,
 } from "./attempt-service";
 import { responseTimeOf } from "./attempt-time-projection";
-import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
+import {
+  isKernelAttempt,
+  requireLegacyAttemptWrite,
+} from "./kernel-assignment-routing.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import {
+  finishKernelResponseMark,
+  stageKernelResponseMark,
+} from "./kernel-response-mark.ts";
 import { pendingMarkCount } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -166,6 +174,37 @@ export function batchSerializeStudentAnswerOfRow(
 
 // ---------- POST /api/teacher/responses/:id/mark ----------
 
+function requireMarkableResponse(
+  db: Pick<Db, "select">,
+  teacherId: string,
+  responseId: string,
+) {
+  const row = db
+    .select({
+      response: responses,
+      attempt: attempts,
+      ownerTeacherId: students.teacherId,
+    })
+    .from(responses)
+    .innerJoin(attempts, eq(responses.attemptId, attempts.id))
+    .innerJoin(students, eq(attempts.studentId, students.id))
+    .where(eq(responses.id, responseId))
+    .get();
+  if (row === undefined || row.ownerTeacherId !== teacherId) {
+    throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答记录不存在");
+  }
+  if (row.attempt.abandonedAt !== null) {
+    throw new HttpError(409, "ATTEMPT_ABANDONED", "这份作答已作废，不能批改");
+  }
+  if (row.attempt.status === "draft" && row.response.submittedAt === null) {
+    throw new HttpError(409, "NOT_SUBMITTED", "未交卷的作答不能批注");
+  }
+  if (snapshotOfRow(row.response) === null) {
+    throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答题目快照不可用");
+  }
+  return row;
+}
+
 /**
  * 教师批注单题（D3）。req.comment 已由契约层归一化（trim 后空串 → null）。
  * 事务内三步（见模块头注释）；返回写回后的最新状态（本题 + 整卷 + 剩余待批数）。
@@ -175,35 +214,25 @@ export function markResponse(
   teacherId: string,
   responseId: string,
   req: MarkRequest,
+  dataDir?: string,
 ): MarkResponseData {
-  return db.transaction(
+  const staged = db.transaction(
     (tx) => {
-      const row = tx
-        .select({
-          response: responses,
-          attempt: attempts,
-          ownerTeacherId: students.teacherId,
-        })
-        .from(responses)
-        .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-        .innerJoin(students, eq(attempts.studentId, students.id))
-        .where(eq(responses.id, responseId))
-        .get();
-      if (row === undefined || row.ownerTeacherId !== teacherId) {
-        throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答记录不存在");
-      }
-      if (row.attempt.abandonedAt !== null) {
-        throw new HttpError(
-          409,
-          "ATTEMPT_ABANDONED",
-          "这份作答已作废，不能批改",
+      const row = requireMarkableResponse(tx, teacherId, responseId);
+      if (
+        dataDir !== undefined &&
+        row.attempt.sourceType === "assignment" &&
+        isKernelAttempt(tx, row.attempt)
+      ) {
+        const result = stageKernelResponseMark(
+          db,
+          dataDir,
+          row.attempt,
+          row.response,
+          teacherId,
+          req,
         );
-      }
-      if (row.attempt.status === "draft" && row.response.submittedAt === null) {
-        throw new HttpError(409, "NOT_SUBMITTED", "未交卷的作答不能批注");
-      }
-      if (snapshotOfRow(row.response) === null) {
-        throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答题目快照不可用");
+        if (result !== undefined) return result;
       }
 
       requireLegacyAttemptWrite(tx, row.attempt);
@@ -241,7 +270,7 @@ export function markResponse(
           .run();
         attempt = { ...attempt, ...outcome };
       }
-      return {
+      const data: MarkResponseData = {
         responseId,
         questionId: row.response.questionId,
         attemptId,
@@ -252,6 +281,18 @@ export function markResponse(
         scoreFinal: attempt.scoreFinal,
         pendingCount: pendingMarkCount(db, attempt),
       };
+      return { data };
+    },
+    { behavior: "immediate" },
+  );
+  if (staged.data !== undefined) return staged.data;
+  if (dataDir === undefined || staged.pending === undefined)
+    kernelAttemptUnavailable();
+  const pending = staged.pending;
+  return db.transaction(
+    (tx) => {
+      const { attempt } = requireMarkableResponse(tx, teacherId, responseId);
+      return finishKernelResponseMark(db, dataDir, attempt, pending);
     },
     { behavior: "immediate" },
   );

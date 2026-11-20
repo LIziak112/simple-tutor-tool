@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtempDisposableSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   ATTEMPT_SNAPSHOT_PROOF_HEADER,
   attemptDraftOkSchema,
@@ -13,6 +14,8 @@ import {
   hintOpenOkSchema,
   importCommitDataSchema,
   lessonStartOkSchema,
+  type MarkRequest,
+  markResponseDataSchema,
   pendingMarkListDataSchema,
   type SelfReviewRequest,
   selfReviewDataSchema,
@@ -510,7 +513,7 @@ it.each([false, true])(
     using data = mkdtempDisposableSync(join(tmpdir(), "k18-fill-"));
     const instance = openInstance(data.path);
     try {
-      const app = instance.open(false);
+      let app = instance.open(false);
       const world = await setupAssignment(app);
       const fillIds = ["extra", "blank", "empty", "missing"].map(
         (name) => "k18-" + name,
@@ -556,6 +559,25 @@ it.each([false, true])(
           await (await jsonCall(app, path, world.ownerCookie)).json(),
         ).data;
       const initial = await draft();
+      const rawResponse = z
+        .object({ id: z.uuid() })
+        .parse(
+          instance
+            .db()
+            .$client.prepare(
+              "SELECT id FROM responses WHERE attempt_id=? AND question_id='k18-extra'",
+            )
+            .get(attempt.id),
+        );
+      const draftMark = await jsonCall(
+        app,
+        "/api/teacher/responses/" + rawResponse.id + "/mark",
+        world.teacher,
+        "POST",
+        { mark: "wrong", comment: null },
+      );
+      expect(draftMark.status).toBe(409);
+      expect(await draftMark.json()).toMatchObject({ error: "NOT_SUBMITTED" });
       const written = new Map([
         ["k17-one", { kind: "choice", index: 0 }],
         ["k18-extra", { kind: "fill", values: [" 甲 ", "", "  保留  "] }],
@@ -781,6 +803,180 @@ it.each([false, true])(
         } finally {
           replaceReceipt.run(ticket.receipt_id, attempt.id);
         }
+      }
+      const markQuestion = teacherView.questions.find(
+        ({ questionId }) =>
+          questionId === (selfReview ? "k17-one" : "k18-extra"),
+      );
+      if (!markQuestion?.responseId)
+        throw new Error("未取得正式作答的批改定位");
+      const responseId = markQuestion.responseId;
+      const markPath = "/api/teacher/responses/" + responseId + "/mark";
+      const markResponse = async (request: MarkRequest) => {
+        const res = await jsonCall(
+          app,
+          markPath,
+          world.teacher,
+          "POST",
+          request,
+        );
+        expect(res.status, await res.clone().text()).toBe(200);
+        return wire(markResponseDataSchema).parse(await res.json()).data;
+      };
+      const oldBody = {
+        mark: selfReview ? "wrong" : "correct",
+        comment: "合成评语",
+      } as const;
+      const marked = await markResponse(oldBody);
+      expect(marked.eventId).toBeDefined();
+      expect(marked).toMatchObject({
+        revision: 1,
+        teacherMark: oldBody.mark,
+        teacherComment: oldBody.comment,
+        finalCorrect: !selfReview,
+        scoreFinal: selfReview ? 0 : null,
+        pendingCount: selfReview ? 0 : 3,
+      });
+      expect(await markResponse(oldBody)).toEqual(marked);
+      const staleMark = await jsonCall(app, markPath, world.teacher, "POST", {
+        mark: null,
+        comment: null,
+        mutationId: randomUUID(),
+        baseRevision: 0,
+      });
+      expect(staleMark.status).toBe(409);
+      expect(await staleMark.json()).toMatchObject({
+        error: "VERDICT_CONFLICT",
+      });
+
+      const clear = {
+        mark: null,
+        comment: null,
+        baseRevision: 1,
+        mutationId: randomUUID(),
+      };
+      if (selfReview) {
+        const db = instance.db().$client;
+        db.exec(
+          "CREATE TEMP TRIGGER stop_mark_projection BEFORE UPDATE OF result_json ON kernel_response_marks BEGIN SELECT RAISE(ABORT, '中断批改回执'); END",
+        );
+        const cut = await jsonCall(app, markPath, world.teacher, "POST", clear);
+        expect(cut.status).toBe(500);
+        expect(
+          db
+            .prepare(
+              "SELECT result_json FROM kernel_response_marks WHERE operation_id=?",
+            )
+            .get(clear.mutationId),
+        ).toEqual({ result_json: null });
+        expect(
+          db
+            .prepare("SELECT teacher_comment FROM responses WHERE id=?")
+            .get(responseId),
+        ).toEqual({ teacher_comment: oldBody.comment });
+        const acceptedEvent = () => {
+          using kernel = new DatabaseSync(
+            join(data.path, "learning-kernel.sqlite"),
+            { readOnly: true },
+          );
+          return kernel
+            .prepare("SELECT id FROM verdict_events WHERE operation_id=?")
+            .all(clear.mutationId);
+        };
+        const [accepted] = acceptedEvent();
+        expect(accepted).toBeDefined();
+        instance.reopen();
+        app = instance.open(false);
+        const operator = teacherInfoOkSchema.parse(
+          await (await jsonCall(app, "/api/teacher/me", world.teacher)).json(),
+        ).data.id;
+        app = instance.open(false, operator);
+        const backup = await jsonCall(
+          app,
+          "/api/teacher/backup/download",
+          world.teacher,
+        );
+        expect(backup.status, await backup.clone().text()).toBe(200);
+        const restoreForm = new FormData();
+        restoreForm.set(
+          "zip",
+          new File(
+            [new Uint8Array(await backup.arrayBuffer())],
+            "批改中断截面.zip",
+            {
+              type: "application/zip",
+            },
+          ),
+        );
+        restoreForm.set("password", "teacher-pass-8");
+        const restored = await app.request("/api/teacher/backup/restore", {
+          method: "POST",
+          headers: { cookie: world.teacher },
+          body: restoreForm,
+        });
+        expect(restored.status, await restored.clone().text()).toBe(200);
+        expect(
+          instance
+            .db()
+            .$client.prepare(
+              "SELECT result_json FROM kernel_response_marks WHERE operation_id=?",
+            )
+            .get(clear.mutationId),
+        ).toEqual({ result_json: null });
+        const disableReviewer = instance
+          .db()
+          .$client.prepare("UPDATE teachers SET disabled_at=? WHERE id=?");
+        disableReviewer.run(new Date().toISOString(), operator);
+        try {
+          const recovered = await finishedResult(app, path, world.ownerCookie);
+          expect(recovered.summary).toEqual(result.summary);
+        } finally {
+          disableReviewer.run(null, operator);
+        }
+        const replayed = await markResponse(clear);
+        expect(replayed.eventId).toBe(accepted?.id);
+        expect(acceptedEvent()).toEqual([accepted]);
+      }
+      const cleared = await markResponse(clear);
+      expect(cleared.eventId).toBeDefined();
+      expect(cleared).toMatchObject({
+        revision: 2,
+        teacherMark: null,
+        teacherComment: null,
+        finalCorrect: selfReview ? true : null,
+        scoreFinal: result.summary.scoreFinal,
+        pendingCount: result.summary.pendingCount,
+      });
+      expect(await markResponse(clear)).toEqual(cleared);
+      const reused = await jsonCall(app, markPath, world.teacher, "POST", {
+        ...clear,
+        comment: "异内容重用",
+      });
+      expect(reused.status).toBe(409);
+      expect(await reused.json()).toMatchObject({
+        error: "OPERATION_CONFLICT",
+      });
+      expect(
+        (await finishedResult(app, path, world.ownerCookie)).summary,
+      ).toEqual(result.summary);
+      const abandon = instance
+        .db()
+        .$client.prepare("UPDATE attempts SET abandoned_at=? WHERE id=?");
+      abandon.run(new Date().toISOString(), attempt.id);
+      try {
+        const blocked = await jsonCall(
+          app,
+          markPath,
+          world.teacher,
+          "POST",
+          oldBody,
+        );
+        expect(blocked.status).toBe(409);
+        expect(await blocked.json()).toMatchObject({
+          error: "ATTEMPT_ABANDONED",
+        });
+      } finally {
+        abandon.run(null, attempt.id);
       }
       expect(
         (

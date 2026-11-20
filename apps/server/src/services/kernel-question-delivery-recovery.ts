@@ -19,6 +19,10 @@ import {
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
 import {
+  projectWholeDeliveryVerdicts,
+  type ReviewedDelivery,
+} from "./kernel-delivery-verdicts.ts";
+import {
   deliveryPolicy,
   type QuestionDeliveryActivity,
   type QuestionDeliveryBinding,
@@ -42,7 +46,11 @@ export const actorOf = (attempt: Attempt) =>
 export const keyOf = ({ operationId, stepAttemptId }: DeliveryTicket) =>
   ({ protocolVersion: 1, operationId, stepAttemptId }) as const;
 
-export type DeliveryFacts = { attempt: Attempt; rows: ResponseRow[] };
+export type DeliveryFacts = {
+  attempt: Attempt;
+  rows: ResponseRow[];
+  review?: ReviewedDelivery["review"];
+};
 type Activate = (ticket: DeliveryTicket) => void;
 
 export function withDelivery<T>(
@@ -305,17 +313,22 @@ export function readQuestionDeliveryFacts(
   dataDir: string,
   attempt: Attempt,
   attachmentDir = dataDir,
-) {
+): DeliveryFacts | undefined {
   return db.$client
-    .transaction(() =>
-      withDelivery(
+    .transaction(() => {
+      const facts = withDelivery(
         db,
         dataDir,
         attempt,
         (runtime, binding, view, activate) =>
           recoverDeliveries(db, runtime, attempt, binding, view, activate),
         attachmentDir,
-      ),
-    )
+      );
+      return facts &&
+        facts.attempt.sourceType === "assignment" &&
+        facts.attempt.status !== "draft"
+        ? projectWholeDeliveryVerdicts(db, dataDir, facts)
+        : facts;
+    })
     .immediate();
 }

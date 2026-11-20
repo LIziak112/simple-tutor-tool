@@ -305,6 +305,7 @@ export function createStudentRoutes(
                 c.req.param("id"),
                 c.req.param("questionId"),
                 new Date(),
+                dataDir,
               ),
             ),
           },

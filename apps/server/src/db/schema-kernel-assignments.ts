@@ -24,6 +24,7 @@ import {
 export {
   kernelLessonOpenings,
   kernelQuestionDeliveries,
+  kernelResponseMarks,
 } from "./schema-kernel-question-delivery.ts";
 
 export const kernelAssignments = sqliteTable("kernel_assignments", {

@@ -231,7 +231,13 @@ export function createTeacherAttemptRoutes(
         const req = await parseJsonBody(c, markRequestSchema);
         return c.json({
           ok: true,
-          data: markResponse(db, c.var.teacher.id, c.req.param("id"), req),
+          data: markResponse(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+            req,
+            dataDir,
+          ),
         });
       })
       .get("/pending-marks", (c) => {

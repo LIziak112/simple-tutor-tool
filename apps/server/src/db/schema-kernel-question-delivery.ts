@@ -1,3 +1,4 @@
+import type { MarkResponseData, TeacherMark } from "@tutor/contract";
 import type { KernelQuestionDeliveryIntent } from "@tutor/contract/kernel-question-delivery";
 import { sql } from "drizzle-orm";
 import {
@@ -7,10 +8,11 @@ import {
   sqliteTable,
   text,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
-import type { PublicationInput } from "learning-kernel";
+import type { PublicationInput, VerdictCommand } from "learning-kernel";
 import type { KernelOpeningDraft } from "../services/kernel-assignment-input.ts";
-import { attempts } from "./schema.ts";
+import { attempts, responses } from "./schema.ts";
 
 export const kernelLessonOpenings = sqliteTable(
   "kernel_lesson_openings",
@@ -62,5 +64,35 @@ export const kernelQuestionDeliveries = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.attemptId, t.stepAttemptId, t.slotId] }),
     unique().on(t.stepAttemptId, t.operationId),
+  ],
+);
+
+export const kernelResponseMarks = sqliteTable(
+  "kernel_response_marks",
+  {
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id, { onDelete: "cascade" }),
+    responseId: text("response_id")
+      .notNull()
+      .references(() => responses.id, { onDelete: "cascade" }),
+    teacherId: text("teacher_id").notNull(),
+    operationId: text("operation_id").notNull(),
+    baseRevision: integer("base_revision").notNull(),
+    mark: text("mark").$type<TeacherMark>(),
+    comment: text("comment"),
+    command: text("command_json", { mode: "json" }).$type<VerdictCommand>(),
+    result: text("result_json", { mode: "json" }).$type<MarkResponseData>(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.attemptId, t.teacherId, t.operationId] }),
+    uniqueIndex("kernel_response_mark_pending")
+      .on(t.responseId)
+      .where(sql`${t.result} IS NULL`),
+    check(
+      "kernel_response_mark_completion",
+      sql`${t.command} IS NOT NULL OR ${t.result} IS NOT NULL`,
+    ),
+    check("kernel_response_mark_revision", sql`${t.baseRevision} >= 0`),
   ],
 );
