@@ -299,9 +299,7 @@ export function startCourseAttempt(
 ): AttemptStartData {
   const { restartAttemptId, timeLimitMinutes, feedbackMode } = options;
   const openingDir =
-    kernel?.enabled &&
-    feedbackMode !== "per_question" &&
-    (restartAttemptId === undefined || timeLimitMinutes === undefined)
+    kernel?.enabled && feedbackMode !== "per_question"
       ? kernel.dataDir
       : undefined;
   const decide = (tx: Tx) => {
@@ -334,8 +332,7 @@ export function startCourseAttempt(
       if (
         pending.attemptNo !== attemptNo ||
         pending.draft.restartAttemptId !== draft?.id ||
-        (restartAttemptId !== undefined &&
-          (timeLimitMinutes !== undefined || feedbackMode === "per_question"))
+        (restartAttemptId !== undefined && feedbackMode === "per_question")
       )
         kernelAttemptUnavailable();
       return { opening: pending };

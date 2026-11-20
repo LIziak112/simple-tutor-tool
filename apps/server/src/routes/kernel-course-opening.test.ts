@@ -511,21 +511,19 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
       true,
     );
     const restart = () =>
-      owner(`${unitPath}/attempts`, "POST", { restartAttemptId: second.id });
-    for (const mode of [
-      { timeLimitMinutes: 5 },
-      { feedbackMode: "per_question" },
-    ]) {
-      expect(
-        (
-          await owner(`${unitPath}/attempts`, "POST", {
-            ...whole,
-            ...mode,
-            restartAttemptId: second.id,
-          })
-        ).status,
-      ).toBe(503);
-    }
+      owner(`${unitPath}/attempts`, "POST", {
+        restartAttemptId: second.id,
+        timeLimitMinutes: 5,
+      });
+    expect(
+      (
+        await owner(`${unitPath}/attempts`, "POST", {
+          ...whole,
+          restartAttemptId: second.id,
+          feedbackMode: "per_question",
+        })
+      ).status,
+    ).toBe(503);
     app = appWith(false);
     expect((await restart()).status).toBe(503);
     expect(await open()).toMatchObject({ id: second.id });
@@ -545,13 +543,20 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     });
     const third = attemptStartOkSchema.parse(restarted).data;
     expect(third.id).not.toBe(second.id);
-    expect(third.attemptNo).toBe(3);
+    expect(third).toMatchObject({
+      attemptNo: 3,
+      phase: "active",
+      activatedAt: third.startedAt,
+      timeLimitSec: 300,
+      deadlineAt: new Date(Date.parse(third.startedAt) + 300_000).toISOString(),
+    });
     expect(await open()).toEqual(third);
     const thirdPath = `/api/student/attempts/${third.id}`;
     const thirdRaw = await (await owner(thirdPath)).json();
     assertNoLeak(thirdRaw);
     const thirdDraft = attemptDraftOkSchema.parse(thirdRaw).data;
     expect(thirdDraft.drafts).toEqual({});
+    expect(thirdDraft.timing?.phase).toBe("running");
     expect(thirdDraft.units[0]?.questions[0]?.questionRevisionId).not.toBe(
       secondSave.questionRevisionId,
     );
@@ -975,7 +980,7 @@ it("先前无绑定草稿继续宿主续作，教师允许选择时不分配内�
   }
 });
 
-it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归档可继续", async () => {
+it("限时重开的两个断点保留第一次选择、旧卷和原意图，同代归档可继续", async () => {
   using data = mkdtempDisposableSync(
     join(tmpdir(), "ownclass-course-restart-"),
   );
@@ -1012,15 +1017,32 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
         options,
       );
     const previous = attemptStartOkSchema.parse(
-      await (await open(enabled)).json(),
+      await (await open(enabled, { ...whole, timeLimitMinutes: 11 })).json(),
     ).data;
     const path = `/api/student/attempts/${previous.id}`;
-    const restart = { restartAttemptId: previous.id };
+    const restart = { restartAttemptId: previous.id, timeLimitMinutes: 5 };
     const draft = attemptDraftOkSchema.parse(
       await (await request(enabled, world.ownerCookie, path)).json(),
     ).data;
     const question = draft.units[0]?.questions[0];
     if (!question) throw new Error("缺少冻结题");
+    expect(
+      (
+        await request(
+          enabled,
+          world.ownerCookie,
+          `${path}/answers/${question.id}`,
+          "PUT",
+          {
+            answer: { kind: "choice", index: 1 },
+            baseRevision: 0,
+            mutationId: randomUUID(),
+            expectedFrozenAt: previous.frozenAt,
+            questionRevisionId: question.questionRevisionId,
+          },
+        )
+      ).status,
+    ).toBe(200);
     const note = await putNoteReceipt(
       enabled,
       world.ownerCookie,
@@ -1028,6 +1050,18 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
       question.id,
     );
     const database = join(data.path, BACKUP_KERNEL_DATABASE);
+    const readPrevious = () => {
+      const runtime = openLearningRuntime({ databasePath: database });
+      try {
+        return runtime.read(
+          { role: "student", id: world.studentId },
+          previous.id,
+        );
+      } finally {
+        runtime.close();
+      }
+    };
+    const oldActivity = readPrevious();
     const activityIds = () => {
       using kernel = new DatabaseSync(database, { readOnly: true });
       return z
@@ -1049,7 +1083,9 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
     const originalBody = readFileSync(join(data.path, original.body_path));
     const pending = () =>
       sql()
-        .prepare(`SELECT operation_id, attempt_id, json_extract(draft_json, '$.restartAttemptId') AS predecessor
+        .prepare(`SELECT operation_id, attempt_id, practice_id, practice_version, draft_json,
+        json_extract(draft_json, '$.restartAttemptId') AS predecessor,
+        json_extract(draft_json, '$.timeLimitMinutes') AS minutes
       FROM kernel_course_openings WHERE attempt_no=2`)
         .get();
     const download = async () => {
@@ -1088,6 +1124,7 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
     expect(intent).toMatchObject({
       attempt_id: null,
       predecessor: previous.id,
+      minutes: 5,
     });
     expect(activityIds()).toEqual([previous.id]);
     expect((await submitOld()).status).toBe(503);
@@ -1102,7 +1139,7 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
 
     sql().exec(`CREATE TEMP TRIGGER stop_restart_projection BEFORE UPDATE OF abandoned_at ON attempts
       BEGIN SELECT RAISE(ABORT, '测试中断换卷投影'); END`);
-    const postKernel = await open(enabled, restart);
+    const postKernel = await open(enabled, { ...restart, timeLimitMinutes: 9 });
     expect(postKernel.status).toBe(500);
     expect(pending()).toEqual(intent);
     expect(
@@ -1112,6 +1149,21 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
     ).toEqual({ abandoned_at: null });
     const prepared = activityIds();
     expect(prepared).toHaveLength(2);
+    const [oldId, preparedId] = prepared;
+    if (!preparedId) throw new Error("缺少已准备新卷");
+    const preparedCoordinates = () => {
+      using kernel = new DatabaseSync(database, { readOnly: true });
+      return z
+        .object({ startedAt: z.iso.datetime(), stepId: z.uuid() })
+        .parse(
+          kernel
+            .prepare(
+              "SELECT started_at AS startedAt, initial_prepared_step_attempt_id AS stepId FROM activities WHERE id=?",
+            )
+            .get(preparedId),
+        );
+    };
+    const coordinates = preparedCoordinates();
     expect((await submitOld()).status).toBe(503);
     expect(
       sql()
@@ -1139,10 +1191,38 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
     expect(pending()).toEqual(intent);
     expect(activityIds()).toEqual(prepared);
 
-    const recovered = await open(disabled);
+    const recovered = await open(disabled, {
+      ...restart,
+      timeLimitMinutes: 12,
+    });
     expect(recovered.status, await recovered.clone().text()).toBe(201);
     const found = attemptStartOkSchema.parse(await recovered.json()).data;
-    expect(found.id).toBe(prepared[1]);
+    expect(found).toMatchObject({
+      id: preparedId,
+      phase: "active",
+      startedAt: coordinates.startedAt,
+      activatedAt: coordinates.startedAt,
+      frozenAt: coordinates.startedAt,
+      timeLimitSec: 300,
+      deadlineAt: new Date(
+        Date.parse(coordinates.startedAt) + 300_000,
+      ).toISOString(),
+    });
+    expect(preparedCoordinates()).toEqual(coordinates);
+    expect(oldId).toBe(previous.id);
+    expect(readPrevious()).toEqual(oldActivity);
+    expect(
+      sql()
+        .prepare(
+          "SELECT activated_at, time_limit_sec, deadline_at, frozen_at FROM attempts WHERE id=?",
+        )
+        .get(previous.id),
+    ).toEqual({
+      activated_at: previous.activatedAt,
+      time_limit_sec: 660,
+      deadline_at: previous.deadlineAt,
+      frozen_at: previous.frozenAt,
+    });
     expect((await open(disabled, restart)).status).toBe(409);
     expect(noteVersion()).toEqual(original);
     expect(readFileSync(join(data.path, original.body_path))).toEqual(
@@ -1192,6 +1272,30 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
     expect(
       attemptStartOkSchema.parse(await (await open(disabled)).json()).data,
     ).toEqual(found);
+    const noLimit = await open(enabled, { restartAttemptId: found.id });
+    expect(noLimit.status, await noLimit.clone().text()).toBe(201);
+    const last = attemptStartOkSchema.parse(await noLimit.json()).data;
+    expect(last.id).not.toBe(found.id);
+    expect(activityIds()).toEqual([...prepared, last.id]);
+    expect(last).toMatchObject({
+      attemptNo: 3,
+      phase: "opened",
+      activatedAt: null,
+      timeLimitSec: null,
+      deadlineAt: null,
+    });
+    const lastDraft = await request(
+      enabled,
+      world.ownerCookie,
+      `/api/student/attempts/${last.id}`,
+    );
+    expect(lastDraft.status).toBe(200);
+    expect(
+      attemptDraftOkSchema.parse(await lastDraft.json()).data,
+    ).toMatchObject({
+      drafts: {},
+      timing: null,
+    });
   } finally {
     handle.close();
   }
@@ -1495,7 +1599,10 @@ it("课程冻结原稿经双库断点和两设备核对后仍以同一回执落�
       error: "ALREADY_SUBMITTED",
     });
     app = openApp(true);
-    const conflict = await owner(entry, "POST", { restartAttemptId: old.id });
+    const conflict = await owner(entry, "POST", {
+      restartAttemptId: old.id,
+      timeLimitMinutes: 5,
+    });
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({
       error: "ATTEMPT_RESTART_STALE",
