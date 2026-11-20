@@ -25,7 +25,6 @@ import {
   kernelLessonOpenings,
   kernelQuestionDeliveries,
 } from "../db/schema-kernel-question-delivery.ts";
-import { needsTeacherMark } from "./attempt-final-outcome.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   type RecoverKernelConfirmation,
@@ -40,6 +39,7 @@ import {
 } from "./kernel-assignment-runtime.ts";
 import { recoverKernelChoiceSnapshot } from "./kernel-choice-amendments.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
+import { attemptResultCountsOfRows } from "./result-counts.ts";
 
 interface TeacherKernelConfirmation
   extends ReturnType<RecoverKernelConfirmation> {
@@ -139,13 +139,7 @@ export function readTeacherKernelFacts(
           confirmed.set(attempt.id, {
             attempt: shared.attempt,
             rows,
-            resultCounts: {
-              correctCount: rows.filter((row) => row.finalCorrect === true)
-                .length,
-              totalCount: rows.length,
-              pendingCount: rows.filter(needsTeacherMark).length,
-              pendingSelfReviewCount: 0,
-            },
+            resultCounts: attemptResultCountsOfRows(rows),
           });
         if (
           includeDrafts &&
@@ -166,13 +160,7 @@ export function readTeacherKernelFacts(
         const facts = recover(attempt, binding, ticket);
         confirmed.set(attempt.id, {
           ...facts,
-          resultCounts: {
-            correctCount: facts.rows.filter((row) => row.finalCorrect === true)
-              .length,
-            totalCount: facts.rows.length,
-            pendingCount: facts.rows.filter(needsTeacherMark).length,
-            pendingSelfReviewCount: 0,
-          },
+          resultCounts: attemptResultCountsOfRows(facts.rows),
         });
         continue;
       }

@@ -11,10 +11,7 @@ import {
   responses,
 } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
-import {
-  hasUsableQuestionSnapshotSql,
-  needsTeacherMark,
-} from "./attempt-final-outcome.ts";
+import { hasUsableQuestionSnapshotSql } from "./attempt-final-outcome.ts";
 import {
   attemptResponseRows,
   effectiveVerdictOfRow,
@@ -29,7 +26,10 @@ import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
 import { pendingMarkCount, pendingSelfReviewCounts } from "./pending-mark.ts";
 import { countsAsWrong } from "./response-verdict.ts";
-import { attemptResultCounts } from "./result-counts.ts";
+import {
+  attemptResultCounts,
+  attemptResultCountsOfRows,
+} from "./result-counts.ts";
 import { reviewEvidenceReader } from "./review-evidence.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 import { detailItemOf } from "./teacher-attempt-detail-item.ts";
@@ -270,23 +270,16 @@ function detailOf(
   const notDoneCount =
     judgedRows.filter((row) => row.verdict?.value === false).length -
     wrongCount;
-  const kernelPending =
-    kernelRows === undefined
-      ? undefined
-      : attempt.status === "draft"
-        ? 0
-        : kernelRows.filter(needsTeacherMark).length;
+  const kernelCounts =
+    kernelRows !== undefined &&
+    attempt.status !== "draft" &&
+    attempt.abandonedAt === null
+      ? attemptResultCountsOfRows(kernelRows)
+      : null;
   const resultCounts =
     kernelRows === undefined
       ? (attemptResultCounts(db, [attempt]).get(attempt.id) ?? null)
-      : attempt.status === "draft" || attempt.abandonedAt !== null
-        ? null
-        : {
-            correctCount,
-            totalCount: judgedRows.length,
-            pendingCount: kernelPending ?? 0,
-            pendingSelfReviewCount: 0,
-          };
+      : kernelCounts;
   return {
     attemptId: attempt.id,
     studentId: attempt.studentId,
@@ -303,11 +296,14 @@ function detailOf(
     // D4 共享谓词（finalCorrect IS NULL 且非 reference_self 行；与列表卡片/
     // 待批队列/学情矩阵同一实现——不再用 effectiveCorrect=null 计数，避免把
     // 待自评行算进教师待批）
-    pendingCount: kernelPending ?? pendingMarkCount(db, attempt),
+    pendingCount:
+      kernelRows === undefined
+        ? pendingMarkCount(db, attempt)
+        : (kernelCounts?.pendingCount ?? 0),
     selfReviewPendingCount:
       kernelRows === undefined
         ? (pendingSelfReviewCounts(db, [attempt]).get(attempt.id) ?? 0)
-        : 0,
+        : (kernelCounts?.pendingSelfReviewCount ?? 0),
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     time: attemptTimeOf(db, attempt.id),

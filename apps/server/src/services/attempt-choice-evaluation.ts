@@ -1,4 +1,6 @@
 import {
+  fillScoringSourceSchema,
+  type GradingPolicy,
   judgeScoringSourceSchema,
   multiChoiceScoringSourceSchema,
   singleChoiceScoringSourceSchema,
@@ -9,6 +11,8 @@ import type {
   ChoiceEvaluatorRegistration,
   IndexResponseEvaluationInput,
   IndexResponseEvaluatorRegistration,
+  OrderedTextEvaluationInput,
+  OrderedTextEvaluatorRegistration,
   ResponseEvaluationInput,
   ResponseEvaluatorRegistration,
   ResponseVerdict,
@@ -57,7 +61,9 @@ function frozenQuestionForEvaluation(
   input:
     | ChoiceEvaluationInput
     | ResponseEvaluationInput
-    | IndexResponseEvaluationInput,
+    | IndexResponseEvaluationInput
+    | OrderedTextEvaluationInput,
+  permittedPolicies: readonly GradingPolicy[] = ["auto"],
 ) {
   if (
     scope === undefined ||
@@ -88,7 +94,8 @@ function frozenQuestionForEvaluation(
     row === undefined ||
     row.id !== scope.questionRevisions.get(input.questionId) ||
     row.questionVersion !== input.questionVersion ||
-    row.gradingPolicy !== "auto"
+    row.gradingPolicy === null ||
+    !permittedPolicies.includes(row.gradingPolicy)
   )
     mismatch();
   const question = snapshotOfRow(row);
@@ -206,6 +213,39 @@ export function createOwnClassMultiEvaluator(
       );
       if (result === null) mismatch();
       return { status: "judged", correct: result };
+    },
+  };
+}
+
+export function createOwnClassFillEvaluator(
+  db: Db,
+  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
+): OrderedTextEvaluatorRegistration {
+  return {
+    ...ownClassDeliveryEvaluatorRef,
+    evaluate(input) {
+      const scope = currentScope();
+      if (scope?.lectureId !== undefined) mismatch();
+      const { row, question } = frozenQuestionForEvaluation(db, scope, input, [
+        "manual_only",
+        "reference_self",
+      ]);
+      const source = fillScoringSourceSchema.safeParse(question);
+      if (
+        !source.success ||
+        JSON.stringify(source.data.answers.blanks) !==
+          JSON.stringify(input.acceptedBlanks)
+      )
+        mismatch();
+      const result = gradeResponseRow(
+        row.gradingPolicy,
+        question,
+        input.value === null
+          ? undefined
+          : { kind: "fill", values: [...input.value] },
+      );
+      if (result !== null) mismatch();
+      return { status: "needsReview" };
     },
   };
 }

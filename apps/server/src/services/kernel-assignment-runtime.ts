@@ -20,6 +20,7 @@ import { HttpError } from "../lib/http-error.ts";
 import { requireAssignmentRow } from "./attempt-access.ts";
 import {
   createOwnClassChoiceEvaluator,
+  createOwnClassFillEvaluator,
   createOwnClassJudgeEvaluator,
   createOwnClassMultiEvaluator,
   type OwnClassChoiceEvaluationScope,
@@ -147,6 +148,7 @@ export function withKernelRuntime<T>(
         ),
       ],
       indexResponseEvaluators: [createOwnClassMultiEvaluator(db, getScope)],
+      orderedTextEvaluators: [createOwnClassFillEvaluator(db, getScope)],
       responseEvaluators: [
         createOwnClassJudgeEvaluator(db, getScope),
         createOwnClassJudgeEvaluator(

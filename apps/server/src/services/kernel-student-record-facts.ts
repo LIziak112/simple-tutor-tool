@@ -23,7 +23,6 @@ import {
   kernelQuestionDeliveries,
 } from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { needsTeacherMark } from "./attempt-final-outcome.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   type RecoverKernelConfirmation,
@@ -37,6 +36,7 @@ import {
   readBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
+import { attemptResultCountsOfRows } from "./result-counts.ts";
 import { answerOf } from "./snapshot.ts";
 import { requireVisibleStudentLecture } from "./student-course-service.ts";
 import {
@@ -177,12 +177,7 @@ function publishedResultOf({
 }: ReturnType<RecoverKernelConfirmation>): PublishedResult {
   return {
     score: attempt.scoreFinal ?? attempt.scoreAuto,
-    resultCounts: {
-      correctCount: rows.filter((row) => row.finalCorrect === true).length,
-      totalCount: rows.length,
-      pendingCount: rows.filter(needsTeacherMark).length,
-      pendingSelfReviewCount: 0,
-    },
+    resultCounts: attemptResultCountsOfRows(rows),
   };
 }
 

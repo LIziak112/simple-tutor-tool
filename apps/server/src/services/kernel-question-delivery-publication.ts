@@ -1,6 +1,7 @@
 import {
   type Question,
   questionDeliveryScoringSourcesSchema,
+  wholeQuestionDeliveryScoringSourcesSchema,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import type { PublicationInput } from "learning-kernel";
@@ -16,9 +17,11 @@ export function questionDeliveryPublication(
   rows: readonly Frozen[],
   mode: "whole" | "perQuestion",
 ) {
-  const sources = questionDeliveryScoringSourcesSchema.parse(
-    rows.map(({ question }) => question),
-  );
+  const schema =
+    mode === "whole"
+      ? wholeQuestionDeliveryScoringSourcesSchema
+      : questionDeliveryScoringSourcesSchema;
+  const sources = schema.parse(rows.map(({ question }) => question));
   const key = { id: `${id}-key`, version };
   const declared = rows.map(({ question, questionVersion }, index) => {
     const source = sources[index];
@@ -29,6 +32,14 @@ export function questionDeliveryPublication(
       prompt: studentStemMd(question),
     };
     if (!("options" in source)) {
+      if ("blanks" in source.answers) {
+        const response = "orderedTextBlanks" as const;
+        const acceptedBlanks = source.answers.blanks;
+        return {
+          question: { ...base, response, blankCount: acceptedBlanks.length },
+          key: { response, acceptedBlanks },
+        };
+      }
       const response = "booleanOrString" as const;
       return {
         question: {

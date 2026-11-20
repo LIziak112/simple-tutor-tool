@@ -1,13 +1,39 @@
 import type { AttemptResultCounts } from "@tutor/contract";
 import { and, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, responses } from "../db/schema";
+import { type Attempt, type ResponseRow, responses } from "../db/schema";
 import {
   hasUsableQuestionSnapshotSql,
+  needsTeacherMark,
   needsTeacherMarkSql,
 } from "./attempt-final-outcome.ts";
 import { needsSelfReviewSql } from "./pending-mark";
-import { effectiveVerdictValueSql } from "./response-verdict.ts";
+import {
+  effectiveVerdictOfRow,
+  effectiveVerdictValueSql,
+} from "./response-verdict.ts";
+
+/** 已确认的内核行以权威回执投影，作答表中的判定列不能用于这些计数。 */
+export function attemptResultCountsOfRows(
+  rows: readonly ResponseRow[],
+): AttemptResultCounts {
+  let correctCount = 0;
+  let pendingCount = 0;
+  let pendingSelfReviewCount = 0;
+  for (const row of rows) {
+    const verdict = effectiveVerdictOfRow(row);
+    if (verdict?.value === true) correctCount++;
+    if (needsTeacherMark(row)) pendingCount++;
+    if (row.gradingPolicy === "reference_self" && verdict === null)
+      pendingSelfReviewCount++;
+  }
+  return {
+    correctCount,
+    totalCount: rows.length,
+    pendingCount,
+    pendingSelfReviewCount,
+  };
+}
 
 /** 只接收调用方已核验归属的作答；草稿与作废卷不产生整卷结果。 */
 export function attemptResultCounts(

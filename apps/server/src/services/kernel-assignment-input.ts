@@ -3,8 +3,8 @@ import {
   attemptContextSnapshotEntrySchema,
   attemptTimeLimitMinutesSchema,
   frozenGradingPolicySchema,
-  questionDeliveryScoringSourcesSchema,
   questionSchema,
+  wholeQuestionDeliveryScoringSourcesSchema,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { z } from "zod";
@@ -135,7 +135,7 @@ export function loadKernelAssignmentQuestions(
     if (
       context.materials.length ||
       context.groups.length ||
-      !questionDeliveryScoringSourcesSchema.safeParse(
+      !wholeQuestionDeliveryScoringSourcesSchema.safeParse(
         responses.map(({ question }) => question),
       ).success
     )

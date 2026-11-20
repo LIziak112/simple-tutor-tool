@@ -1,8 +1,8 @@
 import {
   choiceStudentAnswerSchema,
   judgeStudentAnswerSchema,
-  multiStudentAnswerSchema,
   type StudentAnswer,
+  studentAnswerSchema,
 } from "@tutor/contract";
 import type { QuestionDeliveryDraftInput } from "learning-kernel";
 import type { ResponseRow } from "../db/schema.ts";
@@ -20,7 +20,11 @@ export function deliveryAnswerOf(
   const type = snapshotOfRow(row)?.type;
   const outcome =
     typeof value === "object"
-      ? multiStudentAnswerSchema.safeParse({ kind: type, indexes: value })
+      ? studentAnswerSchema.safeParse({
+          kind: type,
+          indexes: value,
+          values: value,
+        })
       : type === judgeStudentAnswerSchema.shape.kind.value
         ? judgeStudentAnswerSchema.safeParse({ kind: type, value })
         : choiceStudentAnswerSchema.safeParse({
@@ -42,6 +46,7 @@ export function deliveryValueOf(
   if (snapshotOfRow(row)?.type !== answer.kind) return invalidDeliveryAnswer();
   if ("index" in answer) return String(answer.index);
   if ("indexes" in answer) return answer.indexes;
+  if ("values" in answer) return answer.values;
   if ("value" in answer) return answer.value;
   return invalidDeliveryAnswer();
 }

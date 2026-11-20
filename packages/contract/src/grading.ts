@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   choiceAnswersSchema,
+  fillAnswersSchema,
   judgeAnswersSchema,
   multiAnswersSchema,
   optionSchema,
@@ -73,12 +74,24 @@ export const multiChoiceScoringSourceSchema = z
     },
   );
 
-export const questionDeliveryScoringSourcesSchema = z
-  .union([
-    singleChoiceScoringSourceSchema,
-    judgeScoringSourceSchema,
-    multiChoiceScoringSourceSchema,
-  ])
+export const fillScoringSourceSchema = z.object({
+  type: questionTypeSchema.extract(["fill"]),
+  answers: fillAnswersSchema.extend({
+    blanks: fillAnswersSchema.shape.blanks.min(1),
+  }),
+});
+
+const objectiveDeliveryScoringSourceSchema = z.union([
+  singleChoiceScoringSourceSchema,
+  judgeScoringSourceSchema,
+  multiChoiceScoringSourceSchema,
+]);
+
+export const questionDeliveryScoringSourcesSchema =
+  objectiveDeliveryScoringSourceSchema.array().min(1);
+
+export const wholeQuestionDeliveryScoringSourcesSchema = z
+  .union([objectiveDeliveryScoringSourceSchema, fillScoringSourceSchema])
   .array()
   .min(1);
 

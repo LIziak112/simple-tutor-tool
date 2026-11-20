@@ -14,6 +14,7 @@ import {
   lessonStartOkSchema,
   pendingMarkListDataSchema,
   studentRecordsOkSchema,
+  teacherAttemptDetailOkSchema,
   teacherInfoOkSchema,
 } from "@tutor/contract";
 import { ZipArchive } from "archiver";
@@ -117,6 +118,7 @@ async function importQuestions(
   app: ReturnType<typeof createApp>,
   teacher: string,
   courseId?: string,
+  questions = choices,
 ) {
   const kind = courseId ? "lesson" : "practice";
   const markdown = [
@@ -126,7 +128,7 @@ async function importQuestions(
     "---",
     "",
     ...(courseId ? ["# 第1讲 合成共用交付", ""] : []),
-    ...choices,
+    ...questions,
   ].join("\n");
   const response = await jsonCall(
     app,
@@ -321,6 +323,209 @@ it("混合普通作业只有一份权威整卷确认，公布前隐藏键并保�
     instance.close();
   }
 });
+
+it.each([false, true])(
+  "普通整卷保留填空位置和空稿，自评开启=%s",
+  async (selfReview) => {
+    using data = mkdtempDisposableSync(join(tmpdir(), "k18-fill-"));
+    const instance = openInstance(data.path);
+    try {
+      const app = instance.open(false);
+      const world = await setupAssignment(app);
+      const fillIds = ["extra", "blank", "empty", "missing"].map(
+        (name) => "k18-" + name,
+      );
+      const {
+        units: [unit],
+      } = await importQuestions(app, world.teacher, undefined, [
+        ...choices,
+        ...fillIds.flatMap((id) => [
+          "::::question{id=" + id + " type=fill}",
+          "合成填空 [[甲|乙]]，另有 [[丙]]。",
+          "::::",
+          "",
+        ]),
+      ]);
+      if (!unit) throw new Error("未导入合成填空题");
+      expect(
+        (
+          await jsonCall(
+            app,
+            "/api/teacher/settings/practice-feedback",
+            world.teacher,
+            "PUT",
+            {
+              studentSelfReviewEnabled: selfReview,
+            },
+          )
+        ).status,
+      ).toBe(200);
+      const assignment = await assignKernelFixture(
+        app,
+        { ...world, unitId: unit.id },
+        {
+          answerRelease: "after_due",
+          dueAt: "2099-01-01T00:00:00Z",
+        },
+      );
+      const opened = await postAssignment(app, assignment, world.ownerCookie);
+      const attempt = attemptStartOkSchema.parse(await opened.json()).data;
+      const path = "/api/student/attempts/" + attempt.id;
+      const draft = async () =>
+        attemptDraftOkSchema.parse(
+          await (await jsonCall(app, path, world.ownerCookie)).json(),
+        ).data;
+      const initial = await draft();
+      const written = new Map([
+        ["k17-one", { kind: "choice", index: 0 }],
+        ["k18-extra", { kind: "fill", values: [" 甲 ", "", "  保留  "] }],
+        ["k18-blank", { kind: "fill", values: [" ", "\t"] }],
+        ["k18-empty", { kind: "fill", values: [] }],
+      ]);
+      const questions = initial.units.flatMap((group) => group.questions);
+      for (const question of questions) {
+        const answer = written.get(question.id);
+        if (!answer) continue;
+        const saved = await jsonCall(
+          app,
+          path + "/answers/" + question.id,
+          world.ownerCookie,
+          "PUT",
+          {
+            answer,
+            mutationId: randomUUID(),
+            baseRevision: 0,
+            expectedFrozenAt: attempt.frozenAt,
+            questionRevisionId: question.questionRevisionId,
+          },
+        );
+        expect(saved.status, await saved.clone().text()).toBe(200);
+      }
+      const saved = await draft();
+      expect(saved.drafts).toEqual(Object.fromEntries(written));
+      const payload = {
+        revisions: questions.map(({ id, questionRevisionId }) => ({
+          questionId: id,
+          questionRevisionId,
+          expectedAnswerRevision: saved.draftRevisions?.[id] ?? 0,
+        })),
+      };
+      const submit = await jsonCall(
+        app,
+        path + "/submit",
+        world.ownerCookie,
+        "POST",
+        payload,
+      );
+      expect(submit.status, await submit.clone().text()).toBe(200);
+      const hidden = attemptResultOkSchema.parse(await submit.json()).data;
+      expect(hidden.answersReleased).toBe(false);
+      expect(
+        hidden.units
+          .flatMap((group) => group.questions)
+          .map((question) => [
+            question.answer,
+            question.answers,
+            question.solutionMd,
+            question.gradingPolicy,
+            question.autoCorrect,
+          ]),
+      ).toEqual(
+        questions.map(({ id }) => [
+          written.get(id) ?? null,
+          null,
+          null,
+          null,
+          null,
+        ]),
+      );
+      const studentRecord = async () =>
+        studentRecordsOkSchema
+          .parse(
+            await (
+              await jsonCall(app, "/api/student/records", world.ownerCookie)
+            ).json(),
+          )
+          .data.records.find((record) => record.attemptId === attempt.id);
+      expect(await studentRecord()).toMatchObject({
+        pendingSelfReviewCount: null,
+        resultCounts: null,
+      });
+      const publish = await jsonCall(
+        app,
+        "/api/teacher/assignments/" + assignment,
+        world.teacher,
+        "PATCH",
+        {
+          answerRelease: "on_submit",
+        },
+      );
+      expect(publish.status).toBe(200);
+      const result = await finishedResult(app, path, world.ownerCookie);
+      const rows = result.units.flatMap((group) => group.questions);
+      expect(
+        rows.find((question) => question.questionId === "k17-one")?.autoCorrect,
+      ).toBe(true);
+      expect(
+        rows
+          .filter((question) => fillIds.includes(question.questionId))
+          .map((question) => [
+            question.questionId,
+            question.answer,
+            question.answered,
+            question.answers,
+            question.gradingPolicy,
+            question.autoCorrect,
+            question.finalCorrect,
+          ]),
+      ).toEqual(
+        fillIds.map((id, index) => [
+          id,
+          written.get(id) ?? null,
+          index === 0,
+          { kind: "fill", blanks: [["甲", "乙"], ["丙"]] },
+          selfReview ? "reference_self" : "manual_only",
+          null,
+          null,
+        ]),
+      );
+      expect(result.summary).toMatchObject({
+        answered: 2,
+        pendingCount: selfReview ? 0 : 4,
+      });
+      expect(await studentRecord()).toMatchObject({
+        pendingSelfReviewCount: selfReview ? 4 : 0,
+      });
+      const teacherView = teacherAttemptDetailOkSchema.parse(
+        await (
+          await jsonCall(
+            app,
+            "/api/teacher/attempts/" + attempt.id,
+            world.teacher,
+          )
+        ).json(),
+      ).data;
+      expect(teacherView).toMatchObject({
+        pendingCount: selfReview ? 0 : 4,
+        selfReviewPendingCount: selfReview ? 4 : 0,
+        resultCounts: { pendingSelfReviewCount: selfReview ? 4 : 0 },
+      });
+      expect(
+        (
+          await jsonCall(
+            app,
+            path + "/submit",
+            world.ownerCookie,
+            "POST",
+            payload,
+          )
+        ).status,
+      ).toBe(409);
+    } finally {
+      instance.close();
+    }
+  },
+);
 
 function inkForm() {
   const form = new FormData();

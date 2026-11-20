@@ -57,9 +57,9 @@ const password = "teacher-pass-8";
 const dbName = "tutor.db";
 const kernelName = "learning-kernel.sqlite";
 
-it("K17 归档兼容精确匹配已知固定包", () => {
+it("K18 归档兼容精确匹配已知固定包", () => {
   expect(readLockedBackupArtifact().sha256).toBe(
-    "b7bf4ce182647546cc2bd6576af744257a7938100a0486675e2ff7516db11a8f",
+    "2c8255c8ad471ef3cb52d206b3ae854312497b275f20f27a86329e25cc3b834f",
   );
   for (const digest of [
     "3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d",
@@ -70,6 +70,7 @@ it("K17 归档兼容精确匹配已知固定包", () => {
     "baaea5f3ed29fd75f1bc06c3727a2ac311c0bebe6b6188619678cca994a5af07",
     "4576ef7bb755ef71e80deef3d5016a197415e72f26d8fd169bc5de269c32b00e",
     "aa78e0410b5b13f35b422e143a46fb045cb3c8b30497835c3217f57198fd3414",
+    "b7bf4ce182647546cc2bd6576af744257a7938100a0486675e2ff7516db11a8f",
   ]) {
     expect(supportsBackupArtifact(digest), digest).toBe(true);
   }
