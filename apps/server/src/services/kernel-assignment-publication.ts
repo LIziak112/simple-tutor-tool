@@ -116,14 +116,6 @@ export function kernelAssignmentPublication(
   version: number,
   definition: ReturnType<typeof loadKernelAssignmentQuestions>,
 ) {
-  if (definition.slotType === "questionDelivery") {
-    return questionDeliveryPublication(
-      assignment,
-      version,
-      definition.responses,
-      "whole",
-    );
-  }
   const { materials, positions } = materialPublicationOf(
     assignment.teacherId,
     definition.context,
@@ -139,6 +131,19 @@ export function kernelAssignmentPublication(
       },
     ]),
   );
+  const materialDefinitions = materials.length > 0 ? { materials } : {};
+  if (definition.slotType === "questionDelivery") {
+    return {
+      ...materialDefinitions,
+      ...questionDeliveryPublication(
+        assignment,
+        version,
+        definition.responses,
+        "whole",
+        materialInputs,
+      ),
+    } satisfies PublicationInput;
+  }
   const responseSlot = definition.slotType === "oneResponsePerQuestion";
   const key = { id: `${assignment.id}-key`, version };
   const scoringKey = responseSlot
@@ -167,7 +172,7 @@ export function kernelAssignmentPublication(
     confirmFromDrafts: { allowUnanswered: true },
   };
   return {
-    ...(materials.length > 0 && { materials }),
+    ...materialDefinitions,
     practice: {
       id: assignment.id,
       version,

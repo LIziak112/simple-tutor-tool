@@ -6,8 +6,11 @@ import {
   type AttemptContextData,
   adminTeacherCreateOkSchema,
   attemptContextOkSchema,
+  attemptDraftOkSchema,
   attemptResultOkSchema,
   attemptStartOkSchema,
+  studentAssignmentListOkSchema,
+  studentPaperOkSchema,
 } from "@tutor/contract";
 import { openLearningRuntime } from "learning-kernel";
 import pino from "pino";
@@ -29,7 +32,16 @@ import {
 } from "../test/note-world.ts";
 import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
 
-const markdown = (version: number) =>
+const privateSolution = "仅教师解析占位";
+function expectPublicPayload(payload: unknown) {
+  const json = JSON.stringify(payload);
+  expect(json).not.toContain(privateSolution);
+  expect(json).not.toMatch(
+    /sourceMd|acceptedChoice|acceptedResponse|acceptedByQuestion|scoringKey|\[\[正确\]\]|\[x\]/,
+  );
+}
+
+const markdown = (version: number, mixed: boolean) =>
   [
     "---",
     "kind: practice",
@@ -56,17 +68,32 @@ const markdown = (version: number) =>
     "",
     "- [ ] 甲",
     "- [x] 乙",
+    "",
+    ":::solution",
+    privateSolution,
+    ":::",
     "::::",
     "",
-    "::::question{id=mt-q2 type=choice}",
-    "第二道普通单选。",
-    "",
-    "- [x] 甲",
-    "- [ ] 乙",
-    "::::",
+    ...(mixed
+      ? [
+          "::::question{id=mt-q2 type=judge}",
+          "第二道普通判断。[[正确]]",
+          "::::",
+        ]
+      : [
+          "::::question{id=mt-q2 type=choice}",
+          "第二道普通单选。",
+          "",
+          "- [x] 甲",
+          "- [ ] 乙",
+          "::::",
+        ]),
   ].join("\n");
 
-it("两份材料按开卷版本冻结，题组位置和普通单选经正式入口恢复", async () => {
+it.each([
+  { name: "普通单选", mixed: false },
+  { name: "单选与判断混合整卷", mixed: true },
+])("两份材料按开卷版本冻结，$name 经正式入口恢复", async ({ mixed }) => {
   vi.stubEnv("NEW_CONTENT_ENABLED", "true");
   using data = mkdtempDisposableSync(join(tmpdir(), "ownclass-k15-material-"));
   const reopen = () =>
@@ -121,7 +148,7 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
         world.teacher,
         "POST",
         {
-          markdown: markdown(version),
+          markdown: markdown(version, mixed),
           filename: "两份材料.md",
         },
       );
@@ -155,9 +182,7 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
       const response = await call(`${root(id)}/context`, cookie);
       expect(response.status, await response.clone().text()).toBe(200);
       const raw = await response.json();
-      expect(JSON.stringify(raw)).not.toMatch(
-        /sourceMd|acceptedChoice|scoringKey/,
-      );
+      expectPublicPayload(raw);
       return attemptContextOkSchema.parse(raw).data;
     };
     const versions = (data: AttemptContextData) =>
@@ -170,7 +195,29 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
       ["ctx-one", 1, "合成阅读甲 V1"],
       ["ctx-two", version, `合成阅读乙 V${version}`],
     ];
+    const listing = await call("/api/student/assignments", owner);
+    expect(listing.status, await listing.clone().text()).toBe(200);
+    expect(
+      studentAssignmentListOkSchema.parse(await listing.json()).data
+        .assignments,
+    ).toContainEqual(expect.objectContaining({ id: assignment }));
     const original = await open(assignment, owner);
+    expect(
+      (await call(`${root(original.id)}/context`, foreignStudent)).status,
+    ).toBe(403);
+    const paper = await call(`${root(original.id)}/paper`, owner);
+    expect(paper.status, await paper.clone().text()).toBe(200);
+    const paperRaw = await paper.json();
+    expectPublicPayload(paperRaw);
+    expect(
+      studentPaperOkSchema
+        .parse(paperRaw)
+        .data.units.flatMap(({ questions }) => questions)
+        .map(({ id, type }) => [id, type]),
+    ).toEqual([
+      ["mt-q1", "choice"],
+      ["mt-q2", mixed ? "judge" : "choice"],
+    ]);
     const prepared = await open(toRefreeze, owner);
     const toOpen = await assignKernelFixture(app, { ...world, unitId });
     handle.db.$client.exec(
@@ -206,13 +253,17 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
       "mt-q1",
       "mt-q2",
     ]);
+    const savedAnswers = [
+      { kind: "choice", index: 1 },
+      mixed ? { kind: "judge", value: true } : { kind: "choice", index: 0 },
+    ];
     for (const [index, item] of revisions.entries()) {
       const save = await call(
         `${root(original.id)}/answers/${item.questionId}`,
         owner,
         "PUT",
         {
-          answer: { kind: "choice", index: index === 0 ? 1 : 0 },
+          answer: savedAnswers[index],
           baseRevision: 0,
           mutationId: randomUUID(),
           expectedFrozenAt: original.frozenAt,
@@ -222,6 +273,19 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
       expect(save.status, await save.clone().text()).toBe(200);
     }
     expect(await importUnit(2)).toBe(unitId);
+    const reopened = await open(assignment, owner);
+    expect({ id: reopened.id, frozenAt: reopened.frozenAt }).toEqual({
+      id: original.id,
+      frozenAt: original.frozenAt,
+    });
+    expect(await context(reopened.id, owner)).toEqual(oldContext);
+    const draft = await call(root(reopened.id), owner);
+    expect(draft.status, await draft.clone().text()).toBe(200);
+    const draftRaw = await draft.json();
+    expectPublicPayload(draftRaw);
+    expect(attemptDraftOkSchema.parse(draftRaw).data).toMatchObject({
+      drafts: { "mt-q1": savedAnswers[0], "mt-q2": savedAnswers[1] },
+    });
     const opened = await open(toOpen, owner);
     expect(versions(await context(opened.id, owner))).toEqual(
       expectedMaterials(1),
@@ -267,7 +331,7 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
       }
     };
     const materialsIn = (activity: ReturnType<typeof kernelRead>) => {
-      expect(JSON.stringify(activity)).not.toMatch(/acceptedChoice|scoringKey/);
+      expectPublicPayload(activity);
       if (!("inputs" in activity)) throw new Error("找不到冻结材料位置");
       return Object.entries(activity.inputs)
         .flatMap(([inputName, input]) => {
@@ -361,15 +425,22 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
       submission,
     );
     expect(submitted.status, await submitted.clone().text()).toBe(200);
-    const hidden = attemptResultOkSchema.parse(await submitted.json()).data;
+    const hiddenRaw = await submitted.json();
+    expectPublicPayload(hiddenRaw);
+    const hidden = attemptResultOkSchema.parse(hiddenRaw).data;
     expect(hidden.answersReleased).toBe(false);
+    expect(hidden.attempt.scoreAuto).toBeNull();
     expect(
       hidden.units
         .flatMap(({ questions }) => questions)
-        .map(({ answers, autoCorrect }) => [answers, autoCorrect]),
+        .map(({ answers, autoCorrect, solutionMd }) => [
+          answers,
+          autoCorrect,
+          solutionMd,
+        ]),
     ).toEqual([
-      [null, null],
-      [null, null],
+      [null, null, null],
+      [null, null, null],
     ]);
     expect(await context(original.id, owner)).toEqual(oldContext);
     const publish = await call(
@@ -386,6 +457,7 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
     };
     const result = await published();
     expect(result.attempt.scoreAuto).toBe(100);
+    expect(result.units[0]?.questions[0]?.solutionMd).toBe(privateSolution);
     expect(
       result.units
         .flatMap(({ questions }) => questions)
@@ -396,20 +468,25 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
       stepAttemptId: z.uuid(),
     });
     const readReceipt = () => {
-      const ticket = bindingSchema.parse(
-        handle.db.$client
-          .prepare(
-            "SELECT operation_id AS operationId, step_attempt_id AS stepAttemptId FROM kernel_attempt_confirmations WHERE attempt_id=?",
-          )
-          .get(original.id),
-      );
+      const confirmationTable = mixed
+        ? "kernel_question_deliveries"
+        : "kernel_attempt_confirmations";
+      const [ticket] = z
+        .tuple([bindingSchema])
+        .parse(
+          handle.db.$client
+            .prepare(
+              `SELECT operation_id AS operationId, step_attempt_id AS stepAttemptId FROM ${confirmationTable} WHERE attempt_id=?`,
+            )
+            .all(original.id),
+        );
       const runtime = boundActivities();
       try {
-        return runtime.recoverChoiceConfirmation(
-          { role: "student", id: world.studentId },
-          original.id,
-          { protocolVersion: 1, ...ticket },
-        ).receipt;
+        const actor = { role: "student", id: world.studentId } as const;
+        const key = { protocolVersion: 1, ...ticket } as const;
+        return mixed
+          ? runtime.recoverQuestionDelivery(actor, original.id, key).receipt
+          : runtime.recoverChoiceConfirmation(actor, original.id, key).receipt;
       } finally {
         runtime.close();
       }
@@ -429,6 +506,17 @@ it("两份材料按开卷版本冻结，题组位置和普通单选经正式入�
     expect(
       z.object({ error: z.string() }).parse(await repeated.json()).error,
     ).toBe("ALREADY_SUBMITTED");
+
+    expect(readReceipt()).toEqual(receipt);
+    if (mixed) {
+      expect(
+        handle.db.$client
+          .prepare(
+            "SELECT id FROM attempt_settlements WHERE attempt_id=? AND kind='final'",
+          )
+          .all(original.id),
+      ).toHaveLength(1);
+    }
 
     const backupRoute = "/api/teacher/backup";
     const download = await call(`${backupRoute}/download`, world.teacher);

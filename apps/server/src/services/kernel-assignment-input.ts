@@ -83,7 +83,7 @@ function ineligible(): never {
   throw new HttpError(
     422,
     "M04_PRACTICE_INELIGIBLE",
-    "内核作业须使用已支持的题型与参考答案，混合整卷暂不支持材料和题组",
+    "内核作业须使用受支持的题型、参考答案和材料",
   );
 }
 
@@ -127,19 +127,24 @@ export function loadKernelAssignmentQuestions(
       gradingPolicy: frozenGradingPolicyOf(question, selfReview),
     };
   });
-  const parsed = assignmentScoringSourcesSchema.safeParse(
-    responses.map(({ question }) => question),
-  );
+  if (context.materials.some(({ contentMd }) => contentMd.trim() === ""))
+    ineligible();
+  const entries = z
+    .array(attemptContextSnapshotEntrySchema)
+    .parse(contextEntriesOf(context));
+  const frozenQuestions = responses.map(({ question }) => question);
+  const parsed = assignmentScoringSourcesSchema.safeParse(frozenQuestions);
   if (!parsed.success) {
     if (
-      context.materials.length ||
-      context.groups.length ||
-      !wholeQuestionDeliveryScoringSourcesSchema.safeParse(
-        responses.map(({ question }) => question),
-      ).success
+      !wholeQuestionDeliveryScoringSourcesSchema.safeParse(frozenQuestions)
+        .success
     )
       ineligible();
-    return { slotType: "questionDelivery" as const, responses, context: [] };
+    return {
+      slotType: "questionDelivery" as const,
+      responses,
+      context: entries,
+    };
   }
   const { slotType, questions: sources } = parsed.data;
   const common = (index: number) => {
@@ -167,10 +172,5 @@ export function loadKernelAssignmentQuestions(
     ),
     acceptedChoice: String(answers.index),
   }));
-  const entries = z
-    .array(attemptContextSnapshotEntrySchema)
-    .parse(contextEntriesOf(context));
-  if (context.materials.some(({ contentMd }) => contentMd.trim() === ""))
-    ineligible();
   return { slotType, responses, questions, context: entries };
 }

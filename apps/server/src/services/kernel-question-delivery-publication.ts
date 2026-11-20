@@ -15,12 +15,18 @@ import {
 export const deliverySlotId = "answers";
 
 type Frozen = { question: Question; questionVersion: number };
+type DeliveryPublication = Extract<PublicationInput, { materials?: unknown }>;
+type MaterialInput = Extract<
+  DeliveryPublication["practice"]["steps"][0]["inputs"][string],
+  { from: "material" }
+>;
 
 export function questionDeliveryPublication(
   { id, title }: { id: string; title: string },
   version: number,
   rows: readonly Frozen[],
   mode: "whole" | "perQuestion",
+  materialInputs?: Record<string, MaterialInput>,
 ) {
   const schema =
     mode === "whole"
@@ -101,7 +107,7 @@ export function questionDeliveryPublication(
           id: "answer",
           instructions,
           tool: { id: "question-delivery", version: 1 },
-          inputs: { questions: { from: "questions" } },
+          inputs: { ...materialInputs, questions: { from: "questions" } },
           submit: {
             purpose: "finalAnswer",
             slots: {
