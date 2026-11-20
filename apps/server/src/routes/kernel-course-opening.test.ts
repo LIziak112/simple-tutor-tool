@@ -177,16 +177,66 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
         sourceMd: sourceMd.replace("\n", `\n${marker}`),
       });
     expect((await edit("空卷时改题。")).status).toBe(200);
-    const oldClient = await app.request(`${unitPath}/attempts`, {
-      method: "POST",
-      headers: { cookie: ownerCookie, "content-type": "application/json" },
-      body: JSON.stringify(whole),
-    });
+    const openOldClient = () =>
+      app.request(`${unitPath}/attempts`, {
+        method: "POST",
+        headers: { cookie: ownerCookie, "content-type": "application/json" },
+        body: JSON.stringify(whole),
+      });
+    const oldClient = await openOldClient();
     expect(oldClient.status).toBe(201);
     expect(attemptStartOkSchema.parse(await oldClient.json()).data).toEqual(
       first,
     );
     const sql = handle.db.$client;
+    const changeMember = (method: string) =>
+      request(app, teacher, `${course}/members`, method, {
+        studentIds: [studentId],
+      });
+    const pendingRefreeze = () =>
+      sql
+        .prepare(
+          "SELECT operation_id, practice_version FROM kernel_attempt_refreezes WHERE attempt_id=?",
+        )
+        .get(first.id);
+    const kernelDb = new DatabaseSync(database);
+    try {
+      kernelDb.exec(`CREATE TRIGGER break_before_course_step BEFORE UPDATE OF practice_version ON activities
+        BEGIN SELECT RAISE(ABORT, '测试中断内核换版'); END`);
+      expect((await owner(`${unitPath}/attempts`, "POST", whole)).status).toBe(
+        500,
+      );
+      kernelDb.exec("DROP TRIGGER break_before_course_step");
+    } finally {
+      kernelDb.close();
+    }
+    const beforeTeacherRead = pendingRefreeze();
+    expect(beforeTeacherRead).toMatchObject({ practice_version: 2 });
+    expect(readKernel()).toEqual(initial);
+    expect((await changeMember("DELETE")).status).toBe(200);
+    const teacherWhileRemoved = await request(
+      app,
+      teacher,
+      `/api/teacher/attempts/${first.id}`,
+    );
+    expect(
+      teacherWhileRemoved.status,
+      await teacherWhileRemoved.clone().text(),
+    ).toBe(200);
+    expect(
+      teacherAttemptDetailOkSchema.parse(await teacherWhileRemoved.json()).data
+        .attemptId,
+    ).toBe(first.id);
+    expect(readKernel()).toEqual(initial);
+    expect(pendingRefreeze()).toEqual(beforeTeacherRead);
+    expect((await changeMember("POST")).status).toBe(200);
+    const pendingOldClient = await openOldClient();
+    expect(pendingOldClient.status).toBe(201);
+    expect(
+      attemptStartOkSchema.parse(await pendingOldClient.json()).data,
+    ).toEqual(first);
+    expect(pendingRefreeze()).toEqual(beforeTeacherRead);
+    expect(readKernel()).toEqual(initial);
     sql.exec(`CREATE TRIGGER break_course_refreeze BEFORE UPDATE OF frozen_at ON attempts
       WHEN NEW.source_type = 'course' BEGIN SELECT RAISE(ABORT, '测试中断重冻投影'); END`);
     expect((await owner(`${unitPath}/attempts`, "POST", whole)).status).toBe(
@@ -194,12 +244,8 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     );
     const interrupted = readKernel();
     expect(interrupted.stepAttemptId).not.toBe(initial.stepAttemptId);
-    const pending = sql
-      .prepare(
-        "SELECT operation_id, practice_version FROM kernel_attempt_refreezes WHERE attempt_id=?",
-      )
-      .get(first.id);
-    expect(pending).toMatchObject({ practice_version: 2 });
+    const pending = pendingRefreeze();
+    expect(pending).toEqual(beforeTeacherRead);
     expect(
       sql
         .prepare(
@@ -210,10 +256,6 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
       practice_version: 1,
     });
     sql.exec("DROP TRIGGER break_course_refreeze");
-    const changeMember = (method: string) =>
-      request(app, teacher, `${course}/members`, method, {
-        studentIds: [studentId],
-      });
     expect((await changeMember("DELETE")).status).toBe(200);
     expect((await owner(path)).status).toBe(403);
     expect(

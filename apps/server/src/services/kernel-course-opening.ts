@@ -25,7 +25,10 @@ import {
   kernelMaterialPublication,
   matchesKernelMaterialInputs,
 } from "./kernel-assignment-publication.ts";
-import { isOpenEmptyForKernelRefreeze } from "./kernel-assignment-refreeze.ts";
+import {
+  finishKernelRefreeze,
+  isOpenEmptyForKernelRefreeze,
+} from "./kernel-assignment-refreeze.ts";
 import { pendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import {
   ensureKernelRuntimeStorage,
@@ -361,10 +364,11 @@ export function resumeBoundKernelCourse(
   db: Db,
   dataDir: string | undefined,
   attempt: Attempt,
+  allowPendingRefreeze = false,
 ): Attempt {
   if (!dataDir) kernelAttemptUnavailable();
   return db.transaction(
-    () => {
+    (tx) => {
       const current = requireOwnAttempt(db, attempt.studentId, attempt.id);
       if (current.courseId === null || current.unitId === null)
         kernelAttemptUnavailable();
@@ -374,7 +378,13 @@ export function resumeBoundKernelCourse(
         current.courseId,
         current.unitId,
       );
-      const delivery = readQuestionDeliveryFacts(db, dataDir, current);
+      const pending = allowPendingRefreeze
+        ? pendingKernelRefreeze(tx, current.id)
+        : undefined;
+      const resolved = pending
+        ? finishKernelRefreeze(db, tx, dataDir, current, pending, true)
+        : current;
+      const delivery = readQuestionDeliveryFacts(db, dataDir, resolved);
       if (!delivery) kernelAttemptUnavailable();
       return delivery.attempt;
     },

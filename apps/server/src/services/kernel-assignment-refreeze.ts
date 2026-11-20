@@ -217,6 +217,7 @@ export function finishKernelRefreeze(
       previous.stepAttemptId === ticket.stepAttemptId &&
       previous.practiceVersion === ticket.expectedPracticeVersion;
     if (stillOriginal && !allowChange) {
+      if (course) return attempt;
       // 持有同一产品写锁时，仍是原步的 K 活动可安全继续原卷。
       tx.delete(kernelAttemptRefreezes).where(key).run();
       return attempt.activatedAt === null
@@ -350,14 +351,7 @@ export function resolveKernelRefreezeForRead(
       const current = requireOwnAttempt(db, attempt.studentId, attempt.id);
       const ticket = pendingKernelRefreeze(tx, attempt.id);
       return ticket
-        ? finishKernelRefreeze(
-            db,
-            tx,
-            dataDir,
-            current,
-            ticket,
-            current.sourceType === "course",
-          )
+        ? finishKernelRefreeze(db, tx, dataDir, current, ticket, false)
         : current;
     },
     { behavior: "immediate" },

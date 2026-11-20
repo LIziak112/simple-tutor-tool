@@ -393,7 +393,7 @@ export function startCourseAttempt(
     );
   if ("refreeze" in start)
     return attemptSummaryOf(
-      resumeBoundKernelCourse(db, kernel?.dataDir, start.refreeze),
+      resumeBoundKernelCourse(db, kernel?.dataDir, start.refreeze, true),
     );
   return start;
 }
