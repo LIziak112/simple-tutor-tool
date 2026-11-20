@@ -1,21 +1,44 @@
 import type { PublicationInput } from "learning-kernel";
 import type { Assignment } from "../db/schema.ts";
-import { ownClassChoiceEvaluatorRef } from "./attempt-choice-evaluation.ts";
-import type { loadKernelAssignmentChoices } from "./kernel-assignment-input.ts";
+import {
+  ownClassChoiceEvaluatorRef,
+  ownClassJudgeEvaluatorRef,
+} from "./attempt-choice-evaluation.ts";
+import type { loadKernelAssignmentQuestions } from "./kernel-assignment-input.ts";
 
 export function kernelAssignmentPublication(
   assignment: Assignment,
   version: number,
-  questions: ReturnType<typeof loadKernelAssignmentChoices>["questions"],
+  definition: ReturnType<typeof loadKernelAssignmentQuestions>,
 ) {
-  const scoringKey = {
-    id: `${assignment.id}-key`,
-    version,
-    acceptedChoices: Object.fromEntries(
-      questions.map(({ id, acceptedChoice }) => [id, acceptedChoice]),
-    ),
+  const key = { id: `${assignment.id}-key`, version };
+  const scoringKey =
+    definition.kind === "judge"
+      ? {
+          ...key,
+          acceptedResponses: Object.fromEntries(
+            definition.questions.map(({ id, acceptedResponse }) => [
+              id,
+              acceptedResponse,
+            ]),
+          ),
+        }
+      : {
+          ...key,
+          acceptedChoices: Object.fromEntries(
+            definition.questions.map(({ id, acceptedChoice }) => [
+              id,
+              acceptedChoice,
+            ]),
+          ),
+        };
+  const judge = definition.kind === "judge";
+  const instructions = judge ? "判断每道题。" : "选择每题的一个选项。";
+  const slot = {
+    source: "questions",
+    targetId: "answer",
+    confirmFromDrafts: { allowUnanswered: true },
   };
-  const instructions = "选择每题的一个选项。";
   return {
     practice: {
       id: assignment.id,
@@ -23,27 +46,33 @@ export function kernelAssignmentPublication(
       formatVersion: 1,
       title: assignment.title,
       goals: { answer: instructions },
-      questions: questions.map(({ id, version, prompt, options }) => ({
-        id,
-        version,
-        prompt,
-        options,
-      })),
+      questions: definition.questions.map(
+        ({ id, version, prompt, options }) => ({
+          id,
+          version,
+          prompt,
+          options,
+        }),
+      ),
       steps: [
         {
           id: "answer",
           instructions,
-          tool: { id: "single-choice-group", version: 1 },
+          tool: {
+            id: judge ? "response-group" : "single-choice-group",
+            version: 1,
+          },
           inputs: { questions: { from: "questions" } },
           submit: {
             purpose: "finalAnswer",
             slots: {
-              answers: {
-                type: "oneChoicePerQuestion",
-                source: "questions",
-                targetId: "answer",
-                confirmFromDrafts: { allowUnanswered: true },
-              },
+              answers: judge
+                ? {
+                    type: "oneResponsePerQuestion",
+                    input: "booleanOrString",
+                    ...slot,
+                  }
+                : { type: "oneChoicePerQuestion", ...slot },
             },
           },
           afterConfirmation: "finish",
@@ -52,7 +81,9 @@ export function kernelAssignmentPublication(
       grading: {
         assessment: {
           from: { stepId: "answer", slotId: "answers" },
-          evaluator: ownClassChoiceEvaluatorRef,
+          evaluator: judge
+            ? ownClassJudgeEvaluatorRef
+            : ownClassChoiceEvaluatorRef,
           keyRef: { id: scoringKey.id, version },
           unit: "question",
           effectiveVerdictOrder: ["teacherReview", "automatic"],
@@ -64,7 +95,7 @@ export function kernelAssignmentPublication(
         student: {
           ownSubmission: {
             scope: "ownConfirmedSubmissions",
-            fields: ["receipt", "ownChoices"],
+            fields: ["receipt", judge ? "ownResponses" : "ownChoices"],
             onFinal: [],
           },
         },

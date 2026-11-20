@@ -1,4 +1,5 @@
 import type { AttemptResultCounts, StudentRecordsQuery } from "@tutor/contract";
+import { isUnanswered } from "@tutor/grading";
 import {
   and,
   eq,
@@ -17,6 +18,7 @@ import {
   kernelAttemptConfirmations,
   kernelAttemptRefreezes,
 } from "../db/schema-kernel-assignments.ts";
+import { needsTeacherMark } from "./attempt-final-outcome.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   type RecoverKernelConfirmation,
@@ -24,6 +26,7 @@ import {
 } from "./kernel-assignment-confirmation-recovery.ts";
 import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import {
+  judgeAnswerOf,
   type KernelRuntime,
   kernelAttemptUnavailable,
   readBoundKernelActivity,
@@ -115,7 +118,7 @@ function publishedResultOf({
     resultCounts: {
       correctCount: rows.filter((row) => row.finalCorrect === true).length,
       totalCount: rows.length,
-      pendingCount: 0,
+      pendingCount: rows.filter(needsTeacherMark).length,
       pendingSelfReviewCount: 0,
     },
   };
@@ -208,9 +211,13 @@ export function withKernelStudentRecordFacts<T>(
           } else {
             if (activity.status !== "active") kernelAttemptUnavailable();
             const heads =
-              ("choiceDrafts" in activity
-                ? activity.choiceDrafts
-                : undefined) ?? [];
+              "responseDrafts" in activity
+                ? activity.responseDrafts.filter(
+                    ({ value }) => !isUnanswered(judgeAnswerOf(value)),
+                  )
+                : (("choiceDrafts" in activity
+                    ? activity.choiceDrafts
+                    : undefined) ?? []);
             draftChoices.set(
               attempt.id,
               new Set(heads.map(({ questionId }) => questionId)),

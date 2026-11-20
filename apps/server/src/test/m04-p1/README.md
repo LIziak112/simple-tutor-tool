@@ -211,3 +211,14 @@ pnpm --dir apps/server exec tsx src/test/m04-p1/teacher-review-workbench-restart
 ```
 
 用两份同一 P0 冻结卷，在独立进程重启后分别由待批队列和作答卡片首读恢复。验证自动完成卷、分页总数、传统主观待批、已开始草稿、教师域与内核离线范围，并用真实教师 SDK 验证查询同一页的提交及对错计数。
+
+
+### M05 K14 纯判断作业
+
+```powershell
+pnpm exec vitest run apps/server/src/routes/kernel-assignment-judge.test.ts apps/server/src/routes/kernel-assignment-confirmation.test.ts apps/server/src/routes/kernel-teacher-draft-amendment.test.ts apps/server/src/routes/teacher-backup-kernel.test.ts --maxWorkers=1
+```
+
+作业接入范围为整卷纯判断，每题有冻结的布尔参考键，无材料、提示、逐题反馈和重练。学生沿用 v2 逐题答案修订和操作标识。服务端沿用产品的冻结题评分规则，保留布尔和字符串原值。缺少答案的题明确判错，无法识别的原文进入待批。内核在同一次确认中持久化判定和待批工作，产品的成绩、记录及待批读面由原确认投影。
+
+定向夹具在内核接受确认后中断产品投影，关闭并重开数据库，由正常教师待批入口恢复。学生在公布前可读自己的原答，答案键、评分和待批计数遵循既有公布限制。夹具也覆盖撤回、跨学生拒绝、HTTP 重交冲突及当前双库归档恢复。教师裁决写入、混合题型、缺参考键、课程作答、逐题确认、材料和重练属于后续范围。

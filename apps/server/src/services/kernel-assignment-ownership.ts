@@ -6,7 +6,7 @@ import { createAssignmentIds } from "./assignment-service.ts";
 import { requireAssignmentRow } from "./attempt-access.ts";
 import {
   assertKernelAssignmentPolicy,
-  loadKernelAssignmentChoices,
+  loadKernelAssignmentQuestions,
 } from "./kernel-assignment-input.ts";
 
 export function createAssignmentsWithBackend(
@@ -34,7 +34,7 @@ export function createAssignmentsWithBackend(
       for (const assignmentId of ids) {
         const assignment = requireAssignmentRow(db, assignmentId);
         assertKernelAssignmentPolicy(assignment);
-        loadKernelAssignmentChoices(db, assignment, studentId);
+        loadKernelAssignmentQuestions(db, assignment, studentId);
       }
       tx.insert(kernelAssignments)
         .values(ids.map((assignmentId) => ({ assignmentId })))

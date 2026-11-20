@@ -10,7 +10,10 @@ import {
   type ResponseRow,
   responses,
 } from "../db/schema.ts";
-import { hasUsableQuestionSnapshotSql } from "./attempt-final-outcome.ts";
+import {
+  hasUsableQuestionSnapshotSql,
+  needsTeacherMark,
+} from "./attempt-final-outcome.ts";
 import {
   attemptResponseRows,
   effectiveVerdictOfRow,
@@ -259,6 +262,12 @@ function detailOf(
   const notDoneCount =
     judgedRows.filter((row) => row.verdict?.value === false).length -
     wrongCount;
+  const kernelPending =
+    kernelRows === undefined
+      ? undefined
+      : attempt.status === "draft"
+        ? 0
+        : kernelRows.filter(needsTeacherMark).length;
   const resultCounts =
     kernelRows === undefined
       ? (attemptResultCounts(db, [attempt]).get(attempt.id) ?? null)
@@ -267,7 +276,7 @@ function detailOf(
         : {
             correctCount,
             totalCount: judgedRows.length,
-            pendingCount: 0,
+            pendingCount: kernelPending ?? 0,
             pendingSelfReviewCount: 0,
           };
   return {
@@ -286,7 +295,7 @@ function detailOf(
     // D4 共享谓词（finalCorrect IS NULL 且非 reference_self 行；与列表卡片/
     // 待批队列/学情矩阵同一实现——不再用 effectiveCorrect=null 计数，避免把
     // 待自评行算进教师待批）
-    pendingCount: kernelRows === undefined ? pendingMarkCount(db, attempt) : 0,
+    pendingCount: kernelPending ?? pendingMarkCount(db, attempt),
     selfReviewPendingCount:
       kernelRows === undefined
         ? (pendingSelfReviewCounts(db, [attempt]).get(attempt.id) ?? 0)

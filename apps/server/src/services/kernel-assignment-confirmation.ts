@@ -10,6 +10,8 @@ import {
   type ChoiceConfirmationInput,
   LearningError,
   type openLearningRuntime,
+  ResponseConfirmationConflict,
+  type StudentActivity,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
@@ -37,9 +39,11 @@ import {
   kernelConfirmationTicketFor,
   type KernelConfirmationTicket as Ticket,
 } from "./kernel-assignment-confirmation-ticket.ts";
-import { buildKernelChoiceResult } from "./kernel-assignment-confirmed-detail.ts";
+import { buildKernelAssignmentResult } from "./kernel-assignment-confirmed-detail.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
+  isJudgeActivity,
+  judgeAnswerOf,
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
   withBoundKernelActivity,
@@ -71,7 +75,7 @@ function withTicket<T>(
   ticket: Ticket,
   operate: (
     runtime: Runtime,
-    status: string,
+    activity: StudentActivity,
     scope: ReturnType<typeof confirmationScopeOf>,
     authorizeOriginals: (questions: readonly OriginalQuestion[]) => void,
   ) => T,
@@ -85,7 +89,7 @@ function withTicket<T>(
     attempt,
     (runtime, activity, stepAttemptId, practiceVersion) => {
       assertConfirmationBinding(scope, { stepAttemptId, practiceVersion });
-      return operate(runtime, activity.status, scope, (questions) => {
+      return operate(runtime, activity, scope, (questions) => {
         originals = new Map(
           questions.map((question) => [question.questionId, question]),
         );
@@ -117,8 +121,8 @@ export function readKernelConfirmationFacts(
   recoverKernelChoiceAmendment(db, dataDir, attempt.id);
   const ticket = kernelConfirmationTicketFor(db, attempt.id);
   if (!ticket) return undefined;
-  return withTicket(db, dataDir, attempt, ticket, (runtime, status, scope) =>
-    status === "completed"
+  return withTicket(db, dataDir, attempt, ticket, (runtime, activity, scope) =>
+    activity.status === "completed"
       ? recoverKernelConfirmation(db, runtime, scope)
       : undefined,
   );
@@ -133,7 +137,7 @@ export function readKernelConfirmationResult(
   const facts = readKernelConfirmationFacts(db, dataDir, attempt);
   return facts === undefined
     ? undefined
-    : buildKernelChoiceResult(db, facts, now);
+    : buildKernelAssignmentResult(db, facts, now);
 }
 
 function confirmationIntentOf(request: AttemptSubmitRequest): string {
@@ -231,7 +235,16 @@ function stage(
 }
 
 function knownRejection(error: unknown): HttpError | undefined {
-  if (error instanceof ChoiceConfirmationConflict) {
+  if (
+    error instanceof ChoiceConfirmationConflict ||
+    error instanceof ResponseConfirmationConflict
+  ) {
+    const draft =
+      error instanceof ResponseConfirmationConflict
+        ? judgeAnswerOf(error.current.value)
+        : error.current.choice === null
+          ? null
+          : ownClassChoiceAnswerOf(error.current.choice);
     return new HttpError(
       409,
       "ANSWER_REVISION_CONFLICT",
@@ -240,10 +253,7 @@ function knownRejection(error: unknown): HttpError | undefined {
         _questionId: error.questionId,
         _current: {
           revision: error.current.revision,
-          draft:
-            error.current.choice === null
-              ? null
-              : ownClassChoiceAnswerOf(error.current.choice),
+          draft,
         },
       }),
     );
@@ -279,8 +289,8 @@ function confirm(
         dataDir,
         attempt,
         current,
-        (runtime, status, scope, authorizeOriginals) => {
-          if (status !== "completed") {
+        (runtime, activity, scope, authorizeOriginals) => {
+          if (activity.status !== "completed") {
             let questions: ReturnType<typeof prepareChoiceOriginals>;
             try {
               questions = prepareChoiceOriginals(
@@ -297,17 +307,16 @@ function confirm(
             }
             authorizeOriginals(questions);
             try {
-              runtime.confirmChoices(
-                { role: "student", id: studentId },
-                attempt.id,
-                {
-                  protocolVersion: 1,
-                  stepAttemptId: current.stepAttemptId,
-                  operationId: current.operationId,
-                  slotId: scope.slotId,
-                  questions,
-                },
-              );
+              const confirmDrafts = isJudgeActivity(activity)
+                ? runtime.confirmResponses
+                : runtime.confirmChoices;
+              confirmDrafts({ role: "student", id: studentId }, attempt.id, {
+                protocolVersion: 1,
+                stepAttemptId: current.stepAttemptId,
+                operationId: current.operationId,
+                slotId: scope.slotId,
+                questions,
+              });
             } catch (error) {
               const rejection = knownRejection(error);
               if (!rejection) throw error;
@@ -316,7 +325,7 @@ function confirm(
             }
           }
           const facts = recoverKernelConfirmation(db, runtime, scope);
-          return { data: buildKernelChoiceResult(db, facts, now) };
+          return { data: buildKernelAssignmentResult(db, facts, now) };
         },
       );
     })

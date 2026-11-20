@@ -4,6 +4,7 @@ import type { Attempt, ResponseRow } from "../db/schema.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
 import { readKernelConfirmationFacts } from "./kernel-assignment-confirmation.ts";
 import {
+  judgeAnswerOf,
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
   withBoundKernelActivity,
@@ -82,6 +83,26 @@ export function kernelDraftRowsOf(
     rows.set(row.questionId, {
       ...row,
       answerJson: JSON.stringify(answer),
+      answerRevision: draft.revision,
+      changeCount: draft.changeCount,
+    });
+  }
+  for (const draft of ("responseDrafts" in activity
+    ? activity.responseDrafts
+    : undefined) ?? []) {
+    const row = rows.get(draft.questionId);
+    if (
+      draft.slotId !== "answers" ||
+      row === undefined ||
+      row.questionVersion !== draft.questionVersion ||
+      row.answerJson !== null ||
+      draft.revision <= row.answerRevision ||
+      snapshotOfRow(row)?.type !== "judge"
+    )
+      kernelAttemptUnavailable();
+    rows.set(row.questionId, {
+      ...row,
+      answerJson: JSON.stringify(judgeAnswerOf(draft.value)),
       answerRevision: draft.revision,
       changeCount: draft.changeCount,
     });

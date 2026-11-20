@@ -3,6 +3,9 @@ import { gradeResponseRow } from "@tutor/grading";
 import type {
   ChoiceEvaluationInput,
   ChoiceEvaluatorRegistration,
+  ResponseEvaluationInput,
+  ResponseEvaluatorRegistration,
+  ResponseVerdict,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import { responses } from "../db/schema.ts";
@@ -36,6 +39,50 @@ function mismatch(): never {
   );
 }
 
+export const ownClassJudgeEvaluatorRef = {
+  id: "ownclass-judge",
+  version: 1,
+} as const;
+
+function frozenQuestionForEvaluation(
+  db: Db,
+  scope: OwnClassChoiceEvaluationScope | undefined,
+  input: ChoiceEvaluationInput | ResponseEvaluationInput,
+) {
+  if (
+    scope === undefined ||
+    input.activityId !== scope.attemptId ||
+    input.stepAttemptId !== scope.stepAttemptId ||
+    input.slotId !== scope.slotId ||
+    input.practice.id !== scope.assignmentId ||
+    input.practice.version !== scope.practiceVersion
+  )
+    mismatch();
+  const attempt = requireOwnAttempt(db, scope.studentId, scope.attemptId);
+  if (
+    attempt.sourceType !== "assignment" ||
+    attempt.assignmentId !== scope.assignmentId ||
+    attempt.abandonedAt !== null ||
+    attempt.frozenAt === null
+  )
+    mismatch();
+  const row = db
+    .select()
+    .from(responses)
+    .where(buildAttemptQuestionWhere(attempt.id, input.questionId))
+    .get();
+  if (
+    row === undefined ||
+    row.id !== scope.questionRevisions.get(input.questionId) ||
+    row.questionVersion !== input.questionVersion ||
+    row.gradingPolicy !== "auto"
+  )
+    mismatch();
+  const question = snapshotOfRow(row);
+  if (question?.id !== input.questionId) mismatch();
+  return { row, question };
+}
+
 /** 仅供可信回执恢复调用。以宿主冻结行校验评分来源，将实际答案交给统一判分入口。 */
 export function createOwnClassChoiceEvaluator(
   db: Db,
@@ -44,38 +91,11 @@ export function createOwnClassChoiceEvaluator(
   return {
     ...ownClassChoiceEvaluatorRef,
     evaluate(input: ChoiceEvaluationInput): boolean {
-      const scope = currentScope();
-      if (
-        scope === undefined ||
-        input.activityId !== scope.attemptId ||
-        input.stepAttemptId !== scope.stepAttemptId ||
-        input.slotId !== scope.slotId ||
-        input.practice.id !== scope.assignmentId ||
-        input.practice.version !== scope.practiceVersion
-      )
-        mismatch();
-      const attempt = requireOwnAttempt(db, scope.studentId, scope.attemptId);
-      if (
-        attempt.sourceType !== "assignment" ||
-        attempt.assignmentId !== scope.assignmentId ||
-        attempt.abandonedAt !== null ||
-        attempt.frozenAt === null
-      )
-        mismatch();
-      const row = db
-        .select()
-        .from(responses)
-        .where(buildAttemptQuestionWhere(attempt.id, input.questionId))
-        .get();
-      if (
-        row === undefined ||
-        row.id !== scope.questionRevisions.get(input.questionId) ||
-        row.questionVersion !== input.questionVersion ||
-        row.gradingPolicy !== "auto"
-      )
-        mismatch();
-      const question = snapshotOfRow(row);
-      if (question?.id !== input.questionId) mismatch();
+      const { row, question } = frozenQuestionForEvaluation(
+        db,
+        currentScope(),
+        input,
+      );
       const source = singleChoiceScoringSourceSchema.safeParse(question);
       if (
         !source.success ||
@@ -95,6 +115,38 @@ export function createOwnClassChoiceEvaluator(
       );
       if (verdict === null) mismatch();
       return verdict;
+    },
+  };
+}
+
+export function createOwnClassJudgeEvaluator(
+  db: Db,
+  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
+): ResponseEvaluatorRegistration {
+  return {
+    ...ownClassJudgeEvaluatorRef,
+    evaluate(input): ResponseVerdict {
+      const { row, question } = frozenQuestionForEvaluation(
+        db,
+        currentScope(),
+        input,
+      );
+      if (
+        question.type !== "judge" ||
+        question.answers?.kind !== "judge" ||
+        question.answers.value !== input.acceptedResponse
+      )
+        mismatch();
+      const result = gradeResponseRow(
+        row.gradingPolicy,
+        question,
+        input.value === null
+          ? undefined
+          : { kind: "judge", value: input.value },
+      );
+      return result === null
+        ? { status: "needsReview" }
+        : { status: "judged", correct: result };
     },
   };
 }

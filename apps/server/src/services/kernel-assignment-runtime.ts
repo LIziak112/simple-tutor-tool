@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import {
   LearningError,
   openLearningRuntime,
+  type ResponseValue,
   type StudentActivity,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
@@ -13,6 +14,7 @@ import { kernelAttemptBindings } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   createOwnClassChoiceEvaluator,
+  createOwnClassJudgeEvaluator,
   type OwnClassChoiceEvaluationScope,
 } from "./attempt-choice-evaluation.ts";
 
@@ -32,6 +34,17 @@ export function ownClassChoiceAnswerOf(choice: string) {
   if (!parsed.success || String(parsed.data.index) !== choice)
     kernelAttemptUnavailable();
   return parsed.data;
+}
+
+export function judgeAnswerOf(value: ResponseValue | null) {
+  return value === null ? null : { kind: "judge" as const, value };
+}
+
+export function isJudgeActivity(activity: StudentActivity): boolean {
+  return (
+    "submit" in activity.step &&
+    activity.step.submit.slots.answers?.type === "oneResponsePerQuestion"
+  );
 }
 
 export type KernelRuntime = ReturnType<typeof openLearningRuntime>;
@@ -62,6 +75,9 @@ export function withKernelRuntime<T>(
       databasePath,
       choiceEvaluators: [
         createOwnClassChoiceEvaluator(db, evaluateScope ?? (() => undefined)),
+      ],
+      responseEvaluators: [
+        createOwnClassJudgeEvaluator(db, evaluateScope ?? (() => undefined)),
       ],
     });
     try {

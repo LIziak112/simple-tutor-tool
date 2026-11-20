@@ -3,12 +3,14 @@ import {
   attemptAnswerConflictCurrentSchema,
   attemptAnswerSaveDataSchema,
   choiceStudentAnswerSchema,
+  judgeStudentAnswerSchema,
   type StudentAnswer,
 } from "@tutor/contract";
 import {
   ChoiceDraftConflict,
   LearningError,
   type openLearningRuntime,
+  ResponseDraftConflict,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import { type Attempt, responses } from "../db/schema.ts";
@@ -33,6 +35,8 @@ import { kernelDraftRowsOf } from "./kernel-assignment-facts.ts";
 import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
+  isJudgeActivity,
+  judgeAnswerOf,
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
   withBoundKernelActivity,
@@ -63,16 +67,24 @@ function throwDraftError(
   attempt: Attempt,
   authorizedAt: Date,
 ): never {
-  if (error instanceof ChoiceDraftConflict) {
-    const { choice, revision } = error.current;
+  if (
+    error instanceof ChoiceDraftConflict ||
+    error instanceof ResponseDraftConflict
+  ) {
+    const draft =
+      error instanceof ResponseDraftConflict
+        ? judgeAnswerOf(error.current.value)
+        : error.current.choice === null
+          ? null
+          : ownClassChoiceAnswerOf(error.current.choice);
     throw new HttpError(
       409,
       "ANSWER_REVISION_CONFLICT",
       "本题答案在另一设备已更新，请选择保留当前设备版本或采用云端版本",
       {
         _current: attemptAnswerConflictCurrentSchema.parse({
-          revision,
-          draft: choice === null ? null : ownClassChoiceAnswerOf(choice),
+          revision: error.current.revision,
+          draft,
         }),
       },
     );
@@ -85,6 +97,7 @@ function throwDraftError(
         assertAttemptNotTimedOut(attempt, authorizedAt);
         break;
       case "INVALID_CHOICE":
+      case "INVALID_QUESTION":
         return invalidAnswer();
       case "QUESTION_REVISION_STALE":
         throw new HttpError(
@@ -140,32 +153,60 @@ export function saveAssignmentDraftAnswer(
               "这道题已经提交过了，不能再修改答案",
             );
           if (snapshotOfRow(row)?.id !== questionId) throw questionNotFound();
-          const choice = choiceStudentAnswerSchema.safeParse(answer);
-          if (!choice.success) invalidAnswer();
           const authorizedAt = new Date();
           const mode =
             attemptTimingOf(attempt, authorizedAt)?.phase === "locked"
               ? "replayLatestOnly"
               : "save";
           const { mutationId, baseRevision } = proof;
-          let receipt: ReturnType<Runtime["saveCurrentChoiceDraft"]>;
+          const principal = { role: "student", id: studentId } as const;
+          const position = {
+            protocolVersion: 1,
+            stepAttemptId,
+            slotId: "answers",
+            questionId,
+            questionVersion: row.questionVersion,
+          } as const;
+          let receipt: ReturnType<
+            Runtime["saveCurrentChoiceDraft"] | Runtime["saveResponseDraft"]
+          >;
           try {
-            receipt = runtime.saveCurrentChoiceDraft(
-              { role: "student", id: studentId },
-              attemptId,
-              {
-                protocolVersion: 1,
-                stepAttemptId,
-                slotId: "answers",
-                questionId,
-                questionVersion: row.questionVersion,
-                choice: String(choice.data.index),
-                ...(mutationId === undefined || baseRevision === undefined
-                  ? {}
-                  : { operationId: mutationId, baseRevision }),
-              },
-              mode,
-            );
+            if (isJudgeActivity(activity)) {
+              const judge = judgeStudentAnswerSchema.safeParse(answer);
+              if (!judge.success) invalidAnswer();
+              if (mutationId === undefined || baseRevision === undefined)
+                throw new HttpError(
+                  400,
+                  "VALIDATION_ERROR",
+                  "内核判断作答须提供答案版本和操作标识",
+                );
+              receipt = runtime.saveResponseDraft(
+                principal,
+                attemptId,
+                {
+                  ...position,
+                  value: judge.data.value,
+                  operationId: mutationId,
+                  baseRevision,
+                },
+                mode,
+              );
+            } else {
+              const choice = choiceStudentAnswerSchema.safeParse(answer);
+              if (!choice.success) invalidAnswer();
+              receipt = runtime.saveCurrentChoiceDraft(
+                principal,
+                attemptId,
+                {
+                  ...position,
+                  choice: String(choice.data.index),
+                  ...(mutationId === undefined || baseRevision === undefined
+                    ? {}
+                    : { operationId: mutationId, baseRevision }),
+                },
+                mode,
+              );
+            }
           } catch (error) {
             throwDraftError(error, attempt, authorizedAt);
           }
@@ -202,8 +243,11 @@ export function readKernelAssignmentDetail(
           if (activity.status !== "active") kernelAttemptUnavailable();
           const projected = projectKernelDraftActivity(db, attempt, runtime);
           const heads =
-            ("choiceDrafts" in activity ? activity.choiceDrafts : undefined) ??
-            [];
+            "responseDrafts" in activity
+              ? activity.responseDrafts
+              : (("choiceDrafts" in activity
+                  ? activity.choiceDrafts
+                  : undefined) ?? []);
 
           const etag = draftEtag(db, projected, now, heads);
           if (etag !== null && etag === ifNoneMatch)

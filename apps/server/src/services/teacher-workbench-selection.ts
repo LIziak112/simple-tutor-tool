@@ -2,9 +2,10 @@ import type {
   PendingMarkListQuery,
   TeacherAttemptListQuery,
 } from "@tutor/contract";
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { attempts, responses, students } from "../db/schema.ts";
+import { needsTeacherMark } from "./attempt-final-outcome.ts";
 import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { submittedTeacherPendingSql } from "./pending-mark.ts";
 import { readTeacherKernelConfirmations } from "./teacher-kernel-confirmations.ts";
@@ -126,9 +127,18 @@ export function readPendingMarkRows(
 ) {
   const scope = workbenchScope(query);
   function read() {
-    const confirmedIds = [
-      ...readTeacherKernelConfirmations(db, dataDir, teacherId, scope).keys(),
-    ];
+    const confirmed = readTeacherKernelConfirmations(
+      db,
+      dataDir,
+      teacherId,
+      scope,
+    );
+    const confirmedIds = [...confirmed.keys()];
+    const pending = new Map(
+      [...confirmed.values()].flatMap(({ rows }) =>
+        rows.filter(needsTeacherMark).map((row) => [row.id, row] as const),
+      ),
+    );
     return db
       .select({
         response: responses,
@@ -141,11 +151,18 @@ export function readPendingMarkRows(
       .where(
         and(
           eq(students.teacherId, teacherId),
-          submittedTeacherPendingSql,
+          or(
+            and(
+              submittedTeacherPendingSql,
+              confirmedIds.length === 0
+                ? undefined
+                : sql`${attempts.id} not in (select value from json_each(${JSON.stringify(confirmedIds)}))`,
+            ),
+            pending.size === 0
+              ? undefined
+              : sql`${responses.id} in (select value from json_each(${JSON.stringify([...pending.keys()])}))`,
+          ),
           scope,
-          confirmedIds.length === 0
-            ? undefined
-            : sql`${attempts.id} not in (select value from json_each(${JSON.stringify(confirmedIds)}))`,
         ),
       )
       .orderBy(
@@ -153,7 +170,13 @@ export function readPendingMarkRows(
         asc(attempts.id),
         asc(responses.questionId),
       )
-      .all();
+      .all()
+      .flatMap((row) => {
+        const facts = confirmed.get(row.attempt.id);
+        if (!facts) return [row];
+        const response = pending.get(row.response.id);
+        return response ? [{ ...row, response, attempt: facts.attempt }] : [];
+      });
   }
   return dataDir === undefined
     ? read()

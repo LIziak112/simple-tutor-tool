@@ -67,7 +67,7 @@ function ineligible(): never {
   throw new HttpError(
     422,
     "M04_PRACTICE_INELIGIBLE",
-    "内核作业仅支持无材料和提示的整卷单选练习",
+    "内核作业仅支持无材料和提示的整卷单选或判断练习，判断题须有参考答案",
   );
 }
 
@@ -75,7 +75,7 @@ export function assertKernelAssignmentPolicy(assignment: Assignment): void {
   if (assignment.allowPerQuestionFeedback || assignment.allowRedo) ineligible();
 }
 
-export function loadKernelAssignmentChoices(
+export function loadKernelAssignmentQuestions(
   db: Db,
   assignment: Assignment,
   studentId: string,
@@ -102,30 +102,48 @@ export function loadKernelAssignmentChoices(
   if (context.materials.length || context.groups.length) ineligible();
 
   const selfReview = studentSelfReviewEnabledOf(db, teacherId);
-  const rows = liveRows.map((row) => {
-    const snapshot = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
-    const scoring = singleChoiceScoringSourceSchema.safeParse(snapshot);
-    if (!scoring.success || snapshot.hints?.length) ineligible();
-    const { options, answers } = scoring.data;
-    const frozen = {
-      question: snapshot,
+  const responses = liveRows.map((row) => {
+    const question = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
+    if (question.hints?.length) ineligible();
+    return {
+      question,
       questionVersion: row.version,
       unitId: row.unitId,
-      gradingPolicy: frozenGradingPolicyOf(snapshot, selfReview),
+      gradingPolicy: frozenGradingPolicyOf(question, selfReview),
     };
-    const question = {
-      id: snapshot.id,
-      version: row.version,
-      prompt: studentStemMd(snapshot),
+  });
+  const common = ({
+    question,
+    questionVersion,
+  }: (typeof responses)[number]) => ({
+    id: question.id,
+    version: questionVersion,
+    prompt: studentStemMd(question),
+  });
+  if (responses[0]?.question.type === "judge") {
+    const questions = responses.map((row) => {
+      const { question } = row;
+      if (question.type !== "judge" || question.answers?.kind !== "judge")
+        ineligible();
+      return {
+        ...common(row),
+        options: { true: "正确", false: "错误" },
+        acceptedResponse: question.answers.value,
+      };
+    });
+    return { kind: "judge" as const, responses, questions };
+  }
+  const questions = responses.map((row) => {
+    const parsed = singleChoiceScoringSourceSchema.safeParse(row.question);
+    if (!parsed.success) ineligible();
+    const { options, answers } = parsed.data;
+    return {
+      ...common(row),
       options: Object.fromEntries(
         options.map(({ text }, index) => [String(index), text]),
       ),
       acceptedChoice: String(answers.index),
     };
-    return { frozen, question };
   });
-  return {
-    responses: rows.map(({ frozen }) => frozen),
-    questions: rows.map(({ question }) => question),
-  };
+  return { kind: "choice" as const, responses, questions };
 }

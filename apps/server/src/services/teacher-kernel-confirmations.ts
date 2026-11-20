@@ -12,6 +12,7 @@ import {
   kernelAttemptBindings,
   kernelAttemptConfirmations,
 } from "../db/schema-kernel-assignments.ts";
+import { needsTeacherMark } from "./attempt-final-outcome.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   type RecoverKernelConfirmation,
@@ -109,7 +110,7 @@ export function readTeacherKernelFacts(
             correctCount: facts.rows.filter((row) => row.finalCorrect === true)
               .length,
             totalCount: facts.rows.length,
-            pendingCount: 0,
+            pendingCount: facts.rows.filter(needsTeacherMark).length,
             pendingSelfReviewCount: 0,
           },
         });

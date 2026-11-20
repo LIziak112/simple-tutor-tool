@@ -38,7 +38,7 @@ import {
 import {
   assertKernelAssignmentPolicy,
   kernelOpeningDraftSchema,
-  loadKernelAssignmentChoices,
+  loadKernelAssignmentQuestions,
 } from "./kernel-assignment-input.ts";
 import { pendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import {
@@ -100,10 +100,14 @@ export function reserveKernelRefreeze(
     !isOpenEmpty(db, attempt)
   )
     return false;
-  let choices: ReturnType<typeof loadKernelAssignmentChoices>;
+  let definition: ReturnType<typeof loadKernelAssignmentQuestions>;
   try {
     assertKernelAssignmentPolicy(assignment);
-    choices = loadKernelAssignmentChoices(db, assignment, attempt.studentId);
+    definition = loadKernelAssignmentQuestions(
+      db,
+      assignment,
+      attempt.studentId,
+    );
   } catch (error) {
     if (error instanceof HttpError && error.code === "M04_PRACTICE_INELIGIBLE")
       return false;
@@ -111,9 +115,9 @@ export function reserveKernelRefreeze(
   }
   const current = attemptResponseRows(db, attempt.id);
   if (
-    current.length === choices.responses.length &&
+    current.length === definition.responses.length &&
     current.every((row, index) => {
-      const next = choices.responses[index];
+      const next = definition.responses[index];
       return (
         row.questionId === next?.question.id &&
         row.questionVersion === next.questionVersion &&
@@ -127,7 +131,7 @@ export function reserveKernelRefreeze(
     tx,
     dataDir,
     assignment,
-    choices,
+    definition,
   );
   if (target.practiceVersion === activity.practiceVersion)
     kernelAttemptUnavailable();
@@ -142,7 +146,7 @@ export function reserveKernelRefreeze(
       expectedPracticeVersion: activity.practiceVersion,
       frozenAt,
       ...target,
-      responses: choices.responses,
+      responses: definition.responses,
     })
     .run();
   return true;

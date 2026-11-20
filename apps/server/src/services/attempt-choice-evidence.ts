@@ -53,7 +53,7 @@ const recoveredEvidenceSchema = z.object({
   }),
   practice: z.object({ id: z.string(), version: z.int().positive() }),
   confirmation: z.object({
-    kind: z.literal("choiceConfirmation"),
+    kind: z.enum(["choiceConfirmation", "responseConfirmation"]),
     questions: z.array(
       z.object({
         questionId: z.string(),

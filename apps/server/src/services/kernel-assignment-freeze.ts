@@ -7,7 +7,7 @@ import { canonicalJsonOf } from "../lib/canonical-json.ts";
 import { insertFrozenResponse } from "./attempt-freeze.ts";
 import type {
   KernelOpeningDraft,
-  loadKernelAssignmentChoices,
+  loadKernelAssignmentQuestions,
 } from "./kernel-assignment-input.ts";
 import { kernelAssignmentPublication } from "./kernel-assignment-publication.ts";
 import { ensureKernelRuntimeStorage } from "./kernel-assignment-runtime.ts";
@@ -18,11 +18,11 @@ export function reserveKernelAssignmentVersion(
   tx: Tx,
   dataDir: string,
   assignment: Assignment,
-  choices: ReturnType<typeof loadKernelAssignmentChoices>,
+  definition: ReturnType<typeof loadKernelAssignmentQuestions>,
 ) {
-  const { questions, responses } = choices;
+  const { responses } = definition;
   const assignmentId = assignment.id;
-  const publication = kernelAssignmentPublication(assignment, 1, questions);
+  const publication = kernelAssignmentPublication(assignment, 1, definition);
   const fingerprint = createHash("sha256")
     .update(
       canonicalJsonOf({
@@ -68,7 +68,7 @@ export function reserveKernelAssignmentVersion(
     publication:
       practiceVersion === 1
         ? publication
-        : kernelAssignmentPublication(assignment, practiceVersion, questions),
+        : kernelAssignmentPublication(assignment, practiceVersion, definition),
   };
 }
 

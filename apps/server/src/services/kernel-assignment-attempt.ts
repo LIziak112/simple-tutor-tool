@@ -27,7 +27,7 @@ import {
   assertKernelAssignmentPolicy,
   kernelDraftForAssignment,
   kernelOpeningDraftSchema,
-  loadKernelAssignmentChoices,
+  loadKernelAssignmentQuestions,
 } from "./kernel-assignment-input.ts";
 import {
   finishKernelRefreeze,
@@ -133,13 +133,13 @@ function reserveKernelOpening(
       );
   }
 
-  const choices = loadKernelAssignmentChoices(db, assignment, studentId);
+  const definition = loadKernelAssignmentQuestions(db, assignment, studentId);
   const version = reserveKernelAssignmentVersion(
     db,
     tx,
     dataDir,
     assignment,
-    choices,
+    definition,
   );
   tx.insert(kernelAssignmentOpenings)
     .values({
@@ -150,7 +150,7 @@ function reserveKernelOpening(
         courseId: assignment.courseId,
         timeLimitMinutes: options.timeLimitMinutes,
         workflowVersion: options.workflowVersion,
-        responses: choices.responses,
+        responses: definition.responses,
         prepared: options.timeLimitMinutes === undefined ? true : undefined,
       }),
     })

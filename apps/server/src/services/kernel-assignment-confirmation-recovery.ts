@@ -1,18 +1,20 @@
 import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
 import { requireOwnAttempt } from "./attempt-access.ts";
+import { attemptResponseRows } from "./attempt-freeze.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   assertConfirmationBinding,
   type KernelConfirmationTicket,
 } from "./kernel-assignment-confirmation-ticket.ts";
-import { projectKernelChoiceFacts } from "./kernel-assignment-confirmed-detail.ts";
+import { projectKernelConfirmationFacts } from "./kernel-assignment-confirmed-detail.ts";
 import {
   type KernelAttemptBinding,
   type KernelRuntime,
   kernelAttemptUnavailable,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
+import { snapshotOfRow } from "./snapshot.ts";
 
 type ConfirmationScope = ReturnType<typeof confirmationScopeOf>;
 
@@ -71,7 +73,14 @@ export function recoverKernelConfirmation(
         attempt.abandonedAt !== null
       )
         kernelAttemptUnavailable();
-      const recovered = runtime.recoverChoiceConfirmation(
+      const rows = attemptResponseRows(db, attempt.id);
+      const first = rows[0];
+      if (!first) kernelAttemptUnavailable();
+      const recover =
+        snapshotOfRow(first)?.type === "judge"
+          ? runtime.recoverResponseConfirmation
+          : runtime.recoverChoiceConfirmation;
+      const recovered = recover(
         { role: "student", id: attempt.studentId },
         attempt.id,
         {
@@ -81,7 +90,13 @@ export function recoverKernelConfirmation(
         },
       );
       const projected = projectKernelDraftActivity(db, attempt, runtime);
-      return projectKernelChoiceFacts(db, projected, scope, recovered);
+      return projectKernelConfirmationFacts(
+        db,
+        projected,
+        scope,
+        rows,
+        recovered,
+      );
     })
     .immediate();
 }
