@@ -31,15 +31,15 @@ export function questionDeliveryPublication(
       version: questionVersion,
       prompt: studentStemMd(question),
     };
+    if ("acceptedBlanks" in source) {
+      const response = "orderedTextBlanks" as const;
+      const { acceptedBlanks } = source;
+      return {
+        question: { ...base, response, blankCount: acceptedBlanks.length },
+        key: { response, acceptedBlanks },
+      };
+    }
     if (!("options" in source)) {
-      if ("blanks" in source.answers) {
-        const response = "orderedTextBlanks" as const;
-        const acceptedBlanks = source.answers.blanks;
-        return {
-          question: { ...base, response, blankCount: acceptedBlanks.length },
-          key: { response, acceptedBlanks },
-        };
-      }
       const response = "booleanOrString" as const;
       return {
         question: {

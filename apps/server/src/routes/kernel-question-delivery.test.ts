@@ -527,7 +527,7 @@ it.each([false, true])(
   },
 );
 
-function inkForm() {
+function inkForm(firstPointX = 10) {
   const form = new FormData();
   form.set(
     "strokes",
@@ -543,7 +543,7 @@ function inkForm() {
               color: "#1f2328",
               weight: 4,
               points: [
-                { x: 10, y: 20, p: 0.5, t: 0 },
+                { x: firstPointX, y: 20, p: 0.5, t: 0 },
                 { x: 30, y: 40, p: 0.7, t: 25 },
               ],
             },
@@ -1031,6 +1031,296 @@ it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备�
     expect((await start()).status).toBe(403);
     expect((await jsonCall(app, path, world.ownerCookie)).status).toBe(403);
     expect(await records()).toEqual([]);
+  } finally {
+    instance.close();
+  }
+});
+
+it("普通整卷解答题恢复最终文本及正式笔迹，权威确认后拒绝晚写", async () => {
+  using data = mkdtempDisposableSync(join(tmpdir(), "m05-solve-host-"));
+  const instance = openInstance(data.path);
+  try {
+    let app = instance.open(false);
+    const world = await setupAssignment(app);
+    const teacher = teacherInfoOkSchema.parse(
+      await (await jsonCall(app, "/api/teacher/me", world.teacher)).json(),
+    ).data;
+    app = instance.open(false, teacher.id);
+    const solveIds = ["m05-raw", "m05-empty", "m05-ink", "m05-missing"];
+    const {
+      units: [unit],
+    } = await importQuestions(app, world.teacher, undefined, [
+      ...choices,
+      ...solveIds.flatMap((id) => [
+        `::::question{id=${id} type=solve}`,
+        "写出计算结果。",
+        ...(id === "m05-missing" ? [] : [":::answer", "解答参考", ":::"]),
+        ":::solution",
+        "冻结的原详解。",
+        ":::",
+        "::::",
+        "",
+      ]),
+    ]);
+    if (!unit) throw new Error("未导入解答题");
+    const assignment = await assignKernelFixture(
+      app,
+      { ...world, unitId: unit.id },
+      {
+        answerRelease: "after_due",
+        dueAt: "2099-01-01T00:00:00Z",
+      },
+    );
+    const opened = await postAssignment(app, assignment, world.ownerCookie);
+    const attempt = attemptStartOkSchema.parse(await opened.json()).data;
+    const path = "/api/student/attempts/" + attempt.id;
+    const readDraft = async () =>
+      attemptDraftOkSchema.parse(
+        await (await jsonCall(app, path, world.ownerCookie)).json(),
+      ).data;
+    const questions = (await readDraft()).units.flatMap(
+      (group) => group.questions,
+    );
+    const proof = (questionId: string) => ({
+      questionRevisionId: questions.find((q) => q.id === questionId)
+        ?.questionRevisionId,
+      expectedFrozenAt: attempt.frozenAt,
+    });
+    const raw = { kind: "final", finalAnswer: "  原答案\n\t" };
+    const empty = { kind: "final", finalAnswer: "" };
+    for (const [id, answer] of [
+      ["m05-raw", raw],
+      ["m05-empty", empty],
+    ] as const) {
+      const saved = await jsonCall(
+        app,
+        path + "/answers/" + id,
+        world.ownerCookie,
+        "PUT",
+        {
+          ...proof(id),
+          answer,
+          mutationId: randomUUID(),
+          baseRevision: 0,
+        },
+      );
+      expect(saved.status, await saved.clone().text()).toBe(200);
+    }
+    const putInk = (
+      id: string,
+      baseRevision: number,
+      cookie = world.ownerCookie,
+    ) => {
+      const body = inkForm(baseRevision === 0 ? 10 : 11);
+      body.set(
+        "meta",
+        JSON.stringify({
+          ...proof(id),
+          baseRevision,
+          mutationId: randomUUID(),
+        }),
+      );
+      return app.request(path + "/ink/" + id, {
+        method: "PUT",
+        headers: { cookie },
+        body,
+      });
+    };
+    const inkPath = path + "/ink/m05-ink";
+    const uploaded = await putInk("m05-ink", 0);
+    expect(uploaded.status, await uploaded.clone().text()).toBe(200);
+    const inkId = wire(
+      z.object({ inkId: z.uuid(), revision: z.literal(1) }),
+    ).parse(await uploaded.json()).data.inkId;
+    expect((await jsonCall(app, inkPath, world.otherCookie)).status).toBe(403);
+    const storedBefore = await readDraft();
+    expect(storedBefore.drafts).toEqual({ "m05-raw": raw, "m05-empty": empty });
+    expect(storedBefore.draftRevisions).toMatchObject({
+      "m05-raw": 1,
+      "m05-empty": 1,
+    });
+    const submitBody = {
+      revisions: questions.map(({ id, questionRevisionId }) => ({
+        questionId: id,
+        questionRevisionId,
+        expectedAnswerRevision: storedBefore.draftRevisions?.[id] ?? 0,
+      })),
+      evidence: questions.map(({ id }) => ({ questionId: id, state: "none" })),
+    };
+    const sql = () => instance.db().$client;
+    sql().exec(
+      "CREATE TEMP TRIGGER stop_solve_projection BEFORE UPDATE OF receipt_id ON kernel_question_deliveries BEGIN SELECT RAISE(ABORT,'中断解答题投影'); END",
+    );
+    const interrupted = await jsonCall(
+      app,
+      path + "/submit",
+      world.ownerCookie,
+      "POST",
+      submitBody,
+    );
+    expect(interrupted.status, await interrupted.clone().text()).toBe(500);
+    expect(
+      sql().prepare("SELECT status FROM attempts WHERE id=?").get(attempt.id),
+    ).toEqual({ status: "draft" });
+    const ticket = keyRow.parse(
+      sql()
+        .prepare(
+          "SELECT operation_id,step_attempt_id,slot_id FROM kernel_question_deliveries WHERE attempt_id=? AND receipt_id IS NULL",
+        )
+        .get(attempt.id),
+    );
+    const runtime = openLearningRuntime({
+      databasePath: join(data.path, BACKUP_KERNEL_DATABASE),
+      authorizeConfirmationRecovery: (receipt) =>
+        receipt.operationId === ticket.operation_id &&
+        receipt.activityId === attempt.id &&
+        receipt.studentId === world.studentId,
+    });
+    const receipt = (() => {
+      try {
+        return runtime.recoverQuestionDelivery(
+          { role: "student", id: world.studentId },
+          attempt.id,
+          {
+            protocolVersion: 1,
+            operationId: ticket.operation_id,
+            stepAttemptId: ticket.step_attempt_id,
+          },
+        ).receipt;
+      } finally {
+        runtime.close();
+      }
+    })();
+    for (const [id, base] of [
+      ["m05-ink", 1],
+      ["m05-missing", 0],
+    ] as const) {
+      const late = await putInk(id, base);
+      expect(late.status, await late.clone().text()).toBe(409);
+      expect(await late.json()).toMatchObject({ error: "ALREADY_SUBMITTED" });
+    }
+    instance.reopen();
+    app = instance.open(false, teacher.id);
+    const hidden = await finishedResult(app, path, world.ownerCookie);
+    expect(hidden.answersReleased).toBe(false);
+    expect(
+      hidden.units
+        .flatMap((group) => group.questions)
+        .filter((question) => solveIds.includes(question.questionId))
+        .map((question) => [
+          question.questionId,
+          question.answer,
+          question.answered,
+          question.answers,
+          question.solutionMd,
+          question.autoCorrect,
+        ]),
+    ).toEqual([
+      ["m05-raw", raw, true, null, null, null],
+      ["m05-empty", empty, false, null, null, null],
+      ["m05-ink", null, true, null, null, null],
+      ["m05-missing", null, false, null, null, null],
+    ]);
+    expect(
+      sql()
+        .prepare(
+          "SELECT receipt_id FROM kernel_question_deliveries WHERE operation_id=?",
+        )
+        .get(ticket.operation_id),
+    ).toEqual({ receipt_id: receipt.id });
+    expect(
+      sql()
+        .prepare(
+          "SELECT count(*) n FROM attempt_settlements WHERE attempt_id=? AND kind='final'",
+        )
+        .get(attempt.id),
+    ).toEqual({ n: 1 });
+    expect(
+      (
+        await jsonCall(
+          app,
+          path + "/submit",
+          world.ownerCookie,
+          "POST",
+          submitBody,
+        )
+      ).status,
+    ).toBe(409);
+    const png = await jsonCall(app, inkPath + ".png", world.ownerCookie);
+    expect(png.status).toBe(200);
+    expect(Buffer.from(await png.arrayBuffer())).toEqual(
+      Buffer.from(makeNotePng()),
+    );
+    const before = await jsonCall(
+      app,
+      "/api/teacher/ink/" + inkId + ".json.gz",
+      world.teacher,
+    );
+    expect(before.status).toBe(200);
+    const original = Buffer.from(await before.arrayBuffer());
+    const publish = await jsonCall(
+      app,
+      "/api/teacher/assignments/" + assignment,
+      world.teacher,
+      "PATCH",
+      { answerRelease: "on_submit" },
+    );
+    expect(publish.status, await publish.clone().text()).toBe(200);
+    const released = await finishedResult(app, path, world.ownerCookie);
+    expect(released.answersReleased).toBe(true);
+    expect(
+      released.units
+        .flatMap((group) => group.questions)
+        .find((question) => question.questionId === "m05-raw"),
+    ).toMatchObject({
+      answer: raw,
+      answers: { kind: "final", answer: "解答参考" },
+      solutionMd: "冻结的原详解。",
+      autoCorrect: null,
+      finalCorrect: null,
+    });
+    const archive = await jsonCall(
+      app,
+      "/api/teacher/backup/download",
+      world.teacher,
+    );
+    expect(archive.status, await archive.clone().text()).toBe(200);
+    const entries = readZipEntriesMap(Buffer.from(await archive.arrayBuffer()));
+    const restore = async () => {
+      const form = new FormData();
+      form.set(
+        "zip",
+        new File([await zipBytes(entries)], "解答题备份.zip", {
+          type: "application/zip",
+        }),
+      );
+      form.set("password", "teacher-pass-8");
+      return app.request("/api/teacher/backup/restore", {
+        method: "POST",
+        headers: { cookie: world.teacher },
+        body: form,
+      });
+    };
+    const entry = [...entries].find(
+      ([name, bytes]) => name.endsWith(".json.gz") && bytes.equals(original),
+    );
+    if (!entry) throw new Error("找不到正式笔迹归档");
+    entries.set(entry[0], Buffer.from("损坏的正式笔迹"));
+    const rejected = await restore();
+    expect(rejected.status, await rejected.clone().text()).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      error: "BACKUP_ZIP_INVALID",
+    });
+    entries.delete(entry[0]);
+    const missing = await restore();
+    expect(missing.status, await missing.clone().text()).toBe(400);
+    expect(await missing.json()).toMatchObject({ error: "BACKUP_ZIP_INVALID" });
+    entries.set(entry[0], original);
+    const restored = await restore();
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    expect((await finishedResult(app, path, world.ownerCookie)).units).toEqual(
+      released.units,
+    );
   } finally {
     instance.close();
   }

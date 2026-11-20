@@ -1,6 +1,7 @@
 import {
   choiceStudentAnswerSchema,
   judgeStudentAnswerSchema,
+  questionEvidenceBindings,
   type StudentAnswer,
   studentAnswerSchema,
 } from "@tutor/contract";
@@ -14,21 +15,23 @@ type Value = QuestionDeliveryDraftInput["value"];
 
 export function deliveryAnswerOf(
   row: ResponseRow,
-  value: Value | null,
+  value: Readonly<Value> | null,
 ): StudentAnswer | null {
   if (value === null) return null;
-  const type = snapshotOfRow(row)?.type;
+  const question = snapshotOfRow(row);
+  const kind = question && questionEvidenceBindings[question.type].answerKind;
   const outcome =
     typeof value === "object"
       ? studentAnswerSchema.safeParse({
-          kind: type,
+          kind,
           indexes: value,
           values: value,
+          finalAnswer: value.length === 1 ? value[0] : undefined,
         })
-      : type === judgeStudentAnswerSchema.shape.kind.value
-        ? judgeStudentAnswerSchema.safeParse({ kind: type, value })
+      : kind === judgeStudentAnswerSchema.shape.kind.value
+        ? judgeStudentAnswerSchema.safeParse({ kind, value })
         : choiceStudentAnswerSchema.safeParse({
-            kind: type,
+            kind,
             index: Number(value),
           });
   if (
@@ -43,10 +46,16 @@ export function deliveryValueOf(
   row: ResponseRow,
   answer: StudentAnswer,
 ): Value {
-  if (snapshotOfRow(row)?.type !== answer.kind) return invalidDeliveryAnswer();
+  const question = snapshotOfRow(row);
+  if (
+    !question ||
+    questionEvidenceBindings[question.type].answerKind !== answer.kind
+  )
+    return invalidDeliveryAnswer();
   if ("index" in answer) return String(answer.index);
   if ("indexes" in answer) return answer.indexes;
   if ("values" in answer) return answer.values;
+  if ("finalAnswer" in answer) return [answer.finalAnswer];
   if ("value" in answer) return answer.value;
   return invalidDeliveryAnswer();
 }

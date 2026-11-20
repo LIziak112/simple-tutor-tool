@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   choiceAnswersSchema,
   fillAnswersSchema,
+  finalAnswersSchema,
   judgeAnswersSchema,
   multiAnswersSchema,
   optionSchema,
@@ -81,6 +82,20 @@ export const fillScoringSourceSchema = z.object({
   }),
 });
 
+export const solveDeliveryScoringSourceSchema = z.object({
+  type: questionTypeSchema.extract(["solve"]),
+  answers: finalAnswersSchema.optional(),
+});
+
+export const orderedTextDeliveryScoringSourceSchema = z.union([
+  fillScoringSourceSchema.transform(({ answers }) => ({
+    acceptedBlanks: answers.blanks,
+  })),
+  solveDeliveryScoringSourceSchema.transform(({ answers }) => ({
+    acceptedBlanks: [answers === undefined ? [] : [answers.answer]],
+  })),
+]);
+
 const objectiveDeliveryScoringSourceSchema = z.union([
   singleChoiceScoringSourceSchema,
   judgeScoringSourceSchema,
@@ -91,7 +106,10 @@ export const questionDeliveryScoringSourcesSchema =
   objectiveDeliveryScoringSourceSchema.array().min(1);
 
 export const wholeQuestionDeliveryScoringSourcesSchema = z
-  .union([objectiveDeliveryScoringSourceSchema, fillScoringSourceSchema])
+  .union([
+    objectiveDeliveryScoringSourceSchema,
+    orderedTextDeliveryScoringSourceSchema,
+  ])
   .array()
   .min(1);
 

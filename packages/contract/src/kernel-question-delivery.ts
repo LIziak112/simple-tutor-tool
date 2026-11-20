@@ -30,11 +30,32 @@ export const kernelDeliveryOriginalSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("uncollected") }),
 ]);
 
+const inkAttachmentSchema = z.strictObject({
+  path: z.string().min(1),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+
+const kernelFormalInkAnchorSchema = z.strictObject({
+  questionId: z.string().min(1),
+  ink: z
+    .strictObject({
+      inkId: z.uuid(),
+      revision: z.int().positive(),
+      strokeCount: z.int().nonnegative(),
+      strokes: inkAttachmentSchema,
+      png: inkAttachmentSchema,
+    })
+    .nullable(),
+});
+
+export type KernelFormalInkAnchor = z.infer<typeof kernelFormalInkAnchorSchema>;
+
 export const kernelQuestionDeliveryIntentSchema = attemptSubmitRequestSchema
   .extend({
     source: kernelDeliverySourceSchema,
     selectedQuestionIds: z.array(z.string().min(1)).min(1),
     activitySeal: kernelActivitySealSchema,
+    formalInk: z.array(kernelFormalInkAnchorSchema).min(1).optional(),
     questions: z
       .array(
         z.strictObject({

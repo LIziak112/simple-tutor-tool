@@ -16,6 +16,7 @@ export function verifyBackupLessonDeliveries(
   db: Db,
   directory: string,
   openings: readonly Opening[],
+  attachmentDir: string,
 ) {
   try {
     const verified = new Set<string>();
@@ -31,7 +32,10 @@ export function verifyBackupLessonDeliveries(
         .from(attempts)
         .where(eq(attempts.id, opening.attemptId))
         .get();
-      if (!attempt || !readQuestionDeliveryFacts(db, directory, attempt))
+      if (
+        !attempt ||
+        !readQuestionDeliveryFacts(db, directory, attempt, attachmentDir)
+      )
         throw new Error("讲练绑定缺失");
       verified.add(attempt.id);
     }
@@ -46,7 +50,10 @@ export function verifyBackupLessonDeliveries(
         .from(attempts)
         .where(eq(attempts.id, ticket.attemptId))
         .get();
-      if (!attempt || !readQuestionDeliveryFacts(db, directory, attempt))
+      if (
+        !attempt ||
+        !readQuestionDeliveryFacts(db, directory, attempt, attachmentDir)
+      )
         throw new Error("交付票据缺少匹配绑定");
     }
   } catch {

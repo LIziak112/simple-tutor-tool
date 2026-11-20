@@ -20,6 +20,10 @@ import { prepareKernelOriginals } from "./attempt-choice-evidence.ts";
 import { settleSubmissionOriginalReservation } from "./attempt-original-reservation.ts";
 import { validateSubmitRevisions } from "./attempt-submit-revisions.ts";
 import { assertSavedAnswersConfirmed } from "./attempt-timing.ts";
+import {
+  captureFormalInkAnchor,
+  needsFormalInkAnchor,
+} from "./formal-ink-attachment.ts";
 import { captureKernelConfirmationRequest } from "./kernel-assignment-activity.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import {
@@ -127,6 +131,14 @@ export function stageDelivery(
             selected.map((response) => ({ response })),
             request.revisions,
           );
+          const formalInk =
+            source === "whole"
+              ? selected
+                  .filter(needsFormalInkAnchor)
+                  .map(({ questionId }) =>
+                    captureFormalInkAnchor(db, dataDir, attemptId, questionId),
+                  )
+              : [];
           const previous = deliveryTickets(db, attemptId).find(
             (ticket) => ticket.slotId === slotId,
           );
@@ -136,7 +148,10 @@ export function stageDelivery(
               previous.intent.source === source &&
               canonicalJsonOf(previous.intent.selectedQuestionIds) ===
                 canonicalJsonOf(selected.map((row) => row.questionId)) &&
-              submittedIntentOf(previous.intent) === submittedIntentOf(request)
+              submittedIntentOf(previous.intent) ===
+                submittedIntentOf(request) &&
+              canonicalJsonOf(previous.intent.formalInk ?? []) ===
+                canonicalJsonOf(formalInk)
             )
               return { ticket: previous } as const;
             removePendingTicket(db, previous);
@@ -187,6 +202,7 @@ export function stageDelivery(
               selectedQuestionIds: [...covered],
               questions,
               activitySeal: seal,
+              ...(formalInk.length > 0 && { formalInk }),
             }),
           };
           db.insert(kernelQuestionDeliveries).values(ticket).run();

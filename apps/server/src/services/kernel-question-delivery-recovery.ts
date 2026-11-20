@@ -1,8 +1,18 @@
+import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import type { Attempt, ResponseRow } from "../db/schema.ts";
+import {
+  type Attempt,
+  attempts,
+  type InkRow,
+  type ResponseRow,
+} from "../db/schema.ts";
 import { kernelQuestionDeliveries } from "../db/schema-kernel-question-delivery.ts";
 import { canonicalJsonOf } from "../lib/canonical-json.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
+import {
+  assertFormalInkAnchor,
+  needsFormalInkAnchor,
+} from "./formal-ink-attachment.ts";
 import {
   type KernelRuntime,
   kernelAttemptUnavailable,
@@ -45,6 +55,7 @@ export function withDelivery<T>(
     view: QuestionDeliveryActivity,
     activate: Activate,
   ) => T,
+  attachmentDir = dataDir,
 ): T | undefined {
   const binding = questionDeliveryBinding(db, attempt);
   if (!binding) return undefined;
@@ -68,6 +79,8 @@ export function withDelivery<T>(
       return (
         view &&
         run(runtime, binding, view, (ticket) => {
+          for (const anchor of ticket.intent.formalInk ?? [])
+            assertFormalInkAnchor(db, attachmentDir, attempt.id, anchor);
           current = ticket;
         })
       );
@@ -106,6 +119,42 @@ export function withDelivery<T>(
   );
 }
 
+/** 读取权威完成状态，宿主投影中断时仍可在写锁内拦住笔迹更新。 */
+export function wholeDeliveryInkLocked(
+  db: Db,
+  dataDir: string,
+  attempt: Attempt,
+): boolean {
+  return (
+    attempt.sourceType === "assignment" &&
+    withDelivery(
+      db,
+      dataDir,
+      attempt,
+      (_runtime, _binding, view) => view.status === "completed",
+    ) === true
+  );
+}
+
+/** 本人或所属教师已通过入口校验。固定原件必须按实际文件核对。 */
+export function assertDeliveredInk(db: Db, dataDir: string, row: InkRow): void {
+  for (const ticket of deliveryTickets(db, row.attemptId)) {
+    const anchor = ticket.intent.formalInk?.find(
+      ({ questionId }) => questionId === row.questionId,
+    );
+    if (!anchor) continue;
+    if (ticket.receiptId === null) {
+      const attempt = db
+        .select()
+        .from(attempts)
+        .where(eq(attempts.id, row.attemptId))
+        .get();
+      if (!attempt || !wholeDeliveryInkLocked(db, dataDir, attempt)) continue;
+    }
+    assertFormalInkAnchor(db, dataDir, row.attemptId, anchor);
+  }
+}
+
 function validPlacement(
   ticket: DeliveryTicket,
   policy: ReturnType<typeof deliveryPolicy>,
@@ -120,7 +169,15 @@ function validPlacement(
   )
     return false;
   if (policy.mode === "whole") {
+    const required = new Set(
+      [...rows.values()]
+        .filter(needsFormalInkAnchor)
+        .map(({ questionId }) => questionId),
+    );
+    const anchors = ticket.intent.formalInk ?? [];
     return (
+      anchors.length === required.size &&
+      anchors.every(({ questionId }) => required.delete(questionId)) &&
       source === "whole" &&
       ticket.slotId === deliverySlotId &&
       selectedQuestionIds.length === rows.size
@@ -247,11 +304,17 @@ export function readQuestionDeliveryFacts(
   db: Db,
   dataDir: string,
   attempt: Attempt,
+  attachmentDir = dataDir,
 ) {
   return db.$client
     .transaction(() =>
-      withDelivery(db, dataDir, attempt, (runtime, binding, view, activate) =>
-        recoverDeliveries(db, runtime, attempt, binding, view, activate),
+      withDelivery(
+        db,
+        dataDir,
+        attempt,
+        (runtime, binding, view, activate) =>
+          recoverDeliveries(db, runtime, attempt, binding, view, activate),
+        attachmentDir,
       ),
     )
     .immediate();

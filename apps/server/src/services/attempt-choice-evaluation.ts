@@ -1,8 +1,8 @@
 import {
-  fillScoringSourceSchema,
   type GradingPolicy,
   judgeScoringSourceSchema,
   multiChoiceScoringSourceSchema,
+  orderedTextDeliveryScoringSourceSchema,
   singleChoiceScoringSourceSchema,
 } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
@@ -24,6 +24,7 @@ import {
   buildAttemptQuestionWhere,
   requireOwnAttempt,
 } from "./attempt-access.ts";
+import { deliveryAnswerOf } from "./kernel-question-delivery-values.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
 export const ownClassChoiceEvaluatorRef = {
@@ -230,19 +231,17 @@ export function createOwnClassFillEvaluator(
         "manual_only",
         "reference_self",
       ]);
-      const source = fillScoringSourceSchema.safeParse(question);
+      const source = orderedTextDeliveryScoringSourceSchema.safeParse(question);
       if (
         !source.success ||
-        JSON.stringify(source.data.answers.blanks) !==
+        JSON.stringify(source.data.acceptedBlanks) !==
           JSON.stringify(input.acceptedBlanks)
       )
         mismatch();
       const result = gradeResponseRow(
         row.gradingPolicy,
         question,
-        input.value === null
-          ? undefined
-          : { kind: "fill", values: [...input.value] },
+        deliveryAnswerOf(row, input.value) ?? undefined,
       );
       if (result !== null) mismatch();
       return { status: "needsReview" };

@@ -73,7 +73,11 @@ export function hasBackupTable(db: Database.Database, name: string): boolean {
   );
 }
 
-function verifyProjection(db: Db, directory: string): void {
+function verifyProjection(
+  db: Db,
+  directory: string,
+  attachmentDir: string,
+): void {
   const bindings = db
     .select({
       binding: kernelAttemptBindings,
@@ -174,7 +178,7 @@ function verifyProjection(db: Db, directory: string): void {
     "SELECT COUNT(*) AS count FROM submission_evidence WHERE attempt_id = ?",
   );
 
-  verifyBackupLessonDeliveries(db, directory, lessons);
+  verifyBackupLessonDeliveries(db, directory, lessons, attachmentDir);
   withKernelConfirmationReader(db, directory, (runtime, recover) => {
     for (const opening of openings) {
       const publication = publicationIdentitySchema.parse(opening.publication);
@@ -283,7 +287,7 @@ function verifyProjection(db: Db, directory: string): void {
 
       if ("questionDeliveries" in activity) {
         try {
-          if (!readQuestionDeliveryFacts(db, directory, attempt))
+          if (!readQuestionDeliveryFacts(db, directory, attempt, attachmentDir))
             throw new Error("混合整卷缺少交付投影");
         } catch {
           throw new ZipReadError("备份中的内核作答位置和宿主交付票据不一致");
@@ -348,7 +352,7 @@ export function verifyBackupBindings(
   try {
     // 历史归档的主库同样需要当前读路径所依赖的表。迁移仅发生在核验副本。
     runMigrations(copy);
-    verifyProjection(copy, space.path);
+    verifyProjection(copy, space.path, directory);
     verifyOriginals(copy.$client);
   } finally {
     copy.$client.close();

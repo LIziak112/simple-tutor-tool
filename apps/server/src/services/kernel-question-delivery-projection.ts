@@ -45,6 +45,10 @@ export function projectDeliveryRows(
       .all()
       .map((row) => row.id),
   );
+  for (const { questionId, ink: anchor } of ticket.intent.formalInk ?? []) {
+    if (anchor && anchor.strokeCount > 0) formalInk.add(questionId);
+    else formalInk.delete(questionId);
+  }
   const byQuestion = new Map(
     confirmation.questions.map((question) => [question.questionId, question]),
   );
