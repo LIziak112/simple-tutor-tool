@@ -4,6 +4,7 @@ import {
   attemptSubmitRequestSchema,
   BACKUP_KERNEL_DATABASE,
 } from "@tutor/contract";
+import { choiceAmendmentIntentSchema } from "@tutor/contract/choice-amendment-intent";
 import type Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { LearningError, verifyActivityBindings } from "learning-kernel";
@@ -21,7 +22,6 @@ import {
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
 import { kernelOpeningDraftSchema } from "./kernel-assignment-input.ts";
-import { choiceAmendmentIntentSchema } from "./kernel-choice-amendment-intent.ts";
 import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
 
 const publicationIdentitySchema = z.object({
@@ -113,7 +113,7 @@ function verifyProjection(db: Db, directory: string): void {
           if (studentId === null)
             throw new ZipReadError("备份中的教师草稿勘误缺少作答归属");
           return {
-            kind: "answer",
+            kind: intent.kind,
             activityId: ticket.attemptId,
             studentId,
             stepAttemptId: intent.stepAttemptId,

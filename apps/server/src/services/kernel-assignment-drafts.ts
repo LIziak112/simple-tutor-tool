@@ -29,6 +29,7 @@ import {
 import { assertAttemptNotTimedOut, attemptTimingOf } from "./attempt-timing.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import { readKernelConfirmationResult } from "./kernel-assignment-confirmation.ts";
+import { kernelDraftRowsOf } from "./kernel-assignment-facts.ts";
 import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
@@ -36,7 +37,8 @@ import {
   ownClassChoiceAnswerOf,
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
-import { snapshotOfRow } from "./snapshot.ts";
+import { recoverKernelChoiceSnapshot } from "./kernel-choice-amendments.ts";
+import { answerOf, snapshotOfRow } from "./snapshot.ts";
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type DraftProof = Pick<
@@ -112,6 +114,7 @@ export function saveAssignmentDraftAnswer(
     .transaction(() => {
       const attempt = requireUsableAttempt(db, studentId, attemptId);
       if (attempt.status !== "draft") alreadySubmitted();
+      recoverKernelChoiceSnapshot(db, dataDir, attempt.id);
       return withBoundKernelActivity(
         db,
         dataDir,
@@ -208,36 +211,22 @@ export function readKernelAssignmentDetail(
           const detail = detailOfAuthorizedAttempt(db, projected, now);
           if (!("drafts" in detail)) kernelAttemptUnavailable();
 
-          const questions = new Map(
-            detail.units.flatMap(({ questions }) =>
-              questions.map((question) => [question.id, question] as const),
-            ),
-          );
-          const drafts: [string, ReturnType<typeof ownClassChoiceAnswerOf>][] =
-            [];
-          const draftRevisions = new Map(
-            [...questions.keys()].map((id) => [id, 0]),
-          );
-          for (const draft of heads) {
-            const question = questions.get(draft.questionId);
-            const answer = ownClassChoiceAnswerOf(draft.choice);
-            if (
-              draft.slotId !== "answers" ||
-              !question ||
-              question.questionVersion !== draft.questionVersion ||
-              question.options?.[answer.index] === undefined ||
-              draftRevisions.get(draft.questionId) !== 0
-            )
-              kernelAttemptUnavailable();
-            drafts.push([draft.questionId, answer]);
-            draftRevisions.set(draft.questionId, draft.revision);
-          }
+          const rows = kernelDraftRowsOf(db, projected, activity);
+          const drafts = rows.flatMap(({ questionId, answerJson }) => {
+            const answer = answerOf(answerJson);
+            return answer === null ? [] : [[questionId, answer] as const];
+          });
           return {
             etag,
             detail: {
               ...detail,
               drafts: Object.fromEntries(drafts),
-              draftRevisions: Object.fromEntries(draftRevisions),
+              draftRevisions: Object.fromEntries(
+                rows.map(({ questionId, answerRevision }) => [
+                  questionId,
+                  answerRevision,
+                ]),
+              ),
             },
           };
         },

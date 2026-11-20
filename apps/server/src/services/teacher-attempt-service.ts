@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import {
-  gradingPolicyOf,
-  questionEvidenceBindings,
   type TeacherAttemptCard,
   type TeacherAttemptInkInfo,
   type TeacherAttemptListData,
@@ -17,13 +14,11 @@ import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
-  annotationBases,
   assignments,
   attempts,
   courses,
   type InkRow,
   ink,
-  notes,
   questions,
   responseEditAudits,
   responses,
@@ -47,6 +42,11 @@ import {
 } from "./pending-mark";
 import { attemptResultCounts } from "./result-counts";
 import { snapshotOfRow } from "./snapshot";
+import {
+  assertTeacherDraftSnapshot,
+  hasTeacherDraftSnapshotEvidence,
+  responseEvidenceExists,
+} from "./teacher-response-snapshot.ts";
 import { readTeacherAttemptPage } from "./teacher-workbench-selection.ts";
 
 /**
@@ -477,50 +477,9 @@ export function editTeacherDraftResponse(
     }
 
     if ("snapshot" in edit) {
-      const { snapshot } = edit;
-      if (
-        snapshot.id !== questionId ||
-        snapshot.type !== original.type ||
-        !isDeepStrictEqual(
-          snapshot.materialRefs ?? [],
-          original.materialRefs ?? [],
-        ) ||
-        (snapshot.answers !== undefined &&
-          snapshot.answers.kind !==
-            questionEvidenceBindings[snapshot.type].answerKind) ||
-        (row.gradingPolicy !== null &&
-          gradingPolicyOf(snapshot) !== row.gradingPolicy)
-      ) {
-        throw new HttpError(
-          400,
-          "VALIDATION_ERROR",
-          "题号、题型、材料引用与冻结判分策略须保持一致",
-        );
-      }
-      // 已存答案、提示和笔迹依附原题面，保留它们的原始解释。
-      if (
-        row.answerJson !== null ||
-        row.hintsUsed > 0 ||
-        [ink, notes, annotationBases].some(
-          (table) =>
-            tx
-              .select({ id: table.id })
-              .from(table)
-              .where(
-                and(
-                  eq(table.attemptId, attemptId),
-                  eq(table.questionId, questionId),
-                ),
-              )
-              .get() !== undefined,
-        )
-      ) {
-        throw new HttpError(
-          409,
-          "RESPONSE_EVIDENCE_EXISTS",
-          "本题已留存作答材料，不能覆盖原题面",
-        );
-      }
+      assertTeacherDraftSnapshot(row, original, edit.snapshot);
+      if (hasTeacherDraftSnapshotEvidence(tx, row))
+        throw responseEvidenceExists();
     } else {
       assertFrozenAnswerShape(db, row, original, edit.answer);
     }

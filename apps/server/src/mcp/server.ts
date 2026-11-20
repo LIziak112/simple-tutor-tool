@@ -11,7 +11,6 @@ import {
   notePhaseSchema,
   questionTypeSchema,
   teacherAttemptListQuerySchema,
-  teacherResponseSnapshotEditSchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
@@ -53,7 +52,6 @@ import {
   listStudentReports,
 } from "../services/report-service";
 import { listStudents } from "../services/student-service";
-import { editTeacherDraftResponse } from "../services/teacher-attempt-service";
 import {
   commitZipImport,
   decodeImportZipBase64,
@@ -67,7 +65,7 @@ import {
   deleteUnstartedAssignment,
   resolveAssignmentStudentIds,
 } from "./assignment-tools";
-import { registerTeacherAnswerEdit } from "./teacher-answer-edit-tool.ts";
+import { registerTeacherDraftEdits } from "./teacher-answer-edit-tool.ts";
 import { queryTeacherAttemptCards } from "./teacher-attempt-cards.ts";
 import {
   decodeCursorOffset,
@@ -1197,16 +1195,5 @@ export function registerTeacherTools(
     }),
   );
 
-  server.registerTool(
-    "update_response_snapshot",
-    {
-      description:
-        "修正未作废草稿卷中未提交、尚无作答材料的题目快照。须保持题号、题型、材料引用和冻结判分策略一致。用 query_student_responses 定位并读取版本，修正与原因同步留痕。",
-      inputSchema: teacherResponseSnapshotEditSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true },
-    },
-    guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
-  );
-
-  registerTeacherAnswerEdit(server, db, dataDir, teacherId);
+  registerTeacherDraftEdits(server, db, dataDir, teacherId);
 }

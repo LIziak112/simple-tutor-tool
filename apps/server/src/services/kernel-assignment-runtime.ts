@@ -42,6 +42,8 @@ type ConfirmationHooks = Pick<
   | "verifyOriginal"
   | "authorizeConfirmationRecovery"
   | "authorizeChoiceDraftAmendment"
+  | "authorizeChoiceSnapshotRevision"
+  | "hasChoiceSnapshotEvidence"
 > & { evaluateScope?: () => OwnClassChoiceEvaluationScope | undefined };
 
 export function withKernelRuntime<T>(

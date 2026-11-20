@@ -24,6 +24,7 @@ import {
   kernelAttemptUnavailable,
   readBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
+import { recoverKernelChoiceSnapshot } from "./kernel-choice-amendments.ts";
 
 interface TeacherKernelConfirmation
   extends ReturnType<RecoverKernelConfirmation> {
@@ -94,8 +95,10 @@ export function readTeacherKernelFacts(
   return withKernelConfirmationReader(db, dataDir, (runtime, recover) => {
     for (const { attempt, binding, ticket } of scopes) {
       if (binding === null) kernelAttemptUnavailable();
-      if (includeDrafts && attempt.status === "draft")
+      if (includeDrafts && attempt.status === "draft") {
         requireNoPendingKernelRefreeze(db, attempt);
+        recoverKernelChoiceSnapshot(db, dataDir, attempt.id);
+      }
       const activity = readBoundKernelActivity(runtime, attempt, binding);
       if (activity.status === "completed") {
         if (ticket === null) kernelAttemptUnavailable();

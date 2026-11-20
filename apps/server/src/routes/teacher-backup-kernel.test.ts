@@ -1,5 +1,5 @@
 import { fork } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdtempDisposableSync,
@@ -569,7 +569,10 @@ it("双库同时存在却截自不同时间时，管理员下载和恢复均拒�
   expect((await readAttempt(app, first, world.ownerCookie)).status).toBe(200);
 });
 
-async function backupAmendmentFixture(source: ReturnType<typeof openInstance>) {
+async function backupAmendmentFixture(
+  source: ReturnType<typeof openInstance>,
+  kind: "answer" | "snapshot",
+) {
   const app = source.app();
   const world = await setupAssignment(app);
   const teacher = await app.request("/api/teacher/me", {
@@ -581,6 +584,20 @@ async function backupAmendmentFixture(source: ReturnType<typeof openInstance>) {
   const attemptId = await openedAttempt(app, assignment, world.ownerCookie);
   const questionId = "m04-p0-q1";
   const corrected = { kind: "choice", index: 1 };
+  const stemMd = "合成归档中的修订题面";
+  const row = source.handle.db.$client
+    .prepare<[string, string], { snapshot: string }>(
+      "SELECT question_snapshot_json AS snapshot FROM responses WHERE attempt_id=? AND question_id=?",
+    )
+    .get(attemptId, questionId);
+  if (!row) throw new Error("样例缺冻结题");
+  const snapshot = {
+    ...(JSON.parse(row.snapshot) as object),
+    stemMd,
+    answers: corrected,
+  };
+  const kernelAuditTable =
+    kind === "answer" ? "choice_draft_amendments" : "choice_snapshot_revisions";
   const download = (instance: TestApp) =>
     instance.request("/api/teacher/backup/download", {
       headers: { cookie: world.teacher },
@@ -590,6 +607,9 @@ async function backupAmendmentFixture(source: ReturnType<typeof openInstance>) {
     expect(response.status).toBe(200);
     const { data } = attemptDraftOkSchema.parse(await response.json());
     return {
+      stemMd: data.units
+        .flatMap(({ questions }) => questions)
+        .find(({ id }) => id === questionId)?.stemMd,
       studentAnswer: data.drafts[questionId] ?? null,
       answerRevision: data.draftRevisions?.[questionId] ?? 0,
     };
@@ -619,17 +639,25 @@ async function backupAmendmentFixture(source: ReturnType<typeof openInstance>) {
     attemptId,
     questionId,
     corrected,
+    stemMd,
+    kernelAuditTable,
     download,
     readDraft,
     successfulDownload,
     amend: () =>
-      callToolJson(client, "update_response_answer", {
-        attemptId,
-        questionId,
-        answer: corrected,
-        expectedAnswerRevision: 0,
-        reason: "合成归档勘误",
-      }),
+      callToolJson(
+        client,
+        kind === "answer"
+          ? "update_response_answer"
+          : "update_response_snapshot",
+        {
+          attemptId,
+          questionId,
+          ...(kind === "answer" ? { answer: corrected } : { snapshot }),
+          expectedAnswerRevision: 0,
+          reason: "合成归档勘误",
+        },
+      ),
     [Symbol.asyncDispose]: () => client.close(),
   };
 }
@@ -642,9 +670,14 @@ function productSnapshot(entries: Map<string, Buffer>) {
   return product;
 }
 
-it("教师草稿答案勘误的两个跨库组合均不可下载或恢复，同代可恢复", async () => {
+it.each(["answer", "snapshot"] as const)(
+  "%s 教师草稿勘误的两个跨库组合均不可下载或恢复，同代可恢复",
+  verifyCompletedAmendmentArchive,
+);
+
+async function verifyCompletedAmendmentArchive(kind: "answer" | "snapshot") {
   using source = openInstance();
-  await using fixture = await backupAmendmentFixture(source);
+  await using fixture = await backupAmendmentFixture(source, kind);
   const {
     app,
     world,
@@ -653,11 +686,18 @@ it("教师草稿答案勘误的两个跨库组合均不可下载或恢复，同�
     attemptId,
     questionId,
     corrected,
+    stemMd,
     download,
     readDraft,
     successfulDownload,
   } = fixture;
-  expect(await readDraft(app)).toMatchObject({
+  const original = await readDraft(app);
+  const changed = {
+    studentAnswer: kind === "answer" ? corrected : null,
+    stemMd: kind === "snapshot" ? stemMd : original.stemMd,
+    answerRevision: 1,
+  };
+  expect(original).toMatchObject({
     studentAnswer: null,
     answerRevision: 0,
   });
@@ -673,11 +713,8 @@ it("教师草稿答案勘误的两个跨库组合均不可下载或恢复，同�
     teacherAttemptDetailOkSchema
       .parse(await reviewed.json())
       .data.questions.find((item) => item.questionId === questionId),
-  ).toMatchObject({ answer: corrected, changeCount: 0 });
-  expect(await readDraft(app)).toMatchObject({
-    studentAnswer: corrected,
-    answerRevision: 1,
-  });
+  ).toMatchObject({ answer: changed.studentAnswer, changeCount: 0 });
+  expect(await readDraft(app)).toEqual(changed);
   const late = await successfulDownload();
   const statuses = [];
   for (const [host, inner, revision] of [
@@ -691,10 +728,12 @@ it("教师草稿答案勘误的两个跨库组合均不可下载或恢复，同�
       writeFileSync(join(dataDir, kernelName), kernel);
     });
     const mixedDraft = mixed.app(operator);
-    expect(await readDraft(mixedDraft)).toMatchObject({
-      studentAnswer: revision === 1 ? corrected : null,
-      answerRevision: revision,
-    });
+    if (kind === "answer") {
+      expect(await readDraft(mixedDraft)).toMatchObject({
+        studentAnswer: revision === 1 ? corrected : null,
+        answerRevision: revision,
+      });
+    }
     const invalidDownload = await download(mixedDraft);
     await invalidDownload.arrayBuffer();
     const archive = new Map(host).set(kernelName, kernel);
@@ -724,6 +763,7 @@ it("教师草稿答案勘误的两个跨库组合均不可下载或恢复，同�
     );
     const body = (await invalidRestore.json()) as { error?: string };
     const preservedDraft = await readDraft(targetApp);
+    expect(preservedDraft).toEqual(changed);
     statuses.push([
       invalidDownload.status,
       invalidRestore.status,
@@ -738,23 +778,23 @@ it("教师草稿答案勘误的两个跨库组合均不可下载或恢复，同�
   expect((await restore(admin, world.teacher, await rezip(early))).status).toBe(
     200,
   );
-  expect(await readDraft(app)).toMatchObject({
-    studentAnswer: null,
-    answerRevision: 0,
-  });
+  expect(await readDraft(app)).toEqual(original);
   expect((await restore(admin, world.teacher, await rezip(late))).status).toBe(
     200,
   );
-  expect(await readDraft(app)).toMatchObject({
-    studentAnswer: corrected,
-    answerRevision: 1,
-  });
-});
+  expect(await readDraft(app)).toEqual(changed);
+}
 
-it("同一教师草稿勘误在内核写入前后待投影的两份归档均恢复原操作", async () => {
+it.each(["answer", "snapshot"] as const)(
+  "%s 同一教师草稿勘误在内核写入前后待投影的两份归档均恢复原操作",
+  verifyPendingAmendmentArchive,
+);
+
+async function verifyPendingAmendmentArchive(kind: "answer" | "snapshot") {
   using source = openInstance();
-  await using fixture = await backupAmendmentFixture(source);
-  const { world, attemptId, operator, successfulDownload } = fixture;
+  await using fixture = await backupAmendmentFixture(source, kind);
+  const { world, attemptId, operator, successfulDownload, kernelAuditTable } =
+    fixture;
   const product = source.handle.db.$client;
   const pending = (db: Database.Database) =>
     db
@@ -765,7 +805,7 @@ it("同一教师草稿勘误在内核写入前后待投影的两份归档均恢�
   const audit = (db: Database.Database) =>
     db
       .prepare(
-        "SELECT id, answer_revision FROM response_edit_audits ORDER BY id",
+        "SELECT id, kind, answer_revision FROM response_edit_audits ORDER BY id",
       )
       .all();
   const kernel = new Database(join(source.dataDir, kernelName), {
@@ -773,10 +813,10 @@ it("同一教师草稿勘误在内核写入前后待投影的两份归档均恢�
   });
   try {
     kernel.exec(`
-      CREATE TRIGGER interrupt_backup_before_kernel_amendment
-      BEFORE INSERT ON choice_draft_amendments
-      BEGIN SELECT RAISE(ABORT, 'synthetic interrupted amendment'); END
-    `);
+    CREATE TRIGGER interrupt_backup_before_kernel_amendment
+    BEFORE INSERT ON ${kernelAuditTable}
+    BEGIN SELECT RAISE(ABORT, 'synthetic interrupted amendment'); END
+  `);
     expect((await fixture.amend()).isError).toBe(true);
     kernel.exec("DROP TRIGGER interrupt_backup_before_kernel_amendment");
   } finally {
@@ -784,14 +824,19 @@ it("同一教师草稿勘误在内核写入前后待投影的两份归档均恢�
   }
   const ticket = pending(product);
   expect(ticket).toEqual({ operation_id: expect.any(String) });
+  if (kind === "answer") {
+    product.exec(
+      "UPDATE kernel_choice_amendments SET intent_json=json_remove(intent_json, '$.kind')",
+    );
+  }
   const before = await successfulDownload();
   expect(pending(product)).toEqual(ticket);
   expect(audit(product)).toEqual([]);
   product.exec(`
-    CREATE TEMP TRIGGER interrupt_backup_amendment_audit
-    BEFORE INSERT ON response_edit_audits
-    BEGIN SELECT RAISE(ABORT, 'synthetic interrupted amendment projection'); END
-  `);
+  CREATE TEMP TRIGGER interrupt_backup_amendment_audit
+  BEFORE INSERT ON response_edit_audits
+  BEGIN SELECT RAISE(ABORT, 'synthetic interrupted amendment projection'); END
+`);
   try {
     expect((await fixture.amend()).isError).toBe(true);
   } finally {
@@ -814,7 +859,7 @@ it("同一教师草稿勘误在内核写入前后待投影的两份归档均恢�
       expect(audit(hostCopy)).toEqual([]);
       expect(
         kernelCopy
-          .prepare("SELECT COUNT(*) AS count FROM choice_draft_amendments")
+          .prepare(`SELECT COUNT(*) AS count FROM ${kernelAuditTable}`)
           .get(),
       ).toEqual({ count: expectedKernelAudits });
     } finally {
@@ -835,16 +880,49 @@ it("同一教师草稿勘误在内核写入前后待投影的两份归档均恢�
     );
     expect(installed.status, await installed.clone().text()).toBe(200);
     expect(pending(target.handle.db.$client)).toEqual(ticket);
+    if (kind === "snapshot") {
+      expect(await fixture.readDraft(targetApp)).toMatchObject({
+        stemMd: fixture.stemMd,
+        answerRevision: 1,
+      });
+      const draft = attemptDraftOkSchema.parse(
+        await (
+          await readAttempt(targetApp, attemptId, world.ownerCookie)
+        ).json(),
+      ).data;
+      const question = draft.units
+        .flatMap(({ questions }) => questions)
+        .find(({ id }) => id === fixture.questionId);
+      if (!question) throw new Error("恢复后缺冻结题");
+      const saved = await targetApp.request(
+        `/api/student/attempts/${attemptId}/answers/${fixture.questionId}`,
+        {
+          method: "PUT",
+          headers: {
+            cookie: world.ownerCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            answer: fixture.corrected,
+            baseRevision: 1,
+            mutationId: randomUUID(),
+            expectedFrozenAt: draft.attempt.frozenAt,
+            questionRevisionId: question.questionRevisionId,
+          }),
+        },
+      );
+      expect(saved.status, await saved.text()).toBe(200);
+    }
     const result = await readResult(
       await submitAttemptRequest(targetApp, world.ownerCookie, attemptId),
     );
     expect(result.attempt.scoreAuto).toBe(50);
     expect(pending(target.handle.db.$client)).toBeUndefined();
     expect(audit(target.handle.db.$client)).toEqual([
-      { id: ticket?.operation_id, answer_revision: 1 },
+      { id: ticket?.operation_id, kind, answer_revision: 1 },
     ]);
   }
-});
+}
 
 it("开卷意图在内核未开卷和内核已开待绑定两种截面均可备份恢复", async () => {
   using source = openInstance();

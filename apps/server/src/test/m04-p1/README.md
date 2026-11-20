@@ -187,6 +187,19 @@ K13 固定包来自内核修订 `3e48ce73cd322323cecbc7242cba8090d9aa2fb5`，SHA
 
 K13 复验了表中的四份合成下载 ZIP，以及用 K8 和 K9 固定包、既有合成双库截面组装的两份历史归档。K12 的样本包含教师勘误后学生又改答的修订 2，恢复时保留这一修订和教师审计，学生可继续保存到修订 3。
 
+### P6 教师单题题面勘误
+
+```powershell
+pnpm exec vitest run apps/server/src/routes/kernel-teacher-draft-amendment.test.ts apps/server/src/routes/teacher-backup-kernel.test.ts --maxWorkers=1
+node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/test/m04-p1/teacher-choice-snapshot-restart-probe.mjs
+```
+
+教师 `update_response_snapshot` 在 K13 确认后投影该次作答的题面、选项、评分键、题版本和修订。空答公开新修订，其他题及同作业的其他学生仍使用原实例版本。目标已有正文、笔迹、提示或作答时拒绝。本题原稿与其他题的作答保持各自原有归属。提交继续核对冻结题和内核判分依据。
+
+答案和题面共用一个宿主持久票据位置。题面按票据的原操作和当前权限调用内核。教师撤权后，宿主内部仅允许精确恢复内核已接受的操作。内核先匹配原操作回执，随后才检查新写的证据门。内部恢复将此门固定为有证据，尚未接受的票据按拒绝释放，已接受的改题投影后由获准学生正常读取。教师工具交付仍检查该教师的当前权限。
+
+跨进程探针用另一进程在教师票据暂存后写入同题原稿，验证教师收到 `RESPONSE_EVIDENCE_EXISTS`、原稿仍能读取、两库零新增教师审计。另在内核接受后中断宿主审计，重启后教师逐题 SDK 的首次读取按原操作修复投影，学生可用新修订按新键完成一次确认。配对归档分别覆盖答案和题面两向错配及内核写入前后同一待处理意图的恢复，历史无 kind 的答案票据仍可重放。
+
 ### P4 教师批改工作台跨进程恢复
 
 ```powershell

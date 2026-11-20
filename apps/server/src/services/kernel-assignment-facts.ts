@@ -52,6 +52,19 @@ export function kernelDraftRowsOf(
         ] as const,
     ),
   );
+  for (const revision of ("choiceSnapshotRevisions" in activity
+    ? activity.choiceSnapshotRevisions
+    : undefined) ?? []) {
+    const row = rows.get(revision.questionId);
+    if (
+      revision.slotId !== "answers" ||
+      row === undefined ||
+      row.questionVersion !== revision.questionVersion ||
+      row.answerRevision !== 0
+    )
+      kernelAttemptUnavailable();
+    rows.set(row.questionId, { ...row, answerRevision: revision.revision });
+  }
   for (const draft of ("choiceDrafts" in activity
     ? activity.choiceDrafts
     : undefined) ?? []) {
@@ -61,6 +74,8 @@ export function kernelDraftRowsOf(
       draft.slotId !== "answers" ||
       row === undefined ||
       row.questionVersion !== draft.questionVersion ||
+      row.answerJson !== null ||
+      draft.revision <= row.answerRevision ||
       snapshotOfRow(row)?.options?.[answer.index] === undefined
     )
       kernelAttemptUnavailable();

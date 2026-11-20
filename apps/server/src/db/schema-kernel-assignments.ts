@@ -1,4 +1,5 @@
 import type { AttemptSubmitRequest } from "@tutor/contract";
+import type { ChoiceAmendmentIntent } from "@tutor/contract/choice-amendment-intent";
 import {
   foreignKey,
   integer,
@@ -9,7 +10,6 @@ import {
 } from "drizzle-orm/sqlite-core";
 import type { PublicationInput } from "learning-kernel";
 import type { KernelOpeningDraft } from "../services/kernel-assignment-input.ts";
-import type { ChoiceAmendmentIntent } from "../services/kernel-choice-amendment-intent.ts";
 import {
   assignments,
   attempts,

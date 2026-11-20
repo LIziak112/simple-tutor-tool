@@ -1,43 +1,44 @@
 import { randomUUID } from "node:crypto";
 import {
   choiceStudentAnswerSchema,
+  type Question,
+  singleChoiceScoringSourceSchema,
   type TeacherResponseEdit,
 } from "@tutor/contract";
+import { choiceAmendmentIntentSchema } from "@tutor/contract/choice-amendment-intent";
+import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq, isNull } from "drizzle-orm";
-import { ChoiceDraftConflict, LearningError } from "learning-kernel";
+import {
+  ChoiceDraftConflict,
+  ChoiceSnapshotRevisionConflict,
+  LearningError,
+} from "learning-kernel";
 import type { Db } from "../db/client.ts";
-import {
-  type Attempt,
-  responseEditAudits,
-  responses,
-  teachers,
-} from "../db/schema.ts";
-import {
-  kernelAttemptBindings,
-  kernelChoiceAmendments,
-} from "../db/schema-kernel-assignments.ts";
+import { attempts, responseEditAudits, responses } from "../db/schema.ts";
+import { kernelChoiceAmendments } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { buildAttemptQuestionWhere } from "./attempt-access.ts";
 import { assertFrozenAnswerShape } from "./attempt-question-projection.ts";
-import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
-  type KernelRuntime,
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
-  withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
-import { choiceAmendmentIntentSchema } from "./kernel-choice-amendment-intent.ts";
-import { snapshotOfRow } from "./snapshot.ts";
+import {
+  isCurrentChoiceReviewer,
+  kernelChoiceAmendmentScope,
+  withChoiceAmendmentReviewer,
+} from "./kernel-choice-amendment-scope.ts";
 import {
   editTeacherDraftResponse,
   findTeacherAttempt,
   requireTeacherAttempt,
 } from "./teacher-attempt-service.ts";
+import {
+  assertTeacherDraftSnapshot,
+  responseEvidenceExists,
+} from "./teacher-response-snapshot.ts";
 
-type Edit = Extract<TeacherResponseEdit, { answer: unknown }>;
 type Ticket = typeof kernelChoiceAmendments.$inferSelect;
-type Scope = ReturnType<typeof scopeOf>;
 
 function notInProgress() {
   return new HttpError(
@@ -55,11 +56,40 @@ function revisionConflict() {
   );
 }
 
+function amendmentForbidden() {
+  return new HttpError(403, "FORBIDDEN", "当前教师无权修改这份作答");
+}
+
 function knownRejection(error: unknown) {
-  if (error instanceof ChoiceDraftConflict) return revisionConflict();
-  if (error instanceof LearningError && error.code === "ALREADY_SUBMITTED")
-    return notInProgress();
+  if (
+    error instanceof ChoiceDraftConflict ||
+    error instanceof ChoiceSnapshotRevisionConflict
+  )
+    return revisionConflict();
+  if (error instanceof LearningError) {
+    if (error.code === "ALREADY_SUBMITTED") return notInProgress();
+    if (error.code === "RESPONSE_EVIDENCE_EXISTS")
+      return responseEvidenceExists();
+  }
   return undefined;
+}
+
+function kernelSnapshotContent(snapshot: Question) {
+  const scoring = singleChoiceScoringSourceSchema.safeParse(snapshot);
+  if (!scoring.success || snapshot.hints?.length) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "内核题面勘误须保留无提示的整卷单选评分",
+    );
+  }
+  return {
+    prompt: studentStemMd(snapshot),
+    options: Object.fromEntries(
+      scoring.data.options.map(({ text }, index) => [String(index), text]),
+    ),
+    acceptedChoice: String(scoring.data.answers.index),
+  };
 }
 
 function ticketFor(db: Db, attemptId: string) {
@@ -70,88 +100,18 @@ function ticketFor(db: Db, attemptId: string) {
     .get();
 }
 
-function scopeOf(db: Db, attempt: Attempt, questionId: string) {
-  requireNoPendingKernelRefreeze(db, attempt);
-  const binding = db
-    .select()
-    .from(kernelAttemptBindings)
-    .where(eq(kernelAttemptBindings.attemptId, attempt.id))
-    .get();
-  if (binding === undefined || binding.assignmentId !== attempt.assignmentId)
-    kernelAttemptUnavailable();
-
-  const row = db
-    .select()
-    .from(responses)
-    .where(buildAttemptQuestionWhere(attempt.id, questionId))
-    .get();
-  const snapshot = row === undefined ? null : snapshotOfRow(row);
-  if (row === undefined || snapshot === null)
-    throw new HttpError(404, "QUESTION_NOT_FOUND", "找不到该练习的冻结题目");
-
-  return {
-    row,
-    snapshot,
-    binding,
-    capability: {
-      protocolVersion: 1 as const,
-      stepAttemptId: binding.stepAttemptId,
-      slotId: "answers",
-      questionId,
-      questionVersion: row.questionVersion,
-    },
-  };
-}
-
-function withReviewer<T>(
+function stage(
   db: Db,
   dataDir: string,
   teacherId: string,
-  attempt: Attempt,
-  scope: Scope,
-  action: "read" | "amend",
-  run: (
-    runtime: KernelRuntime,
-    reviewer: { role: "reviewer"; id: string },
-  ) => T,
+  edit: TeacherResponseEdit,
 ) {
-  return withKernelRuntime(
-    db,
-    dataDir,
-    false,
-    (runtime) => run(runtime, { role: "reviewer", id: teacherId }),
-    {
-      authorizeChoiceDraftAmendment(request) {
-        const { capability } = scope;
-        return (
-          request.action === action &&
-          request.reviewerId === teacherId &&
-          request.studentId === attempt.studentId &&
-          request.activityId === attempt.id &&
-          request.stepAttemptId === capability.stepAttemptId &&
-          request.slotId === capability.slotId &&
-          request.questionId === capability.questionId &&
-          request.questionVersion === capability.questionVersion &&
-          findTeacherAttempt(db, teacherId, attempt.id)?.attempt.studentId ===
-            attempt.studentId &&
-          db
-            .select({ id: teachers.id })
-            .from(teachers)
-            .where(and(eq(teachers.id, teacherId), isNull(teachers.disabledAt)))
-            .get() !== undefined
-        );
-      },
-    },
-  );
-}
-
-function stage(db: Db, dataDir: string, teacherId: string, edit: Edit) {
   return db.$client
     .transaction(() => {
       const { attempt } = requireTeacherAttempt(db, teacherId, edit.attemptId);
       if (attempt.status !== "draft" || attempt.abandonedAt !== null)
         throw notInProgress();
-      const scope = scopeOf(db, attempt, edit.questionId);
+      const scope = kernelChoiceAmendmentScope(db, attempt, edit.questionId);
       const { row, capability, binding } = scope;
       if (row.submittedAt !== null)
         throw new HttpError(
@@ -161,13 +121,13 @@ function stage(db: Db, dataDir: string, teacherId: string, edit: Edit) {
         );
       if (ticketFor(db, attempt.id) !== undefined) kernelAttemptUnavailable();
 
-      return withReviewer(
+      return withChoiceAmendmentReviewer(
         db,
         dataDir,
         teacherId,
         attempt,
         scope,
-        "read",
+        { action: "read" },
         (runtime, reviewer) => {
           const current = (() => {
             try {
@@ -182,26 +142,41 @@ function stage(db: Db, dataDir: string, teacherId: string, edit: Edit) {
           })();
           if (current.revision !== edit.expectedAnswerRevision)
             throw revisionConflict();
-          assertFrozenAnswerShape(db, row, scope.snapshot, edit.answer);
-          const checked = choiceStudentAnswerSchema.safeParse(edit.answer);
-          if (!checked.success)
-            throw new HttpError(400, "VALIDATION_ERROR", "本题需要单选答案");
+          const fields = (() => {
+            if ("snapshot" in edit) {
+              assertTeacherDraftSnapshot(row, scope.snapshot, edit.snapshot);
+              kernelSnapshotContent(edit.snapshot);
+              return {
+                kind: "snapshot",
+                snapshot: edit.snapshot,
+                prior: row.questionSnapshotJson,
+              };
+            }
+            assertFrozenAnswerShape(db, row, scope.snapshot, edit.answer);
+            const checked = choiceStudentAnswerSchema.safeParse(edit.answer);
+            if (!checked.success)
+              throw new HttpError(400, "VALIDATION_ERROR", "本题需要单选答案");
+            return {
+              kind: "answer",
+              answer: checked.data,
+              prior:
+                current.choice === null
+                  ? null
+                  : ownClassChoiceAnswerOf(current.choice),
+            };
+          })();
           const ticket: Ticket = {
             attemptId: attempt.id,
             operationId: randomUUID(),
             responseId: row.id,
             teacherId,
             intent: choiceAmendmentIntentSchema.parse({
+              ...fields,
               stepAttemptId: capability.stepAttemptId,
               practiceVersion: binding.practiceVersion,
               questionId: capability.questionId,
               questionVersion: capability.questionVersion,
               baseRevision: current.revision,
-              answer: checked.data,
-              prior:
-                current.choice === null
-                  ? null
-                  : ownClassChoiceAnswerOf(current.choice),
               reason: edit.reason,
               createdAt: new Date().toISOString(),
             }),
@@ -217,58 +192,105 @@ function stage(db: Db, dataDir: string, teacherId: string, edit: Edit) {
 function apply(db: Db, dataDir: string, ticket: Ticket) {
   const { attemptId, teacherId, responseId, operationId } = ticket;
   const intent = choiceAmendmentIntentSchema.parse(ticket.intent);
-  const { attempt } =
-    findTeacherAttempt(db, teacherId, attemptId) ?? kernelAttemptUnavailable();
-  if (attempt.abandonedAt !== null) kernelAttemptUnavailable();
-  const scope = scopeOf(db, attempt, intent.questionId);
-  const { capability, binding } = scope;
+  const attempt =
+    intent.kind === "snapshot"
+      ? db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+      : findTeacherAttempt(db, teacherId, attemptId)?.attempt;
+  if (attempt === undefined || attempt.abandonedAt !== null)
+    kernelAttemptUnavailable();
+  const acceptedOnly =
+    intent.kind === "snapshot" &&
+    !isCurrentChoiceReviewer(db, teacherId, attempt);
+  const scope = kernelChoiceAmendmentScope(db, attempt, intent.questionId);
+  const { capability, binding, row } = scope;
   if (
     scope.row.id !== responseId ||
     capability.stepAttemptId !== intent.stepAttemptId ||
     capability.questionVersion !== intent.questionVersion ||
-    binding.practiceVersion !== intent.practiceVersion
+    binding.practiceVersion !== intent.practiceVersion ||
+    (intent.kind === "snapshot" && row.questionSnapshotJson !== intent.prior)
   )
     kernelAttemptUnavailable();
 
-  return withReviewer(
+  return withChoiceAmendmentReviewer(
     db,
     dataDir,
     teacherId,
     attempt,
     scope,
-    "amend",
+    intent.kind === "snapshot"
+      ? {
+          action: "snapshot",
+          operationId,
+          baseRevision: intent.baseRevision,
+          acceptedOnly,
+        }
+      : { action: "amend" },
     (runtime, reviewer) => {
       try {
-        const receipt = runtime.amendChoiceDraft(reviewer, attemptId, {
+        const command = {
           ...capability,
-          choice: String(intent.answer.index),
           operationId,
           baseRevision: intent.baseRevision,
           reason: intent.reason,
-        });
-        if (
-          receipt.revision !== intent.baseRevision + 1 ||
-          receipt.choice !== String(intent.answer.index)
-        )
-          kernelAttemptUnavailable();
+        };
+        const revision = intent.baseRevision + 1;
+        let previousJson: string | null;
+        if (intent.kind === "snapshot") {
+          const receipt = runtime.reviseChoiceSnapshot(reviewer, attemptId, {
+            ...command,
+            ...kernelSnapshotContent(intent.snapshot),
+          });
+          if (
+            receipt.revision !== revision ||
+            receipt.previousQuestionVersion !== intent.questionVersion ||
+            receipt.questionVersion !== intent.questionVersion + 1
+          )
+            kernelAttemptUnavailable();
+          const updated = db
+            .update(responses)
+            .set({
+              questionSnapshotJson: JSON.stringify(intent.snapshot),
+              questionVersion: receipt.questionVersion,
+              answerRevision: receipt.revision,
+              answerMutationId: operationId,
+            })
+            .where(
+              and(eq(responses.id, responseId), isNull(responses.submittedAt)),
+            )
+            .run();
+          if (updated.changes !== 1) kernelAttemptUnavailable();
+          previousJson = intent.prior;
+        } else {
+          const choice = String(intent.answer.index);
+          const receipt = runtime.amendChoiceDraft(reviewer, attemptId, {
+            ...command,
+            choice,
+          });
+          if (receipt.revision !== revision || receipt.choice !== choice)
+            kernelAttemptUnavailable();
+          previousJson =
+            intent.prior === null ? null : JSON.stringify(intent.prior);
+        }
         db.insert(responseEditAudits)
           .values({
             id: operationId,
             responseId,
             teacherId,
-            kind: "answer",
-            previousJson:
-              intent.prior === null ? null : JSON.stringify(intent.prior),
+            kind: intent.kind,
+            previousJson,
             reason: intent.reason,
-            answerRevision: receipt.revision,
+            answerRevision: revision,
             createdAt: intent.createdAt,
           })
           .run();
-        return { answerRevision: receipt.revision };
+        return acceptedOnly
+          ? { denied: amendmentForbidden() }
+          : { answerRevision: revision };
       } catch (error) {
         const denied = knownRejection(error);
         if (denied === undefined) throw error;
-        return { denied };
+        return { denied: acceptedOnly ? amendmentForbidden() : denied };
       }
     },
   );
@@ -299,13 +321,25 @@ export function recoverKernelChoiceAmendment(
     .immediate();
 }
 
-export function editTeacherDraftAnswer(
+export function recoverKernelChoiceSnapshot(
+  db: Db,
+  dataDir: string,
+  attemptId: string,
+) {
+  const ticket = ticketFor(db, attemptId);
+  if (ticket?.intent.kind === "snapshot")
+    recoverKernelChoiceAmendment(db, dataDir, attemptId, ticket.operationId);
+}
+
+export function editTeacherKernelDraft(
   db: Db,
   dataDir: string,
   teacherId: string,
-  edit: Edit,
+  edit: TeacherResponseEdit,
 ) {
   const { attempt } = requireTeacherAttempt(db, teacherId, edit.attemptId);
+  if (!isCurrentChoiceReviewer(db, teacherId, attempt))
+    throw amendmentForbidden();
   if (!isKernelAttempt(db, attempt))
     return editTeacherDraftResponse(db, teacherId, edit);
   recoverKernelChoiceAmendment(db, dataDir, attempt.id);
@@ -325,7 +359,8 @@ export function editTeacherDraftAnswer(
       .where(eq(responseEditAudits.id, ticket.operationId))
       .get()?.revision;
   if (answerRevision === undefined) throw revisionConflict();
-  requireTeacherAttempt(db, teacherId, edit.attemptId);
+  if (!isCurrentChoiceReviewer(db, teacherId, attempt))
+    throw amendmentForbidden();
   return {
     success: true,
     attemptId: edit.attemptId,

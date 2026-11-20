@@ -45,7 +45,10 @@ import {
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 
-import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
+import {
+  recoverKernelChoiceAmendment,
+  recoverKernelChoiceSnapshot,
+} from "./kernel-choice-amendments.ts";
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type OriginalQuestion = ChoiceConfirmationInput["questions"][number];
@@ -160,6 +163,7 @@ function stage(
     .transaction(() => {
       const attempt = requireUsableAttempt(db, studentId, attemptId);
       if (attempt.status !== "draft") alreadySubmitted();
+      recoverKernelChoiceSnapshot(db, dataDir, attempt.id);
       return withBoundKernelActivity(
         db,
         dataDir,
@@ -269,6 +273,7 @@ function confirm(
       if (attempt.status !== "draft") alreadySubmitted();
       const current = kernelConfirmationTicketFor(db, ticket.attemptId);
       if (current?.operationId !== ticket.operationId) return undefined;
+      recoverKernelChoiceSnapshot(db, dataDir, attempt.id);
       return withTicket(
         db,
         dataDir,
