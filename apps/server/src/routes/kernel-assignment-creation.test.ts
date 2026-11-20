@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { AssignmentCreateRequest } from "@tutor/contract";
 import pino from "pino";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
@@ -15,6 +15,7 @@ import type { TestApp } from "../test/note-fixtures.ts";
 
 const openedDatabases: Db[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const db of openedDatabases.splice(0)) db.$client.close();
 });
 async function fixture() {
@@ -154,8 +155,12 @@ describe("P2 建作业时固定执行路由", () => {
   });
 
   it("不合资格的分建批次与创建回执一起回滚", async () => {
+    vi.stubEnv("NEW_CONTENT_ENABLED", "true");
     const env = await fixture();
-    const path = new URL("../../../../samples/v2/练习样例.md", import.meta.url);
+    const path = new URL(
+      "../../../../samples/qm/valid-05-固定项排序.md",
+      import.meta.url,
+    );
     const unitId = await env.importUnit(readFileSync(path, "utf8"));
     const operationId = randomUUID();
     const response = await env.assign(env.mount(true), {

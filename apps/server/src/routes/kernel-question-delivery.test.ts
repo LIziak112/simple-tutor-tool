@@ -10,9 +10,11 @@ import {
   BACKUP_KERNEL_DATABASE,
   BACKUP_KERNEL_MANIFEST,
   backupKernelManifestSchema,
+  hintOpenOkSchema,
   importCommitDataSchema,
   lessonStartOkSchema,
   pendingMarkListDataSchema,
+  studentPaperOkSchema,
   studentRecordsOkSchema,
   teacherAttemptDetailOkSchema,
   teacherInfoOkSchema,
@@ -319,6 +321,181 @@ it("混合普通作业只有一份权威整卷确认，公布前隐藏键并保�
         )
       ).status,
     ).toBe(409);
+  } finally {
+    instance.close();
+  }
+});
+
+it("普通整卷只下发已解锁提示，迟到交付不改变封存活动", async () => {
+  using data = mkdtempDisposableSync(join(tmpdir(), "m05-hint-host-"));
+  const instance = openInstance(data.path);
+  try {
+    const app = instance.open(false);
+    const world = await setupAssignment(app);
+    const questionId = "m05-two-hints";
+    const stem = "指出计算错误。";
+    const first = "先检查乘法。";
+    const second = "再检查符号。";
+    const {
+      units: [unit],
+    } = await importQuestions(app, world.teacher, undefined, [
+      `::::question{id=${questionId} type=find-error}`,
+      stem,
+      ":::hint",
+      first,
+      ":::",
+      ":::hint",
+      second,
+      ":::",
+      ":::answer",
+      "改正第一步。",
+      ":::",
+      "::::",
+    ]);
+    if (!unit) throw new Error("未导入带提示题");
+    const assignment = await assignKernelFixture(app, {
+      ...world,
+      unitId: unit.id,
+    });
+    const opened = await postAssignment(app, assignment, world.ownerCookie);
+    expect(opened.status, await opened.clone().text()).toBe(200);
+    const attempt = attemptStartOkSchema.parse(await opened.json()).data;
+    const path = `/api/student/attempts/${attempt.id}`;
+    const owner = world.ownerCookie;
+    const requestHint = (index: number) =>
+      jsonCall(app, `${path}/hints`, owner, "POST", {
+        questionId,
+        index,
+        expectedFrozenAt: attempt.frozenAt,
+      });
+    const readWithoutHints = async (suffix: string, locks: string[]) => {
+      const response = await jsonCall(app, path + suffix, owner);
+      const raw = await response.text();
+      expect(response.status, raw).toBe(200);
+      for (const locked of locks) expect(raw).not.toContain(locked);
+      return JSON.parse(raw) as unknown;
+    };
+    const paper = studentPaperOkSchema.parse(
+      await readWithoutHints("/paper", [first, second]),
+    ).data;
+    const [question] = paper.units.flatMap(({ questions }) => questions);
+    expect(question).toMatchObject({ id: questionId, hintCount: 2 });
+    const questionRevisionId = question?.questionRevisionId;
+    expect(questionRevisionId).toEqual(expect.any(String));
+    expect(
+      attemptDraftOkSchema.parse(await readWithoutHints("", [first, second]))
+        .data.hintsOpened,
+    ).toEqual({});
+    const readActivity = () => {
+      const runtime = openLearningRuntime({
+        databasePath: join(data.path, BACKUP_KERNEL_DATABASE),
+      });
+      try {
+        return runtime.read(
+          { role: "student", id: world.studentId },
+          attempt.id,
+        );
+      } finally {
+        runtime.close();
+      }
+    };
+    const activity = readActivity();
+    if (!("questionDeliveries" in activity))
+      throw new Error("应走 K18 整卷交付");
+    expect(activity.inputs.questions).toMatchObject({
+      from: "questions",
+      questions: [{ id: questionId, prompt: stem }],
+    });
+    expect(JSON.stringify(activity)).not.toContain(first);
+    expect(JSON.stringify(activity)).not.toContain(second);
+
+    const hint = await requestHint(1);
+    const hintRaw = await hint.text();
+    expect(hint.status, hintRaw).toBe(200);
+    expect(hintRaw).not.toContain(first);
+    expect(hintOpenOkSchema.parse(JSON.parse(hintRaw)).data).toEqual({
+      questionId,
+      index: 1,
+      hint: second,
+      hintCount: 2,
+      hintsUsed: 1,
+      hintsRemaining: 1,
+    });
+    expect(
+      attemptDraftOkSchema.parse(await readWithoutHints("", [first])).data
+        .hintsOpened,
+    ).toEqual({ [questionId]: [{ index: 1, text: second }] });
+
+    const submitted = await jsonCall(app, `${path}/submit`, owner, "POST", {
+      revisions: [
+        {
+          questionId,
+          questionRevisionId,
+          expectedAnswerRevision: 0,
+        },
+      ],
+      evidence: [{ questionId, state: "none" }],
+    });
+    const submittedBody = await submitted.text();
+    expect(submitted.status, submittedBody).toBe(200);
+    expect(submittedBody).not.toContain(first);
+    const result = attemptResultOkSchema.parse(JSON.parse(submittedBody)).data;
+    expect(
+      result.units.flatMap(({ questions }) => questions)[0]?.hintsOpened,
+    ).toEqual([{ index: 1, text: second }]);
+    const sealed = readActivity();
+    expect(sealed).toMatchObject({
+      status: "completed",
+      questionDeliveries: [{ receipt: { id: expect.any(String) } }],
+    });
+    const sql = instance.db().$client;
+    const activityTimes = () =>
+      sql
+        .prepare(
+          "SELECT status, activated_at, last_activity_at, submitted_at FROM attempts WHERE id=?",
+        )
+        .get(attempt.id);
+    const timesBefore = activityTimes();
+    const activityLedger = () =>
+      sql
+        .prepare("SELECT * FROM response_time_ledger WHERE attempt_id=?")
+        .all(attempt.id);
+    const settlements = () =>
+      sql
+        .prepare("SELECT * FROM attempt_settlements WHERE attempt_id=?")
+        .all(attempt.id);
+    const ledgerBefore = activityLedger();
+    expect(ledgerBefore).toHaveLength(1);
+    const settlementsBefore = settlements();
+    expect(settlementsBefore).toMatchObject([{ kind: "final" }]);
+    const lateHint = await requestHint(0);
+    expect(lateHint.status, await lateHint.clone().text()).toBe(200);
+    expect(hintOpenOkSchema.parse(await lateHint.json()).data).toMatchObject({
+      hint: first,
+      hintsUsed: 2,
+      hintsRemaining: 0,
+    });
+    const lateAnswer = await jsonCall(
+      app,
+      `${path}/answers/${questionId}`,
+      owner,
+      "PUT",
+      {
+        questionRevisionId,
+        expectedFrozenAt: attempt.frozenAt,
+        baseRevision: 0,
+        mutationId: randomUUID(),
+        answer: { kind: "final", finalAnswer: "迟到答案" },
+      },
+    );
+    expect(lateAnswer.status, await lateAnswer.clone().text()).toBe(409);
+    expect(await lateAnswer.json()).toMatchObject({
+      error: "ALREADY_SUBMITTED",
+    });
+    expect(activityTimes()).toEqual(timesBefore);
+    expect(readActivity()).toEqual(sealed);
+    expect(activityLedger()).toEqual(ledgerBefore);
+    expect(settlements()).toEqual(settlementsBefore);
   } finally {
     instance.close();
   }

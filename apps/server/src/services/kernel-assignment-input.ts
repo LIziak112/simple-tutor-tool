@@ -83,7 +83,7 @@ function ineligible(): never {
   throw new HttpError(
     422,
     "M04_PRACTICE_INELIGIBLE",
-    "内核作业须使用已支持的题型与参考答案，混合整卷暂不支持提示、材料和题组",
+    "内核作业须使用已支持的题型与参考答案，混合整卷暂不支持材料和题组",
   );
 }
 
@@ -120,7 +120,6 @@ export function loadKernelAssignmentQuestions(
   const selfReview = studentSelfReviewEnabledOf(db, teacherId);
   const responses = liveRows.map((row) => {
     const question = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
-    if (question.hints?.length) ineligible();
     return {
       question,
       questionVersion: row.version,
