@@ -57,11 +57,12 @@ const password = "teacher-pass-8";
 const dbName = "tutor.db";
 const kernelName = "learning-kernel.sqlite";
 
-it("K26 归档兼容精确匹配已知固定包", () => {
+it("K27 归档兼容精确匹配已知固定包", () => {
   expect(readLockedBackupArtifact().sha256).toBe(
-    "daeda182a5e2a423f636edb121027f9bddf978d8c37cd845d69d0a4c2b988cb2",
+    "20908afb18deb0f71a3a13e5904565c54946cac3b8643d29241c7ae6ea87e838",
   );
   for (const digest of [
+    "daeda182a5e2a423f636edb121027f9bddf978d8c37cd845d69d0a4c2b988cb2",
     "f7d7d26bde2d0173db6a7e6661bf61384bba56e2267b8fd351c26983a55c8826",
     "c87fecad78eff549a23f5424d91872e584b3cee1ee633b29ad0dd2c1422fce4f",
     "d24068a9ab2f533d1e2dd49d691ce0d177ba34271200b993fab821f1c8ecae78",
