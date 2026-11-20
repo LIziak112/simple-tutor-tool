@@ -31,6 +31,10 @@ import { runBackfills } from "../db/backfill.ts";
 import { createDbHandle } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import { readZipEntriesMap } from "../lib/zip-read.ts";
+import {
+  readLockedBackupArtifact,
+  supportsBackupArtifact,
+} from "../services/backup-kernel-artifact.ts";
 import { BACKUP_RESTORE_MARKER } from "../services/backup-process-guard.ts";
 import { zipToBackupBuffer } from "../test/backup-fixtures.ts";
 import {
@@ -52,6 +56,23 @@ import {
 const password = "teacher-pass-8";
 const dbName = "tutor.db";
 const kernelName = "learning-kernel.sqlite";
+
+it("K14 归档兼容精确匹配已验证的 K8–K13 包", () => {
+  expect(readLockedBackupArtifact().sha256).toBe(
+    "4576ef7bb755ef71e80deef3d5016a197415e72f26d8fd169bc5de269c32b00e",
+  );
+  for (const digest of [
+    "3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d",
+    "c78a36d1812d3e2d337177dbdb79d50af7c43cf9d0621ffd80f8be0b03d7ae73",
+    "922ec7f9091aea01506a725754830765a9c394edaf1753d680210b883d8b1413",
+    "1968b032742f9626b5d8270984965b39c27ea67541c36ec51a8e12ed9c40d5d5",
+    "7bc836b57ec9140d3ee898a489e03b414490c89de491690c981580548a87c1f3",
+    "baaea5f3ed29fd75f1bc06c3727a2ac311c0bebe6b6188619678cca994a5af07",
+  ]) {
+    expect(supportsBackupArtifact(digest), digest).toBe(true);
+  }
+  expect(supportsBackupArtifact("0".repeat(64))).toBe(false);
+});
 
 function openInstance(seed?: (dataDir: string) => void) {
   const data = mkdtempDisposableSync(join(tmpdir(), "ownclass-double-backup-"));

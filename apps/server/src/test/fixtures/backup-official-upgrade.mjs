@@ -330,7 +330,7 @@ assert.equal(downloaded.status, 200);
 assert.equal(downloaded.headers.get("content-type"), "application/zip");
 const current = Buffer.from(await downloaded.arrayBuffer());
 const exported = readArchive(current, expectedRuntime);
-assert.equal(exported.manifest.kernelSchemaVersion, 15);
+assert.equal(exported.manifest.kernelSchemaVersion, 16);
 
 using reopened = openTarget();
 const currentRestore = await restoreFresh(reopened, current, "当前运行时归档");
