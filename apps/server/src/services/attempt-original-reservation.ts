@@ -9,7 +9,10 @@ import {
   requireUsableAttempt,
 } from "./attempt-access.ts";
 import { buildSingleQuestionEvidence } from "./attempt-submit-evidence.ts";
-import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
+import {
+  lessonKernelBinding,
+  questionDeliveryBinding,
+} from "./kernel-question-delivery-binding.ts";
 import { readNoteVersionDoc } from "./note-service.ts";
 
 type Selection = { questionId: string; versionId: string; revision: number };
@@ -91,7 +94,9 @@ export function reserveSubmissionOriginals(
       if (originals.length === 0) return [];
       if (
         attempt.sourceType !== "assignment" &&
-        !lessonKernelBinding(db, attemptId)
+        !(attempt.sourceType === "course"
+          ? questionDeliveryBinding(db, attempt)?.course
+          : lessonKernelBinding(db, attemptId))
       )
         throw reservationConflict();
       if (attempt.status !== "draft") {

@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdtempDisposableSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempDisposableSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,6 +16,7 @@ import {
   BACKUP_KERNEL_DATABASE,
   BACKUP_KERNEL_MANIFEST,
   backupKernelManifestSchema,
+  noteHeadDataSchema,
   studentCourseDetailOkSchema,
   studentCourseListOkSchema,
   studentRecordsOkSchema,
@@ -30,8 +36,18 @@ import { runMigrations } from "../db/migrate.ts";
 import { readZipEntriesMap } from "../lib/zip-read.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { zipToBackupBuffer } from "../test/backup-fixtures.ts";
-import { setupAssignment } from "../test/m04-p1/product-fixture.ts";
-import { putNoteReceipt } from "../test/note-fixtures.ts";
+import {
+  loginAssignmentOwner,
+  setupAssignment,
+} from "../test/m04-p1/product-fixture.ts";
+import {
+  gzipJson,
+  makeNotePng,
+  noteDoc,
+  postNoteImage,
+  putNoteForm,
+  putNoteReceipt,
+} from "../test/note-fixtures.ts";
 
 const whole = { workflowVersion: 1, feedbackMode: "after_attempt" };
 
@@ -826,6 +842,59 @@ it("先前无绑定草稿继续宿主续作，教师允许选择时不分配内�
       ).status,
     ).toBe(503);
     expect(existsSync(join(data.path, BACKUP_KERNEL_DATABASE))).toBe(false);
+    sql
+      .prepare("DELETE FROM kernel_attempt_refreezes WHERE attempt_id=?")
+      .run(original.id);
+    const legacyPath = `/api/student/attempts/${original.id}`;
+    const legacyDraft = attemptDraftOkSchema.parse(
+      await (await request(live, world.ownerCookie, legacyPath)).json(),
+    ).data;
+    const questions = legacyDraft.units.flatMap((unit) => unit.questions);
+    const [question] = questions;
+    if (!question) throw new Error("缺少旧卷冻结题");
+    const note = await putNoteReceipt(
+      live,
+      world.ownerCookie,
+      original.id,
+      question.id,
+    );
+    const submitted = await request(
+      live,
+      world.ownerCookie,
+      `${legacyPath}/submit`,
+      "POST",
+      {
+        revisions: questions.map(({ id, questionRevisionId }) => ({
+          questionId: id,
+          questionRevisionId,
+          expectedAnswerRevision: 0,
+        })),
+        evidence: questions.map(({ id }) =>
+          id === question.id
+            ? {
+                questionId: id,
+                state: "frozen",
+                versionId: note.versionId,
+                revision: note.revision,
+              }
+            : { questionId: id, state: "none" },
+        ),
+      },
+    );
+    expect(submitted.status, await submitted.clone().text()).toBe(200);
+    expect(
+      sql
+        .prepare(
+          "SELECT state, version_id FROM submission_evidence WHERE attempt_id=? AND question_id=?",
+        )
+        .get(original.id, question.id),
+    ).toEqual({ state: "frozen", version_id: note.versionId });
+    expect(
+      sql
+        .prepare("SELECT count(*) AS n FROM attempt_original_reservations")
+        .get(),
+    ).toEqual({ n: 0 });
+    expect(existsSync(join(data.path, BACKUP_KERNEL_DATABASE))).toBe(false);
   } finally {
     handle.close();
   }
@@ -1053,22 +1122,28 @@ it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归�
   }
 });
 
-it("旧卷已被内核正式接收时，重开补落旧卷并返回过期", async () => {
+it("课程冻结原稿经双库断点和两设备核对后仍以同一回执落地", async () => {
   using data = mkdtempDisposableSync(
     join(tmpdir(), "ownclass-course-restart-submit-"),
   );
-  const handle = createDbHandle(join(data.path, "tutor.db"), runMigrations);
-  try {
-    const app = createApp({
+  const openProduct = () =>
+    createDbHandle(join(data.path, "tutor.db"), runMigrations);
+  let handle = openProduct();
+  const openApp = (kernelCourseOpeningEnabled: boolean) =>
+    createApp({
       db: handle.db,
       dbHandle: handle,
       dataDir: data.path,
-      kernelCourseOpeningEnabled: true,
+      kernelCourseOpeningEnabled,
       isProduction: false,
       publicUrl: "http://localhost:8787",
       logger: pino({ enabled: false }),
     });
+  try {
+    let app = openApp(true);
     const world = await setupCourse(app);
+    const secondDevice = await loginAssignmentOwner(app);
+    expect(secondDevice).not.toBe(world.ownerCookie);
     const owner = (path: string, method = "GET", body?: object) =>
       request(app, world.ownerCookie, path, method, body);
     const entry = `${world.unitPath}/attempts`;
@@ -1090,28 +1165,130 @@ it("旧卷已被内核正式接收时，重开补落旧卷并返回过期", asyn
       questionRevisionId: question.questionRevisionId,
     });
     expect(saved.status).toBe(200);
-    const note = await putNoteReceipt(
+    const firstNote = await putNoteReceipt(
       app,
       world.ownerCookie,
       old.id,
       question.id,
     );
-    const submit = {
+    const submission = ({
+      versionId,
+      revision,
+    }: Pick<typeof firstNote, "versionId" | "revision">) => ({
       revisions: questions.map((item) => ({
         questionId: item.id,
         questionRevisionId: item.questionRevisionId,
         expectedAnswerRevision: item.id === question.id ? 1 : 0,
       })),
-      evidence: questions.map(({ id: questionId }) => ({
-        questionId,
-        state: questionId === question.id ? "missing" : "none",
-      })),
+      evidence: questions.map(({ id: questionId }) =>
+        questionId === question.id
+          ? {
+              questionId,
+              state: "frozen",
+              versionId,
+              revision,
+            }
+          : { questionId, state: "none" },
+      ),
+    });
+    const perform = (
+      body: ReturnType<typeof submission>,
+      cookie = world.ownerCookie,
+    ) => request(app, cookie, `${path}/submit`, "POST", body);
+    const wrongQuestion = await perform({
+      ...submission(firstNote),
+      evidence: submission(firstNote).evidence.map((item) =>
+        item.questionId === question.id
+          ? { ...item, questionId: "题组外的题" }
+          : item,
+      ),
+    });
+    expect(wrongQuestion.status).toBe(409);
+    expect(await wrongQuestion.json()).toMatchObject({
+      error: "NOTE_EVIDENCE_MISMATCH",
+    });
+    expect(
+      (
+        await request(app, world.teacher, `${world.course}/members`, "POST", {
+          studentIds: [world.otherStudentId],
+        })
+      ).status,
+    ).toBe(200);
+    const foreign = attemptStartOkSchema.parse(
+      await (
+        await request(app, world.otherCookie, entry, "POST", whole)
+      ).json(),
+    ).data;
+    const foreignNote = await putNoteReceipt(
+      app,
+      world.otherCookie,
+      foreign.id,
+      question.id,
+    );
+    const wrongOwner = await perform(submission(foreignNote));
+    expect(wrongOwner.status).toBe(409);
+    expect(await wrongOwner.json()).toMatchObject({
+      error: "NOTE_EVIDENCE_MISMATCH",
+    });
+    expect(
+      (await perform(submission(firstNote), world.otherCookie)).status,
+    ).toBe(403);
+    let sql = handle.db.$client;
+    const currentBinding = z
+      .object({ attempt_no: z.number() })
+      .parse(
+        sql
+          .prepare(
+            "SELECT attempt_no FROM kernel_course_openings WHERE attempt_id=?",
+          )
+          .get(old.id),
+      );
+    const setBindingRound = (round: number) =>
+      sql
+        .prepare(
+          "UPDATE kernel_course_openings SET attempt_no=? WHERE attempt_id=?",
+        )
+        .run(round, old.id);
+    setBindingRound(currentBinding.attempt_no + 1);
+    const wrongBinding = await perform(submission(firstNote));
+    expect(wrongBinding.status).toBe(503);
+    expect(await wrongBinding.json()).toMatchObject({
+      error: "KERNEL_ATTEMPT_UNAVAILABLE",
+    });
+    setBindingRound(currentBinding.attempt_no);
+    const held = () =>
+      sql
+        .prepare(`SELECT r.version_id, r.state, r.operation_id
+      FROM attempt_original_reservations r JOIN kernel_question_deliveries d
+        ON d.attempt_id=r.attempt_id AND d.operation_id=r.operation_id
+      WHERE r.attempt_id=?`)
+        .get(old.id);
+    const storedPath = join(
+      data.path,
+      z
+        .object({ body_path: z.string() })
+        .parse(
+          sql
+            .prepare("SELECT body_path FROM note_versions WHERE id=?")
+            .get(firstNote.versionId),
+        ).body_path,
+    );
+    const firstBody = readFileSync(storedPath);
+    try {
+      writeFileSync(storedPath, gzipJson(noteDoc(3)));
+      const damaged = await perform(submission(firstNote));
+      expect(damaged.status).toBe(500);
+      expect(await damaged.json()).toMatchObject({
+        error: "NOTE_BODY_UNREADABLE",
+      });
+    } finally {
+      writeFileSync(storedPath, firstBody);
+    }
+    expect(held()).toBeUndefined();
+    const kernelExec = (statement: string) => {
+      using kernel = new DatabaseSync(join(data.path, BACKUP_KERNEL_DATABASE));
+      kernel.exec(statement);
     };
-    const sql = handle.db.$client;
-    sql.exec(`CREATE TEMP TRIGGER stop_old_submission BEFORE UPDATE OF receipt_id ON kernel_question_deliveries
-      BEGIN SELECT RAISE(ABORT, '测试中断旧卷正式回执投影'); END`);
-    const interrupted = await owner(`${path}/submit`, "POST", submit);
-    expect(interrupted.status, await interrupted.clone().text()).toBe(500);
     const readOld = () => {
       const runtime = openLearningRuntime({
         databasePath: join(data.path, BACKUP_KERNEL_DATABASE),
@@ -1122,12 +1299,118 @@ it("旧卷已被内核正式接收时，重开补落旧卷并返回过期", asyn
         runtime.close();
       }
     };
+    kernelExec(`CREATE TRIGGER stop_confirmation BEFORE INSERT ON submissions
+      BEGIN SELECT RAISE(ABORT, '测试中断权威确认'); END`);
+    const beforeKernel = await perform(submission(firstNote));
+    expect(beforeKernel.status, await beforeKernel.clone().text()).toBe(500);
+    const reserved = held();
+    expect(reserved).toMatchObject({
+      version_id: firstNote.versionId,
+      state: "pending",
+    });
+    expect(readOld()).toMatchObject({
+      status: "active",
+      questionDeliveries: [],
+    });
+    handle.close();
+    handle = openProduct();
+    sql = handle.db.$client;
+    app = openApp(true);
+    const replay = await perform(submission(firstNote), secondDevice);
+    expect(replay.status).toBe(500);
+    expect(held()).toEqual(reserved);
+    kernelExec("DROP TRIGGER stop_confirmation");
+    const note = await putNoteReceipt(
+      app,
+      secondDevice,
+      old.id,
+      question.id,
+      2,
+      {
+        baseRevision: firstNote.revision,
+      },
+    );
+    const stale = await perform(submission(firstNote));
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({
+      error: "NOTE_EVIDENCE_MISMATCH",
+    });
+    expect(held()).toBeUndefined();
+    expect(
+      sql
+        .prepare(
+          "SELECT state FROM attempt_original_reservations WHERE attempt_id=?",
+        )
+        .all(old.id),
+    ).toEqual([{ state: "aborted" }]);
+
+    const png = makeNotePng();
+    const uploaded = await postNoteImage(
+      app,
+      "student",
+      note.versionId,
+      png,
+      secondDevice,
+    );
+    expect(uploaded.status, await uploaded.clone().text()).toBe(200);
+    const {
+      data: { imageId },
+    } = z
+      .object({ data: z.object({ imageId: z.uuid() }) })
+      .parse(await uploaded.json());
+    const readBytes = async (role: "student" | "teacher", part: string) => {
+      const response = await request(
+        app,
+        role === "student" ? secondDevice : world.teacher,
+        `/api/${role}/note-versions/${note.versionId}/${part}`,
+      );
+      expect(response.status).toBe(200);
+      return new Uint8Array(await response.arrayBuffer());
+    };
+    const originalBytes = await readBytes("student", "document");
+    const image = `images/${imageId}.png`;
+    expect(await readBytes("student", image)).toEqual(png);
+    const submit = submission(note);
+    sql.exec(`CREATE TEMP TRIGGER stop_old_submission BEFORE UPDATE OF receipt_id ON kernel_question_deliveries
+      BEGIN SELECT RAISE(ABORT, '测试中断旧卷正式回执投影'); END`);
+    const interrupted = await perform(submit);
+    expect(interrupted.status, await interrupted.clone().text()).toBe(500);
     const receipt = readOld();
     expect(receipt.status).toBe("completed");
+    if (!("questionDeliveries" in receipt)) throw new Error("缺少权威交卷记录");
+    const receiptId = receipt.questionDeliveries[0]?.receipt?.id;
+    expect(receiptId).toEqual(expect.any(String));
+    expect(held()).toMatchObject({
+      version_id: note.versionId,
+      state: "pending",
+    });
     expect(
       sql.prepare("SELECT status FROM attempts WHERE id=?").get(old.id),
     ).toEqual({ status: "draft" });
-    sql.exec("DROP TRIGGER stop_old_submission");
+    expect(
+      sql
+        .prepare("SELECT * FROM submission_evidence WHERE attempt_id=?")
+        .all(old.id),
+    ).toEqual([]);
+    expect(
+      sql
+        .prepare("SELECT * FROM attempt_settlements WHERE attempt_id=?")
+        .all(old.id),
+    ).toEqual([]);
+    handle.close();
+    handle = openProduct();
+    sql = handle.db.$client;
+    app = openApp(false);
+    const rejectedWrite = await app.request(`${path}/notes/${question.id}`, {
+      method: "PUT",
+      headers: { cookie: secondDevice },
+      body: putNoteForm(3, { baseRevision: note.revision }),
+    });
+    expect(rejectedWrite.status, await rejectedWrite.clone().text()).toBe(409);
+    expect(await rejectedWrite.json()).toMatchObject({
+      error: "ALREADY_SUBMITTED",
+    });
+    app = openApp(true);
     const conflict = await owner(entry, "POST", { restartAttemptId: old.id });
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({
@@ -1149,17 +1432,50 @@ it("旧卷已被内核正式接收时，重开补落旧卷并返回过期", asyn
           "SELECT state, version_id FROM submission_evidence WHERE attempt_id=? AND question_id=?",
         )
         .get(old.id, question.id),
-    ).toEqual({ state: "missing", version_id: null });
+    ).toEqual({ state: "frozen", version_id: note.versionId });
+    expect(held()).toMatchObject({
+      version_id: note.versionId,
+      state: "projected",
+    });
+    expect(
+      sql
+        .prepare(
+          "SELECT receipt_id FROM kernel_question_deliveries WHERE attempt_id=?",
+        )
+        .get(old.id),
+    ).toEqual({ receipt_id: receiptId });
     expect(
       sql
         .prepare("SELECT id FROM note_versions WHERE id=?")
         .get(note.versionId),
     ).toEqual({ id: note.versionId });
     expect(
-      sql.prepare("SELECT attempt_id FROM kernel_course_openings").all(),
+      sql
+        .prepare(
+          "SELECT attempt_id FROM kernel_course_openings WHERE student_id=?",
+        )
+        .all(world.studentId),
     ).toEqual([{ attempt_id: old.id }]);
+    for (const role of ["student", "teacher"] as const) {
+      expect(await readBytes(role, "document")).toEqual(originalBytes);
+      expect(await readBytes(role, image)).toEqual(png);
+    }
+    const head = await owner(`${path}/evidence/${question.id}`);
+    expect(head.status).toBe(200);
+    const headBody: unknown = await head.json();
+    assertNoLeak(headBody);
+    expect(
+      z.object({ data: noteHeadDataSchema }).parse(headBody).data,
+    ).toMatchObject({
+      note: { currentVersionId: note.versionId, revision: note.revision },
+      evidence: { state: "frozen", versionId: note.versionId },
+    });
     expect((await owner(path)).status).toBe(200);
-    expect((await owner(`${path}/submit`, "POST", submit)).status).toBe(409);
+    const duplicate = await perform(submit);
+    expect(duplicate.status).toBe(409);
+    expect(await duplicate.json()).toMatchObject({
+      error: "ALREADY_SUBMITTED",
+    });
     expect(readOld()).toEqual(receipt);
   } finally {
     handle.close();
