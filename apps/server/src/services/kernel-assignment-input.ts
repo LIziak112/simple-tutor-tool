@@ -7,6 +7,7 @@ import {
   frozenGradingPolicySchema,
   getDirective,
   isTeacherReviewDeliveryScoringSource,
+  judgeScoringSourceSchema,
   type Question,
   questionSchema,
   refDirective,
@@ -33,6 +34,11 @@ import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import { jsonOf } from "./snapshot.ts";
+
+const kernelCourseScoringSourceSchema = z.union([
+  singleChoiceScoringSourceSchema,
+  judgeScoringSourceSchema,
+]);
 
 const kernelFrozenAssignmentSchema = z.strictObject({
   responses: z
@@ -93,7 +99,7 @@ export function kernelCourseDraftFor(
       ({ question, gradingPolicy }) =>
         gradingPolicy !== "auto" ||
         question.hints?.length ||
-        !singleChoiceScoringSourceSchema.safeParse(question).success,
+        !kernelCourseScoringSourceSchema.safeParse(question).success,
     )
   )
     return undefined;
