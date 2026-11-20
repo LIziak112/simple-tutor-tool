@@ -7,16 +7,22 @@ import {
   attemptResultOkSchema,
   attemptStartOkSchema,
   type SubmitEvidenceDeclaration,
+  teacherAttemptDetailOkSchema,
 } from "@tutor/contract";
 import pino from "pino";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import {
+  assignFixture,
   assignKernelFixture,
   postAssignment,
   setupAssignment,
 } from "../test/m04-p1/product-fixture.ts";
+import {
+  callToolJson,
+  connectMcpClientViaApp,
+} from "../test/mcp-test-utils.ts";
 import {
   makeNotePng,
   postNoteImage,
@@ -156,7 +162,7 @@ function authorityFacts(attemptId: string, submitted: boolean) {
   });
   const writes = db.$client
     .prepare(
-      "SELECT COUNT(*) AS n FROM responses WHERE attempt_id=? AND (answer_json IS NOT NULL OR answer_revision <> 0 OR change_count <> 0 OR auto_correct IS NOT NULL OR final_correct IS NOT NULL)",
+      "SELECT COUNT(*) AS n FROM responses WHERE attempt_id=? AND (answer_json IS NOT NULL OR answer_revision <> 0 OR answer_mutation_id IS NOT NULL OR auto_correct IS NOT NULL OR final_correct IS NOT NULL)",
     )
     .get(attemptId);
   expect(writes).toEqual({ n: 0 });
@@ -497,4 +503,318 @@ it("内核已确认而宿主仍是草稿时拒绝新原稿，只重发已保存�
     state: "frozen",
     version_id: original.versionId,
   });
+});
+
+const epoch = 1_769_000_000_000;
+function event(type: string, second: number, questionId: string) {
+  return { type, clientTs: epoch + second * 1000, questionId };
+}
+
+async function sendActivity(
+  work: { root: string; cookie: string },
+  events: ReturnType<typeof event>[],
+) {
+  const response = await call(`${work.root}/events`, work.cookie, "POST", {
+    events,
+    viewId: "m05-p04",
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    ok: true,
+    data: { accepted: events.length },
+  });
+}
+
+async function teacherActivity(attemptId: string) {
+  const response = await call(
+    `/api/teacher/attempts/${attemptId}`,
+    world.teacher,
+  );
+  expect(response.status).toBe(200);
+  const { activeSec, scoreFinal, questions } =
+    teacherAttemptDetailOkSchema.parse(await response.json()).data;
+  return {
+    activeSec,
+    scoreFinal,
+    rows: questions.map((row) => [row.activeSec, row.changeCount]),
+  };
+}
+
+function storedActivity(attemptId: string) {
+  return {
+    rows: db.$client
+      .prepare(
+        `SELECT r.active_sec, r.change_count, l.active_sec AS sealed_sec, l.state, l.reason
+        FROM responses r LEFT JOIN response_time_ledger l ON l.response_id=r.id
+        WHERE r.attempt_id=? ORDER BY r.question_id`,
+      )
+      .all(attemptId),
+    seals: db.$client
+      .prepare(
+        "SELECT COUNT(*) n FROM attempt_event_receipts WHERE attempt_id=? AND kind='seal'",
+      )
+      .get(attemptId),
+    profile: db.$client
+      .prepare("SELECT version FROM attempt_time_profiles WHERE attempt_id=?")
+      .get(attemptId),
+  };
+}
+
+async function teacherTool() {
+  const response = await call("/api/teacher/api-token", world.teacher, "POST");
+  expect(response.status).toBe(200);
+  const { data } = (await response.json()) as { data: { token: string } };
+  return connectMcpClientViaApp(app, "/mcp", data.token, "m05-p04-activity");
+}
+
+it("正式整卷封存逐题焦点、协议 1 活动水位及 max 改答计数，迟到事件仍可接收", async () => {
+  const candidateAssignment = await assignKernelFixture(app, world);
+  const legacyAssignment = await assignFixture(
+    app,
+    world.teacher,
+    world.unitId,
+    world.studentId,
+  );
+  for (const assignment of [legacyAssignment, candidateAssignment]) {
+    const work = await open(assignment, world.ownerCookie);
+    const q1 = work.first.questionId;
+    const q2 = work.second.questionId;
+    await sendActivity(work, [
+      event("question_focus", 0, q1),
+      event("answer_change", 2, q1),
+      event("answer_change", 4, q1),
+      event("question_blur", 8, q1),
+      event("question_focus", 10, q2),
+      event("answer_change", 11, q2),
+      event("question_blur", 15, q2),
+    ]);
+    await work.save(0, 1);
+    const request = { revisions: await work.revisions() };
+    const submitted = await result(await work.submit(request));
+    expect.soft(submitted.time).toMatchObject({
+      metric: "question_activity_sealed",
+      version: 1,
+      activeSec: 13,
+      knownCount: 2,
+      unknownCount: 0,
+    });
+    const expected = {
+      activeSec: 13,
+      scoreFinal: 50,
+      rows: [
+        [8, 2],
+        [5, 1],
+      ],
+    };
+    expect.soft(await teacherActivity(work.id)).toEqual(expected);
+    const atSubmission = storedActivity(work.id);
+    expect.soft(atSubmission).toEqual({
+      profile: { version: 1 },
+      seals: { n: 1 },
+      rows: [
+        {
+          active_sec: 8,
+          change_count: 2,
+          sealed_sec: 8,
+          state: "available",
+          reason: null,
+        },
+        {
+          active_sec: 5,
+          change_count: 1,
+          sealed_sec: 5,
+          state: "available",
+          reason: null,
+        },
+      ],
+    });
+    await sendActivity(work, [
+      event("question_focus", 16, q2),
+      event("answer_change", 17, q2),
+      event("question_blur", 20, q2),
+    ]);
+    expect.soft(await teacherActivity(work.id)).toEqual(expected);
+    expect(storedActivity(work.id)).toEqual(atSubmission);
+    await denied(await work.submit(request), 409, "ALREADY_SUBMITTED");
+    if (assignment === candidateAssignment) authorityFacts(work.id, true);
+  }
+});
+
+it("正式交卷按学生实际保存计数，教师代改只推进答案修订，缺证的时间保持未知", async () => {
+  const work = await open(
+    await assignKernelFixture(app, world),
+    world.ownerCookie,
+  );
+  const teacher = await teacherTool();
+  try {
+    const edit = (questionId: string, expectedAnswerRevision: number) =>
+      callToolJson(teacher, "update_response_answer", {
+        attemptId: work.id,
+        questionId,
+        expectedAnswerRevision,
+        answer: { kind: "choice", index: 1 },
+        reason: "合成教师代改",
+      });
+    expect((await edit(work.first.questionId, 0)).isError).toBe(false);
+    await work.save(1, 1);
+    await work.save(1, 0);
+    expect((await edit(work.second.questionId, 2)).isError).toBe(false);
+    await sendActivity(work, [
+      event("answer_change", 4, work.second.questionId),
+    ]);
+
+    const submitted = await result(await work.submit());
+    expect.soft(submitted.time).toMatchObject({
+      metric: "question_activity_sealed",
+      knownCount: 1,
+      unknownCount: 1,
+      knownActiveSec: 0,
+      activeSec: null,
+    });
+    const response = await callToolJson(teacher, "query_student_responses", {
+      studentId: world.studentId,
+      attemptIds: [work.id],
+    });
+    expect(response.isError).toBe(false);
+    const rows = response.data.responses as { questionId: string }[];
+    expect
+      .soft(rows.toSorted((a, b) => a.questionId.localeCompare(b.questionId)))
+      .toMatchObject([
+        {
+          questionId: work.first.questionId,
+          answerRevision: 1,
+          changeCount: 0,
+          activeSec: null,
+        },
+        {
+          questionId: work.second.questionId,
+          answerRevision: 3,
+          changeCount: 2,
+          activeSec: null,
+        },
+      ]);
+    expect.soft(storedActivity(work.id)).toMatchObject({
+      seals: { n: 1 },
+      rows: [
+        {
+          active_sec: null,
+          change_count: 0,
+          sealed_sec: null,
+          state: "unknown",
+          reason: "no_client_evidence",
+        },
+        {
+          active_sec: null,
+          change_count: 2,
+          sealed_sec: 0,
+          state: "available",
+          reason: null,
+        },
+      ],
+    });
+    authorityFacts(work.id, true);
+  } finally {
+    await teacher.close();
+  }
+});
+
+it("答案冲突保稿且释放活动预留，下一次有效交卷按新的收件水位封存", async () => {
+  const work = await open(
+    await assignKernelFixture(app, world),
+    world.ownerCookie,
+  );
+  const q1 = work.first.questionId;
+  const stale = { revisions: await work.revisions() };
+  await sendActivity(work, [
+    event("question_focus", 0, q1),
+    event("answer_change", 1, q1),
+    event("question_blur", 3, q1),
+  ]);
+  await work.save(0, 1);
+  const conflict = await denied(
+    await work.submit(stale),
+    409,
+    "ANSWER_REVISION_CONFLICT",
+  );
+  expect(conflict).toMatchObject({
+    _questionId: q1,
+    _current: { revision: 1, draft: { kind: "choice", index: 1 } },
+  });
+  expect(storedActivity(work.id)).toMatchObject({
+    seals: { n: 0 },
+    rows: [
+      { state: null, active_sec: null },
+      { state: null, active_sec: null },
+    ],
+  });
+  authorityFacts(work.id, false);
+  await sendActivity(work, [
+    event("question_focus", 4, q1),
+    event("answer_change", 5, q1),
+    event("question_blur", 8, q1),
+  ]);
+  await result(await work.submit());
+  expect(await teacherActivity(work.id)).toEqual({
+    activeSec: 7,
+    scoreFinal: 50,
+    rows: [
+      [7, 2],
+      [null, 0],
+    ],
+  });
+  authorityFacts(work.id, true);
+});
+
+it("升级后恢复已确认但没有旧活动水位的票据，保留历史未知且不从迟到事件补算", async () => {
+  const work = await open(
+    await assignKernelFixture(app, world),
+    world.ownerCookie,
+  );
+  await work.save(0, 1);
+  db.$client.exec(`
+    CREATE TRIGGER interrupt_legacy_ticket BEFORE UPDATE OF status ON attempts
+    WHEN NEW.status = 'graded'
+    BEGIN SELECT RAISE(ABORT, 'interrupted host projection'); END
+  `);
+  try {
+    expect((await work.submit()).status).toBe(500);
+  } finally {
+    db.$client.exec("DROP TRIGGER interrupt_legacy_ticket");
+  }
+  db.$client
+    .prepare(`
+    UPDATE kernel_attempt_confirmations
+    SET request_json = json_remove(request_json, '$.activitySeal')
+    WHERE attempt_id = ?
+  `)
+    .run(work.id);
+  await sendActivity(work, [
+    event("question_focus", 0, work.first.questionId),
+    event("answer_change", 1, work.first.questionId),
+    event("question_blur", 3, work.first.questionId),
+  ]);
+  expect(await teacherActivity(work.id)).toEqual({
+    activeSec: null,
+    scoreFinal: 50,
+    rows: [
+      [null, 1],
+      [null, 0],
+    ],
+  });
+  expect((await result(await call(work.root, work.cookie))).time).toMatchObject(
+    {
+      metric: "question_activity_sealed",
+      knownCount: 0,
+      unknownCount: 2,
+      activeSec: null,
+    },
+  );
+  expect(storedActivity(work.id)).toMatchObject({
+    seals: { n: 0 },
+    rows: [
+      { state: null, active_sec: null },
+      { state: null, active_sec: null },
+    ],
+  });
+  authorityFacts(work.id, true);
 });

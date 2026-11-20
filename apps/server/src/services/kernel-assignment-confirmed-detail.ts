@@ -12,17 +12,19 @@ import { projectConfirmedChoiceEvidence } from "./attempt-choice-evidence.ts";
 import { buildResultData } from "./attempt-detail.ts";
 import { attemptFinalOutcomeOf, scoreAutoOf } from "./attempt-final-outcome.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
+import { projectKernelConfirmedActivity } from "./kernel-assignment-activity.ts";
 import {
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
 } from "./kernel-assignment-runtime.ts";
+import { recordedActiveSecTotal } from "./submission-time.ts";
 
 type Recovery = ReturnType<
   ReturnType<typeof openLearningRuntime>["recoverChoiceConfirmation"]
 >;
 type Scope = OwnClassChoiceEvaluationScope & { operationId: string };
 
-/** 从内核确认重建结果，只落宿主卷生命周期和原稿索引。 */
+/** 从内核确认重建结果，只落宿主卷生命周期、原稿索引和活动统计。 */
 export function projectKernelChoiceFacts(
   db: Db,
   attempt: Attempt,
@@ -57,7 +59,15 @@ export function projectKernelChoiceFacts(
       .all()
       .map(({ id }) => id),
   );
-  const projectedRows = rows.map((row) => {
+  const measuredRows = projectKernelConfirmedActivity(
+    db,
+    attempt,
+    scope.operationId,
+    recovery.receipt.confirmedAt,
+    rows,
+    recovery.choiceDraftChangeCounts,
+  );
+  const projectedRows = measuredRows.map((row) => {
     const confirmed = confirmedById.get(row.questionId);
     const verdict = evaluationsById.get(row.questionId);
     if (
@@ -75,7 +85,6 @@ export function projectKernelChoiceFacts(
       ...row,
       answerJson: choice === null ? null : JSON.stringify(choice),
       answerRevision: confirmed.revision,
-      changeCount: confirmed.revision,
       submittedAt:
         attempt.practiceWorkflowVersion === null
           ? null
@@ -92,7 +101,11 @@ export function projectKernelChoiceFacts(
     touchAttemptActivity(db, attempt.id, receipt.confirmedAt);
     const saved = db
       .update(attempts)
-      .set({ status: outcome.status, submittedAt: receipt.confirmedAt })
+      .set({
+        status: outcome.status,
+        submittedAt: receipt.confirmedAt,
+        activeSec: recordedActiveSecTotal(projectedRows),
+      })
       .where(eq(attempts.id, attempt.id))
       .returning()
       .get();

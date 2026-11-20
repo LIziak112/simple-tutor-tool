@@ -22,6 +22,10 @@ import { settleSubmissionOriginalReservation } from "./attempt-original-reservat
 import { revisionStale } from "./attempt-submit-revisions.ts";
 import { assertSavedAnswersConfirmed } from "./attempt-timing.ts";
 import { submitAttempt } from "./attempt-whole-submit.ts";
+import {
+  captureKernelConfirmationRequest,
+  kernelActivitySealOf,
+} from "./kernel-assignment-activity.ts";
 import type { RecoveryRequest } from "./kernel-assignment-confirmation-recovery.ts";
 import {
   confirmationScopeOf,
@@ -112,7 +116,7 @@ export function readKernelConfirmationFacts(
   if (!ticket) return undefined;
   return withTicket(db, dataDir, attempt, ticket, (runtime, status, scope) =>
     status === "completed"
-      ? recoverKernelConfirmation(db, attempt, runtime, scope)
+      ? recoverKernelConfirmation(db, runtime, scope)
       : undefined,
   );
 }
@@ -178,28 +182,44 @@ function stage(
               practiceVersion,
             });
             if (
-              confirmationIntentOf(previous.request) ===
-              confirmationIntentOf(request)
-            )
-              return previous;
+              confirmationIntentOf(
+                attemptSubmitRequestSchema.parse(previous.request),
+              ) === confirmationIntentOf(request)
+            ) {
+              if (kernelActivitySealOf(previous.request)) return previous;
+              const updated = captureKernelConfirmationRequest(
+                db,
+                attemptId,
+                request,
+              );
+              db.update(kernelAttemptConfirmations)
+                .set({ request: updated })
+                .where(eq(kernelAttemptConfirmations.attemptId, attemptId))
+                .run();
+              return { ...previous, request: updated };
+            }
             // 内核仍为 active，且持有宿主写锁。只有这时可替换未确认的不同意图。
             discardTicket(db, previous);
           }
-          const ticket: Ticket = {
+          const ticket = {
             attemptId,
             operationId: randomUUID(),
             stepAttemptId,
             practiceVersion,
             request,
-          };
+          } satisfies Ticket;
           prepareChoiceOriginals(
             db,
             dataDir,
             confirmationScopeOf(attempt, ticket),
             request,
           );
-          db.insert(kernelAttemptConfirmations).values(ticket).run();
-          return ticket;
+          const staged = {
+            ...ticket,
+            request: captureKernelConfirmationRequest(db, attemptId, request),
+          };
+          db.insert(kernelAttemptConfirmations).values(staged).run();
+          return staged;
         },
       );
     })
@@ -290,7 +310,7 @@ function confirm(
               return { error: rejection };
             }
           }
-          const facts = recoverKernelConfirmation(db, attempt, runtime, scope);
+          const facts = recoverKernelConfirmation(db, runtime, scope);
           return { data: buildKernelChoiceResult(db, facts, now) };
         },
       );

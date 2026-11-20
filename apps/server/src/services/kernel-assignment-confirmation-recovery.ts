@@ -1,5 +1,6 @@
 import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
+import { requireOwnAttempt } from "./attempt-access.ts";
 import { projectKernelDraftActivity } from "./kernel-assignment-activity.ts";
 import {
   assertConfirmationBinding,
@@ -59,21 +60,30 @@ export function permitsRecovery(
 
 export function recoverKernelConfirmation(
   db: Db,
-  attempt: Attempt,
   runtime: KernelRuntime,
   scope: ConfirmationScope,
 ) {
-  const recovered = runtime.recoverChoiceConfirmation(
-    { role: "student", id: attempt.studentId },
-    attempt.id,
-    {
-      protocolVersion: 1,
-      stepAttemptId: scope.stepAttemptId,
-      operationId: scope.operationId,
-    },
-  );
-  const projected = projectKernelDraftActivity(db, attempt, runtime);
-  return projectKernelChoiceFacts(db, projected, scope, recovered);
+  return db.$client
+    .transaction(() => {
+      const attempt = requireOwnAttempt(db, scope.studentId, scope.attemptId);
+      if (
+        attempt.assignmentId !== scope.assignmentId ||
+        attempt.abandonedAt !== null
+      )
+        kernelAttemptUnavailable();
+      const recovered = runtime.recoverChoiceConfirmation(
+        { role: "student", id: attempt.studentId },
+        attempt.id,
+        {
+          protocolVersion: 1,
+          stepAttemptId: scope.stepAttemptId,
+          operationId: scope.operationId,
+        },
+      );
+      const projected = projectKernelDraftActivity(db, attempt, runtime);
+      return projectKernelChoiceFacts(db, projected, scope, recovered);
+    })
+    .immediate();
 }
 
 export type RecoverKernelConfirmation = (
@@ -99,7 +109,7 @@ export function withKernelConfirmationReader<T>(
         assertConfirmationBinding(selected, binding);
         scope = selected;
         try {
-          return recoverKernelConfirmation(db, attempt, runtime, selected);
+          return recoverKernelConfirmation(db, runtime, selected);
         } finally {
           scope = undefined;
         }

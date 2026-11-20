@@ -296,6 +296,7 @@ it("教师首读补全已确认卷，公布前后均保留同一冻结事实和�
       .orderBy(responses.questionId)
       .all();
   const frozen = frozenRows();
+  expect(frozen.map(({ changeCount }) => changeCount)).toEqual([0, 0]);
   db.$client.exec(`
     CREATE TRIGGER interrupt_teacher_result BEFORE UPDATE OF status ON attempts
     WHEN NEW.id = '${candidate}' AND NEW.status = 'graded'
@@ -358,7 +359,9 @@ it("教师首读补全已确认卷，公布前后均保留同一冻结事实和�
   expect(await teacherOriginal.text()).toBe(await studentOriginal.text());
   expect((await call(teacherOriginalPath, outsider)).status).toBe(404);
 
-  expect(frozenRows()).toEqual(frozen);
+  expect(frozenRows()).toEqual(
+    frozen.map((row, index) => ({ ...row, changeCount: index === 0 ? 2 : 1 })),
+  );
   expect(verdicts()).toEqual(confirmed);
 
   const student = await call(studentPath(candidate), ownerCookie);

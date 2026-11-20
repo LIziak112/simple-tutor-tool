@@ -3,9 +3,20 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { attemptResultOkSchema, attemptStartOkSchema } from "@tutor/contract";
+import {
+  attemptResultOkSchema,
+  attemptStartOkSchema,
+  teacherAttemptDetailOkSchema,
+} from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import { openLearningRuntime } from "learning-kernel";
 import { createDb } from "../../db/client.ts";
+import { attempts } from "../../db/schema.ts";
+import {
+  kernelAttemptBindings,
+  kernelAttemptConfirmations,
+} from "../../db/schema-kernel-assignments.ts";
+import { withKernelConfirmationReader } from "../../services/kernel-assignment-confirmation-recovery.ts";
 import {
   makeNotePng,
   postNoteImage,
@@ -36,7 +47,7 @@ function inspect(attemptId) {
   return productRead((db) => ({
     prepared: db
       .prepare(
-        "SELECT operation_id, step_attempt_id FROM kernel_attempt_confirmations WHERE attempt_id=?",
+        "SELECT operation_id, step_attempt_id, json_extract(request_json, '$.activitySeal.receivedThroughSeq') AS activity_cut FROM kernel_attempt_confirmations WHERE attempt_id=?",
       )
       .get(attemptId),
     lifecycle: db
@@ -54,6 +65,23 @@ function inspect(attemptId) {
         "SELECT question_id, state, version_id FROM submission_evidence WHERE attempt_id=? ORDER BY question_id",
       )
       .all(attemptId),
+    time: db
+      .prepare(`
+      SELECT r.active_sec, r.change_count, l.active_sec AS ledger_sec, l.sealed_at
+      FROM responses r LEFT JOIN response_time_ledger l ON l.response_id=r.id
+      WHERE r.attempt_id=? ORDER BY r.question_id
+    `)
+      .all(attemptId),
+    seals: db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM attempt_event_receipts WHERE attempt_id=? AND kind='seal'",
+      )
+      .get(attemptId).n,
+    submitAudit: db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM events WHERE attempt_id=? AND type='submit' AND json_extract(payload_json, '$.confirmed')=1",
+      )
+      .get(attemptId).n,
     oldAnswers: db
       .prepare(
         "SELECT COUNT(*) AS n FROM responses WHERE attempt_id=? AND (answer_json IS NOT NULL OR auto_correct IS NOT NULL OR final_correct IS NOT NULL)",
@@ -128,6 +156,39 @@ try {
       200,
     );
   }
+
+  const activityEpoch = 1_769_000_000_000;
+  const event = (type, second, questionId) => ({
+    type,
+    clientTs: activityEpoch + second * 1000,
+    questionId,
+  });
+  const postEvents = async (events) => {
+    const response = await call(`${root}/events`, world.ownerCookie, "POST", {
+      viewId: "m05-p04-restart",
+      events,
+    });
+    await expectStatus(response, 200);
+    assert.equal((await response.json()).data.accepted, events.length);
+  };
+  await postEvents([
+    event("question_focus", 0, q1.questionId),
+    event("answer_change", 1, q1.questionId),
+    event("answer_change", 2, q1.questionId),
+    event("question_blur", 8, q1.questionId),
+    event("question_focus", 10, q2.questionId),
+    event("answer_change", 11, q2.questionId),
+    event("question_blur", 15, q2.questionId),
+  ]);
+  const lastEventReceipt = () =>
+    productRead(
+      (db) =>
+        db
+          .prepare(
+            "SELECT MAX(seq) AS seq FROM attempt_event_receipts WHERE attempt_id=? AND kind='event'",
+          )
+          .get(id).seq,
+    );
 
   const v1 = await putNoteReceipt(app, world.ownerCookie, id, q1.questionId, 1);
   const originalMutation = randomUUID();
@@ -233,6 +294,17 @@ try {
     },
   ]);
   assert.ok(held.prepared);
+  assert.ok(lastEventReceipt() > 0);
+  assert.equal(held.prepared.activity_cut, lastEventReceipt());
+  assert.equal(held.seals, 0);
+  assert.equal(held.submitAudit, 0);
+  assert.deepEqual(
+    held.time.map((row) => [row.active_sec, row.change_count, row.ledger_sec]),
+    [
+      [null, 0, null],
+      [null, 0, null],
+    ],
+  );
   const durable = recover(id, world.studentId, held.prepared);
   assert.equal(
     durable.confirmation.questions[0].original.versionId,
@@ -307,12 +379,67 @@ try {
     renameSync(hiddenKernel, kernelPath);
   }
 
+  await postEvents([
+    event("question_focus", 20, q2.questionId),
+    event("answer_change", 22, q2.questionId),
+    event("question_blur", 26, q2.questionId),
+  ]);
+  assert.ok(lastEventReceipt() > held.prepared.activity_cut);
+  assert.equal(inspect(id).seals, 0);
+  const withProductDb = (read) => {
+    const db = createDb(productPath);
+    try {
+      return read(db);
+    } finally {
+      db.$client.close();
+    }
+  };
+  const stale = withProductDb((db) => ({
+    attempt: db.select().from(attempts).where(eq(attempts.id, id)).get(),
+    binding: db
+      .select()
+      .from(kernelAttemptBindings)
+      .where(eq(kernelAttemptBindings.attemptId, id))
+      .get(),
+    ticket: db
+      .select()
+      .from(kernelAttemptConfirmations)
+      .where(eq(kernelAttemptConfirmations.attemptId, id))
+      .get(),
+  }));
+  assert.equal(stale.attempt.status, "draft");
+  const teacherPath = `/api/teacher/attempts/${id}`;
+  const teacherActivity = async () => {
+    const response = await call(teacherPath, world.teacher);
+    await expectStatus(response, 200);
+    const { activeSec, questions } = teacherAttemptDetailOkSchema.parse(
+      await response.json(),
+    ).data;
+    return {
+      activeSec,
+      rows: questions.map(({ activeSec: seconds, changeCount }) => [
+        seconds,
+        changeCount,
+      ]),
+    };
+  };
+  const activity = {
+    activeSec: 13,
+    rows: [
+      [8, 2],
+      [5, 1],
+    ],
+  };
+  assert.deepEqual(await teacherActivity(), activity);
   const reopened = await call(root);
   await expectStatus(reopened, 200);
   const detail = attemptResultOkSchema.parse(await reopened.json()).data;
   assert.equal(detail.attempt.id, id);
   assert.equal(detail.attempt.submittedAt, durable.receipt.confirmedAt);
   assert.equal(detail.attempt.scoreAuto, 100);
+  assert.equal(detail.time.metric, "question_activity_sealed");
+  assert.equal(detail.time.activeSec, 13);
+  assert.equal(detail.time.knownCount, 2);
   assert.deepEqual(
     detail.units.flatMap(({ questions }) =>
       questions.map(({ questionRevisionId }) => questionRevisionId),
@@ -335,6 +462,31 @@ try {
     { question_id: q2.questionId, state: "none", version_id: null },
   ]);
   assert.equal(projected.oldAnswers, 0);
+  assert.equal(projected.seals, 1);
+  assert.equal(projected.submitAudit, 1);
+  withProductDb((db) =>
+    withKernelConfirmationReader(db, dataDir, (_runtime, read) => {
+      const recovered = read(stale.attempt, stale.binding, stale.ticket);
+      assert.equal(recovered.attempt.status, "graded");
+      assert.equal(recovered.attempt.submittedAt, durable.receipt.confirmedAt);
+    }),
+  );
+  assert.deepEqual(inspect(id), projected);
+  assert.deepEqual(
+    projected.time.map((row) => [
+      row.active_sec,
+      row.change_count,
+      row.ledger_sec,
+      row.sealed_at,
+    ]),
+    [
+      [8, 2, 8, durable.receipt.confirmedAt],
+      [5, 1, 5, durable.receipt.confirmedAt],
+    ],
+  );
+  await postEvents([event("answer_change", 29, q2.questionId)]);
+  assert.deepEqual(await teacherActivity(), activity);
+  assert.deepEqual(inspect(id), projected);
   await expectStatus(await submit(), 409, "ALREADY_SUBMITTED");
   await expectStatus(await submit(different), 409, "ALREADY_SUBMITTED");
   assert.deepEqual(recover(id, world.studentId, projected.prepared), durable);
@@ -474,6 +626,8 @@ try {
         },
         receipt: durable.receipt,
         counts,
+        activity,
+        submitAudit: projected.submitAudit,
         directlyConfirmedAfterDraftInterruption: {
           pid: directSubmitPid,
           firstChangedAt: actualFirst,
