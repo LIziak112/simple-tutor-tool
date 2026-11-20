@@ -333,6 +333,33 @@ describe("整卷排序的冻结来源", () => {
     ).toBe(false);
   });
 
+  it("无参考的零槽排序只进入整卷待批分区", () => {
+    const unkeyed = {
+      type: source.type,
+      orderingItems: source.orderingItems.map((item) => ({
+        ...item,
+        fixedPosition: null,
+        distractor: true,
+      })),
+    };
+    expect(wholeQuestionDeliveryScoringSourcesSchema.parse([unkeyed])).toEqual([
+      unkeyed,
+    ]);
+    expect(
+      questionDeliveryScoringSourcesSchema.safeParse([unkeyed]).success,
+    ).toBe(false);
+    for (const invalid of [
+      { ...unkeyed, answers: null },
+      { ...unkeyed, answers: { kind: "ordering", sequence: [] } },
+      { ...unkeyed, answers: source.answers },
+      { ...unkeyed, orderingItems: [] },
+    ]) {
+      expect(
+        wholeQuestionDeliveryScoringSourcesSchema.safeParse([invalid]).success,
+      ).toBe(false);
+    }
+  });
+
   it("不接受缺少冻结项的排序或把其他作答形态当成参考", () => {
     expect(
       wholeQuestionDeliveryScoringSourcesSchema.safeParse([

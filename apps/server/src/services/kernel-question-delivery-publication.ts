@@ -1,5 +1,6 @@
 import {
   isResponseDeliveryScoringSource,
+  isTeacherReviewDeliveryScoringSource,
   type Question,
   questionDeliveryScoringSourcesSchema,
   wholeQuestionDeliveryScoringSourcesSchema,
@@ -45,16 +46,20 @@ export function questionDeliveryPublication(
       version: questionVersion,
       prompt: studentStemMd(question),
     };
-    if ("materialRefs" in source) {
-      const blankCount = teacherReviewWidths?.get(question.id);
-      if (!blankCount) throw new Error("冻结配对题缺少材料槽位");
+    if (isTeacherReviewDeliveryScoringSource(source)) {
+      const isOrdering = "orderingItems" in source;
+      const blankCount = isOrdering ? 0 : teacherReviewWidths?.get(question.id);
+      if (blankCount === undefined || (!isOrdering && blankCount === 0))
+        throw new Error("冻结配对题缺少材料槽位");
       return {
         question: {
           ...base,
           response: "orderedTextBlanks" as const,
           blankCount,
         },
-        answerRule: ownClassMatchingAnswerRuleRef,
+        answerRule: isOrdering
+          ? ownClassOrderingAnswerRuleRef
+          : ownClassMatchingAnswerRuleRef,
       };
     }
     if ("acceptedBlanks" in source) {

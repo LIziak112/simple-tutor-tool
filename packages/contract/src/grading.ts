@@ -168,6 +168,33 @@ export const matchingTeacherReviewSourceSchema = z.object({
   answers: z.undefined().optional(),
 });
 
+const orderingTeacherReviewSourceSchema = z.object({
+  type: questionTypeSchema.extract(["ordering"]),
+  orderingItems: orderingItemSchema
+    .array()
+    .min(1)
+    .refine(
+      (items) =>
+        items.every(
+          ({ distractor, fixedPosition }) =>
+            distractor && fixedPosition === null,
+        ),
+      { message: "无参考排序题的冻结项不得占用排序位置" },
+    ),
+  answers: z.undefined().optional(),
+});
+
+const teacherReviewDeliveryScoringSourceSchema = z.union([
+  matchingTeacherReviewSourceSchema,
+  orderingTeacherReviewSourceSchema,
+]);
+
+export function isTeacherReviewDeliveryScoringSource(
+  source: unknown,
+): source is z.output<typeof teacherReviewDeliveryScoringSourceSchema> {
+  return teacherReviewDeliveryScoringSourceSchema.safeParse(source).success;
+}
+
 export const responseDeliveryScoringSourceSchema = z.object({
   type: questionTypeSchema.extract(["response"]),
   answers: responseAnswersSchema.optional(),
@@ -194,7 +221,7 @@ export const wholeQuestionDeliveryScoringSourcesSchema = z
     orderedTextDeliveryScoringSourceSchema,
     orderingDeliveryScoringSourceSchema,
     matchingDeliveryScoringSourceSchema,
-    matchingTeacherReviewSourceSchema,
+    teacherReviewDeliveryScoringSourceSchema,
     responseDeliveryScoringSourceSchema,
   ])
   .array()

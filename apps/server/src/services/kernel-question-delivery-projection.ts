@@ -1,4 +1,4 @@
-import { matchingTeacherReviewSourceSchema } from "@tutor/contract";
+import { isTeacherReviewDeliveryScoringSource } from "@tutor/contract";
 import { kernelDeliveryOriginalSchema } from "@tutor/contract/kernel-question-delivery";
 import { isUnanswered } from "@tutor/grading";
 import { and, eq, gt } from "drizzle-orm";
@@ -100,9 +100,9 @@ export function projectDeliveryRows(
     const question = byQuestion.get(row.questionId);
     const evaluated = verdicts.get(row.questionId);
     const reviewRequired = required.get(row.questionId);
-    const teacherReview = matchingTeacherReviewSourceSchema.safeParse(
+    const teacherReview = isTeacherReviewDeliveryScoringSource(
       snapshotOfRow(row),
-    ).success;
+    );
     const seal = seals.get(row.id);
     const revision = ticket.intent.revisions.find(
       (item) => item.questionId === row.questionId,

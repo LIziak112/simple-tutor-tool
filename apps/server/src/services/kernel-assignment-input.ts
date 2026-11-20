@@ -6,6 +6,7 @@ import {
   attemptTimeLimitMinutesSchema,
   frozenGradingPolicySchema,
   getDirective,
+  isTeacherReviewDeliveryScoringSource,
   type Question,
   questionSchema,
   wholeQuestionDeliveryScoringSourcesSchema,
@@ -95,13 +96,12 @@ export function assertKernelAssignmentPolicy(assignment: Assignment): void {
   if (assignment.allowPerQuestionFeedback || assignment.allowRedo) ineligible();
 }
 
-function matchingReviewWidth(
-  question: Question,
-  entries: readonly AttemptContextSnapshotEntry[],
+function assertNoStoredReference(
+  sourceMd: string,
   storedAnswers: string | null,
-): number {
+): void {
   // 旧投影可能把坏参考字段丢成缺省，原文里的空答案块也不能视为无参考。
-  const [source] = processor.parse(question.sourceMd).children;
+  const [source] = processor.parse(sourceMd).children;
   if (
     storedAnswers !== null ||
     source?.type !== "containerDirective" ||
@@ -112,6 +112,12 @@ function matchingReviewWidth(
     )
   )
     ineligible();
+}
+
+function matchingReviewWidth(
+  question: Question,
+  entries: readonly AttemptContextSnapshotEntry[],
+): number {
   const selected = new Set<string>();
   for (const ref of question.materialRefs ?? []) {
     if (ref.slots === undefined) continue;
@@ -186,15 +192,17 @@ export function loadKernelAssignmentQuestions(
     if (!delivery.success) ineligible();
     const teacherReviewWidths = new Map<string, number>();
     for (const [index, source] of delivery.data.entries()) {
-      if (!("materialRefs" in source)) continue;
+      if (!isTeacherReviewDeliveryScoringSource(source)) continue;
       const row = liveRows[index];
       const frozen = responses[index];
       if (!row || !frozen || frozen.gradingPolicy !== "manual_only")
         ineligible();
-      teacherReviewWidths.set(
-        row.id,
-        matchingReviewWidth(frozen.question, entries, row.answersJson),
-      );
+      assertNoStoredReference(frozen.question.sourceMd, row.answersJson);
+      if ("materialRefs" in source)
+        teacherReviewWidths.set(
+          row.id,
+          matchingReviewWidth(frozen.question, entries),
+        );
     }
     return {
       slotType: "questionDelivery" as const,
