@@ -18,6 +18,7 @@ export default defineConfig({
     "./src/db/schema-kernel-assignments.ts",
     "./src/db/create-receipt-schema.ts",
     "./src/db/attempt-time-schema.ts",
+    "./src/db/schema-backup-restore-facts.ts",
   ],
   out: "./src/db/migrations",
   dbCredentials: {

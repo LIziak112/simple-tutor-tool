@@ -23,6 +23,7 @@ import { HttpError } from "../lib/http-error";
 import { captureBackupArchive } from "./backup-download.ts";
 import { removeBackupTemp } from "./backup-process-guard.ts";
 import { replaceBackupFiles } from "./backup-restore-files";
+import { protectStagedRestore } from "./backup-restore-protection.ts";
 import { stageBackupArchive } from "./backup-restore-staging.ts";
 import { beijingExportStampOf } from "./export-csv";
 
@@ -318,12 +319,14 @@ export async function restoreFromBackup(
     recheckPassword();
     recheckAccess?.();
     // ③⑤⑥ 取得恢复独占权后拍保险快照，再于同卷按移动清单替换和回滚。
+    const verifiedStaging = staging;
     replaceBackupFiles(
       absoluteDataDir,
-      staging,
+      verifiedStaging,
       BACKUP_DIR_NAME,
       handle,
       () => {
+        protectStagedRestore(handle.db, verifiedStaging, DB_FILE_NAME);
         createSnapshot(dataDir, handle.db);
       },
     );

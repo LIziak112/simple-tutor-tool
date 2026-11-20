@@ -16,7 +16,7 @@ import { z } from "zod";
  *   错误密码 → 403 BACKUP_INVALID_PASSWORD；
  * - 服务端执行顺序：预检 zip → 同卷暂存与校验 → 确认独占后做一次主库快照 →
  *   记录替换计划并切换 DATA_DIR 内容（保留 backups/）→ 重开数据连接；
- * - 恢复后以**恢复库中的会话**为准：当前登录会话可能失效，属预期——
+ * - 替换前重施本实例登记的设备会话撤销与资源彻删；当前登录会话可能失效——
  *   响应携带 sessionWarning=true，UI 据此提示重新登录。
  *
  * 下载响应（GET /api/teacher/backup/download）是 zip 文件直出、无 JSON schema，
@@ -59,6 +59,22 @@ export const backupKernelManifestSchema = z.strictObject({
   kernelSchemaVersion: z.number().int().positive(),
   kernelArtifactSha256: z.hash("sha256"),
 });
+
+/** 本实例随主库保存的恢复依据。会话只记录不可用于登录的摘要。 */
+export const backupRestoreFactSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("sessionRevocation"),
+    tokenSha256: z.hash("sha256"),
+  }),
+  z.strictObject({
+    kind: z.literal("resourcePurge"),
+    resourceKind: z.enum(["unit", "lecture"]),
+    teacherId: z.string().min(1),
+    resourceId: z.string().min(1),
+  }),
+]);
+
+export type BackupRestoreFact = z.infer<typeof backupRestoreFactSchema>;
 
 // ---------- 快照列表 ----------
 
@@ -106,6 +122,7 @@ export const BACKUP_OPERATOR_REQUIRED = "BACKUP_OPERATOR_REQUIRED";
  * - BACKUP_INVALID_PASSWORD：恢复时登录密码不正确（403，D21）；
  * - BACKUP_ZIP_INVALID：zip 损坏、结构不符、双库不匹配或缺少必需文件（400）；
  * - BACKUP_TOO_LARGE：恢复上传或 ZIP 展开预算超限（413）；
+ * - BACKUP_RESTORE_PROTECTION_CONFLICT：重施本实例的保护依据会与归档数据冲突（409）。
  * - BACKUP_ROLLBACK_FAILED：自动回滚未完成，保留旧数据暂存目录并保持数据库关闭（500）；
  * - BACKUP_RESTORE_FAILED：进程占用、另一次恢复或恢复标记冲突（409），或替换 DATA_DIR 失败（500）。
  */
@@ -115,6 +132,7 @@ export const backupErrorCodeSchema = z.enum([
   "BACKUP_ZIP_INVALID",
   "BACKUP_TOO_LARGE",
   "BACKUP_RESTORE_FAILED",
+  "BACKUP_RESTORE_PROTECTION_CONFLICT",
   "BACKUP_ROLLBACK_FAILED",
 ]);
 
