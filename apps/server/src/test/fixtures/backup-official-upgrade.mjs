@@ -29,16 +29,23 @@ import { fetchSubmitRevisions } from "../submit-revisions.ts";
 
 const [sourceZip, fixture, inputSha256, expectedRuntime] =
   process.argv.slice(2);
-assert.ok(sourceZip && ["K10", "K11", "K11-amended"].includes(fixture));
+assert.ok(
+  sourceZip && ["K10", "K11", "K11-amended", "K12-amended"].includes(fixture),
+);
 const sha256 = /^[0-9a-f]{64}$/u;
 assert.ok(sha256.test(inputSha256) && sha256.test(expectedRuntime));
-const amended = fixture === "K11-amended";
+const amended = fixture.endsWith("-amended");
 const oldRuntime =
   fixture === "K10"
     ? "922ec7f9091aea01506a725754830765a9c394edaf1753d680210b883d8b1413"
-    : "1968b032742f9626b5d8270984965b39c27ea67541c36ec51a8e12ed9c40d5d5";
+    : fixture === "K12-amended"
+      ? "7bc836b57ec9140d3ee898a489e03b414490c89de491690c981580548a87c1f3"
+      : "1968b032742f9626b5d8270984965b39c27ea67541c36ec51a8e12ed9c40d5d5";
 const amendedQuestion = "m04-p0-q1";
-const amendedAnswer = { kind: "choice", index: 1 };
+const studentContinued = fixture === "K12-amended";
+const amendedRevision = studentContinued ? 2 : 1;
+const amendedAnswer = { kind: "choice", index: studentContinued ? 0 : 1 };
+const restoredAnswerIndex = amended ? 1 - amendedAnswer.index : 1;
 const {
   OWNCLASS_BACKUP_FIXTURE_TEACHER_PASSWORD: teacherPassword,
   OWNCLASS_BACKUP_FIXTURE_STUDENT_PASSWORD: studentPassword,
@@ -72,7 +79,10 @@ function readArchive(bytes, runtime) {
 }
 
 const old = readArchive(input, oldRuntime);
-assert.equal(old.manifest.kernelSchemaVersion, fixture === "K10" ? 13 : 14);
+assert.equal(
+  old.manifest.kernelSchemaVersion,
+  fixture === "K10" ? 13 : fixture === "K12-amended" ? 15 : 14,
+);
 const snapshot = new Database(old.product);
 let facts;
 let original;
@@ -262,14 +272,14 @@ async function readRecovered(target) {
   if (amended) {
     const view = await draftDetail();
     assert.deepEqual(view.drafts[amendedQuestion], amendedAnswer);
-    assert.equal(view.draftRevisions[amendedQuestion], 1);
+    assert.equal(view.draftRevisions[amendedQuestion], amendedRevision);
     const detail = await get(app, `/api/teacher/attempts/${draft.id}`, teacher);
     assert.equal(detail.status, 200);
     const question = teacherAttemptDetailOkSchema
       .parse(await detail.json())
       .data.questions.find((row) => row.questionId === amendedQuestion);
     assert.deepEqual(question?.answer, amendedAnswer);
-    assert.equal(question.changeCount, 0);
+    assert.equal(question.changeCount, studentContinued ? 1 : 0);
     assert.equal(target.amendmentAuditCount(), 1);
   }
   return { app, teacher, owner, draftDetail };
@@ -329,7 +339,7 @@ assert.deepEqual((await restored.draftDetail()).drafts[first], {
   kind: "choice",
   index: 1,
 });
-const second = await saveDraft(restored, amended ? 0 : 1, amended ? 0 : 1);
+const second = await saveDraft(restored, amended ? 0 : 1, restoredAnswerIndex);
 if (amended) assert.equal(second, amendedQuestion);
 
 async function rejectArtifact(artifact, declaredSha256) {
@@ -370,12 +380,12 @@ const mismatchedArtifactRestore = await rejectArtifact(
 );
 assert.deepEqual((await restored.draftDetail()).drafts[second], {
   kind: "choice",
-  index: amended ? 0 : 1,
+  index: restoredAnswerIndex,
 });
 if (amended) {
   assert.equal(
     (await restored.draftDetail()).draftRevisions[amendedQuestion],
-    2,
+    amendedRevision + 1,
   );
   assert.equal(reopened.amendmentAuditCount(), 1);
 }
@@ -394,7 +404,9 @@ console.log(
     documentBytes: documentBytes?.length,
     imageBytes: imageBytes?.length,
     amendmentAuditCount: amended ? reopened.amendmentAuditCount() : undefined,
-    amendmentAnswerRevisionAfterStudentWrite: amended ? 2 : undefined,
+    amendmentAnswerRevisionAfterStudentWrite: amended
+      ? amendedRevision + 1
+      : undefined,
     kernelBefore: old.manifest.kernelSchemaVersion,
     kernelAfter: exported.manifest.kernelSchemaVersion,
     inputKernelArtifactSha256: oldRuntime,

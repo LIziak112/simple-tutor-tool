@@ -172,6 +172,7 @@ K12 来自内核修订 `cbec8df3cb84372539cf33ecb8c3379770e2ba50`，固定包 SH
 | `K10` | `963c0bd861e451557d5c1f776d8bc739036db797` | `91bb913d0441f6d37036345c98af65b7cd132e9e29321774259569e90d091329` |
 | `K11` | `cb6ca8c18e4a64007e69cb65d0007a4a6dace3e6` | `89d76b6e50b6be1977490271323f23040a776f0b1c94ced38b7b93e97ad4d846` |
 | `K11-amended` | `74a1471bfad391735eea4ebf3dfe250267c6ad95` | `5729bbd966c6761fffc645c443d9782527203bf0e170841f519f4b232abea9bc` |
+| `K12-amended` | `f9504ec9` | `0a7bc1d426eea28f325461ce9ca98bc38dc7941f5c6e2bd00f1dcb9b5b9c7de2` |
 
 要生成新的输入，在对应旧基线冻结安装并以独立合成 `DATA_DIR` 运行。沿用 `product-fixture.ts` 的合成师生与两道冻结题。K10 建立甲的 50 分已交内核卷并冻结带 PNG 的 V2 原稿，乙正常交出 100 分卷，甲另开一份传统草稿。K11 可恢复同一 K10 下载后再下载。带勘误的 K11 使用同一甲账号正常交出 50 分旧卷，再开内核草稿，按 `kernel-teacher-draft-amendment.test.ts` 的教师 SDK 操作把第一题从空改为 B@1。按部署文档配置 `INSTANCE_BACKUP_OPERATOR_ID`，由已登录管理员访问 `/api/teacher/backup/download` 取得 ZIP。
 
@@ -182,6 +183,9 @@ $inputZipSha256 = (Get-FileHash -LiteralPath $officialZip -Algorithm SHA256).Has
 node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/test/fixtures/backup-official-upgrade.mjs $officialZip $fixture $inputZipSha256 $currentKernelSha256
 ```
 
+K13 固定包来自内核修订 `3e48ce73cd322323cecbc7242cba8090d9aa2fb5`，SHA-256 为 `baaea5f3ed29fd75f1bc06c3727a2ac311c0bebe6b6188619678cca994a5af07`。双库核验从归档主库中的绑定作答、教师审计及未结勘误意图取声明。若只有一侧记录已完成勘误，管理员下载返回 500，恢复返回 400，当前草稿仍可读。同一未结答案勘误在内核写入前和写入后均可归档，恢复后交卷沿原操作补回一条审计。
+
+K13 复验了表中的四份合成下载 ZIP，以及用 K8 和 K9 固定包、既有合成双库截面组装的两份历史归档。K12 的样本包含教师勘误后学生又改答的修订 2，恢复时保留这一修订和教师审计，学生可继续保存到修订 3。
 
 ### P4 教师批改工作台跨进程恢复
 

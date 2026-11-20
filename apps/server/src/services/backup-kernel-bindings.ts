@@ -10,7 +10,7 @@ import { LearningError, verifyActivityBindings } from "learning-kernel";
 import { z } from "zod";
 import { createDb, type Db } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
-import { attempts } from "../db/schema.ts";
+import { attempts, responseEditAudits, responses } from "../db/schema.ts";
 import {
   kernelAssignmentOpenings,
   kernelAttemptBindings,
@@ -21,11 +21,39 @@ import {
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelConfirmationReader } from "./kernel-assignment-confirmation-recovery.ts";
 import { kernelOpeningDraftSchema } from "./kernel-assignment-input.ts";
+import { choiceAmendmentIntentSchema } from "./kernel-choice-amendment-intent.ts";
 import { recoverKernelChoiceAmendment } from "./kernel-choice-amendments.ts";
 
 const publicationIdentitySchema = z.object({
   practice: z.object({ id: z.string(), version: z.number().int().positive() }),
 });
+
+type AmendmentClaims = NonNullable<
+  Parameters<typeof verifyActivityBindings>[1]["teacherAmendments"]
+>;
+
+function completedAmendmentClaims(db: Db): AmendmentClaims["completed"] {
+  return db
+    .select({
+      kind: responseEditAudits.kind,
+      activityId: kernelAttemptBindings.attemptId,
+      studentId: attempts.studentId,
+      stepAttemptId: kernelAttemptBindings.stepAttemptId,
+      questionId: responses.questionId,
+      reviewerId: responseEditAudits.teacherId,
+      operationId: responseEditAudits.id,
+      revision: responseEditAudits.answerRevision,
+    })
+    .from(responseEditAudits)
+    .innerJoin(responses, eq(responses.id, responseEditAudits.responseId))
+    .innerJoin(
+      kernelAttemptBindings,
+      eq(kernelAttemptBindings.attemptId, responses.attemptId),
+    )
+    .innerJoin(attempts, eq(attempts.id, kernelAttemptBindings.attemptId))
+    .all()
+    .map((audit) => ({ ...audit, slotId: "answers" }));
+}
 
 export function hasBackupTable(db: Database.Database, name: string): boolean {
   return (
@@ -61,6 +89,11 @@ function verifyProjection(db: Db, directory: string): void {
       return { attempt, binding, confirmation, refreeze };
     });
   const openings = db.select().from(kernelAssignmentOpenings).all();
+  const pendingAmendments = db
+    .select({ ticket: kernelChoiceAmendments, studentId: attempts.studentId })
+    .from(kernelChoiceAmendments)
+    .leftJoin(attempts, eq(attempts.id, kernelChoiceAmendments.attemptId))
+    .all();
   try {
     verifyActivityBindings(join(directory, BACKUP_KERNEL_DATABASE), {
       protocolVersion: 1,
@@ -73,6 +106,25 @@ function verifyProjection(db: Db, directory: string): void {
         studentId,
         operationId: `open:${assignmentId}`,
       })),
+      teacherAmendments: {
+        completed: completedAmendmentClaims(db),
+        pending: pendingAmendments.map(({ ticket, studentId }) => {
+          const intent = choiceAmendmentIntentSchema.parse(ticket.intent);
+          if (studentId === null)
+            throw new ZipReadError("备份中的教师草稿勘误缺少作答归属");
+          return {
+            kind: "answer",
+            activityId: ticket.attemptId,
+            studentId,
+            stepAttemptId: intent.stepAttemptId,
+            slotId: "answers",
+            questionId: intent.questionId,
+            reviewerId: ticket.teacherId,
+            operationId: ticket.operationId,
+            revision: intent.baseRevision + 1,
+          };
+        }),
+      },
     });
   } catch (error) {
     if (
@@ -81,15 +133,17 @@ function verifyProjection(db: Db, directory: string): void {
     ) {
       throw new ZipReadError("主库的开卷记录与内核实际作答不一致");
     }
+    if (
+      error instanceof LearningError &&
+      error.code === "TEACHER_AMENDMENTS_MISMATCH"
+    ) {
+      throw new ZipReadError("主库的教师草稿勘误与内核审计不一致");
+    }
     throw error;
   }
-  const pendingAmendments = db
-    .select({ attemptId: kernelChoiceAmendments.attemptId })
-    .from(kernelChoiceAmendments)
-    .all();
-  for (const { attemptId } of pendingAmendments) {
+  for (const { ticket } of pendingAmendments) {
     try {
-      recoverKernelChoiceAmendment(db, directory, attemptId);
+      recoverKernelChoiceAmendment(db, directory, ticket.attemptId);
     } catch {
       throw new ZipReadError("备份中的答案勘误意图与内核作答不一致");
     }

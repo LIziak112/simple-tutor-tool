@@ -11,12 +11,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  attemptDraftOkSchema,
   attemptResultOkSchema,
   attemptStartOkSchema,
   BACKUP_KERNEL_ARTIFACT,
   BACKUP_KERNEL_MANIFEST,
   BACKUP_SNAPSHOT_NAME_PATTERN,
   backupKernelManifestSchema,
+  teacherAttemptDetailOkSchema,
   teacherInfoOkSchema,
 } from "@tutor/contract";
 import { ZipArchive } from "archiver";
@@ -36,6 +38,10 @@ import {
   postAssignment,
   setupAssignment,
 } from "../test/m04-p1/product-fixture.ts";
+import {
+  callToolJson,
+  connectMcpClientViaApp,
+} from "../test/mcp-test-utils.ts";
 import { putNoteReceipt, type TestApp } from "../test/note-fixtures.ts";
 import { extractSessionToken } from "../test/note-world.ts";
 import {
@@ -561,6 +567,283 @@ it("双库同时存在却截自不同时间时，管理员下载和恢复均拒�
     await readResult(await readAttempt(app, second, world.otherCookie)),
   ).toEqual(before);
   expect((await readAttempt(app, first, world.ownerCookie)).status).toBe(200);
+});
+
+async function backupAmendmentFixture(source: ReturnType<typeof openInstance>) {
+  const app = source.app();
+  const world = await setupAssignment(app);
+  const teacher = await app.request("/api/teacher/me", {
+    headers: { cookie: world.teacher },
+  });
+  const operator = teacherInfoOkSchema.parse(await teacher.json()).data.id;
+  const admin = source.app(operator);
+  const assignment = await assignKernelFixture(app, world);
+  const attemptId = await openedAttempt(app, assignment, world.ownerCookie);
+  const questionId = "m04-p0-q1";
+  const corrected = { kind: "choice", index: 1 };
+  const download = (instance: TestApp) =>
+    instance.request("/api/teacher/backup/download", {
+      headers: { cookie: world.teacher },
+    });
+  const readDraft = async (instance: TestApp) => {
+    const response = await readAttempt(instance, attemptId, world.ownerCookie);
+    expect(response.status).toBe(200);
+    const { data } = attemptDraftOkSchema.parse(await response.json());
+    return {
+      studentAnswer: data.drafts[questionId] ?? null,
+      answerRevision: data.draftRevisions?.[questionId] ?? 0,
+    };
+  };
+  const successfulDownload = async () => {
+    const response = await download(admin);
+    expect(response.status, await response.clone().text()).toBe(200);
+    return readZipEntriesMap(Buffer.from(await response.arrayBuffer()));
+  };
+  const issued = await app.request("/api/teacher/api-token", {
+    method: "POST",
+    headers: { cookie: world.teacher },
+  });
+  expect(issued.status).toBe(200);
+  const { data } = (await issued.json()) as { data: { token: string } };
+  const client = await connectMcpClientViaApp(
+    app,
+    "/mcp",
+    data.token,
+    "mixed-backup-choice-amendment",
+  );
+  return {
+    app,
+    world,
+    operator,
+    admin,
+    attemptId,
+    questionId,
+    corrected,
+    download,
+    readDraft,
+    successfulDownload,
+    amend: () =>
+      callToolJson(client, "update_response_answer", {
+        attemptId,
+        questionId,
+        answer: corrected,
+        expectedAnswerRevision: 0,
+        reason: "合成归档勘误",
+      }),
+    [Symbol.asyncDispose]: () => client.close(),
+  };
+}
+
+function productSnapshot(entries: Map<string, Buffer>) {
+  const product = [...entries].find(([name]) =>
+    BACKUP_SNAPSHOT_NAME_PATTERN.test(name),
+  )?.[1];
+  if (!product) throw new Error("样例归档缺少主数据库");
+  return product;
+}
+
+it("教师草稿答案勘误的两个跨库组合均不可下载或恢复，同代可恢复", async () => {
+  using source = openInstance();
+  await using fixture = await backupAmendmentFixture(source);
+  const {
+    app,
+    world,
+    operator,
+    admin,
+    attemptId,
+    questionId,
+    corrected,
+    download,
+    readDraft,
+    successfulDownload,
+  } = fixture;
+  expect(await readDraft(app)).toMatchObject({
+    studentAnswer: null,
+    answerRevision: 0,
+  });
+  const early = await successfulDownload();
+  const amendment = await fixture.amend();
+  expect(amendment.isError).toBe(false);
+  expect(amendment.data).toMatchObject({ success: true, answerRevision: 1 });
+  const reviewed = await app.request(`/api/teacher/attempts/${attemptId}`, {
+    headers: { cookie: world.teacher },
+  });
+  expect(reviewed.status).toBe(200);
+  expect(
+    teacherAttemptDetailOkSchema
+      .parse(await reviewed.json())
+      .data.questions.find((item) => item.questionId === questionId),
+  ).toMatchObject({ answer: corrected, changeCount: 0 });
+  expect(await readDraft(app)).toMatchObject({
+    studentAnswer: corrected,
+    answerRevision: 1,
+  });
+  const late = await successfulDownload();
+  const statuses = [];
+  for (const [host, inner, revision] of [
+    [early, late, 1],
+    [late, early, 0],
+  ] as const) {
+    const kernel = inner.get(kernelName);
+    if (!kernel) throw new Error("样例归档缺少内核数据库");
+    using mixed = openInstance((dataDir) => {
+      writeFileSync(join(dataDir, dbName), productSnapshot(host));
+      writeFileSync(join(dataDir, kernelName), kernel);
+    });
+    const mixedDraft = mixed.app(operator);
+    expect(await readDraft(mixedDraft)).toMatchObject({
+      studentAnswer: revision === 1 ? corrected : null,
+      answerRevision: revision,
+    });
+    const invalidDownload = await download(mixedDraft);
+    await invalidDownload.arrayBuffer();
+    const archive = new Map(host).set(kernelName, kernel);
+    const metadata = backupKernelManifestSchema.parse(
+      JSON.parse(host.get(BACKUP_KERNEL_MANIFEST)?.toString() ?? "null"),
+    );
+    archive.set(
+      BACKUP_KERNEL_MANIFEST,
+      Buffer.from(
+        JSON.stringify({
+          ...metadata,
+          kernelSha256: createHash("sha256").update(kernel).digest("hex"),
+        }),
+      ),
+    );
+    using target = openInstance((dataDir) => {
+      const lateKernel = late.get(kernelName);
+      if (!lateKernel) throw new Error("样例归档缺少内核数据库");
+      writeFileSync(join(dataDir, dbName), productSnapshot(late));
+      writeFileSync(join(dataDir, kernelName), lateKernel);
+    });
+    const targetApp = target.app(operator);
+    const invalidRestore = await restore(
+      targetApp,
+      world.teacher,
+      await rezip(archive),
+    );
+    const body = (await invalidRestore.json()) as { error?: string };
+    const preservedDraft = await readDraft(targetApp);
+    statuses.push([
+      invalidDownload.status,
+      invalidRestore.status,
+      body.error,
+      preservedDraft.answerRevision,
+    ]);
+  }
+  expect(statuses).toEqual([
+    [500, 400, "BACKUP_ZIP_INVALID", 1],
+    [500, 400, "BACKUP_ZIP_INVALID", 1],
+  ]);
+  expect((await restore(admin, world.teacher, await rezip(early))).status).toBe(
+    200,
+  );
+  expect(await readDraft(app)).toMatchObject({
+    studentAnswer: null,
+    answerRevision: 0,
+  });
+  expect((await restore(admin, world.teacher, await rezip(late))).status).toBe(
+    200,
+  );
+  expect(await readDraft(app)).toMatchObject({
+    studentAnswer: corrected,
+    answerRevision: 1,
+  });
+});
+
+it("同一教师草稿勘误在内核写入前后待投影的两份归档均恢复原操作", async () => {
+  using source = openInstance();
+  await using fixture = await backupAmendmentFixture(source);
+  const { world, attemptId, operator, successfulDownload } = fixture;
+  const product = source.handle.db.$client;
+  const pending = (db: Database.Database) =>
+    db
+      .prepare<[string], { operation_id: string }>(
+        "SELECT operation_id FROM kernel_choice_amendments WHERE attempt_id=?",
+      )
+      .get(attemptId);
+  const audit = (db: Database.Database) =>
+    db
+      .prepare(
+        "SELECT id, answer_revision FROM response_edit_audits ORDER BY id",
+      )
+      .all();
+  const kernel = new Database(join(source.dataDir, kernelName), {
+    fileMustExist: true,
+  });
+  try {
+    kernel.exec(`
+      CREATE TRIGGER interrupt_backup_before_kernel_amendment
+      BEFORE INSERT ON choice_draft_amendments
+      BEGIN SELECT RAISE(ABORT, 'synthetic interrupted amendment'); END
+    `);
+    expect((await fixture.amend()).isError).toBe(true);
+    kernel.exec("DROP TRIGGER interrupt_backup_before_kernel_amendment");
+  } finally {
+    kernel.close();
+  }
+  const ticket = pending(product);
+  expect(ticket).toEqual({ operation_id: expect.any(String) });
+  const before = await successfulDownload();
+  expect(pending(product)).toEqual(ticket);
+  expect(audit(product)).toEqual([]);
+  product.exec(`
+    CREATE TEMP TRIGGER interrupt_backup_amendment_audit
+    BEFORE INSERT ON response_edit_audits
+    BEGIN SELECT RAISE(ABORT, 'synthetic interrupted amendment projection'); END
+  `);
+  try {
+    expect((await fixture.amend()).isError).toBe(true);
+  } finally {
+    product.exec("DROP TRIGGER interrupt_backup_amendment_audit");
+  }
+  const after = await successfulDownload();
+  expect(pending(product)).toEqual(ticket);
+  expect(audit(product)).toEqual([]);
+
+  for (const [archive, expectedKernelAudits] of [
+    [before, 0],
+    [after, 1],
+  ] as const) {
+    const hostCopy = new Database(productSnapshot(archive));
+    const kernelBytes = archive.get(kernelName);
+    if (!kernelBytes) throw new Error("样例归档缺少内核数据库");
+    const kernelCopy = new Database(kernelBytes);
+    try {
+      expect(pending(hostCopy)).toEqual(ticket);
+      expect(audit(hostCopy)).toEqual([]);
+      expect(
+        kernelCopy
+          .prepare("SELECT COUNT(*) AS count FROM choice_draft_amendments")
+          .get(),
+      ).toEqual({ count: expectedKernelAudits });
+    } finally {
+      kernelCopy.close();
+      hostCopy.close();
+    }
+    using target = openInstance((dataDir) => {
+      writeFileSync(join(dataDir, dbName), productSnapshot(before));
+      const bytes = before.get(kernelName);
+      if (!bytes) throw new Error("样例归档缺少内核数据库");
+      writeFileSync(join(dataDir, kernelName), bytes);
+    });
+    const targetApp = target.app(operator);
+    const installed = await restore(
+      targetApp,
+      world.teacher,
+      await rezip(archive),
+    );
+    expect(installed.status, await installed.clone().text()).toBe(200);
+    expect(pending(target.handle.db.$client)).toEqual(ticket);
+    const result = await readResult(
+      await submitAttemptRequest(targetApp, world.ownerCookie, attemptId),
+    );
+    expect(result.attempt.scoreAuto).toBe(50);
+    expect(pending(target.handle.db.$client)).toBeUndefined();
+    expect(audit(target.handle.db.$client)).toEqual([
+      { id: ticket?.operation_id, answer_revision: 1 },
+    ]);
+  }
 });
 
 it("开卷意图在内核未开卷和内核已开待绑定两种截面均可备份恢复", async () => {
