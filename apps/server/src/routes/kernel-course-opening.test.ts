@@ -1155,8 +1155,8 @@ it("课程冻结原稿经双库断点和两设备核对后仍以同一回执落�
       await (await owner(path)).json(),
     ).data;
     const questions = draft.units.flatMap((unit) => unit.questions);
-    const [question] = questions;
-    if (!question) throw new Error("缺少冻结题");
+    const [question, missingQuestion] = questions;
+    if (!question || !missingQuestion) throw new Error("缺少冻结题");
     const saved = await owner(`${path}/answers/${question.id}`, "PUT", {
       answer: { kind: "choice", index: 1 },
       baseRevision: 0,
@@ -1170,6 +1170,12 @@ it("课程冻结原稿经双库断点和两设备核对后仍以同一回执落�
       world.ownerCookie,
       old.id,
       question.id,
+    );
+    const missingNote = await putNoteReceipt(
+      app,
+      world.ownerCookie,
+      old.id,
+      missingQuestion.id,
     );
     const submission = ({
       versionId,
@@ -1188,7 +1194,10 @@ it("课程冻结原稿经双库断点和两设备核对后仍以同一回执落�
               versionId,
               revision,
             }
-          : { questionId, state: "none" },
+          : {
+              questionId,
+              state: questionId === missingQuestion.id ? "missing" : "none",
+            },
       ),
     });
     const perform = (
@@ -1433,6 +1442,18 @@ it("课程冻结原稿经双库断点和两设备核对后仍以同一回执落�
         )
         .get(old.id, question.id),
     ).toEqual({ state: "frozen", version_id: note.versionId });
+    expect(
+      sql
+        .prepare(
+          "SELECT state, version_id FROM submission_evidence WHERE attempt_id=? AND question_id=?",
+        )
+        .get(old.id, missingQuestion.id),
+    ).toEqual({ state: "missing", version_id: null });
+    expect(
+      sql
+        .prepare("SELECT id FROM note_versions WHERE id=?")
+        .get(missingNote.versionId),
+    ).toEqual({ id: missingNote.versionId });
     expect(held()).toMatchObject({
       version_id: note.versionId,
       state: "projected",
