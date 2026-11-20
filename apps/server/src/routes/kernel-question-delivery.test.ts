@@ -14,6 +14,8 @@ import {
   importCommitDataSchema,
   lessonStartOkSchema,
   pendingMarkListDataSchema,
+  type SelfReviewRequest,
+  selfReviewDataSchema,
   studentPaperOkSchema,
   studentRecordsOkSchema,
   teacherAttemptDetailOkSchema,
@@ -30,6 +32,7 @@ import { createDbHandle } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import { readZipEntriesMap } from "../lib/zip-read.ts";
 import { purgeOpenedAttempts } from "../services/attempt-opened-purge.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { zipToBackupBuffer } from "../test/backup-fixtures.ts";
 import {
   assignKernelFixture,
@@ -628,6 +631,21 @@ it.each([false, true])(
         pendingSelfReviewCount: null,
         resultCounts: null,
       });
+      const reviewPath = path + "/questions/k18-extra/self-review";
+      const review = (body: SelfReviewRequest, cookie = world.ownerCookie) =>
+        jsonCall(app, reviewPath, cookie, "POST", body);
+      const correct: SelfReviewRequest = {
+        verdict: "correct",
+        baseRevision: 0,
+        mutationId: randomUUID(),
+      };
+      if (selfReview) {
+        const withheldReview = await review(correct);
+        expect(withheldReview.status).toBe(403);
+        const body: unknown = await withheldReview.json();
+        expect(body).toMatchObject({ error: "SELF_REVIEW_NOT_RELEASED" });
+        assertNoLeak(body);
+      }
       const publish = await jsonCall(
         app,
         "/api/teacher/assignments/" + assignment,
@@ -687,6 +705,83 @@ it.each([false, true])(
         selfReviewPendingCount: selfReview ? 4 : 0,
         resultCounts: { pendingSelfReviewCount: selfReview ? 4 : 0 },
       });
+      if (selfReview) {
+        const denied = await review(correct, world.otherCookie);
+        expect(denied.status).toBe(403);
+        assertNoLeak(await denied.json());
+
+        const receipt = async (request: SelfReviewRequest) => {
+          const saved = await review(request);
+          expect(saved.status, await saved.clone().text()).toBe(200);
+          return wire(selfReviewDataSchema).parse(await saved.json()).data;
+        };
+        for (const [baseRevision, verdict] of (
+          ["correct", "wrong", "undecided"] as const
+        ).entries()) {
+          const request =
+            baseRevision === 0
+              ? correct
+              : { verdict, baseRevision, mutationId: randomUUID() };
+          const saved = await receipt(request);
+          const reread = await finishedResult(app, path, world.ownerCookie);
+          expect(saved.summary).toEqual(reread.summary);
+          expect(saved.summary.scoreFinal).toBe(result.summary.scoreFinal);
+          expect(
+            reread.units
+              .flatMap((group) => group.questions)
+              .find((question) => question.questionId === "k18-extra")
+              ?.selfReview,
+          ).toEqual({ record: saved.selfReview, revision: baseRevision + 1 });
+          expect(saved.effective).toEqual(
+            verdict === "undecided"
+              ? null
+              : { source: "self", value: verdict === "correct" },
+          );
+          expect(await receipt(request)).toEqual(saved);
+        }
+        const stale = await review({ ...correct, mutationId: randomUUID() });
+        expect(stale.status).toBe(409);
+        expect(await stale.json()).toMatchObject({
+          error: "SELF_REVIEW_REVISION_CONFLICT",
+          _current: { selfReview: null, revision: 3 },
+        });
+
+        const db = instance.db().$client;
+        const readReview = () =>
+          db
+            .prepare(
+              "SELECT self_review_verdict, self_review_at, self_review_revision, self_review_mutation_id FROM responses WHERE attempt_id=? AND question_id='k18-extra'",
+            )
+            .get(attempt.id);
+        const originalReview = readReview();
+        const ticket = z
+          .object({ receipt_id: z.string() })
+          .parse(
+            db
+              .prepare(
+                "SELECT receipt_id FROM kernel_question_deliveries WHERE attempt_id=?",
+              )
+              .get(attempt.id),
+          );
+        const replaceReceipt = db.prepare(
+          "UPDATE kernel_question_deliveries SET receipt_id=? WHERE attempt_id=?",
+        );
+        replaceReceipt.run(randomUUID(), attempt.id);
+        try {
+          const unavailable = await review({
+            verdict: "correct",
+            baseRevision: 3,
+            mutationId: randomUUID(),
+          });
+          expect(unavailable.status).toBe(503);
+          const body: unknown = await unavailable.json();
+          expect(body).toMatchObject({ error: "KERNEL_ATTEMPT_UNAVAILABLE" });
+          assertNoLeak(body);
+          expect(readReview()).toEqual(originalReview);
+        } finally {
+          replaceReceipt.run(ticket.receipt_id, attempt.id);
+        }
+      }
       expect(
         (
           await jsonCall(

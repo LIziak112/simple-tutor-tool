@@ -12,7 +12,6 @@ import {
   noteHeadsRequestSchema,
   practiceQuestionFeedbackDataSchema,
   practiceWorkflowUpdateRequestSchema,
-  selfReviewDataSchema,
   selfReviewRequestSchema,
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
@@ -320,14 +319,14 @@ export function createStudentRoutes(
         return c.json(
           {
             ok: true,
-            data: selfReviewDataSchema.parse(
-              submitSelfReview(
-                db,
-                c.var.student.id,
-                c.req.param("id"),
-                c.req.param("questionId"),
-                body,
-              ),
+            data: submitSelfReview(
+              db,
+              c.var.student.id,
+              c.req.param("id"),
+              c.req.param("questionId"),
+              body,
+              new Date(),
+              dataDir,
             ),
           },
           200,
