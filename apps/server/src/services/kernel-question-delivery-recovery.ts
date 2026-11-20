@@ -277,7 +277,7 @@ export function recoverDeliveries(
         .set({ receiptId: receipt.id })
         .where(ticketFilter(ticket))
         .run();
-    if (ticket.intent.source === "question")
+    if (policy.mode === "perQuestion")
       reviewedTickets.push({ ...ticket, receiptId: receipt.id });
     if (!confirmedAt || receipt.confirmedAt > confirmedAt)
       confirmedAt = receipt.confirmedAt;

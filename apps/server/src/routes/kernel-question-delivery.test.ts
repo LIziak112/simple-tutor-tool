@@ -1648,8 +1648,8 @@ it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备�
     const neighborMarkPath = `/api/teacher/responses/${q3Revision}/mark`;
     const mark = (request: MarkRequest, target = markPath) =>
       jsonCall(app, target, world.teacher, "POST", request);
-    const markOk = async (request: MarkRequest) => {
-      const response = await mark(request);
+    const markOk = async (request: MarkRequest, target = markPath) => {
+      const response = await mark(request, target);
       expect(response.status, await response.clone().text()).toBe(200);
       return wire(markResponseDataSchema).parse(await response.json()).data;
     };
@@ -1901,11 +1901,89 @@ it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备�
     const finalSettlement = settlement();
     expect(finalSettlement).toHaveLength(1);
     expect(finalSettlement[0]).toMatchObject({ seq: 1, question_count: 4 });
-    const wrongNeighbor = await mark(
-      { ...wrong, mutationId: randomUUID() },
+    const neighborWrong = { ...wrong, mutationId: randomUUID() };
+    const override = await markOk(neighborWrong, neighborMarkPath);
+    expect(override).toMatchObject({
+      responseId: q3Revision,
+      teacherMark: "wrong",
+      finalCorrect: false,
+      revision: 1,
+      scoreFinal: 0,
+    });
+    expect(await markOk(neighborWrong, neighborMarkPath)).toEqual(override);
+    const wrongTarget = await mark(neighborWrong);
+    expect(wrongTarget.status).toBe(409);
+    expect(await wrongTarget.json()).toMatchObject({
+      error: "OPERATION_CONFLICT",
+    });
+    expect(
+      (
+        await jsonCall(
+          app,
+          neighborMarkPath,
+          outsideTeacher,
+          "POST",
+          neighborWrong,
+        )
+      ).status,
+    ).toBe(404);
+    const overridden = await finishedResult(app, path, world.ownerCookie);
+    expect(overridden.summary.scoreFinal).toBe(0);
+    const revisedQuestions = overridden.units.flatMap(
+      ({ questions }) => questions,
+    );
+    expect(revisedQuestions).toEqual(
+      finalQuestions.map((question) =>
+        question.questionId === "k17-three"
+          ? {
+              ...question,
+              teacherMark: "wrong",
+              teacherComment: wrong.comment,
+              finalCorrect: false,
+            }
+          : question,
+      ),
+    );
+    const neighborClear = await markOk(
+      { ...clear, mutationId: randomUUID() },
       neighborMarkPath,
     );
-    expect(wrongNeighbor.status).toBe(503);
+    expect(neighborClear).toMatchObject({
+      revision: 2,
+      scoreFinal: 25,
+      finalCorrect: true,
+    });
+    const finishReceipt = z
+      .object({ receipt_id: z.uuid() })
+      .parse(
+        instance
+          .db()
+          .$client.prepare(
+            "SELECT receipt_id FROM kernel_question_deliveries WHERE attempt_id=? AND json_extract(intent_json, '$.source')='finish'",
+          )
+          .get(id),
+      ).receipt_id;
+    expect(finishReceipt).not.toBe(receiptId);
+    const verdictDb = new DatabaseSync(
+      join(data.path, BACKUP_KERNEL_DATABASE),
+      { readOnly: true },
+    );
+    try {
+      const event = verdictDb.prepare(
+        "SELECT question_id, submission_id FROM verdict_events WHERE id=?",
+      );
+      for (const change of [override, neighborClear])
+        expect(event.get(change.eventId ?? "")).toEqual({
+          question_id: "k17-three",
+          submission_id: finishReceipt,
+        });
+      expect(event.get(renewedMark.eventId ?? "")).toEqual({
+        question_id: "k17-one",
+        submission_id: receiptId,
+      });
+    } finally {
+      verdictDb.close();
+    }
     expect(await finishedResult(app, path, world.ownerCookie)).toEqual(final);
     expect(settlement()).toEqual(finalSettlement);
     expect(
@@ -1988,6 +2066,37 @@ it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备�
     );
     expect(lessonStartOkSchema.parse(await repeat.json()).data.attempt.id).toBe(
       nextData.attempt.id,
+    );
+    const automaticView = await startView();
+    const nextPath = `/api/student/attempts/${automaticView.attempt.id}`;
+    for (const question of automaticView.questions) {
+      const response = await jsonCall(
+        app,
+        `${nextPath}/questions/${question.id}/submit`,
+        world.ownerCookie,
+        "POST",
+        {
+          questionRevisionId: question.questionRevisionId,
+          expectedAnswerRevision:
+            automaticView.draftRevisions?.[question.id] ?? 0,
+          evidence: { questionId: question.id, state: "none" },
+        },
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+    }
+    const autoFinished = await finishedResult(app, nextPath, world.ownerCookie);
+    const last = automaticView.questions.at(-1);
+    if (!last || autoFinished.summary.scoreFinal === null)
+      throw new Error("缺少末题自动收尾结果");
+    const lastMarkPath = `/api/teacher/responses/${last.questionRevisionId}/mark`;
+    const lastMark = await markOk(
+      { ...wrong, mark: "correct", mutationId: randomUUID() },
+      lastMarkPath,
+    );
+    expect(lastMark.scoreFinal).toBe(autoFinished.summary.scoreFinal + 25);
+    await markOk({ ...clear, mutationId: randomUUID() }, lastMarkPath);
+    expect(await finishedResult(app, nextPath, world.ownerCookie)).toEqual(
+      autoFinished,
     );
     expect(await finishedResult(app, path, world.ownerCookie)).toEqual(final);
     expect(
