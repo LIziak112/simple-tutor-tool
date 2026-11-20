@@ -1,5 +1,6 @@
 import {
   choiceStudentAnswerSchema,
+  judgeBehavior,
   judgeStudentAnswerSchema,
   questionEvidenceBindings,
   responseBehavior,
@@ -17,6 +18,17 @@ import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
 type Value = QuestionDeliveryDraftInput["value"];
+
+export const ownClassJudgeAnswerRuleRef = {
+  id: "ownclass-judge-value",
+  version: 1,
+} as const;
+
+export const ownClassJudgeAnswerRule = {
+  ...ownClassJudgeAnswerRuleRef,
+  response: "booleanOrString",
+  isAnswered: (value) => judgeBehavior.isAnswered({ kind: "judge", value }),
+} satisfies QuestionAnswerRuleRegistration;
 
 export const ownClassResponseAnswerRuleRef = {
   id: "ownclass-response-body",

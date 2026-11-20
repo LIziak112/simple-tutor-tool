@@ -6,7 +6,10 @@ import {
 import { studentStemMd } from "@tutor/md-dsl";
 import type { PublicationInput } from "learning-kernel";
 import { ownClassDeliveryEvaluatorRef } from "./attempt-choice-evaluation.ts";
-import { ownClassResponseAnswerRuleRef } from "./kernel-question-delivery-values.ts";
+import {
+  ownClassJudgeAnswerRuleRef,
+  ownClassResponseAnswerRuleRef,
+} from "./kernel-question-delivery-values.ts";
 
 export const deliverySlotId = "answers";
 
@@ -71,11 +74,15 @@ export function questionDeliveryPublication(
       key: { response, acceptedIndexes: source.answers.indexes },
     };
   });
-  const answerRules = declared.flatMap(({ question }) =>
-    question.response === "textWithOptionalTitle"
-      ? [[question.id, ownClassResponseAnswerRuleRef] as const]
-      : [],
-  );
+  const answerRules = declared.flatMap(({ question }) => {
+    const rule =
+      question.response === "textWithOptionalTitle"
+        ? ownClassResponseAnswerRuleRef
+        : mode === "whole" && question.response === "booleanOrString"
+          ? ownClassJudgeAnswerRuleRef
+          : undefined;
+    return rule ? [[question.id, rule] as const] : [];
+  });
   const instructions = "完成练习并提交答案。";
   return {
     practice: {
