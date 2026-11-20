@@ -19,7 +19,7 @@ import {
   effectiveVerdictOfRow,
   requireUsableAttempt,
 } from "../attempt-service.ts";
-import { createAiTask } from "./student-ai-queue.ts";
+import { type AiTaskServiceOptions, createAiTask } from "./student-ai-queue.ts";
 import { batchItemMutationIdOf } from "./student-ai-shared.ts";
 
 /**
@@ -100,13 +100,11 @@ export interface CreateAiBatchReviewInput {
 export function createAiBatchReviewTasks(
   db: Db,
   input: CreateAiBatchReviewInput,
-  options: { hmacSecret: string },
+  options: Pick<AiTaskServiceOptions, "hmacSecret" | "dataDir">,
 ): AiBatchCreateData {
   const results: AiBatchCreateItemResult[] = [];
   for (const item of input.items) {
-    results.push(
-      createOneBatchItem(db, input, item, { hmacSecret: options.hmacSecret }),
-    );
+    results.push(createOneBatchItem(db, input, item, options));
   }
   return {
     items: results,
@@ -125,7 +123,7 @@ function createOneBatchItem(
   db: Db,
   input: CreateAiBatchReviewInput,
   item: AiBatchReviewItem,
-  options: { hmacSecret: string },
+  options: Pick<AiTaskServiceOptions, "hmacSecret" | "dataDir">,
 ): AiBatchCreateItemResult {
   // 派生幂等键预检：跨学生撞键按冲突拒绝（createAiTask 的 409 文案同源，
   // 此处先行是为不把他人任务行误报成 already_exists）
@@ -182,7 +180,7 @@ function createOneBatchItem(
           channel: input.channel,
           mutationId: derivedMutationId,
         },
-        { hmacSecret: options.hmacSecret },
+        options,
       );
       return {
         attemptId: item.attemptId,
@@ -227,7 +225,7 @@ function createOneBatchItem(
         channel: input.channel,
         mutationId: derivedMutationId,
       },
-      { hmacSecret: options.hmacSecret },
+      options,
     );
     return {
       attemptId: item.attemptId,

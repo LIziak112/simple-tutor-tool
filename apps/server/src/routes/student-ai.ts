@@ -349,7 +349,7 @@ export function createStudentAiRoutes(
             question: body.question,
             mutationId: body.mutationId,
           },
-          { hmacSecret },
+          { hmacSecret, dataDir },
         );
         return c.json({ ok: true, data });
       })
@@ -507,7 +507,7 @@ export function createStudentAiRoutes(
             mutationId: body.mutationId,
             ...(body.purpose !== undefined ? { purpose: body.purpose } : {}),
           },
-          { hmacSecret },
+          { hmacSecret, dataDir },
         );
         return c.json(taskView(task), created ? 201 : 200);
       })
@@ -578,7 +578,7 @@ export function createStudentAiRoutes(
             taskId: c.req.param("id"),
             ...(body.question !== undefined && { question: body.question }),
           },
-          { hmacSecret },
+          { hmacSecret, dataDir },
         );
         return c.json(taskView(task));
       })
