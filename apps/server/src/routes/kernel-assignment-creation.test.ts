@@ -155,19 +155,40 @@ describe("P2 建作业时固定执行路由", () => {
   });
 
   it("不合资格的分建批次与创建回执一起回滚", async () => {
-    vi.stubEnv("NEW_CONTENT_ENABLED", "true");
     const env = await fixture();
-    const path = new URL(
-      "../../../../samples/qm/valid-05-固定项排序.md",
-      import.meta.url,
+    const app = env.mount(true);
+    const questionId = "m04-p2-empty-unit-question";
+    const emptyUnitId = await env.importUnit(
+      [
+        "---",
+        "kind: practice",
+        "unit: M04P2待删单元",
+        "---",
+        "",
+        `::::question{id=${questionId} type=choice difficulty=1}`,
+        "选择正确的一项。",
+        "",
+        "- [x] 甲",
+        "- [ ] 乙",
+        "::::",
+        "",
+      ].join("\n"),
     );
-    const unitId = await env.importUnit(readFileSync(path, "utf8"));
+    const deleted = await app.request(`/api/teacher/questions/${questionId}`, {
+      method: "DELETE",
+      headers: { cookie: env.teacher },
+    });
+    expect(deleted.status).toBe(200);
+
     const operationId = randomUUID();
-    const response = await env.assign(env.mount(true), {
+    const request = {
       ...env.request,
       unitGrouping: "separate",
-      unitIds: [env.unitId, unitId],
       operationId,
+    } as const;
+    const response = await env.assign(app, {
+      ...request,
+      unitIds: [env.unitId, emptyUnitId],
     });
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({
@@ -183,5 +204,9 @@ describe("P2 建作业时固定执行路由", () => {
         .pluck()
         .get(operationId),
     ).toBe(0);
+
+    const ids = await assignmentIds(await env.assign(app, request));
+    expect(ids).toHaveLength(1);
+    expect(env.marks()).toEqual(ids);
   });
 });
