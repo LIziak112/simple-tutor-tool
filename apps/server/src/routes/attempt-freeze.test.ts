@@ -11,7 +11,6 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { runMigrations } from "../db/migrate.ts";
 import {
   attemptContextFreezes,
   attempts,
@@ -23,6 +22,7 @@ import {
   createTestDb,
   createTestDbBeforeActivationGuards,
   createTestDir,
+  migrateTestDbFromBeforeActivationGuards,
 } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -369,7 +369,7 @@ function downgradeToLegacyDraft(db: Db, attemptId: string): void {
         .run();
     }
   }
-  runMigrations(db);
+  migrateTestDbFromBeforeActivationGuards(db);
 }
 
 describe("T6R.3 建卷冻结：assignment 来源", () => {
@@ -853,6 +853,18 @@ $-1$ 是正数。[[错误]]
 describe("T6R.3 迁移三分支（升级遗留行）", () => {
   it("分支①升级前已交卷：沿用既有交卷快照，不重写、不补冻结标记（frozenAt 保持 null）", async () => {
     const { app, db, aCookie, assignmentId } = await makeEnv(true);
+    const kernelTableNames = [
+      "kernel_assignments",
+      "kernel_attempt_refreezes",
+      "kernel_course_openings",
+    ];
+    const kernelObjects = db.$client.prepare(
+      `SELECT schema, name, type FROM pragma_table_list
+       WHERE name IN (?, ?, ?) ORDER BY name`,
+    );
+    expect(kernelObjects.all(...kernelTableNames)).toEqual(
+      kernelTableNames.map((name) => ({ schema: "temp", name, type: "view" })),
+    );
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     await putAnswer(app, aCookie, attemptId, Q.judge, {
       kind: "judge",
@@ -870,7 +882,10 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
       .where(eq(attempts.id, attemptId))
       .run();
 
-    runMigrations(db);
+    migrateTestDbFromBeforeActivationGuards(db);
+    expect(kernelObjects.all(...kernelTableNames)).toEqual(
+      kernelTableNames.map((name) => ({ schema: "main", name, type: "table" })),
+    );
     const { res, body } = await getAttempt(app, aCookie, attemptId);
     expect(res.status).toBe(200);
     const result = (body as { data: { summary: { total: number } } }).data;
@@ -1319,7 +1334,7 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
       .where(eq(attempts.id, wrongAttemptId))
       .run();
 
-    runMigrations(db);
+    migrateTestDbFromBeforeActivationGuards(db);
     // 首次恢复访问：只补标记（frozenAt 回填 startedAt，非当下时刻；非 legacy）
     const { res } = await getAttempt(app, aCookie, wrongAttemptId);
     expect(res.status).toBe(200);

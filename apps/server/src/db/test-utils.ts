@@ -8,11 +8,17 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getTableColumns, getTableName, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { runBackfills } from "./backfill";
 import { createDb, createDbFromBuffer, type Db } from "./client";
 import { resolveMigrationsFolder, runMigrations } from "./migrate";
 import { lectures, teachers, units } from "./schema";
+import {
+  kernelAssignments,
+  kernelAttemptRefreezes,
+} from "./schema-kernel-assignments";
+import { kernelCourseOpenings } from "./schema-kernel-question-delivery";
 
 /**
  * createTestDb 种入的教师行（T2B.1）：固定 id/createdAt，loginName='teacher'、
@@ -65,7 +71,13 @@ function seedTestTeacher(db: Db): void {
     .run();
 }
 
-/** 仅遗留兼容用例：旧0075 schema造数后再正式迁移0076，临时视图仅为旧侧测试提供空的内核名单。 */
+const legacyKernelViews = [
+  kernelAssignments,
+  kernelAttemptRefreezes,
+  kernelCourseOpenings,
+];
+
+/** 0075 造数阶段让现行路由读取空的内核名单，保留历史主库结构。 */
 export function createTestDbBeforeActivationGuards(): Db {
   const db = createDb(":memory:");
   const prefix = makeMigrationsFolderUpTo("0075_hard_zodiak");
@@ -78,10 +90,23 @@ export function createTestDbBeforeActivationGuards(): Db {
   }
   runBackfills(db);
   seedTestTeacher(db);
-  db.$client.exec(
-    "CREATE TEMP VIEW kernel_assignments AS SELECT id AS assignment_id FROM assignments WHERE 0",
-  );
+  for (const table of legacyKernelViews) {
+    const columns = Object.values(getTableColumns(table)).map(
+      ({ name }) => sql`NULL AS ${sql.identifier(name)}`,
+    );
+    db.run(
+      sql`CREATE TEMP VIEW ${sql.identifier(getTableName(table))} AS SELECT ${sql.join(columns, sql`, `)} WHERE 0`,
+    );
+  }
   return db;
+}
+
+/** 清除同名临时视图，确保正式迁移及其后的路由只能读取新表。 */
+export function migrateTestDbFromBeforeActivationGuards(db: Db): void {
+  for (const table of legacyKernelViews) {
+    db.run(sql`DROP VIEW temp.${sql.identifier(getTableName(table))}`);
+  }
+  runMigrations(db);
 }
 
 export function createTestDb(): Db {

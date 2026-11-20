@@ -9,7 +9,6 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { runMigrations } from "../db/migrate.ts";
 import {
   attemptContextFreezes,
   attempts,
@@ -21,6 +20,7 @@ import {
   createTestDb,
   createTestDbBeforeActivationGuards,
   createTestDir,
+  migrateTestDbFromBeforeActivationGuards,
 } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
@@ -700,7 +700,7 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
       .set({ courseId: null })
       .where(eq(attempts.id, a2))
       .run();
-    runMigrations(env.db);
+    migrateTestDbFromBeforeActivationGuards(env.db);
     const fallback = await getWrongQuestions(env);
     const judge1Fallback = fallback.data?.questions.find(
       (card) => card.questionId === Q.judge1,
