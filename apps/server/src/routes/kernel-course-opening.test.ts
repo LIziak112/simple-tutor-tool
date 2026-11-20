@@ -512,6 +512,263 @@ it.each(["纯判断", "判断与单选"] as const)(
   },
 );
 
+it.each(["纯多选", "单选、判断与多选"])(
+  "正常课程入口的%s整卷保留多选原数组、冻结和唯一确认",
+  async (mode) => {
+    using data = mkdtempDisposableSync(
+      join(tmpdir(), "ownclass-course-multi-"),
+    );
+    const kernelPath = join(data.path, BACKUP_KERNEL_DATABASE);
+    const handle = createDbHandle(join(data.path, "tutor.db"), runMigrations);
+    const sql = handle.db.$client;
+    const app = createApp({
+      db: handle.db,
+      dbHandle: handle,
+      dataDir: data.path,
+      kernelCourseOpeningEnabled: true,
+      isProduction: false,
+      publicUrl: "http://localhost:8787",
+      logger: pino({ enabled: false }),
+    });
+    try {
+      const [selected, empty, missing] = [
+        "course-multi-selected",
+        "course-multi-empty",
+        "course-multi-missing",
+      ];
+      const solution = "课程多选私有详解。";
+      const mixed = mode !== "纯多选";
+      const markdown = [
+        "---",
+        "kind: practice",
+        "unit: 合成课程多选",
+        "---",
+        "",
+        ...[selected, empty, missing].flatMap((id) => [
+          `::::question{id=${id} type=multi}`,
+          "合成多选。",
+          "",
+          "- [x] 甲",
+          "- [ ] 乙",
+          "- [x] 丙",
+          "",
+          ":::solution",
+          solution,
+          ":::",
+          "::::",
+          "",
+        ]),
+        ...(mixed
+          ? [
+              "::::question{id=course-multi-choice type=choice}",
+              "合成单选。",
+              "",
+              "- [x] 一",
+              "- [ ] 二",
+              "::::",
+              "",
+              "::::question{id=course-multi-judge type=judge}",
+              "合成判断。[[正确]]",
+              "::::",
+            ]
+          : []),
+      ].join("\n");
+      const world = await setupCourse(app, markdown);
+      const call = async (
+        cookie: string,
+        path: string,
+        status: number,
+        method = "GET",
+        body?: object,
+      ): Promise<unknown> => {
+        const response = await request(app, cookie, path, method, body);
+        expect(response.status, await response.clone().text()).toBe(status);
+        return response.json();
+      };
+      const owner = (
+        path: string,
+        status: number,
+        method?: string,
+        body?: object,
+      ) => call(world.ownerCookie, path, status, method, body);
+      const entry = `${world.unitPath}/attempts`;
+      await call(world.otherCookie, entry, 403, "POST", whole);
+      const forbid = [
+        "acceptedIndexes",
+        "acceptedOptionIndexes",
+        "scoringKey",
+        "correct",
+      ];
+      const open = async () => {
+        const raw = await owner(entry, 201, "POST", whole);
+        assertNoLeak(raw, { forbid });
+        return attemptStartOkSchema.parse(raw).data;
+      };
+      const first = await open();
+      expect(existsSync(kernelPath), "多选课程开卷须创建 K25 权威活动").toBe(
+        true,
+      );
+      const path = `/api/student/attempts/${first.id}`;
+      const draft = async () => {
+        const raw = await owner(path, 200);
+        assertNoLeak(raw, { forbid });
+        expect(JSON.stringify(raw)).not.toMatch(/课程多选私有详解|\[x\]/u);
+        return attemptDraftOkSchema.parse(raw).data;
+      };
+      const frozen = (await draft()).units;
+      const questions = frozen.flatMap((unit) => unit.questions);
+      const revisions = new Map(
+        questions.map(({ id, questionRevisionId }) => [id, questionRevisionId]),
+      );
+      const multi = (indexes: number[]) => ({ kind: "multi", indexes });
+      const save = (
+        id: string,
+        answer: object,
+        baseRevision: number,
+        status = 200,
+      ) =>
+        owner(`${path}/answers/${id}`, status, "PUT", {
+          answer,
+          baseRevision,
+          mutationId: randomUUID(),
+          expectedFrozenAt: first.frozenAt,
+          questionRevisionId: revisions.get(id),
+        });
+      await save(selected, multi([0]), 0);
+      expect(await save(selected, multi([3]), 1, 400)).toMatchObject({
+        error: "VALIDATION_ERROR",
+      });
+      expect((await draft()).drafts).toEqual({ [selected]: multi([0]) });
+      const ownAnswers = new Map<string, object>([
+        [selected, multi([2, 0, 2])],
+        [empty, multi([])],
+      ]);
+      if (mixed) {
+        ownAnswers.set("course-multi-choice", { kind: "choice", index: 0 });
+        ownAnswers.set("course-multi-judge", { kind: "judge", value: true });
+      }
+      for (const [id, answer] of ownAnswers)
+        await save(id, answer, id === selected ? 1 : 0);
+      const questionPath = `/api/teacher/questions/${selected}`;
+      const {
+        data: { sourceMd },
+      } = z
+        .object({ data: z.object({ sourceMd: z.string() }) })
+        .parse(await call(world.teacher, questionPath, 200));
+      await call(world.teacher, questionPath, 200, "PUT", {
+        sourceMd: sourceMd
+          .replace("[x] 甲", "[ ] 甲")
+          .replace("[ ] 乙", "[x] 乙"),
+      });
+      expect(await open()).toMatchObject({
+        id: first.id,
+        frozenAt: first.frozenAt,
+      });
+      const resumed = await draft();
+      expect(resumed.units).toEqual(frozen);
+      expect(resumed.drafts).toEqual(Object.fromEntries(ownAnswers));
+      const expectedRevisions = new Map(
+        questions.map(({ id }) => [
+          id,
+          id === selected ? 2 : ownAnswers.has(id) ? 1 : 0,
+        ]),
+      );
+      const submission = {
+        revisions: questions.map(({ id, questionRevisionId }) => ({
+          questionId: id,
+          questionRevisionId,
+          expectedAnswerRevision: expectedRevisions.get(id),
+        })),
+      };
+      const submitPath = `${path}/submit`;
+      await call(world.otherCookie, submitPath, 403, "POST", submission);
+      const result = attemptResultOkSchema.parse(
+        await owner(submitPath, 200, "POST", submission),
+      ).data;
+      expect(result.attempt.scoreAuto).toBe(mixed ? 60 : 33);
+      const rows = result.units.flatMap((unit) => unit.questions);
+      expect(rows).toMatchObject(
+        questions.map(({ id }) => ({
+          questionId: id,
+          answer: ownAnswers.get(id) ?? null,
+          autoCorrect: id !== empty && id !== missing,
+          answered: id !== empty && id !== missing,
+        })),
+      );
+      expect(rows[0]?.answers).toEqual(multi([0, 2]));
+      expect(await owner(submitPath, 409, "POST", submission)).toMatchObject({
+        error: "ALREADY_SUBMITTED",
+      });
+      expect(
+        sql
+          .prepare("SELECT kind FROM attempt_settlements WHERE attempt_id=?")
+          .all(first.id),
+      ).toEqual([{ kind: "final" }]);
+      expect(
+        sql
+          .prepare("SELECT answer_json FROM responses WHERE attempt_id=?")
+          .all(first.id),
+      ).toEqual(questions.map(() => ({ answer_json: null })));
+      const ticket = z
+        .tuple([z.object({ operation_id: z.string(), receipt_id: z.string() })])
+        .parse(
+          sql
+            .prepare(
+              "SELECT operation_id, receipt_id FROM kernel_question_deliveries WHERE attempt_id=?",
+            )
+            .all(first.id),
+        )[0];
+      const actor = { role: "student" as const, id: world.studentId };
+      const runtime = openLearningRuntime({
+        databasePath: kernelPath,
+        authorizeConfirmationRecovery: (subject) =>
+          subject.studentId === actor.id &&
+          subject.activityId === first.id &&
+          subject.operationId === ticket.operation_id,
+      });
+      try {
+        const activity = runtime.read(actor, first.id);
+        expect(activity.status).toBe("completed");
+        const key = {
+          protocolVersion: 1 as const,
+          operationId: ticket.operation_id,
+          stepAttemptId: activity.stepAttemptId,
+        };
+        const recovered = runtime.recoverQuestionDelivery(
+          actor,
+          first.id,
+          key,
+          "declared",
+        );
+        expect(recovered.receipt.id).toBe(ticket.receipt_id);
+        expect(recovered.confirmation.questions.slice(0, 3)).toMatchObject([
+          { questionId: selected, value: [2, 0, 2], revision: 2 },
+          { questionId: empty, value: [], revision: 1 },
+          { questionId: missing, value: null, revision: 0 },
+        ]);
+        expect(() =>
+          runtime.recoverQuestionDelivery(
+            { role: "student", id: world.otherStudentId },
+            first.id,
+            key,
+            "declared",
+          ),
+        ).toThrow();
+        using kernelDb = new DatabaseSync(kernelPath, { readOnly: true });
+        expect(
+          kernelDb
+            .prepare("SELECT id FROM submissions WHERE step_attempt_id=?")
+            .all(key.stepAttemptId),
+        ).toEqual([{ id: ticket.receipt_id }]);
+      } finally {
+        runtime.close();
+      }
+    } finally {
+      handle.close();
+    }
+  },
+);
+
 it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后再开空卷", async () => {
   using data = mkdtempDisposableSync(join(tmpdir(), "ownclass-course-k25-"));
   const handle = createDbHandle(join(data.path, "tutor.db"), runMigrations);

@@ -8,6 +8,7 @@ import {
   getDirective,
   isTeacherReviewDeliveryScoringSource,
   judgeScoringSourceSchema,
+  multiChoiceScoringSourceSchema,
   type Question,
   questionSchema,
   refDirective,
@@ -38,6 +39,7 @@ import { jsonOf } from "./snapshot.ts";
 const kernelCourseScoringSourceSchema = z.union([
   singleChoiceScoringSourceSchema,
   judgeScoringSourceSchema,
+  multiChoiceScoringSourceSchema,
 ]);
 
 const kernelFrozenAssignmentSchema = z.strictObject({
