@@ -1,9 +1,9 @@
 import {
+  assignmentScoringSourcesSchema,
   attemptContextSnapshotEntrySchema,
   attemptTimeLimitMinutesSchema,
   frozenGradingPolicySchema,
   questionSchema,
-  singleChoiceScoringSourceSchema,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { z } from "zod";
@@ -127,44 +127,40 @@ export function loadKernelAssignmentQuestions(
       gradingPolicy: frozenGradingPolicyOf(question, selfReview),
     };
   });
-  const common = ({
-    question,
-    questionVersion,
-  }: (typeof responses)[number]) => ({
-    id: question.id,
-    version: questionVersion,
-    prompt: studentStemMd(question),
-  });
-  if (responses[0]?.question.type === "judge") {
-    if (context.materials.length) ineligible();
-    const questions = responses.map((row) => {
-      const { question } = row;
-      if (question.type !== "judge" || question.answers?.kind !== "judge")
-        ineligible();
-      return {
-        ...common(row),
-        options: { true: "正确", false: "错误" },
-        acceptedResponse: question.answers.value,
-      };
-    });
-    return { kind: "judge" as const, responses, questions, context: [] };
-  }
-  const questions = responses.map((row) => {
-    const parsed = singleChoiceScoringSourceSchema.safeParse(row.question);
-    if (!parsed.success) ineligible();
-    const { options, answers } = parsed.data;
+  const parsed = assignmentScoringSourcesSchema.safeParse(
+    responses.map(({ question }) => question),
+  );
+  if (!parsed.success) ineligible();
+  const { slotType, questions: sources } = parsed.data;
+  const common = (index: number) => {
+    const row = responses[index];
+    if (!row) ineligible();
     return {
-      ...common(row),
-      options: Object.fromEntries(
-        options.map(({ text }, index) => [String(index), text]),
-      ),
-      acceptedChoice: String(answers.index),
+      id: row.question.id,
+      version: row.questionVersion,
+      prompt: studentStemMd(row.question),
     };
-  });
+  };
+  if (slotType === "oneResponsePerQuestion") {
+    if (context.materials.length) ineligible();
+    const questions = sources.map(({ answers }, index) => ({
+      ...common(index),
+      options: { true: "正确", false: "错误" },
+      acceptedResponse: answers.value,
+    }));
+    return { slotType, responses, questions, context: [] };
+  }
+  const questions = sources.map(({ options, answers }, index) => ({
+    ...common(index),
+    options: Object.fromEntries(
+      options.map(({ text }, optionIndex) => [String(optionIndex), text]),
+    ),
+    acceptedChoice: String(answers.index),
+  }));
   const entries = z
     .array(attemptContextSnapshotEntrySchema)
     .parse(contextEntriesOf(context));
   if (context.materials.some(({ contentMd }) => contentMd.trim() === ""))
     ineligible();
-  return { kind: "choice" as const, responses, questions, context: entries };
+  return { slotType, responses, questions, context: entries };
 }

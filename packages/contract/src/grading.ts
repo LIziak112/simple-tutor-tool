@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   choiceAnswersSchema,
+  judgeAnswersSchema,
   optionSchema,
   questionTypeSchema,
 } from "./content.ts";
@@ -50,6 +51,28 @@ export const singleChoiceScoringSourceSchema = z
     path: ["answers", "index"],
     message: "单选题的正确下标超出选项范围",
   });
+
+export const judgeScoringSourceSchema = z.object({
+  type: questionTypeSchema.extract(["judge"]),
+  answers: judgeAnswersSchema,
+});
+
+export const assignmentScoringSourcesSchema = z.union([
+  singleChoiceScoringSourceSchema
+    .array()
+    .min(1)
+    .transform((questions) => ({
+      slotType: "oneChoicePerQuestion" as const,
+      questions,
+    })),
+  judgeScoringSourceSchema
+    .array()
+    .min(1)
+    .transform((questions) => ({
+      slotType: "oneResponsePerQuestion" as const,
+      questions,
+    })),
+]);
 
 export const multiStudentAnswerSchema = z.object({
   kind: z.literal("multi"),

@@ -130,29 +130,28 @@ export function kernelAssignmentPublication(
       },
     ]),
   );
+  const responseSlot = definition.slotType === "oneResponsePerQuestion";
   const key = { id: `${assignment.id}-key`, version };
-  const scoringKey =
-    definition.kind === "judge"
-      ? {
-          ...key,
-          acceptedResponses: Object.fromEntries(
-            definition.questions.map(({ id, acceptedResponse }) => [
-              id,
-              acceptedResponse,
-            ]),
-          ),
-        }
-      : {
-          ...key,
-          acceptedChoices: Object.fromEntries(
-            definition.questions.map(({ id, acceptedChoice }) => [
-              id,
-              acceptedChoice,
-            ]),
-          ),
-        };
-  const judge = definition.kind === "judge";
-  const instructions = judge ? "判断每道题。" : "选择每题的一个选项。";
+  const scoringKey = responseSlot
+    ? {
+        ...key,
+        acceptedResponses: Object.fromEntries(
+          definition.questions.map(({ id, acceptedResponse }) => [
+            id,
+            acceptedResponse,
+          ]),
+        ),
+      }
+    : {
+        ...key,
+        acceptedChoices: Object.fromEntries(
+          definition.questions.map(({ id, acceptedChoice }) => [
+            id,
+            acceptedChoice,
+          ]),
+        ),
+      };
+  const instructions = responseSlot ? "判断每道题。" : "选择每题的一个选项。";
   const slot = {
     source: "questions",
     targetId: "answer",
@@ -179,20 +178,20 @@ export function kernelAssignmentPublication(
           id: "answer",
           instructions,
           tool: {
-            id: judge ? "response-group" : "single-choice-group",
+            id: responseSlot ? "response-group" : "single-choice-group",
             version: 1,
           },
           inputs: { questions: { from: "questions" }, ...materialInputs },
           submit: {
             purpose: "finalAnswer",
             slots: {
-              answers: judge
+              answers: responseSlot
                 ? {
-                    type: "oneResponsePerQuestion",
+                    type: definition.slotType,
                     input: "booleanOrString",
                     ...slot,
                   }
-                : { type: "oneChoicePerQuestion", ...slot },
+                : { type: definition.slotType, ...slot },
             },
           },
           afterConfirmation: "finish",
@@ -201,7 +200,7 @@ export function kernelAssignmentPublication(
       grading: {
         assessment: {
           from: { stepId: "answer", slotId: "answers" },
-          evaluator: judge
+          evaluator: responseSlot
             ? ownClassJudgeEvaluatorRef
             : ownClassChoiceEvaluatorRef,
           keyRef: { id: scoringKey.id, version },
@@ -215,7 +214,7 @@ export function kernelAssignmentPublication(
         student: {
           ownSubmission: {
             scope: "ownConfirmedSubmissions",
-            fields: ["receipt", judge ? "ownResponses" : "ownChoices"],
+            fields: ["receipt", responseSlot ? "ownResponses" : "ownChoices"],
             onFinal: [],
           },
         },

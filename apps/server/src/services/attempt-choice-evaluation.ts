@@ -1,4 +1,7 @@
-import { singleChoiceScoringSourceSchema } from "@tutor/contract";
+import {
+  judgeScoringSourceSchema,
+  singleChoiceScoringSourceSchema,
+} from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
 import type {
   ChoiceEvaluationInput,
@@ -131,10 +134,10 @@ export function createOwnClassJudgeEvaluator(
         currentScope(),
         input,
       );
+      const source = judgeScoringSourceSchema.safeParse(question);
       if (
-        question.type !== "judge" ||
-        question.answers?.kind !== "judge" ||
-        question.answers.value !== input.acceptedResponse
+        !source.success ||
+        source.data.answers.value !== input.acceptedResponse
       )
         mismatch();
       const result = gradeResponseRow(

@@ -1,3 +1,4 @@
+import { assignmentScoringSourcesSchema } from "@tutor/contract";
 import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
 import { requireOwnAttempt } from "./attempt-access.ts";
@@ -74,10 +75,12 @@ export function recoverKernelConfirmation(
       )
         kernelAttemptUnavailable();
       const rows = attemptResponseRows(db, attempt.id);
-      const first = rows[0];
-      if (!first) kernelAttemptUnavailable();
+      const scoring = assignmentScoringSourcesSchema.safeParse(
+        rows.map(snapshotOfRow),
+      );
+      if (!scoring.success) kernelAttemptUnavailable();
       const recover =
-        snapshotOfRow(first)?.type === "judge"
+        scoring.data.slotType === "oneResponsePerQuestion"
           ? runtime.recoverResponseConfirmation
           : runtime.recoverChoiceConfirmation;
       const recovered = recover(

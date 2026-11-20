@@ -1,3 +1,7 @@
+import {
+  judgeScoringSourceSchema,
+  singleChoiceScoringSourceSchema,
+} from "@tutor/contract";
 import type { StudentActivity } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import type { Attempt, ResponseRow } from "../db/schema.ts";
@@ -71,13 +75,17 @@ export function kernelDraftRowsOf(
     : undefined) ?? []) {
     const row = rows.get(draft.questionId);
     const answer = ownClassChoiceAnswerOf(draft.choice);
+    const source = singleChoiceScoringSourceSchema.safeParse(
+      row && snapshotOfRow(row),
+    );
     if (
       draft.slotId !== "answers" ||
       row === undefined ||
       row.questionVersion !== draft.questionVersion ||
       row.answerJson !== null ||
       draft.revision <= row.answerRevision ||
-      snapshotOfRow(row)?.options?.[answer.index] === undefined
+      !source.success ||
+      source.data.options[answer.index] === undefined
     )
       kernelAttemptUnavailable();
     rows.set(row.questionId, {
@@ -97,7 +105,7 @@ export function kernelDraftRowsOf(
       row.questionVersion !== draft.questionVersion ||
       row.answerJson !== null ||
       draft.revision <= row.answerRevision ||
-      snapshotOfRow(row)?.type !== "judge"
+      !judgeScoringSourceSchema.safeParse(snapshotOfRow(row)).success
     )
       kernelAttemptUnavailable();
     rows.set(row.questionId, {
