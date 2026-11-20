@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { StudentActivity } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import type { Attempt } from "../db/schema.ts";
@@ -40,6 +40,29 @@ export function courseKernelBinding(db: Pick<Db, "select">, attemptId: string) {
     })
     .from(kernelCourseOpenings)
     .where(eq(kernelCourseOpenings.attemptId, attemptId))
+    .get();
+}
+
+export function pendingKernelCourseOpening(
+  db: Pick<Db, "select">,
+  {
+    studentId,
+    courseId,
+    unitId,
+  }: Pick<Attempt, "studentId" | "courseId" | "unitId">,
+) {
+  if (courseId === null || unitId === null) return undefined;
+  return db
+    .select()
+    .from(kernelCourseOpenings)
+    .where(
+      and(
+        eq(kernelCourseOpenings.studentId, studentId),
+        eq(kernelCourseOpenings.courseId, courseId),
+        eq(kernelCourseOpenings.unitId, unitId),
+        isNull(kernelCourseOpenings.attemptId),
+      ),
+    )
     .get();
 }
 

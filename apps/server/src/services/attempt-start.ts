@@ -31,12 +31,16 @@ import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-gua
 import { isKernelAssignment } from "./kernel-assignment-routing.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import {
+  courseRestartStale,
   finishKernelCourseOpening,
   reserveKernelCourseOpening,
   reserveKernelCourseRefreeze,
   resumeBoundKernelCourse,
 } from "./kernel-course-opening.ts";
-import { courseKernelBinding } from "./kernel-question-delivery-binding.ts";
+import {
+  courseKernelBinding,
+  pendingKernelCourseOpening,
+} from "./kernel-question-delivery-binding.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
@@ -283,16 +287,7 @@ function persistFrozenAttempt(
 
 // ---------- POST /api/student/courses/:cid/units/:uid/attempts（T2A.6） ----------
 
-/**
- * 课程练习入口（D10）：
- * - 每次调用都先校验 D5 可见性（requireVisibleCourseUnit：非成员/归档 403、
- *   条目不可见 404，D22）；
- * - 存在未交卷（draft）作答 → 返回它（入口为「继续作答」）；
- * - 否则新建 attempt（attemptNo = 该 (学生, 课程, 单元) 历次最大值 + 1，从 1 起；
- *   新一次从空白开始——不预填上次答案与笔迹，历次记录互不影响）；
- * - 「(学生, 课程, 单元) 同时最多 1 份未交卷」在事务内先查后插保证：
- *   better-sqlite3 同步事务天然串行，并发两次 POST 只产生一份 draft。
- */
+/** 先校验课程可见性，再串行续作、重开指定草稿或从空白开下一卷。 */
 export function startCourseAttempt(
   db: Db,
   studentId: string,
@@ -302,6 +297,11 @@ export function startCourseAttempt(
   client: AttemptStartClient = {},
   kernel?: { dataDir: string; enabled: boolean },
 ): AttemptStartData {
+  const { restartAttemptId, timeLimitMinutes, feedbackMode } = options;
+  const canOpenInKernel =
+    kernel?.enabled &&
+    timeLimitMinutes === undefined &&
+    feedbackMode !== "per_question";
   const decide = (tx: Tx) => {
     const item = requireVisibleCourseUnit(db, studentId, courseId, unitId);
     const existing = tx
@@ -319,27 +319,33 @@ export function startCourseAttempt(
     const draft = existing.find(
       (row) => row.status === "draft" && row.abandonedAt === null,
     );
+    if (restartAttemptId !== undefined && draft?.id !== restartAttemptId)
+      throw courseRestartStale();
+    const attemptNo =
+      existing.reduce((max, row) => Math.max(max, row.attemptNo), 0) + 1;
+    const pending = pendingKernelCourseOpening(tx, {
+      studentId,
+      courseId,
+      unitId,
+    });
+    if (pending) {
+      if (
+        pending.attemptNo !== attemptNo ||
+        pending.draft.restartAttemptId !== draft?.id ||
+        (restartAttemptId !== undefined &&
+          (timeLimitMinutes !== undefined || feedbackMode === "per_question"))
+      )
+        kernelAttemptUnavailable();
+      return { opening: pending };
+    }
     const bound = draft && courseKernelBinding(tx, draft.id);
     if (draft && !bound) requireNoPendingKernelRefreeze(tx, draft);
-    if (options.restartAttemptId !== undefined) {
-      if (draft?.id !== options.restartAttemptId) {
-        throw new HttpError(
-          409,
-          "ATTEMPT_RESTART_STALE",
-          "当前作答已变化，请关闭确认后查看最新记录。",
-        );
-      }
-      if (bound) kernelAttemptUnavailable();
-      tx.update(attempts)
-        .set({ abandonedAt: new Date().toISOString() })
-        .where(eq(attempts.id, draft.id))
-        .run();
-    } else if (draft !== undefined) {
+    if (draft && restartAttemptId === undefined) {
       if (!bound)
         return attemptSummaryOf(resumeDraftAttempt(db, draft, options, client));
       if (
         !kernel ||
-        (draft.activatedAt === null && options.timeLimitMinutes !== undefined)
+        (draft.activatedAt === null && timeLimitMinutes !== undefined)
       )
         kernelAttemptUnavailable();
       if (
@@ -351,11 +357,12 @@ export function startCourseAttempt(
         resumeBoundKernelCourse(db, kernel.dataDir, draft),
       );
     }
-
-    const maxAttemptNo = existing.reduce(
-      (max, row) => Math.max(max, row.attemptNo),
-      0,
-    );
+    if (bound && draft) {
+      if (!canOpenInKernel || !kernel) kernelAttemptUnavailable();
+      // 先补落已被内核接受的旧交卷，提交主库事务后再返回过期错误。
+      if (resumeBoundKernelCourse(db, kernel.dataDir, draft).status !== "draft")
+        return { error: courseRestartStale() };
+    }
     const attempt = newDraftAttempt({
       id: randomUUID(),
       studentId,
@@ -364,32 +371,50 @@ export function startCourseAttempt(
       lectureId: null,
       courseId,
       unitId,
-      attemptNo: maxAttemptNo + 1,
+      attemptNo,
       startedAt: new Date().toISOString(),
       // 模块 2：自选时长（缺省不限时）
-      timeLimitMinutes: options.timeLimitMinutes,
+      timeLimitMinutes,
       // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议。
       // M5-D2：传该卷 unitId——学生未设置偏好时课程单元的文档推荐参与裁决
-      ...workflowStartColumns(db, "course", studentId, null, options, unitId),
+      ...workflowStartColumns(
+        db,
+        "course",
+        studentId,
+        null,
+        bound ? { ...options, workflowVersion: 1 } : options,
+        unitId,
+      ),
     });
     const opening = reserveKernelCourseOpening(
       db,
       tx,
       attempt,
       item.title,
-      kernel?.enabled &&
-        options.restartAttemptId === undefined &&
-        options.feedbackMode !== "per_question"
-        ? kernel.dataDir
+      canOpenInKernel && (bound || restartAttemptId === undefined)
+        ? kernel?.dataDir
         : undefined,
+      bound ? restartAttemptId : undefined,
     );
     if (opening) return { opening };
+    if (bound) kernelAttemptUnavailable();
+    if (draft)
+      tx.update(attempts)
+        .set({ abandonedAt: attempt.startedAt })
+        .where(eq(attempts.id, draft.id))
+        .run();
     return persistFrozenAttempt(db, tx, attempt);
   };
   const start = db.transaction(decide, { behavior: "immediate" });
+  if ("error" in start) throw start.error;
   if ("opening" in start)
     return attemptSummaryOf(
-      finishKernelCourseOpening(db, kernel?.dataDir, start.opening),
+      finishKernelCourseOpening(
+        db,
+        kernel?.dataDir,
+        start.opening,
+        restartAttemptId !== undefined,
+      ),
     );
   if ("refreeze" in start)
     return attemptSummaryOf(

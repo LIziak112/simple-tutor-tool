@@ -10,6 +10,7 @@ import {
   type Question,
   questionSchema,
   refDirective,
+  singleChoiceScoringSourceSchema,
   wholeQuestionDeliveryScoringSourcesSchema,
 } from "@tutor/contract";
 import {
@@ -49,6 +50,7 @@ const kernelFrozenAssignmentSchema = z.strictObject({
 
 export const kernelOpeningDraftSchema = kernelFrozenAssignmentSchema.extend({
   courseId: z.string().nullable(),
+  restartAttemptId: z.uuid().optional(),
   timeLimitMinutes: attemptTimeLimitMinutesSchema.optional(),
   workflowVersion: z.literal(1).optional(),
   prepared: z.literal(true).optional(),
@@ -64,6 +66,56 @@ export const kernelRefreezeDraftSchema = z.union([
 
 export type KernelOpeningDraft = z.infer<typeof kernelOpeningDraftSchema>;
 export type KernelRefreezeDraft = z.input<typeof kernelRefreezeDraftSchema>;
+
+export function kernelCourseDraftFor(
+  db: Db,
+  attempt: Attempt,
+  expectedTeacherId: string,
+  selfReview: boolean,
+  restartAttemptId?: string,
+) {
+  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
+    db,
+    attempt,
+  );
+  if (teacherId !== expectedTeacherId || !liveRows.length) return undefined;
+  const responses = liveRows.map((row) => {
+    const question = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
+    return {
+      question,
+      questionVersion: row.version,
+      unitId: row.unitId,
+      gradingPolicy: frozenGradingPolicyOf(question, selfReview),
+    };
+  });
+  if (
+    responses.some(
+      ({ question, gradingPolicy }) =>
+        gradingPolicy !== "auto" ||
+        question.hints?.length ||
+        !singleChoiceScoringSourceSchema.safeParse(question).success,
+    )
+  )
+    return undefined;
+  const context = liveAttemptContextClosure(
+    db,
+    teacherId,
+    liveRows.map(({ id }) => id),
+  );
+  if (
+    (context.materials.length === 0 && context.groups.length > 0) ||
+    context.materials.some(({ contentMd }) => contentMd.trim() === "")
+  )
+    return undefined;
+
+  return kernelOpeningDraftSchema.parse({
+    courseId: attempt.courseId,
+    workflowVersion: 1,
+    restartAttemptId,
+    responses,
+    context: contextEntriesOf(context),
+  });
+}
 
 export function kernelDraftForAssignment(
   assignment: Pick<Assignment, "id" | "courseId">,

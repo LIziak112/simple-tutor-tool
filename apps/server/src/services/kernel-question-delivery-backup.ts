@@ -8,7 +8,10 @@ import {
 } from "../db/schema-kernel-question-delivery.ts";
 import { ZipReadError } from "../lib/zip-read.ts";
 import { withKernelRuntime } from "./kernel-assignment-runtime.ts";
-import { replayKernelCourseOpening } from "./kernel-course-opening.ts";
+import {
+  replayKernelCourseOpening,
+  verifyKernelCourseRestartSource,
+} from "./kernel-course-opening.ts";
 import { replayKernelLessonOpening } from "./kernel-lesson-opening.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 
@@ -26,6 +29,13 @@ export function verifyBackupQuestionDeliveries(
     const verified = new Set<string>();
     for (const opening of openings) {
       if (opening.attemptId === null) {
+        if (!("lectureId" in opening))
+          verifyKernelCourseRestartSource(
+            db,
+            directory,
+            opening,
+            attachmentDir,
+          );
         withKernelRuntime(db, directory, false, (runtime) =>
           "lectureId" in opening
             ? replayKernelLessonOpening(runtime, opening)

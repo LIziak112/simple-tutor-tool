@@ -1,15 +1,9 @@
-import { singleChoiceScoringSourceSchema } from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { type Attempt, attempts, courses } from "../db/schema.ts";
 import { kernelCourseOpenings } from "../db/schema-kernel-question-delivery.ts";
+import { HttpError } from "../lib/http-error.ts";
 import { requireOwnAttempt } from "./attempt-access.ts";
-import {
-  contextEntriesOf,
-  frozenGradingPolicyOf,
-  liveAttemptContextClosure,
-} from "./attempt-context.ts";
-import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { requireVisibleCourseUnit } from "./course-service.ts";
 import {
   canInitializeKernelStorage,
@@ -19,6 +13,7 @@ import {
 } from "./kernel-assignment-freeze.ts";
 import {
   type KernelOpeningDraft,
+  kernelCourseDraftFor,
   kernelOpeningDraftSchema,
 } from "./kernel-assignment-input.ts";
 import {
@@ -50,31 +45,24 @@ import type { Tx } from "./question-sync.ts";
 
 type Opening = typeof kernelCourseOpenings.$inferSelect;
 
+export function courseRestartStale() {
+  return new HttpError(
+    409,
+    "ATTEMPT_RESTART_STALE",
+    "当前作答已变化，请关闭确认后查看最新记录。",
+  );
+}
+
 export function reserveKernelCourseOpening(
   db: Db,
   tx: Tx,
   attempt: Attempt,
   title: string,
   dataDir?: string,
+  restartAttemptId?: string,
 ): Opening | undefined {
   const { courseId, unitId, studentId, attemptNo } = attempt;
   if (courseId === null || unitId === null) kernelAttemptUnavailable();
-  const pending = tx
-    .select()
-    .from(kernelCourseOpenings)
-    .where(
-      and(
-        eq(kernelCourseOpenings.studentId, studentId),
-        eq(kernelCourseOpenings.courseId, courseId),
-        eq(kernelCourseOpenings.unitId, unitId),
-        isNull(kernelCourseOpenings.attemptId),
-      ),
-    )
-    .get();
-  if (pending) {
-    if (pending.attemptNo !== attemptNo) kernelAttemptUnavailable();
-    return pending;
-  }
   if (
     !dataDir ||
     attempt.practiceWorkflowVersion !== 1 ||
@@ -90,11 +78,12 @@ export function reserveKernelCourseOpening(
   const settings = getPracticeFeedbackSettings(db, course.teacherId);
   if (settings.practiceFeedbackPolicy !== "after_attempt") return undefined;
   const teacherId = course.teacherId;
-  const draft = courseDraftFor(
+  const draft = kernelCourseDraftFor(
     db,
     attempt,
     teacherId,
     settings.studentSelfReviewEnabled,
+    restartAttemptId,
   );
   if (!draft) return undefined;
   const practiceId = `course:${attempt.id}`;
@@ -122,54 +111,6 @@ export function reserveKernelCourseOpening(
     })
     .returning()
     .get();
-}
-
-function courseDraftFor(
-  db: Db,
-  attempt: Attempt,
-  expectedTeacherId: string,
-  selfReview: boolean,
-) {
-  const { liveRows, teacherId, knowledgeByQuestion } = freezeInputsOfNewAttempt(
-    db,
-    attempt,
-  );
-  if (teacherId !== expectedTeacherId || !liveRows.length) return undefined;
-  const responses = liveRows.map((row) => {
-    const question = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
-    return {
-      question,
-      questionVersion: row.version,
-      unitId: row.unitId,
-      gradingPolicy: frozenGradingPolicyOf(question, selfReview),
-    };
-  });
-  if (
-    responses.some(
-      ({ question, gradingPolicy }) =>
-        gradingPolicy !== "auto" ||
-        question.hints?.length ||
-        !singleChoiceScoringSourceSchema.safeParse(question).success,
-    )
-  )
-    return undefined;
-  const context = liveAttemptContextClosure(
-    db,
-    teacherId,
-    liveRows.map(({ id }) => id),
-  );
-  if (
-    (context.materials.length === 0 && context.groups.length > 0) ||
-    context.materials.some(({ contentMd }) => contentMd.trim() === "")
-  )
-    return undefined;
-
-  return kernelOpeningDraftSchema.parse({
-    courseId: attempt.courseId,
-    workflowVersion: 1,
-    responses,
-    context: contextEntriesOf(context),
-  });
 }
 
 function coursePublication(
@@ -208,7 +149,7 @@ export function reserveKernelCourseRefreeze(
   if (!isOpenEmptyForKernelRefreeze(db, attempt)) return false;
   const binding = questionDeliveryBinding(db, attempt);
   if (!binding?.course) kernelAttemptUnavailable();
-  const next = courseDraftFor(
+  const next = kernelCourseDraftFor(
     db,
     attempt,
     binding.teacherId,
@@ -287,10 +228,40 @@ export function replayKernelCourseOpening(
   return { receipt, draft };
 }
 
+export function verifyKernelCourseRestartSource(
+  db: Db,
+  dataDir: string,
+  opening: Opening,
+  attachmentDir = dataDir,
+) {
+  const { restartAttemptId } = kernelOpeningDraftSchema.parse(opening.draft);
+  if (restartAttemptId === undefined) return undefined;
+  const predecessor = db
+    .select()
+    .from(attempts)
+    .where(eq(attempts.id, restartAttemptId))
+    .get();
+  if (
+    predecessor?.sourceType !== "course" ||
+    predecessor.courseId !== opening.courseId ||
+    predecessor.unitId !== opening.unitId ||
+    predecessor.studentId !== opening.studentId ||
+    predecessor.attemptNo >= opening.attemptNo ||
+    predecessor.abandonedAt !== null ||
+    predecessor.status !== "draft" ||
+    questionDeliveryBinding(db, predecessor)?.teacherId !== opening.teacherId ||
+    readQuestionDeliveryFacts(db, dataDir, predecessor, attachmentDir)?.attempt
+      .status !== "draft"
+  )
+    kernelAttemptUnavailable();
+  return predecessor;
+}
+
 export function finishKernelCourseOpening(
   db: Db,
   dataDir: string | undefined,
   opening: Opening,
+  explicitRestart: boolean,
 ) {
   if (!dataDir) kernelAttemptUnavailable();
   return db.transaction(
@@ -314,6 +285,7 @@ export function finishKernelCourseOpening(
       if (!current || course?.teacherId !== current.teacherId)
         kernelAttemptUnavailable();
       if (current.attemptId !== null) {
+        if (explicitRestart) throw courseRestartStale();
         const attempt = tx
           .select()
           .from(attempts)
@@ -323,6 +295,7 @@ export function finishKernelCourseOpening(
         return resumeBoundKernelCourse(db, dataDir, attempt);
       }
 
+      const predecessor = verifyKernelCourseRestartSource(db, dataDir, current);
       const { receipt, draft } = withKernelRuntime(
         db,
         dataDir,
@@ -351,9 +324,20 @@ export function finishKernelCourseOpening(
         attempt.startedAt,
       );
       tx.update(kernelCourseOpenings)
-        .set({ attemptId: attempt.id, stepAttemptId: receipt.stepAttemptId })
+        .set({
+          attemptId: attempt.id,
+          stepAttemptId: receipt.stepAttemptId,
+          draft: { ...draft, restartAttemptId: undefined },
+        })
         .where(eq(kernelCourseOpenings.operationId, current.operationId))
         .run();
+      if (predecessor)
+        tx.update(attempts)
+          .set({ abandonedAt: new Date().toISOString() })
+          .where(
+            and(eq(attempts.id, predecessor.id), isNull(attempts.abandonedAt)),
+          )
+          .run();
       return attempt;
     },
     { behavior: "immediate" },

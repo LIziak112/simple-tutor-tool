@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdtempDisposableSync } from "node:fs";
+import { existsSync, mkdtempDisposableSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -31,6 +31,7 @@ import { readZipEntriesMap } from "../lib/zip-read.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { zipToBackupBuffer } from "../test/backup-fixtures.ts";
 import { setupAssignment } from "../test/m04-p1/product-fixture.ts";
+import { putNoteReceipt } from "../test/note-fixtures.ts";
 
 const whole = { workflowVersion: 1, feedbackMode: "after_attempt" };
 
@@ -126,14 +127,6 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
         await owner(`${unitPath}/attempts`, "POST", {
           ...whole,
           timeLimitMinutes: 5,
-        })
-      ).status,
-    ).toBe(503);
-    expect(
-      (
-        await owner(`${unitPath}/attempts`, "POST", {
-          ...whole,
-          restartAttemptId: first.id,
         })
       ).status,
     ).toBe(503);
@@ -346,6 +339,13 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     });
     expect(
       (
+        await owner(`${unitPath}/attempts`, "POST", {
+          restartAttemptId: first.id,
+        })
+      ).status,
+    ).toBe(503);
+    expect(
+      (
         await owner(`${path}/workflow`, "PATCH", {
           feedbackMode: "per_question",
           workflowRevision: 0,
@@ -486,6 +486,75 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     expect((await records()).some((row) => row.attemptId === second.id)).toBe(
       true,
     );
+    const restart = () =>
+      owner(`${unitPath}/attempts`, "POST", { restartAttemptId: second.id });
+    for (const mode of [
+      { timeLimitMinutes: 5 },
+      { feedbackMode: "per_question" },
+    ]) {
+      expect(
+        (
+          await owner(`${unitPath}/attempts`, "POST", {
+            ...whole,
+            ...mode,
+            restartAttemptId: second.id,
+          })
+        ).status,
+      ).toBe(503);
+    }
+    app = appWith(false);
+    expect((await restart()).status).toBe(503);
+    expect(await open()).toMatchObject({ id: second.id });
+    app = appWith(true);
+    const [firstRestart, repeatedRestart] = await Promise.all([
+      restart(),
+      restart(),
+    ]);
+    expect(firstRestart.status, await firstRestart.clone().text()).toBe(201);
+    expect(repeatedRestart.status).toBe(409);
+    expect(await repeatedRestart.json()).toMatchObject({
+      error: "ATTEMPT_RESTART_STALE",
+    });
+    const restarted = await firstRestart.json();
+    assertNoLeak(restarted, {
+      forbid: ["restartAttemptId", "questions", "stemMd"],
+    });
+    const third = attemptStartOkSchema.parse(restarted).data;
+    expect(third.id).not.toBe(second.id);
+    expect(third.attemptNo).toBe(3);
+    expect(await open()).toEqual(third);
+    const thirdPath = `/api/student/attempts/${third.id}`;
+    const thirdRaw = await (await owner(thirdPath)).json();
+    assertNoLeak(thirdRaw);
+    const thirdDraft = attemptDraftOkSchema.parse(thirdRaw).data;
+    expect(thirdDraft.drafts).toEqual({});
+    expect(thirdDraft.units[0]?.questions[0]?.questionRevisionId).not.toBe(
+      secondSave.questionRevisionId,
+    );
+    for (const denied of [
+      await owner(secondPath),
+      await owner(`${secondPath}/answers/${question.id}`, "PUT", secondSave),
+      await owner(`${secondPath}/submit`, "POST", { revisions: [] }),
+    ]) {
+      expect(denied.status).toBe(409);
+      expect(await denied.json()).toMatchObject({ error: "ATTEMPT_ABANDONED" });
+    }
+    const runtime = openLearningRuntime({ databasePath: database });
+    try {
+      expect(runtime.read(actor, second.id)).toMatchObject({
+        questionDeliveryDrafts: [
+          expect.objectContaining({ questionId: question.id }),
+        ],
+        questionDeliveries: [],
+      });
+      expect(runtime.read(actor, third.id)).toMatchObject({
+        questionDeliveryDrafts: [],
+        questionDeliveries: [],
+      });
+    } finally {
+      runtime.close();
+    }
+    expect(readKernel()).toEqual(complete);
     expect(
       (
         await request(app, teacher, `${course}/members`, "DELETE", {
@@ -496,11 +565,11 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
     expect((await owner(`${unitPath}/attempts`, "POST", whole)).status).toBe(
       403,
     );
-    expect((await owner(secondPath)).status).toBe(403);
+    expect((await owner(thirdPath)).status).toBe(403);
     expect(
-      (await owner(`${secondPath}/answers/${question.id}`, "PUT", save)).status,
+      (await owner(`${thirdPath}/answers/${question.id}`, "PUT", save)).status,
     ).toBe(403);
-    expect((await owner(`${secondPath}/submit`, "POST", submit)).status).toBe(
+    expect((await owner(`${thirdPath}/submit`, "POST", submit)).status).toBe(
       403,
     );
     expect((await owner(path)).status).toBe(200);
@@ -757,6 +826,341 @@ it("先前无绑定草稿继续宿主续作，教师允许选择时不分配内�
       ).status,
     ).toBe(503);
     expect(existsSync(join(data.path, BACKUP_KERNEL_DATABASE))).toBe(false);
+  } finally {
+    handle.close();
+  }
+});
+
+it("重开意图在两个断点保护旧卷并可按原操作恢复，同代归档可继续", async () => {
+  using data = mkdtempDisposableSync(
+    join(tmpdir(), "ownclass-course-restart-"),
+  );
+  const handle = createDbHandle(join(data.path, "tutor.db"), (db) => {
+    runMigrations(db);
+    runBackfills(db);
+  });
+  try {
+    const appWith = (
+      kernelCourseOpeningEnabled: boolean,
+      backupOperatorId?: string,
+    ) =>
+      createApp({
+        db: handle.db,
+        dbHandle: handle,
+        dataDir: data.path,
+        backupOperatorId,
+        kernelCourseOpeningEnabled,
+        isProduction: false,
+        publicUrl: "http://localhost:8787",
+        logger: pino({ enabled: false }),
+      });
+    const enabled = appWith(true);
+    const world = await setupCourse(enabled);
+    const profile = await request(enabled, world.teacher, "/api/teacher/me");
+    const operator = teacherInfoOkSchema.parse(await profile.json()).data.id;
+    const disabled = appWith(false, operator);
+    const open = (app: ReturnType<typeof createApp>, options: object = whole) =>
+      request(
+        app,
+        world.ownerCookie,
+        `${world.unitPath}/attempts`,
+        "POST",
+        options,
+      );
+    const previous = attemptStartOkSchema.parse(
+      await (await open(enabled)).json(),
+    ).data;
+    const path = `/api/student/attempts/${previous.id}`;
+    const restart = { restartAttemptId: previous.id };
+    const draft = attemptDraftOkSchema.parse(
+      await (await request(enabled, world.ownerCookie, path)).json(),
+    ).data;
+    const question = draft.units[0]?.questions[0];
+    if (!question) throw new Error("缺少冻结题");
+    const note = await putNoteReceipt(
+      enabled,
+      world.ownerCookie,
+      previous.id,
+      question.id,
+    );
+    const database = join(data.path, BACKUP_KERNEL_DATABASE);
+    const activityIds = () => {
+      using kernel = new DatabaseSync(database, { readOnly: true });
+      return z
+        .array(z.object({ id: z.uuid() }))
+        .parse(kernel.prepare("SELECT id FROM activities ORDER BY rowid").all())
+        .map(({ id }) => id);
+    };
+    const sql = () => handle.db.$client;
+    const noteVersion = () =>
+      z
+        .object({ body_path: z.string() })
+        .passthrough()
+        .parse(
+          sql()
+            .prepare("SELECT * FROM note_versions WHERE id=?")
+            .get(note.versionId),
+        );
+    const original = noteVersion();
+    const originalBody = readFileSync(join(data.path, original.body_path));
+    const pending = () =>
+      sql()
+        .prepare(`SELECT operation_id, attempt_id, json_extract(draft_json, '$.restartAttemptId') AS predecessor
+      FROM kernel_course_openings WHERE attempt_no=2`)
+        .get();
+    const download = async () => {
+      const response = await request(
+        disabled,
+        world.teacher,
+        "/api/teacher/backup/download",
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      return new Uint8Array(await response.arrayBuffer());
+    };
+    const restore = (bytes: Uint8Array<ArrayBuffer>) => {
+      const body = new FormData();
+      body.set("zip", new File([bytes], "tutor-backup.zip"));
+      body.set("password", "teacher-pass-8");
+      return disabled.request("/api/teacher/backup/restore", {
+        method: "POST",
+        headers: { cookie: world.teacher },
+        body,
+      });
+    };
+    const submitOld = () =>
+      request(disabled, world.ownerCookie, `${path}/submit`, "POST", {
+        revisions: [],
+      });
+    const kernelExec = (statement: string) => {
+      using kernel = new DatabaseSync(database);
+      kernel.exec(statement);
+    };
+
+    kernelExec(`CREATE TRIGGER stop_restart_prepare BEFORE INSERT ON activities
+      BEGIN SELECT RAISE(ABORT, '测试中断新活动准备'); END`);
+    const preKernel = await open(enabled, restart);
+    expect(preKernel.status).toBe(500);
+    const intent = pending();
+    expect(intent).toMatchObject({
+      attempt_id: null,
+      predecessor: previous.id,
+    });
+    expect(activityIds()).toEqual([previous.id]);
+    expect((await submitOld()).status).toBe(503);
+    kernelExec("DROP TRIGGER stop_restart_prepare");
+    const beforePrepare = await download();
+    const restoredIntent = await restore(beforePrepare);
+    expect(restoredIntent.status, await restoredIntent.clone().text()).toBe(
+      200,
+    );
+    expect(activityIds()).toEqual([previous.id]);
+    expect(pending()).toEqual(intent);
+
+    sql().exec(`CREATE TEMP TRIGGER stop_restart_projection BEFORE UPDATE OF abandoned_at ON attempts
+      BEGIN SELECT RAISE(ABORT, '测试中断换卷投影'); END`);
+    const postKernel = await open(enabled, restart);
+    expect(postKernel.status).toBe(500);
+    expect(pending()).toEqual(intent);
+    expect(
+      sql()
+        .prepare("SELECT abandoned_at FROM attempts WHERE id=?")
+        .get(previous.id),
+    ).toEqual({ abandoned_at: null });
+    const prepared = activityIds();
+    expect(prepared).toHaveLength(2);
+    expect((await submitOld()).status).toBe(503);
+    expect(
+      sql()
+        .prepare("SELECT 1 FROM kernel_question_deliveries WHERE attempt_id=?")
+        .get(previous.id),
+    ).toBeUndefined();
+    sql().exec("DROP TRIGGER stop_restart_projection");
+
+    const members = `${world.course}/members`;
+    const updateMembers = (method: string) =>
+      request(disabled, world.teacher, members, method, {
+        studentIds: [world.studentId],
+      });
+    expect((await updateMembers("DELETE")).status).toBe(200);
+    expect((await open(disabled, restart)).status).toBe(403);
+    expect((await submitOld()).status).toBe(403);
+    expect(pending()).toEqual(intent);
+    expect(activityIds()).toEqual(prepared);
+    expect((await updateMembers("POST")).status).toBe(200);
+    const afterPrepare = await download();
+    const restoredPrepared = await restore(afterPrepare);
+    expect(restoredPrepared.status, await restoredPrepared.clone().text()).toBe(
+      200,
+    );
+    expect(pending()).toEqual(intent);
+    expect(activityIds()).toEqual(prepared);
+
+    const recovered = await open(disabled);
+    expect(recovered.status, await recovered.clone().text()).toBe(201);
+    const found = attemptStartOkSchema.parse(await recovered.json()).data;
+    expect(found.id).toBe(prepared[1]);
+    expect((await open(disabled, restart)).status).toBe(409);
+    expect(noteVersion()).toEqual(original);
+    expect(readFileSync(join(data.path, original.body_path))).toEqual(
+      originalBody,
+    );
+    expect(
+      await (
+        await request(
+          disabled,
+          world.ownerCookie,
+          `/api/student/attempts/${found.id}/notes/${question.id}`,
+        )
+      ).json(),
+    ).toMatchObject({ data: { note: null, evidence: null, images: [] } });
+    const beforeKernel = readZipEntriesMap(Buffer.from(beforePrepare)).get(
+      BACKUP_KERNEL_DATABASE,
+    );
+    if (!beforeKernel) throw new Error("较早归档缺内核库");
+    const newer = readZipEntriesMap(Buffer.from(await download()));
+    const manifest = backupKernelManifestSchema.parse(
+      JSON.parse(newer.get(BACKUP_KERNEL_MANIFEST)?.toString() ?? "null"),
+    );
+    newer.set(BACKUP_KERNEL_DATABASE, beforeKernel);
+    newer.set(
+      BACKUP_KERNEL_MANIFEST,
+      Buffer.from(
+        JSON.stringify({
+          ...manifest,
+          kernelSha256: createHash("sha256").update(beforeKernel).digest("hex"),
+        }),
+      ),
+    );
+    const archive = new ZipArchive();
+    const mixed = zipToBackupBuffer({
+      stream: archive,
+      filename: "mixed-restart.zip",
+    });
+    for (const [name, bytes] of newer) archive.append(bytes, { name });
+    await archive.finalize();
+    const rejected = await restore(new Uint8Array(await mixed));
+    expect(rejected.status, await rejected.clone().text()).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      error: "BACKUP_ZIP_INVALID",
+      message: expect.stringContaining("开卷记录与内核实际作答不一致"),
+    });
+    expect(activityIds()).toEqual(prepared);
+    expect(
+      attemptStartOkSchema.parse(await (await open(disabled)).json()).data,
+    ).toEqual(found);
+  } finally {
+    handle.close();
+  }
+});
+
+it("旧卷已被内核正式接收时，重开补落旧卷并返回过期", async () => {
+  using data = mkdtempDisposableSync(
+    join(tmpdir(), "ownclass-course-restart-submit-"),
+  );
+  const handle = createDbHandle(join(data.path, "tutor.db"), runMigrations);
+  try {
+    const app = createApp({
+      db: handle.db,
+      dbHandle: handle,
+      dataDir: data.path,
+      kernelCourseOpeningEnabled: true,
+      isProduction: false,
+      publicUrl: "http://localhost:8787",
+      logger: pino({ enabled: false }),
+    });
+    const world = await setupCourse(app);
+    const owner = (path: string, method = "GET", body?: object) =>
+      request(app, world.ownerCookie, path, method, body);
+    const entry = `${world.unitPath}/attempts`;
+    const old = attemptStartOkSchema.parse(
+      await (await owner(entry, "POST", whole)).json(),
+    ).data;
+    const path = `/api/student/attempts/${old.id}`;
+    const draft = attemptDraftOkSchema.parse(
+      await (await owner(path)).json(),
+    ).data;
+    const questions = draft.units.flatMap((unit) => unit.questions);
+    const [question] = questions;
+    if (!question) throw new Error("缺少冻结题");
+    const saved = await owner(`${path}/answers/${question.id}`, "PUT", {
+      answer: { kind: "choice", index: 1 },
+      baseRevision: 0,
+      mutationId: randomUUID(),
+      expectedFrozenAt: old.frozenAt,
+      questionRevisionId: question.questionRevisionId,
+    });
+    expect(saved.status).toBe(200);
+    const note = await putNoteReceipt(
+      app,
+      world.ownerCookie,
+      old.id,
+      question.id,
+    );
+    const submit = {
+      revisions: questions.map((item) => ({
+        questionId: item.id,
+        questionRevisionId: item.questionRevisionId,
+        expectedAnswerRevision: item.id === question.id ? 1 : 0,
+      })),
+      evidence: questions.map(({ id: questionId }) => ({
+        questionId,
+        state: questionId === question.id ? "missing" : "none",
+      })),
+    };
+    const sql = handle.db.$client;
+    sql.exec(`CREATE TEMP TRIGGER stop_old_submission BEFORE UPDATE OF receipt_id ON kernel_question_deliveries
+      BEGIN SELECT RAISE(ABORT, '测试中断旧卷正式回执投影'); END`);
+    const interrupted = await owner(`${path}/submit`, "POST", submit);
+    expect(interrupted.status, await interrupted.clone().text()).toBe(500);
+    const readOld = () => {
+      const runtime = openLearningRuntime({
+        databasePath: join(data.path, BACKUP_KERNEL_DATABASE),
+      });
+      try {
+        return runtime.read({ role: "student", id: world.studentId }, old.id);
+      } finally {
+        runtime.close();
+      }
+    };
+    const receipt = readOld();
+    expect(receipt.status).toBe("completed");
+    expect(
+      sql.prepare("SELECT status FROM attempts WHERE id=?").get(old.id),
+    ).toEqual({ status: "draft" });
+    sql.exec("DROP TRIGGER stop_old_submission");
+    const conflict = await owner(entry, "POST", { restartAttemptId: old.id });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({
+      error: "ATTEMPT_RESTART_STALE",
+    });
+    expect(
+      sql
+        .prepare("SELECT status, abandoned_at FROM attempts WHERE id=?")
+        .get(old.id),
+    ).toEqual({ status: "graded", abandoned_at: null });
+    expect(
+      sql
+        .prepare("SELECT kind FROM attempt_settlements WHERE attempt_id=?")
+        .all(old.id),
+    ).toEqual([{ kind: "final" }]);
+    expect(
+      sql
+        .prepare(
+          "SELECT state, version_id FROM submission_evidence WHERE attempt_id=? AND question_id=?",
+        )
+        .get(old.id, question.id),
+    ).toEqual({ state: "missing", version_id: null });
+    expect(
+      sql
+        .prepare("SELECT id FROM note_versions WHERE id=?")
+        .get(note.versionId),
+    ).toEqual({ id: note.versionId });
+    expect(
+      sql.prepare("SELECT attempt_id FROM kernel_course_openings").all(),
+    ).toEqual([{ attempt_id: old.id }]);
+    expect((await owner(path)).status).toBe(200);
+    expect((await owner(`${path}/submit`, "POST", submit)).status).toBe(409);
+    expect(readOld()).toEqual(receipt);
   } finally {
     handle.close();
   }

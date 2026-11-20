@@ -13,7 +13,11 @@ import { HttpError } from "../lib/http-error";
 import { ensureAttemptFrozen } from "./attempt-freeze.ts";
 import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 /** 作业行（含已删除——作答记录不随作业软删消失）；不存在 → 404 ASSIGNMENT_NOT_FOUND */
-import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import {
+  lessonKernelBinding,
+  pendingKernelCourseOpening,
+} from "./kernel-question-delivery-binding.ts";
 import { assertDraftCourseVisible } from "./practice-workflow-wiring";
 import { requireVisibleStudentLecture } from "./student-course-service.ts";
 
@@ -127,6 +131,14 @@ export function requireUsableAttempt(
         throw new HttpError(403, "FORBIDDEN", "这份讲练已不可访问");
     }
   }
+  // 重开意图落库后，旧卷不能在新活动待绑定时接受迟到的交卷或草稿。
+  if (
+    attempt.sourceType === "course" &&
+    attempt.status === "draft" &&
+    pendingKernelCourseOpening(db, attempt)?.draft.restartAttemptId ===
+      attempt.id
+  )
+    kernelAttemptUnavailable();
   requireNoPendingKernelRefreeze(db, attempt);
   return ensureAttemptFrozen(db, attempt);
 }
