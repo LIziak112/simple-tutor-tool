@@ -18,6 +18,8 @@ export function deliveryAnswerOf(
   value: Readonly<Value> | null,
 ): StudentAnswer | null {
   if (value === null) return null;
+  if (typeof value === "object" && !Array.isArray(value))
+    return kernelAttemptUnavailable();
   const question = snapshotOfRow(row);
   const kind = question && questionEvidenceBindings[question.type].answerKind;
   const outcome =

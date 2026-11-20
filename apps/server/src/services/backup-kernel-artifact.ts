@@ -23,15 +23,16 @@ const restorablePredecessors = new Set([
   "4576ef7bb755ef71e80deef3d5016a197415e72f26d8fd169bc5de269c32b00e",
   "aa78e0410b5b13f35b422e143a46fb045cb3c8b30497835c3217f57198fd3414",
   "b7bf4ce182647546cc2bd6576af744257a7938100a0486675e2ff7516db11a8f",
+  "2c8255c8ad471ef3cb52d206b3ae854312497b275f20f27a86329e25cc3b834f",
 ]);
 
-/** K18 支持已验旧归档。归档中的包仅用于离线比对。 */
+/** K22 支持已验旧归档。归档中的包仅用于离线比对。 */
 export function supportsBackupArtifact(sha256: string): boolean {
   const current = lockedArtifact().sha256;
   return (
     sha256 === current ||
     (current ===
-      "2c8255c8ad471ef3cb52d206b3ae854312497b275f20f27a86329e25cc3b834f" &&
+      "2dafb580124e3a1531aed21845c26f3e107faa21d10552509647d4c9c52ba8f4" &&
       restorablePredecessors.has(sha256))
   );
 }

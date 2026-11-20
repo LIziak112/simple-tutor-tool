@@ -57,11 +57,12 @@ const password = "teacher-pass-8";
 const dbName = "tutor.db";
 const kernelName = "learning-kernel.sqlite";
 
-it("K18 归档兼容精确匹配已知固定包", () => {
+it("K22 归档兼容精确匹配已知固定包", () => {
   expect(readLockedBackupArtifact().sha256).toBe(
-    "2c8255c8ad471ef3cb52d206b3ae854312497b275f20f27a86329e25cc3b834f",
+    "2dafb580124e3a1531aed21845c26f3e107faa21d10552509647d4c9c52ba8f4",
   );
   for (const digest of [
+    "2c8255c8ad471ef3cb52d206b3ae854312497b275f20f27a86329e25cc3b834f",
     "3b565090f38b16dea6051cf71c63b3ebfa331291da9ccaf42e19549f162cde1d",
     "c78a36d1812d3e2d337177dbdb79d50af7c43cf9d0621ffd80f8be0b03d7ae73",
     "922ec7f9091aea01506a725754830765a9c394edaf1753d680210b883d8b1413",
@@ -80,6 +81,11 @@ it("K18 归档兼容精确匹配已知固定包", () => {
     ),
   ).toBe(false);
   expect(supportsBackupArtifact("0".repeat(64))).toBe(false);
+  expect(
+    supportsBackupArtifact(
+      "7c8ec8f19a6f8b27e923af1fe8df2a722afc77fc7076bc1dab41339333c19e84",
+    ),
+  ).toBe(false);
 });
 
 function openInstance(seed?: (dataDir: string) => void) {
