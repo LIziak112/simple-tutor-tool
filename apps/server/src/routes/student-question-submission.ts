@@ -42,6 +42,8 @@ export function createStudentQuestionSubmissionRoutes(db: Db, dataDir: string) {
                   c.req.param("id"),
                   c.req.param("questionId"),
                   parsed,
+                  new Date(),
+                  dataDir,
                 ),
               ),
             },

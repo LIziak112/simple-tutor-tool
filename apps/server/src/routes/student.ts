@@ -76,7 +76,7 @@ import {
   saveNoteVersion,
   sealCorrection,
 } from "../services/note-service";
-import { updateAttemptWorkflow } from "../services/practice-workflow-wiring";
+import { updateAttemptWorkflow } from "../services/practice-workflow-update.ts";
 import {
   buildReviewPackZip,
   previewReviewPack,
@@ -337,7 +337,7 @@ export function createStudentRoutes(
       })
       // M1b：首次任何提交前更改反馈节奏（真实事务 CAS，陈旧 revision 409）；
       // 响应 no-store（不落 PWA/浏览器缓存）；拒绝 legacy/lesson/已交/首题已交/
-      // 失权/不允许模式（详见 practice-workflow-wiring.updateAttemptWorkflow）
+      // 失权/不允许模式。
       .patch("/attempts/:id/workflow", async (c) => {
         const body = await parseJsonBody(
           c,
@@ -349,6 +349,7 @@ export function createStudentRoutes(
             data: attemptWorkflowUpdateDataSchema.parse(
               updateAttemptWorkflow(
                 db,
+                dataDir,
                 c.var.student.id,
                 c.req.param("id"),
                 body,

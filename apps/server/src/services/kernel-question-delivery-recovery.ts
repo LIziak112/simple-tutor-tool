@@ -19,6 +19,7 @@ import {
   kernelAttemptUnavailable,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
+import { resolveKernelCourseWorkflow } from "./kernel-course-workflow.ts";
 import {
   type MarkIntent,
   projectDeliveryVerdicts,
@@ -59,15 +60,17 @@ type Activate = (ticket: DeliveryTicket) => void;
 export function withDelivery<T>(
   db: Db,
   dataDir: string,
-  attempt: Attempt,
+  originalAttempt: Attempt,
   run: (
     runtime: KernelRuntime,
     binding: QuestionDeliveryBinding,
     view: QuestionDeliveryActivity,
     activate: Activate,
+    attempt: Attempt,
   ) => T,
   attachmentDir = dataDir,
 ): T | undefined {
+  const attempt = resolveKernelCourseWorkflow(db, dataDir, originalAttempt);
   const binding = questionDeliveryBinding(db, attempt);
   if (!binding) return undefined;
   let current: DeliveryTicket | undefined;
@@ -89,11 +92,17 @@ export function withDelivery<T>(
       const view = readBoundQuestionDelivery(db, runtime, attempt, binding);
       return (
         view &&
-        run(runtime, binding, view, (ticket) => {
-          for (const anchor of ticket.intent.formalInk ?? [])
-            assertFormalInkAnchor(db, attachmentDir, attempt.id, anchor);
-          current = ticket;
-        })
+        run(
+          runtime,
+          binding,
+          view,
+          (ticket) => {
+            for (const anchor of ticket.intent.formalInk ?? [])
+              assertFormalInkAnchor(db, attachmentDir, attempt.id, anchor);
+            current = ticket;
+          },
+          attempt,
+        )
       );
     },
     {
@@ -137,15 +146,19 @@ export function wholeDeliveryInkLocked(
   dataDir: string,
   attempt: Attempt,
 ): boolean {
-  return (
-    (attempt.sourceType === "assignment" || attempt.sourceType === "course") &&
-    withDelivery(
-      db,
-      dataDir,
-      attempt,
-      (_runtime, _binding, view) => view.status === "completed",
-    ) === true
-  );
+  if (attempt.sourceType !== "assignment" && attempt.sourceType !== "course")
+    return false;
+  return db.$client
+    .transaction(
+      () =>
+        withDelivery(
+          db,
+          dataDir,
+          attempt,
+          (_runtime, _binding, view) => view.status === "completed",
+        ) === true,
+    )
+    .immediate();
 }
 
 /** 本人或所属教师已通过入口校验。固定原件必须按实际文件核对。 */
@@ -362,12 +375,12 @@ export function readQuestionDeliveryFacts(
         db,
         dataDir,
         current,
-        (runtime, binding, view, activate) =>
+        (runtime, binding, view, activate, bound) =>
           recoverDeliveries(
             db,
             dataDir,
             runtime,
-            current,
+            bound,
             binding,
             view,
             activate,

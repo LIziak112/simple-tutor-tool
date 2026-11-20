@@ -6,7 +6,10 @@ import {
   attemptSubmissionConflictSchema,
   type StudentAnswer,
 } from "@tutor/contract";
-import type { KernelDeliverySource } from "@tutor/contract/kernel-question-delivery";
+import type {
+  KernelDeliverySource,
+  KernelPracticeSubmission,
+} from "@tutor/contract/kernel-question-delivery";
 import {
   LearningError,
   QuestionDeliveryConflict,
@@ -39,6 +42,7 @@ import {
   withDelivery,
 } from "./kernel-question-delivery-recovery.ts";
 import {
+  checkPracticeDelivery,
   duplicate,
   removePendingTicket,
   stageDelivery,
@@ -94,7 +98,7 @@ export function saveQuestionDeliveryAnswer(
         db,
         dataDir,
         attempt,
-        (runtime, binding, view, activate) => {
+        (runtime, binding, view, activate, attempt) => {
           const facts = recoverDeliveries(
             db,
             dataDir,
@@ -165,21 +169,24 @@ export function submitQuestionDelivery(
   dataDir: string,
   studentId: string,
   attemptId: string,
-  source: KernelDeliverySource,
+  requestedSource: KernelDeliverySource,
   request: AttemptSubmitRequest,
   now: Date,
+  practiceSubmission?: KernelPracticeSubmission,
 ): { facts?: DeliveryFacts; error?: HttpError } | undefined {
   const stage = stageDelivery(
     db,
     dataDir,
     studentId,
     attemptId,
-    source,
+    requestedSource,
     request,
     now,
+    practiceSubmission,
   );
-  if (!stage || "error" in stage) return stage;
+  if (!stage || "error" in stage || "facts" in stage) return stage;
   const { ticket } = stage;
+  const { source } = ticket.intent;
   return db.$client
     .transaction(() => {
       const attempt = requireUsableAttempt(db, studentId, attemptId);
@@ -187,7 +194,7 @@ export function submitQuestionDelivery(
         db,
         dataDir,
         attempt,
-        (runtime, binding, view, activate) => {
+        (runtime, binding, view, activate, attempt) => {
           const before = recoverDeliveries(
             db,
             dataDir,
@@ -200,6 +207,20 @@ export function submitQuestionDelivery(
           const current = deliveryTickets(db, attemptId).find(
             (item) => item.slotId === ticket.slotId,
           );
+          if (
+            practiceSubmission &&
+            checkPracticeDelivery(
+              db,
+              before.attempt,
+              before.rows.find(
+                ({ questionId }) =>
+                  questionId === request.revisions[0]?.questionId,
+              ),
+              practiceSubmission,
+              now,
+            ) === "replayed"
+          )
+            return { facts: before };
           if (current?.receiptId) return { error: duplicate(source) };
           if (
             before.attempt.status !== "draft" ||

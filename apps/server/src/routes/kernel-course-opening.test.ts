@@ -18,6 +18,8 @@ import {
   BACKUP_KERNEL_MANIFEST,
   backupKernelManifestSchema,
   noteHeadDataSchema,
+  practiceQuestionFeedbackOkSchema,
+  practiceQuestionSubmitOkSchema,
   studentCourseDetailOkSchema,
   studentCourseListOkSchema,
   studentRecordsOkSchema,
@@ -1017,9 +1019,9 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
       ).status,
     ).toBe(200);
     expect((await getDraft()).practiceWorkflow).toMatchObject({
-      canChangeFeedback: false,
+      canChangeFeedback: true,
       canSubmitQuestion: false,
-      allowedFeedbackModes: ["after_attempt"],
+      allowedFeedbackModes: ["per_question", "after_attempt"],
     });
     expect(
       (
@@ -1028,14 +1030,6 @@ it("正常课程入口对不限时整卷绑定权威，续作冻结，完成后�
         })
       ).status,
     ).toBe(503);
-    expect(
-      (
-        await owner(`${path}/workflow`, "PATCH", {
-          feedbackMode: "per_question",
-          workflowRevision: 0,
-        })
-      ).status,
-    ).toBe(400);
     expect(
       (
         await owner(`${path}/workflow`, "PATCH", {
@@ -2683,5 +2677,401 @@ it("明确选择逐题的新课程请求沿原策略处理", async () => {
     expect(existsSync(join(data.path, BACKUP_KERNEL_DATABASE))).toBe(false);
   } finally {
     handle.close();
+  }
+});
+
+it("课程整卷已有原稿仍可切换反馈并按权威逐题、整卷收尾", async () => {
+  vi.stubEnv("NEW_CONTENT_ENABLED", "true");
+  using data = mkdtempDisposableSync(join(tmpdir(), "ownclass-course-k26-"));
+  const handle = createDbHandle(join(data.path, "tutor.db"), runMigrations);
+  try {
+    const app = createApp({
+      db: handle.db,
+      dbHandle: handle,
+      dataDir: data.path,
+      kernelCourseOpeningEnabled: true,
+      isProduction: false,
+      publicUrl: "http://localhost:8787",
+      logger: pino({ enabled: false }),
+    });
+    const world = await setupCourse(
+      app,
+      [
+        "---",
+        "kind: practice",
+        "unit: 课程反馈切换",
+        "---",
+        "",
+        "::::material{id=workflow-material}",
+        "这段合成材料随原卷冻结。",
+        "::::",
+        "",
+        "::::group{id=workflow-group}",
+        "::ref{material=workflow-material}",
+        "::ref{question=workflow-choice}",
+        "::ref{question=workflow-judge}",
+        "::::",
+        "",
+        "::::question{id=workflow-choice type=choice}",
+        "第一题。",
+        "",
+        "- [ ] 甲",
+        "- [x] 乙",
+        "::::",
+        "",
+        "::::question{id=workflow-judge type=judge}",
+        "第二题。[[正确]]",
+        "::::",
+      ].join("\n"),
+    );
+    const call = async (
+      cookie: string,
+      path: string,
+      status: number,
+      method?: string,
+      body?: object,
+    ) => {
+      const res = await request(app, cookie, path, method, body);
+      expect(res.status, await res.clone().text()).toBe(status);
+      return res.json();
+    };
+    const owner = (
+      path: string,
+      status: number,
+      method?: string,
+      body?: object,
+    ) => call(world.ownerCookie, path, status, method, body);
+    const open = async () =>
+      attemptStartOkSchema.parse(
+        await owner(`${world.unitPath}/attempts`, 201, "POST", whole),
+      ).data;
+    const attempt = await open();
+    const path = `/api/student/attempts/${attempt.id}`;
+    const draft = async () => {
+      const result = await owner(path, 200);
+      assertNoLeak(result);
+      return attemptDraftOkSchema.parse(result).data;
+    };
+    const original = await draft();
+    const [first, second] = original.units.flatMap(
+      ({ questions }) => questions,
+    );
+    if (!first || !second) throw new Error("缺少两道冻结题");
+    const answers = `${path}/answers/${first.id}`;
+    const save = {
+      answer: { kind: "choice", index: 1 },
+      baseRevision: 0,
+      mutationId: randomUUID(),
+      expectedFrozenAt: attempt.frozenAt,
+      questionRevisionId: first.questionRevisionId,
+    };
+    const saved = await owner(answers, 200, "PUT", save);
+    const read = () => {
+      const runtime = openLearningRuntime({
+        databasePath: join(data.path, BACKUP_KERNEL_DATABASE),
+      });
+      try {
+        const view = runtime.read(
+          { role: "student", id: world.studentId },
+          attempt.id,
+        );
+        if (!("questionDeliveries" in view)) throw new Error("缺少题组活动");
+        return view;
+      } finally {
+        runtime.close();
+      }
+    };
+    const before = read();
+    expect(before.questionDeliveryDrafts).toHaveLength(1);
+    const context = await owner(`${path}/context`, 200);
+    assertNoLeak(context);
+    expect(JSON.stringify(context)).toContain("这段合成材料随原卷冻结。");
+    expect(Object.values(before.inputs)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ from: "material" })]),
+    );
+    const teacher = (
+      url: string,
+      status: number,
+      method: string,
+      body: object,
+    ) => call(world.teacher, url, status, method, body);
+    await teacher("/api/teacher/settings/practice-feedback", 200, "PUT", {
+      practiceFeedbackPolicy: "student_choice",
+    });
+    const patch = (
+      feedbackMode: string,
+      workflowRevision: number,
+      status = 200,
+      cookie = world.ownerCookie,
+    ) =>
+      call(cookie, `${path}/workflow`, status, "PATCH", {
+        feedbackMode,
+        workflowRevision,
+      });
+    const firstPatch = await patch("per_question", 0);
+    assertNoLeak(firstPatch);
+    expect(firstPatch).toMatchObject({
+      data: {
+        practiceWorkflow: {
+          feedbackMode: "per_question",
+          revision: 1,
+          canChangeFeedback: true,
+          canSubmitQuestion: true,
+          allowedFeedbackModes: expect.arrayContaining([
+            "per_question",
+            "after_attempt",
+          ]),
+        },
+      },
+    });
+    const switched = read();
+    expect(switched).toMatchObject({
+      activityId: before.activityId,
+      startedAt: before.startedAt,
+      inputs: before.inputs,
+      questionDeliveries: [],
+    });
+    expect(switched.stepAttemptId).not.toBe(before.stepAttemptId);
+    if (switched.practiceVersion === undefined)
+      throw new Error("缺少逐题练习版本");
+    const oldStepRuntime = openLearningRuntime({
+      databasePath: join(data.path, BACKUP_KERNEL_DATABASE),
+    });
+    try {
+      expect(() =>
+        oldStepRuntime.saveQuestionDeliveryDraft(
+          { role: "student", id: world.studentId },
+          attempt.id,
+          {
+            protocolVersion: 1,
+            stepAttemptId: before.stepAttemptId,
+            slotId: "answers",
+            questionId: first.id,
+            questionVersion: first.questionVersion ?? 1,
+            value: "0",
+            baseRevision: 1,
+            operationId: randomUUID(),
+          },
+        ),
+      ).toThrow(expect.objectContaining({ code: "FORBIDDEN" }));
+    } finally {
+      oldStepRuntime.close();
+    }
+    const draftFacts = (view: typeof before) =>
+      view.questionDeliveryDrafts.map(
+        ({ questionId, questionVersion, revision, value, changeCount }) => ({
+          questionId,
+          questionVersion,
+          revision,
+          value,
+          changeCount,
+        }),
+      );
+    expect(draftFacts(switched)).toEqual(draftFacts(before));
+    expect(await patch("per_question", 0, 409)).toMatchObject({
+      error: "WORKFLOW_REVISION_STALE",
+    });
+    const members = `${world.course}/members`;
+    const changeMember = (method: string) =>
+      teacher(members, 200, method, { studentIds: [world.studentId] });
+    const sql = handle.db.$client;
+    const pending = () =>
+      sql
+        .prepare(
+          "SELECT pending_workflow_json FROM kernel_course_openings WHERE attempt_id=?",
+        )
+        .get(attempt.id);
+    using kernel = new DatabaseSync(join(data.path, BACKUP_KERNEL_DATABASE));
+    kernel.exec(`CREATE TRIGGER break_workflow_switch BEFORE UPDATE OF practice_version ON activities
+      BEGIN SELECT RAISE(ABORT, '测试中断内核反馈切换'); END`);
+    try {
+      await patch("after_attempt", 1, 500);
+    } finally {
+      kernel.exec("DROP TRIGGER break_workflow_switch");
+    }
+    const intent = pending();
+    expect(intent).toEqual({
+      pending_workflow_json: JSON.stringify({
+        feedbackMode: "after_attempt",
+        workflowRevision: 1,
+      }),
+    });
+    expect(read()).toEqual(switched);
+    await changeMember("DELETE");
+    await owner(path, 403);
+    await call(world.teacher, `/api/teacher/attempts/${attempt.id}`, 200);
+    expect(read()).toEqual(switched);
+    expect(pending()).toEqual(intent);
+    await changeMember("POST");
+    expect((await draft()).practiceWorkflow).toMatchObject({
+      feedbackMode: "per_question",
+      revision: 1,
+    });
+    expect(read()).toEqual(switched);
+
+    sql.exec(`CREATE TRIGGER break_workflow_projection BEFORE UPDATE OF workflow_revision ON attempts
+      BEGIN SELECT RAISE(ABORT, '测试中断宿主反馈投影'); END`);
+    try {
+      await patch("after_attempt", 1, 500);
+      expect(pending()).toEqual(intent);
+      const accepted = read();
+      expect(accepted.practiceVersion).toBe(switched.practiceVersion + 1);
+      expect(draftFacts(accepted)).toEqual(draftFacts(before));
+      await owner(answers, 500, "PUT", {
+        ...save,
+        baseRevision: 1,
+        mutationId: randomUUID(),
+        answer: { kind: "choice", index: 0 },
+      });
+      expect(read()).toEqual(accepted);
+      await changeMember("DELETE");
+      await patch("after_attempt", 1, 403);
+      await owner(path, 403);
+      expect(read()).toEqual(accepted);
+      await changeMember("POST");
+    } finally {
+      sql.exec("DROP TRIGGER break_workflow_projection");
+    }
+    await patch("after_attempt", 1);
+    expect(pending()).toEqual({ pending_workflow_json: null });
+    await patch("after_attempt", 1, 409);
+    await patch("per_question", 2);
+    expect((await open()).id).toBe(attempt.id);
+    expect(await owner(`${path}/context`, 200)).toEqual(context);
+    const reopened = await draft();
+    expect(reopened.units).toEqual(original.units);
+    expect(reopened.drafts).toEqual({ [first.id]: save.answer });
+    expect(reopened.draftRevisions).toMatchObject({ [first.id]: 1 });
+    expect(await owner(answers, 200, "PUT", save)).toEqual(saved);
+    expect(draftFacts(read())).toEqual(draftFacts(before));
+
+    const submitPath = `${path}/questions/${first.id}/submit`;
+    const submission = {
+      workflowVersion: 1,
+      workflowRevision: 3,
+      questionRevisionId: first.questionRevisionId,
+      expectedAnswerRevision: 1,
+      submissionMutationId: randomUUID(),
+      evidence: { state: "none", questionId: first.id },
+    };
+    await changeMember("DELETE");
+    await patch("after_attempt", 3, 403);
+    await owner(submitPath, 403, "POST", submission);
+    await owner(path, 403);
+    await owner(answers, 403, "PUT", save);
+    await changeMember("POST");
+    await patch("after_attempt", 3, 404, world.otherCookie);
+    await call(world.otherCookie, submitPath, 404, "POST", submission);
+    expect(
+      await owner(submitPath, 409, "POST", {
+        ...submission,
+        workflowRevision: 2,
+      }),
+    ).toMatchObject({ error: "WORKFLOW_REVISION_STALE" });
+    const receipt = await owner(submitPath, 200, "POST", submission);
+    expect(practiceQuestionSubmitOkSchema.parse(receipt).data).toMatchObject({
+      feedback: {
+        status: "released",
+        question: { questionId: first.id, autoCorrect: true },
+      },
+      questionProgress: [
+        {
+          questionId: first.id,
+          submittedAt: expect.any(String),
+          feedbackReadable: true,
+        },
+        { questionId: second.id, submittedAt: null, feedbackReadable: false },
+      ],
+      attempt: { status: "draft", scoreAuto: null },
+    });
+    expect(read().questionDeliveries).toHaveLength(1);
+    const hidden = await owner(`${path}/questions/${second.id}/feedback`, 200);
+    assertNoLeak(hidden, { forbid: ["autoCorrect", "finalCorrect"] });
+    expect(
+      practiceQuestionFeedbackOkSchema.parse(hidden).data.feedback.status,
+    ).toBe("not_submitted");
+    expect(await owner(submitPath, 200, "POST", submission)).toEqual(receipt);
+    expect(
+      await owner(submitPath, 409, "POST", {
+        ...submission,
+        workflowRevision: 2,
+      }),
+    ).toMatchObject({ error: "WORKFLOW_MUTATION_CONFLICT" });
+    expect(await patch("after_attempt", 3, 409)).toMatchObject({
+      error: "QUESTION_ALREADY_SUBMITTED",
+    });
+
+    const final = await owner(`${path}/submit`, 200, "POST", {
+      revisions: [
+        {
+          questionId: first.id,
+          questionRevisionId: first.questionRevisionId,
+          expectedAnswerRevision: 1,
+        },
+        {
+          questionId: second.id,
+          questionRevisionId: second.questionRevisionId,
+          expectedAnswerRevision: 0,
+        },
+      ],
+    });
+    expect(attemptResultOkSchema.parse(final).data.attempt).toMatchObject({
+      id: attempt.id,
+      scoreAuto: 50,
+    });
+    const completed = read();
+    expect(completed.status).toBe("completed");
+    expect(completed.questionDeliveries).toHaveLength(2);
+    expect(
+      handle.db.$client
+        .prepare("SELECT kind FROM attempt_settlements WHERE attempt_id = ?")
+        .all(attempt.id),
+    ).toEqual([{ kind: "final" }]);
+
+    // 空卷采用原准备态换版；宿主投影失败期间，普通保存不能在新步骤写入草稿。
+    await teacher("/api/teacher/settings/practice-feedback", 200, "PUT", {
+      practiceFeedbackPolicy: "after_attempt",
+    });
+    const next = await open();
+    const nextPath = `/api/student/attempts/${next.id}`;
+    const nextQuestion = attemptDraftOkSchema.parse(await owner(nextPath, 200))
+      .data.units[0]?.questions[0];
+    if (!nextQuestion) throw new Error("缺少空卷冻结题");
+    const nextWorkflow = { feedbackMode: "per_question", workflowRevision: 0 };
+    await teacher("/api/teacher/settings/practice-feedback", 200, "PUT", {
+      practiceFeedbackPolicy: "student_choice",
+    });
+    sql.exec(`CREATE TRIGGER break_empty_workflow_projection BEFORE UPDATE OF workflow_revision ON attempts
+      BEGIN SELECT RAISE(ABORT, '测试中断空卷反馈投影'); END`);
+    try {
+      await owner(`${nextPath}/workflow`, 500, "PATCH", nextWorkflow);
+      await owner(`${nextPath}/answers/${nextQuestion.id}`, 500, "PUT", {
+        ...save,
+        mutationId: randomUUID(),
+        expectedFrozenAt: next.frozenAt,
+        questionRevisionId: nextQuestion.questionRevisionId,
+      });
+      expect(
+        kernel
+          .prepare(
+            "SELECT intent FROM prepared_activity_version_changes WHERE activity_id=?",
+          )
+          .all(next.id),
+      ).toEqual([{ intent: null }]);
+    } finally {
+      sql.exec("DROP TRIGGER break_empty_workflow_projection");
+    }
+    const emptyRecovered = attemptDraftOkSchema.parse(
+      await owner(nextPath, 200),
+    ).data;
+    expect(emptyRecovered.drafts).toEqual({});
+    expect(emptyRecovered.practiceWorkflow).toMatchObject({
+      feedbackMode: "per_question",
+      revision: 1,
+    });
+    await owner(`${nextPath}/workflow`, 409, "PATCH", nextWorkflow);
+  } finally {
+    handle.close();
+    vi.unstubAllEnvs();
   }
 });

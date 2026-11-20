@@ -1,0 +1,1 @@
+ALTER TABLE `kernel_course_openings` ADD `pending_workflow_json` text;

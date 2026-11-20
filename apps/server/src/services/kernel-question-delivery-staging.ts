@@ -5,9 +5,11 @@ import {
 } from "@tutor/contract";
 import {
   type KernelDeliverySource,
+  type KernelPracticeSubmission,
   kernelQuestionDeliveryIntentSchema,
 } from "@tutor/contract/kernel-question-delivery";
 import type { Db } from "../db/client.ts";
+import type { Attempt, ResponseRow } from "../db/schema.ts";
 import { kernelQuestionDeliveries } from "../db/schema-kernel-question-delivery.ts";
 import { canonicalJsonOf } from "../lib/canonical-json.ts";
 import { HttpError } from "../lib/http-error.ts";
@@ -19,7 +21,10 @@ import {
 import { prepareKernelOriginals } from "./attempt-choice-evidence.ts";
 import { settleSubmissionOriginalReservation } from "./attempt-original-reservation.ts";
 import { validateSubmitRevisions } from "./attempt-submit-revisions.ts";
-import { assertSavedAnswersConfirmed } from "./attempt-timing.ts";
+import {
+  assertAttemptNotTimedOut,
+  assertSavedAnswersConfirmed,
+} from "./attempt-timing.ts";
 import {
   captureFormalInkAnchor,
   needsFormalInkAnchor,
@@ -40,6 +45,7 @@ import {
   deliveryTickets,
   ticketFilter,
 } from "./kernel-question-delivery-ticket.ts";
+import { attemptWorkflowView } from "./practice-workflow-wiring.ts";
 
 export const duplicate = (source: KernelDeliverySource) =>
   source === "question"
@@ -82,14 +88,53 @@ function submittedIntentOf(request: AttemptSubmitRequest) {
   });
 }
 
+export function checkPracticeDelivery(
+  db: Db,
+  attempt: Attempt,
+  row: ResponseRow | undefined,
+  practice: KernelPracticeSubmission,
+  now: Date,
+): "replayed" | undefined {
+  if (!row) throw questionNotFound();
+  if (row.submittedAt !== null) {
+    if (row.practiceMutationId !== practice.mutationId)
+      throw questionAlreadySubmitted();
+    if (row.practiceRequestDigest !== practice.digest)
+      throw new HttpError(
+        409,
+        "WORKFLOW_MUTATION_CONFLICT",
+        "同一提交标识的请求内容不一致，请刷新页面后重试",
+      );
+    return "replayed";
+  }
+  if (attempt.status !== "draft") throw duplicate("whole");
+  assertAttemptNotTimedOut(attempt, now, "running");
+  if (
+    !attemptWorkflowView(db, attempt, now)?.practiceWorkflow.canSubmitQuestion
+  )
+    throw new HttpError(
+      409,
+      "WORKFLOW_RESTRICTED",
+      "当前规则不允许逐题提交，请继续完成剩余题目并交卷",
+    );
+  if (practice.workflowRevision !== attempt.workflowRevision)
+    throw new HttpError(
+      409,
+      "WORKFLOW_REVISION_STALE",
+      "做题设置已在其他设备修改，请刷新后重试",
+    );
+  return undefined;
+}
+
 export function stageDelivery(
   db: Db,
   dataDir: string,
   studentId: string,
   attemptId: string,
-  source: KernelDeliverySource,
+  requestedSource: KernelDeliverySource,
   request: AttemptSubmitRequest,
   now: Date,
+  practiceSubmission?: KernelPracticeSubmission,
 ) {
   return db.$client
     .transaction(() => {
@@ -98,8 +143,8 @@ export function stageDelivery(
         db,
         dataDir,
         attempt,
-        (runtime, binding, view, activate) => {
-          const { attempt: current, rows } = recoverDeliveries(
+        (runtime, binding, view, activate, attempt) => {
+          const facts = recoverDeliveries(
             db,
             dataDir,
             runtime,
@@ -108,12 +153,30 @@ export function stageDelivery(
             view,
             activate,
           );
-          if (current.status !== "draft")
-            return { error: duplicate("whole") } as const;
+          const { attempt: current, rows } = facts;
+          const source =
+            requestedSource === "whole" &&
+            binding.course &&
+            deliveryPolicy(view).mode === "perQuestion"
+              ? "finish"
+              : requestedSource;
           const questionId =
             source === "question"
               ? request.revisions[0]?.questionId
               : undefined;
+          if (
+            practiceSubmission &&
+            checkPracticeDelivery(
+              db,
+              current,
+              rows.find((row) => row.questionId === questionId),
+              practiceSubmission,
+              now,
+            ) === "replayed"
+          )
+            return { facts } as const;
+          if (current.status !== "draft")
+            return { error: duplicate("whole") } as const;
           const slotId = slotFor(view, source, questionId);
           const scope =
             source === "question"
@@ -151,6 +214,10 @@ export function stageDelivery(
                 canonicalJsonOf(selected.map((row) => row.questionId)) &&
               submittedIntentOf(previous.intent) ===
                 submittedIntentOf(request) &&
+              previous.intent.practiceSubmission?.mutationId ===
+                practiceSubmission?.mutationId &&
+              previous.intent.practiceSubmission?.digest ===
+                practiceSubmission?.digest &&
               canonicalJsonOf(previous.intent.formalInk ?? []) ===
                 canonicalJsonOf(formalInk)
             )
@@ -203,6 +270,7 @@ export function stageDelivery(
               selectedQuestionIds: [...covered],
               questions,
               activitySeal: seal,
+              ...(practiceSubmission && { practiceSubmission }),
               ...(formalInk.length > 0 && { formalInk }),
             }),
           };

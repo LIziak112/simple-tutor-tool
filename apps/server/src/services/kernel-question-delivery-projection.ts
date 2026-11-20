@@ -46,7 +46,7 @@ export function projectDeliveryRows(
   recovery: Recovery,
   selected: readonly ResponseRow[],
 ) {
-  const { activitySeal, source } = ticket.intent;
+  const { activitySeal, source, practiceSubmission } = ticket.intent;
   if (
     recovery.assessment !== "automatic" &&
     recovery.assessment !== "teacherReview"
@@ -145,6 +145,10 @@ export function projectDeliveryRows(
       finalCorrect: result,
       activeSec: seal.activeSec,
       changeCount: Math.max(seal.changeCount, counts.get(row.questionId) ?? 0),
+      ...(practiceSubmission && {
+        practiceMutationId: practiceSubmission.mutationId,
+        practiceRequestDigest: practiceSubmission.digest,
+      }),
     };
   });
 
@@ -173,7 +177,9 @@ export function projectDeliveryRows(
         (row, index) =>
           row.submittedAt !== selected[index]?.submittedAt ||
           row.studentFlag !== selected[index]?.studentFlag ||
-          row.answered !== selected[index]?.answered,
+          row.answered !== selected[index]?.answered ||
+          row.practiceMutationId !== selected[index]?.practiceMutationId ||
+          row.practiceRequestDigest !== selected[index]?.practiceRequestDigest,
       )
     )
       kernelAttemptUnavailable();
@@ -194,9 +200,19 @@ export function projectDeliveryRows(
     answered,
     activeSec,
     changeCount,
+    practiceMutationId,
+    practiceRequestDigest,
   } of rows) {
     db.update(responses)
-      .set({ submittedAt, studentFlag, answered, activeSec, changeCount })
+      .set({
+        submittedAt,
+        studentFlag,
+        answered,
+        activeSec,
+        changeCount,
+        practiceMutationId,
+        practiceRequestDigest,
+      })
       .where(eq(responses.id, id))
       .run();
   }

@@ -37,6 +37,7 @@ export function courseKernelBinding(db: Pick<Db, "select">, attemptId: string) {
       practiceVersion: kernelCourseOpenings.practiceVersion,
       stepAttemptId: kernelCourseOpenings.stepAttemptId,
       teacherId: kernelCourseOpenings.teacherId,
+      pendingWorkflow: kernelCourseOpenings.pendingWorkflow,
     })
     .from(kernelCourseOpenings)
     .where(eq(kernelCourseOpenings.attemptId, attemptId))
@@ -76,7 +77,9 @@ export function questionDeliveryBinding(db: Db, attempt: Attempt) {
       binding.studentId !== attempt.studentId ||
       binding.attemptNo !== attempt.attemptNo ||
       binding.teacherId !== attemptTeacherId(db, attempt) ||
-      attempt.feedbackMode !== "after_attempt" ||
+      (attempt.feedbackMode !== "after_attempt" &&
+        (attempt.feedbackMode !== "per_question" ||
+          attempt.timeLimitSec !== null)) ||
       !binding.stepAttemptId
     )
       kernelAttemptUnavailable();
@@ -157,7 +160,9 @@ export function readBoundQuestionDelivery(
     activity.practiceVersion !== binding.practiceVersion ||
     activity.startedAt !== attempt.startedAt ||
     (deliveryPolicy(activity).mode === "perQuestion") !==
-      (binding.lectureId !== undefined)
+      (binding.lectureId !== undefined ||
+        (binding.course !== undefined &&
+          attempt.feedbackMode === "per_question"))
   )
     kernelAttemptUnavailable();
   if (binding.teacherId !== undefined) {

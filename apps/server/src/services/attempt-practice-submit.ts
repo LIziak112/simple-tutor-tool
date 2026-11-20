@@ -31,6 +31,9 @@ import {
   submissionActivityOf,
 } from "./event-service";
 import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import { submitQuestionDelivery } from "./kernel-question-delivery.ts";
+import { courseKernelBinding } from "./kernel-question-delivery-binding.ts";
 import { practiceRequestDigestOf } from "./practice-submit-intent.ts";
 import {
   assertDraftCourseVisible,
@@ -294,15 +297,23 @@ export function submitPracticeQuestion(
   questionId: string,
   req: PracticeQuestionSubmitWithAnswer,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): PracticeQuestionSubmitData {
-  const outcome = commitPracticeQuestion(
-    db,
-    studentId,
-    attemptId,
-    questionId,
-    req,
-    now,
-  );
+  const owned = dataDir && requireOwnActiveAttempt(db, studentId, attemptId);
+  const outcome =
+    dataDir &&
+    owned &&
+    owned.sourceType === "course" &&
+    courseKernelBinding(db, attemptId)
+      ? confirmBoundCourseQuestion(
+          db,
+          dataDir,
+          owned,
+          questionId,
+          req,
+          new Date(now),
+        )
+      : commitPracticeQuestion(db, studentId, attemptId, questionId, req, now);
   // 响应组装：读取时刻投影（§10.3 不重放旧正文）。行与 attempt 直接用事务
   // 产物（同步单连接：事务后重读与事务内已读恒等，省两次整行 SELECT——
   // 含每题数 KB 快照原文的行）；快照只解析一次——非重放路径复用事务内判分
@@ -325,8 +336,7 @@ export function submitPracticeQuestion(
       db,
       outcome.attempt,
       outcome.row,
-      () =>
-        "snapshot" in outcome ? outcome.snapshot : snapshotOfRow(outcome.row),
+      () => outcome.snapshot ?? snapshotOfRow(outcome.row),
       now,
       view,
     ),
@@ -334,4 +344,43 @@ export function submitPracticeQuestion(
     attempt: attemptSummaryOf(outcome.attempt),
     practiceWorkflow: view.practiceWorkflow,
   };
+}
+
+function confirmBoundCourseQuestion(
+  db: Db,
+  dataDir: string,
+  attempt: ReturnType<typeof requireOwnActiveAttempt>,
+  questionId: string,
+  req: PracticeQuestionSubmitWithAnswer,
+  now: Date,
+) {
+  const result = submitQuestionDelivery(
+    db,
+    dataDir,
+    attempt.studentId,
+    attempt.id,
+    "question",
+    {
+      revisions: [
+        {
+          questionId,
+          questionRevisionId: req.questionRevisionId,
+          expectedAnswerRevision: req.expectedAnswerRevision,
+        },
+      ],
+      evidence: [req.evidence],
+    },
+    now,
+    {
+      workflowRevision: req.workflowRevision,
+      mutationId: req.submissionMutationId,
+      digest: practiceRequestDigestOf(attempt.id, questionId, req),
+    },
+  );
+  if (result?.error) throw result.error;
+  const row = result?.facts?.rows.find(
+    (item) => item.questionId === questionId,
+  );
+  if (!result?.facts || !row) kernelAttemptUnavailable();
+  return { row, attempt: result.facts.attempt, snapshot: null };
 }

@@ -617,6 +617,13 @@
       "when": 1795199931360,
       "tag": "0087_kernel_course_openings",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "6",
+      "when": 1795210089623,
+      "tag": "0088_kernel_course_workflow",
+      "breakpoints": true
     }
   ]
 }

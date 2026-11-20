@@ -33,6 +33,7 @@ import {
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
 import {
+  courseKernelBinding,
   deliveryPolicy,
   questionDeliveryBinding,
   readBoundQuestionDelivery,
@@ -142,6 +143,11 @@ export function reserveKernelCourseRefreeze(
   title: string,
 ): boolean {
   if (pendingKernelRefreeze(tx, attempt.id)) return true;
+  if (
+    attempt.feedbackMode !== "after_attempt" ||
+    courseKernelBinding(tx, attempt.id)?.pendingWorkflow
+  )
+    return false;
   if (!isOpenEmptyForKernelRefreeze(db, attempt)) return false;
   const binding = questionDeliveryBinding(db, attempt);
   if (!binding?.course) kernelAttemptUnavailable();
@@ -371,6 +377,8 @@ export function resumeBoundKernelCourse(
       // 内核已收草稿而宿主激活投影中断时，仍沿用原卷的时钟。
       if (
         timeLimitMinutes === undefined ||
+        reopened.feedbackMode !== "after_attempt" ||
+        courseKernelBinding(tx, reopened.id)?.pendingWorkflow ||
         !isOpenEmptyForKernelRefreeze(db, reopened) ||
         delivery.rows.some(({ answerRevision }) => answerRevision > 0)
       )

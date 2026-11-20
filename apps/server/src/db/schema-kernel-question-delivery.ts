@@ -1,4 +1,8 @@
-import type { MarkResponseData, TeacherMark } from "@tutor/contract";
+import type {
+  MarkResponseData,
+  PracticeWorkflowUpdateRequest,
+  TeacherMark,
+} from "@tutor/contract";
 import type { KernelQuestionDeliveryIntent } from "@tutor/contract/kernel-question-delivery";
 import { sql } from "drizzle-orm";
 import {
@@ -63,6 +67,9 @@ export const kernelCourseOpenings = sqliteTable(
     draft: text("draft_json", { mode: "json" })
       .$type<KernelOpeningDraft>()
       .notNull(),
+    pendingWorkflow: text("pending_workflow_json", {
+      mode: "json",
+    }).$type<PracticeWorkflowUpdateRequest>(),
     attemptId: text("attempt_id")
       .unique()
       .references(() => attempts.id),

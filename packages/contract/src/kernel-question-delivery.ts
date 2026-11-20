@@ -50,12 +50,23 @@ const kernelFormalInkAnchorSchema = z.strictObject({
 
 export type KernelFormalInkAnchor = z.infer<typeof kernelFormalInkAnchorSchema>;
 
+const kernelPracticeSubmissionSchema = z.strictObject({
+  mutationId: z.uuid(),
+  digest: z.string().regex(/^[a-f0-9]{64}$/u),
+  workflowRevision: z.int().nonnegative(),
+});
+
+export type KernelPracticeSubmission = z.infer<
+  typeof kernelPracticeSubmissionSchema
+>;
+
 export const kernelQuestionDeliveryIntentSchema = attemptSubmitRequestSchema
   .extend({
     source: kernelDeliverySourceSchema,
     selectedQuestionIds: z.array(z.string().min(1)).min(1),
     activitySeal: kernelActivitySealSchema,
     formalInk: z.array(kernelFormalInkAnchorSchema).min(1).optional(),
+    practiceSubmission: kernelPracticeSubmissionSchema.optional(),
     questions: z
       .array(
         z.strictObject({
@@ -68,8 +79,10 @@ export const kernelQuestionDeliveryIntentSchema = attemptSubmitRequestSchema
       .min(1),
   })
   .refine(
-    ({ selectedQuestionIds }) =>
-      new Set(selectedQuestionIds).size === selectedQuestionIds.length,
+    ({ selectedQuestionIds, source, practiceSubmission }) =>
+      new Set(selectedQuestionIds).size === selectedQuestionIds.length &&
+      (!practiceSubmission ||
+        (source === "question" && selectedQuestionIds.length === 1)),
   );
 
 export type KernelDeliverySource = z.infer<typeof kernelDeliverySourceSchema>;
