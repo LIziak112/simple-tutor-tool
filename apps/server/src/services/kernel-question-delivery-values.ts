@@ -88,7 +88,7 @@ export function deliveryValueOf(
   if ("values" in answer) return answer.values;
   if ("finalAnswer" in answer) return [answer.finalAnswer];
   if ("value" in answer) return answer.value;
-  if (answer.kind === "response") {
+  if ("body" in answer) {
     const { body, title } = answer;
     return title === undefined ? { body } : { body, title };
   }

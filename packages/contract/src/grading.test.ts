@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   choiceStudentAnswerSchema,
   fillStudentAnswerSchema,
+  finalTextDeliveryScoringSourceSchema,
   handwrittenStudentAnswerSchema,
   judgeStudentAnswerSchema,
   multiStudentAnswerSchema,
+  orderedTextDeliveryScoringSourceSchema,
   questionDeliveryScoringSourcesSchema,
   RESPONSE_BODY_MAX_CHARS,
   RESPONSE_TITLE_MAX_CHARS,
+  responseDeliveryScoringSourceSchema,
   responseStudentAnswerSchema,
   singleChoiceScoringSourceSchema,
   studentAnswerSchema,
@@ -215,11 +218,70 @@ describe("整卷手写最终文本的评分来源", () => {
     },
   );
 
-  it("开放题使用独立正文，未进入手写最终文本整卷范围", () => {
+  it("最终文本形态拒绝答问，含无参考答案的答问", () => {
+    expect(
+      finalTextDeliveryScoringSourceSchema.safeParse({ type: "response" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("整卷答问的评分来源", () => {
+  const source = {
+    type: "response",
+    answers: { kind: "response", referenceMd: "答问范文" },
+  };
+
+  it("整卷接收独立答问来源，有无范文都合法，讲练范围不变", () => {
+    const withoutReference = { type: "response" };
+    expect(responseDeliveryScoringSourceSchema.parse(source)).toEqual(source);
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.parse([
+        source,
+        withoutReference,
+      ]),
+    ).toEqual([source, withoutReference]);
+    expect(
+      questionDeliveryScoringSourcesSchema.safeParse([source]).success,
+    ).toBe(false);
+  });
+
+  it("答问参考与手写最终文本各用自己的形态", () => {
+    const finalSource = {
+      type: "solve",
+      answers: { kind: "final", answer: "最终文本参考" },
+    };
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.parse([source, finalSource]),
+    ).toEqual([source, { acceptedBlanks: [["最终文本参考"]] }]);
+    expect(
+      orderedTextDeliveryScoringSourceSchema.safeParse(source).success,
+    ).toBe(false);
+    expect(
+      responseDeliveryScoringSourceSchema.safeParse(finalSource).success,
+    ).toBe(false);
     expect(
       wholeQuestionDeliveryScoringSourcesSchema.safeParse([
-        { type: "response" },
+        { ...source, answers: finalSource.answers },
       ]).success,
     ).toBe(false);
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+        { ...finalSource, answers: source.answers },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("拒绝把学生正文或空范文当成评分来源", () => {
+    for (const answers of [
+      { kind: "response", body: "学生正文" },
+      { kind: "response", referenceMd: "" },
+    ]) {
+      expect(
+        wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+          { ...source, answers },
+        ]).success,
+      ).toBe(false);
+    }
   });
 });

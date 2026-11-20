@@ -1,4 +1,5 @@
 import {
+  isResponseDeliveryScoringSource,
   type Question,
   questionDeliveryScoringSourcesSchema,
   wholeQuestionDeliveryScoringSourcesSchema,
@@ -43,7 +44,7 @@ export function questionDeliveryPublication(
         key: { response, acceptedBlanks },
       };
     }
-    if (source.type === "response") {
+    if (isResponseDeliveryScoringSource(source)) {
       const response = "textWithOptionalTitle" as const;
       return { question: { ...base, response }, key: { response } };
     }

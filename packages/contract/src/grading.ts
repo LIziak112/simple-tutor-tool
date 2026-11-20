@@ -106,6 +106,12 @@ export const responseDeliveryScoringSourceSchema = z.object({
   answers: responseAnswersSchema.optional(),
 });
 
+export function isResponseDeliveryScoringSource(
+  source: unknown,
+): source is z.output<typeof responseDeliveryScoringSourceSchema> {
+  return responseDeliveryScoringSourceSchema.safeParse(source).success;
+}
+
 const objectiveDeliveryScoringSourceSchema = z.union([
   singleChoiceScoringSourceSchema,
   judgeScoringSourceSchema,
