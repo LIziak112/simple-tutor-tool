@@ -9,14 +9,21 @@ import {
   isTeacherReviewDeliveryScoringSource,
   type Question,
   questionSchema,
+  refDirective,
   wholeQuestionDeliveryScoringSourcesSchema,
 } from "@tutor/contract";
-import { expandSelectionIds, processor, studentStemMd } from "@tutor/md-dsl";
+import {
+  detectNewContent,
+  expandSelectionIds,
+  processor,
+  studentStemMd,
+} from "@tutor/md-dsl";
 import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import type { Assignment, Attempt } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
+  closureRefIds,
   contextEntriesOf,
   frozenGradingPolicyOf,
   liveAttemptContextClosure,
@@ -24,6 +31,7 @@ import {
 import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
+import { jsonOf } from "./snapshot.ts";
 
 const kernelFrozenAssignmentSchema = z.strictObject({
   responses: z
@@ -198,11 +206,29 @@ export function loadKernelAssignmentQuestions(
       if (!row || !frozen || frozen.gradingPolicy !== "manual_only")
         ineligible();
       assertNoStoredReference(frozen.question.sourceMd, row.answersJson);
-      if ("materialRefs" in source)
+      if (!("matchingOptions" in source)) continue;
+      if (source.materialRefs?.length) {
         teacherReviewWidths.set(
           row.id,
           matchingReviewWidth(frozen.question, entries),
         );
+        continue;
+      }
+      // 零槽位须来自真实缺省。冻结投影可能剥去破损的引用列。
+      const refs =
+        row.materialRefsJson === null ? [] : jsonOf(row.materialRefsJson);
+      if (
+        !Array.isArray(refs) ||
+        refs.length > 0 ||
+        detectNewContent(row.sourceMd).some(
+          ({ kind, name }) =>
+            kind === "directive" && name === refDirective.name,
+        ) ||
+        (context.materials.length > 0 &&
+          closureRefIds(db, teacherId, [row.id]).materialIds.size > 0)
+      )
+        ineligible();
+      teacherReviewWidths.set(row.id, 0);
     }
     return {
       slotType: "questionDelivery" as const,

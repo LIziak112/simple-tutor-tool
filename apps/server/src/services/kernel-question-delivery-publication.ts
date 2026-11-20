@@ -49,8 +49,7 @@ export function questionDeliveryPublication(
     if (isTeacherReviewDeliveryScoringSource(source)) {
       const isOrdering = "orderingItems" in source;
       const blankCount = isOrdering ? 0 : teacherReviewWidths?.get(question.id);
-      if (blankCount === undefined || (!isOrdering && blankCount === 0))
-        throw new Error("冻结配对题缺少材料槽位");
+      if (blankCount === undefined) throw new Error("冻结配对题缺少材料槽位");
       return {
         question: {
           ...base,

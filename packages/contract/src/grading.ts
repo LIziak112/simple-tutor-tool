@@ -162,9 +162,12 @@ export const matchingTeacherReviewSourceSchema = z.object({
   ),
   materialRefs: materialRefSchema
     .array()
-    .refine((refs) => refs.some(({ slots }) => slots !== undefined), {
-      message: "无参考配对题须声明材料槽位",
-    }),
+    .refine(
+      (refs) =>
+        refs.length === 0 || refs.some(({ slots }) => slots !== undefined),
+      { message: "有材料引用的无参考配对题须声明槽位" },
+    )
+    .optional(),
   answers: z.undefined().optional(),
 });
 

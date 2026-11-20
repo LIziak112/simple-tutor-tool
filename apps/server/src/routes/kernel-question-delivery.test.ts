@@ -4546,6 +4546,401 @@ it.each([
   },
 );
 
+it("普通整卷无材料无参考配对按真实零槽位冻结并进入教师待批", async () => {
+  using data = mkdtempDisposableSync(join(tmpdir(), "m05-zero-matching-"));
+  const instance = openInstance(data.path);
+  try {
+    let app = instance.open(false);
+    const world = await setupAssignment(app);
+    vi.stubEnv("NEW_CONTENT_ENABLED", "true");
+    const ids = {
+      partial: "match-partial",
+      repeat: "match-repeat",
+      empty: "match-empty",
+      missing: "match-missing",
+    };
+    const questionIds = Object.values(ids);
+    const withRepeat = (id: string) => id === ids.repeat;
+    const options = [
+      { id: "opt-1", text: "甲选项。" },
+      { id: "opt-2", text: "乙选项。" },
+    ];
+    const solution = "合成零槽配对私有详解。";
+    const {
+      units: [unit],
+    } = await importQuestions(app, world.teacher, undefined, [
+      "::::material{id=unattached-material}",
+      "索引污染探针所用的独立材料。",
+      "::::",
+      "",
+      ...questionIds.flatMap((id) => [
+        `:::::question{id=${id} type=matching}`,
+        "请配置对应关系。",
+        "",
+        withRepeat(id) ? "::::options{allow-repeat=true}" : "::::options",
+        ...options.flatMap(({ id, text }) => [
+          `:::option{id=${id}${id === "opt-2" ? " distractor=true" : ""}}`,
+          text,
+          ":::",
+        ]),
+        "::::",
+        "",
+        ":::solution",
+        solution,
+        ":::",
+        ":::::",
+        "",
+      ]),
+    ]);
+    if (!unit) throw new Error("未导入零槽配对题");
+    const assignment = await assignKernelFixture(
+      app,
+      { ...world, unitId: unit.id },
+      { answerRelease: "after_due", dueAt: "2099-01-01T00:00:00Z" },
+    );
+
+    const db = instance.db().$client;
+    const stored = z
+      .object({ source_md: z.string(), material_refs_json: z.null() })
+      .parse(
+        db
+          .prepare(
+            "SELECT source_md,material_refs_json FROM questions WHERE id=?",
+          )
+          .get(ids.partial),
+      );
+    const replace = db.prepare(
+      "UPDATE questions SET source_md=?,material_refs_json=? WHERE id=?",
+    );
+    const rejectBrokenMaterial = async () => {
+      const rejected = await jsonCall(
+        app,
+        "/api/teacher/assignments",
+        world.teacher,
+        "POST",
+        {
+          title: "错误的配对材料引用",
+          unitIds: [unit.id],
+          studentIds: [world.studentId],
+          executionBackend: "kernel",
+          allowRedo: false,
+        },
+      );
+      expect(rejected.status, await rejected.clone().text()).toBe(422);
+      expect(await rejected.json()).toMatchObject({
+        error: "M04_PRACTICE_INELIGIBLE",
+      });
+    };
+    for (const [source, refs] of [
+      [stored.source_md, "无效 JSON"],
+      [stored.source_md, "null"],
+      [stored.source_md, '[{"slots":"slot-1"}]'],
+      [stored.source_md, '[{"material":"missing","slots":"slot-1"}]'],
+      [
+        stored.source_md.replace(
+          "::::options",
+          "::ref{material=missing slots=slot-1}\n\n::::options",
+        ),
+        null,
+      ],
+      [
+        stored.source_md.replace(
+          "请配置对应关系。",
+          "请配置对应关系。::ref{slots=slot-1}",
+        ),
+        null,
+      ],
+    ] as const) {
+      replace.run(source, refs, ids.partial);
+      try {
+        await rejectBrokenMaterial();
+      } finally {
+        replace.run(stored.source_md, stored.material_refs_json, ids.partial);
+      }
+    }
+    db.prepare(
+      "INSERT INTO material_refs (teacher_id, owner_kind, owner_id, material_id, ref_order) SELECT teacher_id, 'question', id, 'unattached-material', 0 FROM questions WHERE id=?",
+    ).run(ids.partial);
+    try {
+      await rejectBrokenMaterial();
+    } finally {
+      db.prepare(
+        "DELETE FROM material_refs WHERE owner_kind='question' AND owner_id=? AND material_id='unattached-material'",
+      ).run(ids.partial);
+    }
+
+    const opened = await postAssignment(app, assignment, world.ownerCookie);
+    expect(opened.status, await opened.clone().text()).toBe(200);
+    const attempt = attemptStartOkSchema.parse(await opened.json()).data;
+    const path = `/api/student/attempts/${attempt.id}`;
+    const privateKeys = [
+      "acceptedBlanks",
+      "acceptedByQuestion",
+      "distractor",
+      "questionAnswerRules",
+      "scoringKey",
+      "teacherReview",
+    ];
+    const allow = ["answer", "answers", "solutionMd"];
+    const readPublic = async (suffix = "") => {
+      const response = await jsonCall(app, path + suffix, world.ownerCookie);
+      expect(response.status, await response.clone().text()).toBe(200);
+      const raw: unknown = await response.json();
+      assertNoLeak(raw, { forbid: privateKeys, allow });
+      return raw;
+    };
+    const context = attemptContextOkSchema.parse(
+      await readPublic("/context"),
+    ).data;
+    expect(context).toMatchObject({ materials: [], groups: [] });
+    const draft = attemptDraftOkSchema.parse(await readPublic()).data;
+    const questions = draft.units.flatMap(({ questions }) => questions);
+    expect(questions.map(({ id }) => id)).toEqual(questionIds);
+    for (const question of questions) {
+      expect(question).toMatchObject({
+        matchingOptions: { allowRepeat: withRepeat(question.id), options },
+      });
+      expect(question).not.toHaveProperty("matchingSlots");
+      expect(question).not.toHaveProperty("materialRefs");
+    }
+    const matching = (pairs: Record<string, string>) =>
+      ({ kind: "matching", pairs }) as const;
+    const drafts = {
+      [ids.partial]: matching({ "slot-2": "opt-2" }),
+      [ids.repeat]: matching({ arbitrary: "opt-1", "slot-2": "opt-1" }),
+      [ids.empty]: matching({}),
+    };
+    const save = (id: string, answer: ReturnType<typeof matching>) =>
+      jsonCall(app, `${path}/answers/${id}`, world.ownerCookie, "PUT", {
+        answer,
+        baseRevision: 0,
+        mutationId: randomUUID(),
+        expectedFrozenAt: attempt.frozenAt,
+        questionRevisionId: questions.find((question) => question.id === id)
+          ?.questionRevisionId,
+      });
+    for (const answer of [
+      matching({ arbitrary: "unknown" }),
+      matching({ arbitrary: "opt-1", "slot-2": "opt-1" }),
+    ]) {
+      const rejected = await save(ids.partial, answer);
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toMatchObject({
+        error: "VALIDATION_ERROR",
+      });
+    }
+    for (const [id, answer] of Object.entries(drafts)) {
+      const saved = await save(id, answer);
+      expect(saved.status, await saved.clone().text()).toBe(200);
+      assertNoLeak(await saved.json(), { forbid: privateKeys, allow });
+    }
+    instance.reopen();
+    app = instance.open(false);
+    const saved = attemptDraftOkSchema.parse(await readPublic()).data;
+    expect(saved.drafts).toEqual(drafts);
+    const submit = () =>
+      jsonCall(app, path + "/submit", world.ownerCookie, "POST", {
+        revisions: questions.map(({ id, questionRevisionId }) => ({
+          questionId: id,
+          questionRevisionId,
+          expectedAnswerRevision: saved.draftRevisions?.[id] ?? 0,
+        })),
+      });
+    const confirmed = await submit();
+    expect(confirmed.status, await confirmed.clone().text()).toBe(200);
+    const raw: unknown = await confirmed.json();
+    assertNoLeak(raw, { forbid: privateKeys, allow });
+    expect(JSON.stringify(raw)).not.toContain(solution);
+    const hidden = attemptResultOkSchema.parse(raw).data;
+    expect(hidden.answersReleased).toBe(false);
+    expect(hidden.attempt.scoreAuto).toBeNull();
+    expect(hidden.units.flatMap(({ questions }) => questions)).toEqual(
+      questionIds.map((questionId) =>
+        expect.objectContaining({
+          questionId,
+          answer: drafts[questionId] ?? null,
+          answered: questionId === ids.partial || questionId === ids.repeat,
+          answers: null,
+          autoCorrect: null,
+          finalCorrect: null,
+          teacherComment: null,
+        }),
+      ),
+    );
+    expect((await submit()).status).toBe(409);
+
+    const ticket = keyRow
+      .extend({ receipt_id: z.string() })
+      .parse(
+        instance
+          .db()
+          .$client.prepare(
+            "SELECT operation_id,step_attempt_id,slot_id,receipt_id FROM kernel_question_deliveries WHERE attempt_id=?",
+          )
+          .get(attempt.id),
+      );
+    const databasePath = join(data.path, BACKUP_KERNEL_DATABASE);
+    using kernel = new DatabaseSync(databasePath, { readOnly: true });
+    const definition = z
+      .object({ definition: z.string() })
+      .parse(
+        kernel
+          .prepare(
+            "SELECT p.definition FROM practices p JOIN activities a ON p.id=a.practice_id AND p.version=a.practice_version WHERE a.id=?",
+          )
+          .get(attempt.id),
+      );
+    expect(JSON.parse(definition.definition)).toMatchObject({
+      questions: questionIds.map((id) =>
+        expect.objectContaining({
+          id,
+          response: "orderedTextBlanks",
+          blankCount: 0,
+        }),
+      ),
+      grading: { teacherReview: { questionIds: questionIds.toSorted() } },
+    });
+    expect(
+      kernel
+        .prepare("SELECT key_id FROM evaluation_tasks WHERE submission_id=?")
+        .get(ticket.receipt_id),
+    ).toEqual({ key_id: null });
+    const runtime = openLearningRuntime({
+      databasePath,
+      authorizeConfirmationRecovery: (scope) =>
+        scope.studentId === world.studentId &&
+        scope.activityId === attempt.id &&
+        scope.operationId === ticket.operation_id &&
+        scope.stepAttemptId === ticket.step_attempt_id,
+    });
+    try {
+      const actor = { role: "student", id: world.studentId } as const;
+      assertNoLeak(runtime.read(actor, attempt.id), {
+        forbid: privateKeys,
+        allow,
+      });
+      const key = {
+        protocolVersion: 1 as const,
+        operationId: ticket.operation_id,
+        stepAttemptId: ticket.step_attempt_id,
+      };
+      const recovered = runtime.recoverQuestionDelivery(
+        actor,
+        attempt.id,
+        key,
+        "declared",
+      );
+      expect(recovered.receipt.id).toBe(ticket.receipt_id);
+      expect(recovered.assessment).toBe("teacherReview");
+      expect(
+        recovered.confirmation.questions.map(({ value, revision }) => [
+          value,
+          revision,
+        ]),
+      ).toEqual([
+        [["slot-2", "opt-2"], 1],
+        [["arbitrary", "opt-1", "slot-2", "opt-1"], 1],
+        [[], 1],
+        [null, 0],
+      ]);
+      expect(
+        runtime.confirmQuestionDelivery(actor, attempt.id, {
+          ...key,
+          source: "whole",
+          slotId: ticket.slot_id,
+          questions: recovered.requestQuestions,
+        }),
+      ).toEqual(recovered.receipt);
+    } finally {
+      runtime.close();
+    }
+    const queue = async () => {
+      const response = await jsonCall(
+        app,
+        `/api/teacher/pending-marks?assignmentId=${assignment}`,
+        world.teacher,
+      );
+      expect(response.status).toBe(200);
+      return wire(pendingMarkListDataSchema).parse(await response.json()).data
+        .marks;
+    };
+    const pending = await queue();
+    expect(pending.map(({ questionId }) => questionId).sort()).toEqual(
+      questionIds.toSorted(),
+    );
+    const teacherView = await jsonCall(
+      app,
+      `/api/teacher/attempts/${attempt.id}`,
+      world.teacher,
+    );
+    expect(teacherView.status).toBe(200);
+    const teacherDetail = teacherAttemptDetailOkSchema.parse(
+      await teacherView.json(),
+    ).data;
+    expect(
+      teacherDetail.questions.map(({ gradingPolicy, answers }) => [
+        gradingPolicy,
+        answers,
+      ]),
+    ).toEqual(questionIds.map(() => ["manual_only", null]));
+    const target = pending.find(({ questionId }) => questionId === ids.partial);
+    if (!target) throw new Error("缺少零槽配对待批行");
+    const mark = async (request: MarkRequest) => {
+      const response = await jsonCall(
+        app,
+        `/api/teacher/responses/${target.responseId}/mark`,
+        world.teacher,
+        "POST",
+        request,
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      return wire(markResponseDataSchema).parse(await response.json()).data;
+    };
+    const comment = "合成零槽配对教师私有评语。";
+    const markRequest = {
+      mark: "wrong",
+      comment,
+      baseRevision: 0,
+      mutationId: randomUUID(),
+    } as const;
+    const marked = await mark(markRequest);
+    expect(marked).toMatchObject({
+      eventId: expect.any(String),
+      revision: 1,
+      finalCorrect: false,
+      pendingCount: 3,
+    });
+    expect(await mark(markRequest)).toEqual(marked);
+    expect(JSON.stringify(await readPublic())).not.toContain(comment);
+    const cleared = await mark({
+      mark: null,
+      comment: null,
+      baseRevision: 1,
+      mutationId: randomUUID(),
+    });
+    expect(cleared).toMatchObject({
+      eventId: expect.any(String),
+      revision: 2,
+      finalCorrect: null,
+      pendingCount: 4,
+    });
+    expect((await queue()).map(({ questionId }) => questionId).sort()).toEqual(
+      questionIds.toSorted(),
+    );
+    expect(
+      instance
+        .db()
+        .$client.prepare(
+          "SELECT count(*) n FROM attempt_settlements WHERE attempt_id=? AND kind='final'",
+        )
+        .get(attempt.id),
+    ).toEqual({ n: 1 });
+  } finally {
+    vi.unstubAllEnvs();
+    instance.close();
+  }
+});
+
 it.each([false, true])(
   "普通整卷无参考排序保留零槽位并进入原教师待批队列，混卷=%s",
   async (mixed) => {

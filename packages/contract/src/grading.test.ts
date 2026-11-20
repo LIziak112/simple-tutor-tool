@@ -405,7 +405,6 @@ describe("整卷配对的冻结来源与原值", () => {
 
   it("拒绝无实际映射、无选项池或参考引用池外选项", () => {
     for (const changes of [
-      { answers: undefined },
       { answers: { kind: "matching", pairs: {} } },
       { answers: { kind: "matching", pairs: { "slot=乙": "未知" } } },
       { matchingOptions: undefined },
@@ -416,6 +415,29 @@ describe("整卷配对的冻结来源与原值", () => {
         ]).success,
       ).toBe(false);
     }
+  });
+
+  it("整卷可冻结无引用的无参考配对，并保留对实际材料声明的校验", () => {
+    const { answers: _reference, ...unkeyed } = source;
+    const emptyRefs = { ...unkeyed, materialRefs: [] };
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.parse([unkeyed, emptyRefs]),
+    ).toEqual([unkeyed, emptyRefs]);
+    for (const materialRefs of [
+      null,
+      [{ material: "听力材料" }],
+      [{ material: "" }],
+      [{ material: "听力材料", slots: "" }],
+    ]) {
+      expect(
+        wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+          { ...unkeyed, materialRefs },
+        ]).success,
+      ).toBe(false);
+    }
+    expect(
+      questionDeliveryScoringSourcesSchema.safeParse([unkeyed]).success,
+    ).toBe(false);
   });
 
   it("整卷可冻结有材料槽位的无参考配对，且不会把坏参考降级为无参考", () => {
