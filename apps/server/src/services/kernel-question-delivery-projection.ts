@@ -188,6 +188,7 @@ export function projectDeliveryCompletion(
   attempt: Attempt,
   rows: readonly ResponseRow[],
   confirmedAt: string,
+  verdictsChanged = false,
 ) {
   const outcome = attemptFinalOutcomeOf(rows, { finalized: true });
   let lifecycle = attempt;
@@ -210,7 +211,7 @@ export function projectDeliveryCompletion(
     lifecycle = saved;
   } else {
     if (
-      attempt.status !== outcome.status ||
+      (!verdictsChanged && attempt.status !== outcome.status) ||
       attempt.submittedAt !== confirmedAt
     )
       kernelAttemptUnavailable();
@@ -237,7 +238,7 @@ export function projectDeliveryCompletion(
     attempt: {
       ...lifecycle,
       scoreAuto: scoreAutoOf(rows),
-      scoreFinal: outcome.scoreFinal,
+      ...outcome,
     },
     rows: rows.map((row) => ({
       ...row,

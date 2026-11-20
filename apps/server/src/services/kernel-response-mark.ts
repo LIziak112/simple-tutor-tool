@@ -9,9 +9,9 @@ import { HttpError } from "../lib/http-error.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import {
   type MarkIntent,
-  projectWholeDeliveryVerdicts,
   responseMarkKey,
   responseMarkResult,
+  subjectOf,
 } from "./kernel-delivery-verdicts.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery-recovery.ts";
 import { deliveryTickets } from "./kernel-question-delivery-ticket.ts";
@@ -35,13 +35,11 @@ export function stageKernelResponseMark(
 ) {
   if (deliveryTickets(db, attempt.id).length === 0) return undefined;
   const facts = readQuestionDeliveryFacts(db, dataDir, attempt);
-  const review = facts?.review;
+  const review = facts?.reviews?.get(response.questionId);
   if (!facts || !review) return undefined;
   const row = facts.rows.find((item) => item.id === response.id);
-  const verdict = review.questions.find(
-    (item) => item.questionId === response.questionId,
-  );
-  if (!row || !verdict) kernelAttemptUnavailable();
+  const { verdict } = review;
+  if (!row) kernelAttemptUnavailable();
 
   const key = {
     attemptId: attempt.id,
@@ -101,10 +99,7 @@ export function stageKernelResponseMark(
     );
   }
 
-  const subject =
-    verdict.status === "judged" && verdict.effective.source === "teacherReview"
-      ? verdict.effective
-      : undefined;
+  const subject = subjectOf(verdict);
   if (
     request.mutationId === undefined &&
     request.mark === row.teacherMark &&
@@ -124,7 +119,7 @@ export function stageKernelResponseMark(
   const core = {
     protocolVersion: 1 as const,
     operationId: key.operationId,
-    submissionId: review.receipt.id,
+    submissionId: review.submissionId,
     targetId: review.targetId,
     questionId: row.questionId,
     expectedRevision: verdict.revision,
@@ -176,12 +171,10 @@ export function finishKernelResponseMark(
   attempt: Attempt,
   staged: MarkIntent,
 ) {
-  const facts = readQuestionDeliveryFacts(db, dataDir, attempt);
-  if (!facts?.review) kernelAttemptUnavailable();
   const current = loadIntent(db, staged);
   if (!current) kernelAttemptUnavailable();
   if (current.result) return markResponseDataSchema.parse(current.result);
-  projectWholeDeliveryVerdicts(db, dataDir, facts, current);
+  readQuestionDeliveryFacts(db, dataDir, attempt, dataDir, current);
   const result = loadIntent(db, staged)?.result;
   if (!result) kernelAttemptUnavailable();
   return markResponseDataSchema.parse(result);

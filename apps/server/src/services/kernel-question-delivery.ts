@@ -97,6 +97,7 @@ export function saveQuestionDeliveryAnswer(
         (runtime, binding, view, activate) => {
           const facts = recoverDeliveries(
             db,
+            dataDir,
             runtime,
             attempt,
             binding,
@@ -184,6 +185,7 @@ export function submitQuestionDelivery(
         (runtime, binding, view, activate) => {
           const before = recoverDeliveries(
             db,
+            dataDir,
             runtime,
             attempt,
             binding,
@@ -270,6 +272,7 @@ export function submitQuestionDelivery(
           return {
             facts: recoverDeliveries(
               db,
+              dataDir,
               runtime,
               attempt,
               binding,

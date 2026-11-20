@@ -38,6 +38,7 @@ import {
   requireLegacyAttemptWrite,
 } from "./kernel-assignment-routing.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
 import {
   finishKernelResponseMark,
   stageKernelResponseMark,
@@ -190,7 +191,15 @@ function requireMarkableResponse(
     .innerJoin(students, eq(attempts.studentId, students.id))
     .where(eq(responses.id, responseId))
     .get();
-  if (row === undefined || row.ownerTeacherId !== teacherId) {
+  const lesson =
+    row?.attempt.sourceType === "lesson"
+      ? lessonKernelBinding(db, row.attempt.id)
+      : undefined;
+  if (
+    row === undefined ||
+    row.ownerTeacherId !== teacherId ||
+    (lesson !== undefined && lesson.teacherId !== teacherId)
+  ) {
     throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答记录不存在");
   }
   if (row.attempt.abandonedAt !== null) {
@@ -219,11 +228,7 @@ export function markResponse(
   const staged = db.transaction(
     (tx) => {
       const row = requireMarkableResponse(tx, teacherId, responseId);
-      if (
-        dataDir !== undefined &&
-        row.attempt.sourceType === "assignment" &&
-        isKernelAttempt(tx, row.attempt)
-      ) {
+      if (dataDir !== undefined && isKernelAttempt(tx, row.attempt)) {
         const result = stageKernelResponseMark(
           db,
           dataDir,

@@ -48,7 +48,9 @@ import {
   postAssignment,
   setupAssignment,
 } from "../test/m04-p1/product-fixture.ts";
+import { nodePeerBindings } from "../test/node-peer.ts";
 import { gzipJson, makeNotePng, putNoteForm } from "../test/note-fixtures.ts";
+import { extractSessionToken } from "../test/note-world.ts";
 
 const choices = [
   "::::question{id=k17-one type=choice}",
@@ -1631,6 +1633,146 @@ it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备�
       kind: "multi",
       indexes: [2, 0],
     });
+    const teacherPath = `/api/teacher/attempts/${id}`;
+    const teacherDetail = async () => {
+      const res = await jsonCall(app, teacherPath, world.teacher);
+      expect(res.status, await res.clone().text()).toBe(200);
+      return teacherAttemptDetailOkSchema.parse(await res.json()).data;
+    };
+    const detail = await teacherDetail();
+    const q1Response = detail.questions.find((q) => q.questionId === "k17-one");
+    const q3Revision = frozen.get("k17-three");
+    if (!q1Response?.responseId || !q3Revision)
+      throw new Error("缺少首题冻结行或邻题原稿");
+    const markPath = `/api/teacher/responses/${q1Response.responseId}/mark`;
+    const neighborMarkPath = `/api/teacher/responses/${q3Revision}/mark`;
+    const mark = (request: MarkRequest, target = markPath) =>
+      jsonCall(app, target, world.teacher, "POST", request);
+    const markOk = async (request: MarkRequest) => {
+      const response = await mark(request);
+      expect(response.status, await response.clone().text()).toBe(200);
+      return wire(markResponseDataSchema).parse(await response.json()).data;
+    };
+    const wrong = {
+      mark: "wrong",
+      comment: "合成讲练课中批注",
+      mutationId: randomUUID(),
+      baseRevision: 0,
+    } as const;
+    expect((await mark(wrong, neighborMarkPath)).status).toBe(409);
+    const marked = await markOk(wrong);
+    expect(marked).toMatchObject({
+      responseId: q1Response.responseId,
+      teacherMark: "wrong",
+      teacherComment: wrong.comment,
+      finalCorrect: false,
+      revision: 1,
+      attemptStatus: "submitted",
+      scoreFinal: null,
+      pendingCount: 0,
+    });
+    expect(marked.eventId).toBeDefined();
+    expect(await markOk(wrong)).toEqual(marked);
+    const registration = await app.request(
+      "/api/public/teacher/register",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          loginName: "讲练域外老师",
+          password: "outside-pass-8",
+        }),
+      },
+      nodePeerBindings("10.0.0.2"),
+    );
+    expect(registration.status, await registration.clone().text()).toBe(200);
+    const outsideTeacher = `tutor_session=${extractSessionToken(registration)}`;
+    const foreignMark = await jsonCall(
+      app,
+      markPath,
+      outsideTeacher,
+      "POST",
+      wrong,
+    );
+    expect(foreignMark.status).toBe(404);
+    expect(await foreignMark.text()).not.toContain(wrong.comment);
+    expect((await jsonCall(app, teacherPath, outsideTeacher)).status).toBe(404);
+    const markedView = await startView();
+    expect(markedView.attempt.status).toBe("draft");
+    expect(markedView.released["k17-one"]).toMatchObject({
+      answer: reopened.released["k17-one"]?.answer,
+      autoCorrect: true,
+      teacherMark: "wrong",
+      teacherComment: wrong.comment,
+      finalCorrect: false,
+    });
+    expect(markedView.drafts).toEqual(reopened.drafts);
+    expect(markedView.draftRevisions).toEqual(reopened.draftRevisions);
+    expect(
+      (await teacherDetail()).questions.find((q) => q.questionId === "k17-one"),
+    ).toMatchObject({
+      autoCorrect: true,
+      teacherMark: "wrong",
+      finalCorrect: false,
+    });
+    const stale = await mark({ ...wrong, mutationId: randomUUID() });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({
+      error: "VERDICT_CONFLICT",
+      _current: { revision: 1 },
+    });
+
+    const clear = {
+      mark: null,
+      comment: null,
+      mutationId: randomUUID(),
+      baseRevision: 1,
+    } as const;
+    instance
+      .db()
+      .$client.exec(
+        "CREATE TEMP TRIGGER stop_lesson_mark_projection BEFORE UPDATE OF result_json ON kernel_response_marks BEGIN SELECT RAISE(ABORT,'中断讲练改判投影'); END",
+      );
+    expect((await mark(clear)).status).toBe(500);
+    const readMarkReceipt = () =>
+      instance
+        .db()
+        .$client.prepare(
+          "SELECT result_json FROM kernel_response_marks WHERE operation_id=?",
+        )
+        .get(clear.mutationId);
+    expect(readMarkReceipt()).toEqual({ result_json: null });
+    const outsider = await jsonCall(app, path, world.otherCookie);
+    expect(outsider.status).toBe(403);
+    expect(await outsider.text()).not.toContain(wrong.comment);
+    expect(readMarkReceipt()).toEqual({ result_json: null });
+    instance.reopen();
+    app = instance.open(false, teacher.id);
+    expect((await startView()).released["k17-one"]).toEqual(
+      reopened.released["k17-one"],
+    );
+    const recoveredMark = await markOk(clear);
+    expect(recoveredMark).toMatchObject({ revision: 2, finalCorrect: true });
+    expect(recoveredMark.eventId).toBeDefined();
+    expect(readMarkReceipt()).not.toEqual({ result_json: null });
+    const renewed = { ...wrong, mutationId: randomUUID(), baseRevision: 2 };
+    instance.db().$client.exec(
+      `CREATE TEMP TRIGGER revoke_lesson_mark AFTER INSERT ON kernel_response_marks
+       BEGIN UPDATE teachers SET disabled_at = '2026-11-20T00:00:00.000Z' WHERE id = NEW.teacher_id; END`,
+    );
+    const denied = await mark(renewed);
+    expect(denied.status, await denied.clone().text()).toBe(403);
+    expect(await denied.json()).toMatchObject({ error: "FORBIDDEN" });
+    expect((await startView()).released["k17-one"]).toEqual(
+      reopened.released["k17-one"],
+    );
+    instance.db().$client.exec("DROP TRIGGER revoke_lesson_mark");
+    instance
+      .db()
+      .$client.prepare("UPDATE teachers SET disabled_at=NULL WHERE id=?")
+      .run(teacher.id);
+    const renewedMark = await markOk(renewed);
+    expect(renewedMark).toMatchObject({ revision: 3, finalCorrect: false });
     expect(
       instance
         .db()
@@ -1731,9 +1873,41 @@ it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备�
     expect(final.summary).toMatchObject({
       answered: 3,
       unanswered: 1,
-      scoreFinal: 50,
+      scoreFinal: 25,
     });
-    expect((await records())[0]).toMatchObject({ status: "graded", score: 50 });
+    expect((await records())[0]).toMatchObject({ status: "graded", score: 25 });
+    const finalQuestions = final.units.flatMap(({ questions }) => questions);
+    expect(
+      finalQuestions.find((q) => q.questionId === "k17-one"),
+    ).toMatchObject({
+      autoCorrect: true,
+      teacherMark: "wrong",
+      finalCorrect: false,
+    });
+    expect(
+      finalQuestions.find((q) => q.questionId === "k17-three"),
+    ).toMatchObject({
+      autoCorrect: true,
+      teacherMark: null,
+      finalCorrect: true,
+    });
+    const settlement = () =>
+      instance
+        .db()
+        .$client.prepare(
+          "SELECT id, seq, created_at, question_count FROM attempt_settlements WHERE attempt_id=? AND kind='final'",
+        )
+        .all(id);
+    const finalSettlement = settlement();
+    expect(finalSettlement).toHaveLength(1);
+    expect(finalSettlement[0]).toMatchObject({ seq: 1, question_count: 4 });
+    const wrongNeighbor = await mark(
+      { ...wrong, mutationId: randomUUID() },
+      neighborMarkPath,
+    );
+    expect(wrongNeighbor.status).toBe(503);
+    expect(await finishedResult(app, path, world.ownerCookie)).toEqual(final);
+    expect(settlement()).toEqual(finalSettlement);
     expect(
       (
         await jsonCall(

@@ -101,6 +101,7 @@ export function stageDelivery(
         (runtime, binding, view, activate) => {
           const { attempt: current, rows } = recoverDeliveries(
             db,
+            dataDir,
             runtime,
             attempt,
             binding,

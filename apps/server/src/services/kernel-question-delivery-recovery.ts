@@ -19,8 +19,9 @@ import {
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
 import {
-  projectWholeDeliveryVerdicts,
-  type ReviewedDelivery,
+  type MarkIntent,
+  projectDeliveryVerdicts,
+  type ReviewedQuestion,
 } from "./kernel-delivery-verdicts.ts";
 import {
   deliveryPolicy,
@@ -49,7 +50,7 @@ export const keyOf = ({ operationId, stepAttemptId }: DeliveryTicket) =>
 export type DeliveryFacts = {
   attempt: Attempt;
   rows: ResponseRow[];
-  review?: ReviewedDelivery["review"];
+  reviews?: Map<string, ReviewedQuestion>;
 };
 type Activate = (ticket: DeliveryTicket) => void;
 
@@ -207,11 +208,13 @@ function validPlacement(
 
 export function recoverDeliveries(
   db: Db,
+  dataDir: string,
   runtime: KernelRuntime,
   attempt: Attempt,
   binding: QuestionDeliveryBinding,
   view: QuestionDeliveryActivity,
   activate: Activate,
+  markIntent?: MarkIntent,
 ): DeliveryFacts {
   const rows = new Map(
     attemptResponseRows(db, attempt.id).map((row) => [row.questionId, row]),
@@ -236,6 +239,7 @@ export function recoverDeliveries(
     kernelAttemptUnavailable();
 
   const confirmed = new Set<string>();
+  const reviewedTickets: DeliveryTicket[] = [];
   let confirmedAt: string | undefined;
   for (const [slot, receipt] of receipts) {
     const ticket = tickets.find((candidate) => candidate.slotId === slot);
@@ -273,6 +277,8 @@ export function recoverDeliveries(
         .set({ receiptId: receipt.id })
         .where(ticketFilter(ticket))
         .run();
+    if (ticket.intent.source === "question")
+      reviewedTickets.push({ ...ticket, receiptId: receipt.id });
     if (!confirmedAt || receipt.confirmedAt > confirmedAt)
       confirmedAt = receipt.confirmedAt;
   }
@@ -292,20 +298,45 @@ export function recoverDeliveries(
       changeCount: draft.changeCount,
     });
   }
-  const projected = [...rows.values()];
+  const baseline = { attempt, rows: [...rows.values()] };
+  const reviewed = reviewedTickets.length
+    ? projectDeliveryVerdicts(
+        db,
+        dataDir,
+        baseline,
+        binding.practiceId,
+        reviewedTickets,
+        markIntent,
+      )
+    : undefined;
+  const facts = reviewed ?? baseline;
   if (view.status === "completed") {
     if (!confirmedAt || confirmed.size !== rows.size)
       kernelAttemptUnavailable();
-    return projectDeliveryCompletion(db, attempt, projected, confirmedAt);
+    const verdictsChanged =
+      reviewed &&
+      [...reviewed.reviews.values()].some(
+        ({ verdict }) => verdict.revision > 0,
+      );
+    return {
+      ...facts,
+      ...projectDeliveryCompletion(
+        db,
+        attempt,
+        facts.rows,
+        confirmedAt,
+        verdictsChanged,
+      ),
+    };
   }
   if (
     attempt.status !== "draft" ||
-    projected.some(
+    facts.rows.some(
       (row) => row.submittedAt !== null && !confirmed.has(row.questionId),
     )
   )
     kernelAttemptUnavailable();
-  return { attempt, rows: projected };
+  return facts;
 }
 
 export function readQuestionDeliveryFacts(
@@ -313,6 +344,7 @@ export function readQuestionDeliveryFacts(
   dataDir: string,
   attempt: Attempt,
   attachmentDir = dataDir,
+  markIntent?: MarkIntent,
 ): DeliveryFacts | undefined {
   return db.$client
     .transaction(() => {
@@ -321,14 +353,40 @@ export function readQuestionDeliveryFacts(
         dataDir,
         attempt,
         (runtime, binding, view, activate) =>
-          recoverDeliveries(db, runtime, attempt, binding, view, activate),
+          recoverDeliveries(
+            db,
+            dataDir,
+            runtime,
+            attempt,
+            binding,
+            view,
+            activate,
+            markIntent,
+          ),
         attachmentDir,
       );
-      return facts &&
-        facts.attempt.sourceType === "assignment" &&
-        facts.attempt.status !== "draft"
-        ? projectWholeDeliveryVerdicts(db, dataDir, facts)
-        : facts;
+      if (
+        !facts ||
+        attempt.sourceType !== "assignment" ||
+        facts.attempt.status === "draft"
+      )
+        return facts;
+      const [ticket, ...others] = deliveryTickets(db, attempt.id);
+      if (
+        !attempt.assignmentId ||
+        !ticket?.receiptId ||
+        others.length ||
+        ticket.intent.source !== "whole"
+      )
+        kernelAttemptUnavailable();
+      return projectDeliveryVerdicts(
+        db,
+        dataDir,
+        facts,
+        attempt.assignmentId,
+        [ticket],
+        markIntent,
+      );
     })
     .immediate();
 }

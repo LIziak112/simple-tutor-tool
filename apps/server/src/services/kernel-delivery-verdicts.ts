@@ -24,11 +24,11 @@ import {
   kernelAttemptUnavailable,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
-import { deliveryTickets } from "./kernel-question-delivery-ticket.ts";
+import type { DeliveryTicket } from "./kernel-question-delivery-ticket.ts";
 
 export type MarkIntent = typeof kernelResponseMarks.$inferSelect;
 
-type WholeFacts = { attempt: Attempt; rows: ResponseRow[] };
+type VerdictFacts = { attempt: Attempt; rows: ResponseRow[] };
 type ReviewScope = Parameters<AuthorizeQuestionDeliveryReview>[0];
 
 const readVerdicts = (
@@ -43,10 +43,14 @@ const readVerdicts = (
     key,
     "verdicts",
   );
-type WholeReview = ReturnType<typeof readVerdicts>;
-type QuestionVerdict = WholeReview["questions"][number];
+type DeliveryReview = ReturnType<typeof readVerdicts>;
+type QuestionVerdict = DeliveryReview["questions"][number];
 
-export type ReviewedDelivery = WholeFacts & { review: WholeReview };
+export type ReviewedQuestion = {
+  submissionId: string;
+  targetId: string;
+  verdict: QuestionVerdict;
+};
 
 export function responseMarkKey({
   attemptId,
@@ -61,7 +65,7 @@ export function responseMarkKey({
 }
 
 export function responseMarkResult(
-  facts: WholeFacts,
+  facts: VerdictFacts,
   row: ResponseRow,
   revision: number,
   eventId?: string,
@@ -73,22 +77,26 @@ export function responseMarkResult(
     teacherMark: row.teacherMark,
     teacherComment: row.teacherComment,
     finalCorrect: row.finalCorrect,
-    attemptStatus: facts.attempt.status,
+    attemptStatus: facts.attempt.status === "graded" ? "graded" : "submitted",
     scoreFinal: facts.attempt.scoreFinal,
-    pendingCount: facts.rows.filter(needsTeacherMark).length,
+    pendingCount: facts.rows.filter(
+      (row) =>
+        (facts.attempt.status !== "draft" || row.submittedAt !== null) &&
+        needsTeacherMark(row),
+    ).length,
     revision,
     ...(eventId === undefined ? {} : { eventId }),
   });
 }
 
-function subjectOf(verdict: QuestionVerdict) {
+export function subjectOf(verdict: QuestionVerdict) {
   return verdict.status === "judged" &&
     verdict.effective.source === "teacherReview"
     ? verdict.effective
     : undefined;
 }
 
-function verdictFor(review: WholeReview, row: ResponseRow) {
+function verdictFor(review: DeliveryReview, row: ResponseRow) {
   const verdict = review.questions.find(
     (item) => item.questionId === row.questionId,
   );
@@ -97,17 +105,16 @@ function verdictFor(review: WholeReview, row: ResponseRow) {
   return verdict;
 }
 
-/** 已通过普通整卷的交付核验，并持有主库写锁。评语只保存在宿主。 */
-export function projectWholeDeliveryVerdicts(
+/** 已核验票据与宿主响应的归属并持有主库写锁。评语只保存在宿主。 */
+export function projectDeliveryVerdicts(
   db: Db,
   dataDir: string,
-  facts: WholeFacts,
+  facts: VerdictFacts,
+  practiceId: string,
+  tickets: readonly DeliveryTicket[],
   newIntent?: MarkIntent,
-): ReviewedDelivery {
+) {
   const { attempt } = facts;
-  const [ticket, ...others] = deliveryTickets(db, attempt.id);
-  if (!ticket?.receiptId || others.length || ticket.intent.source !== "whole")
-    kernelAttemptUnavailable();
   const owner = db
     .select({ teacherId: students.teacherId, disabledAt: teachers.disabledAt })
     .from(students)
@@ -116,19 +123,16 @@ export function projectWholeDeliveryVerdicts(
     .get();
   if (!owner?.teacherId) kernelAttemptUnavailable();
   const ownerId = owner.teacherId;
-  const key = {
-    protocolVersion: 1 as const,
-    stepAttemptId: ticket.stepAttemptId,
-    operationId: ticket.operationId,
-  };
+  let active: DeliveryTicket | undefined;
   const matchesScope = (scope: ReviewScope, reviewerId: string) =>
+    active !== undefined &&
     scope.reviewerId === reviewerId &&
     scope.studentId === attempt.studentId &&
     scope.activityId === attempt.id &&
-    scope.stepAttemptId === key.stepAttemptId &&
-    scope.operationId === key.operationId &&
-    scope.submissionId === ticket.receiptId &&
-    scope.slotId === ticket.slotId;
+    scope.stepAttemptId === active.stepAttemptId &&
+    scope.operationId === active.operationId &&
+    scope.submissionId === active.receiptId &&
+    scope.slotId === active.slotId;
   let permitted:
     | {
         teacherId: string;
@@ -141,30 +145,41 @@ export function projectWholeDeliveryVerdicts(
     dataDir,
     false,
     (runtime) => {
-      const read = () => {
-        const review = readVerdicts(runtime, ownerId, attempt.id, key);
+      const keyOf = (ticket: DeliveryTicket) => ({
+        protocolVersion: 1 as const,
+        stepAttemptId: ticket.stepAttemptId,
+        operationId: ticket.operationId,
+      });
+      const read = (ticket: DeliveryTicket) => {
+        const review = readVerdicts(
+          runtime,
+          ownerId,
+          attempt.id,
+          keyOf(ticket),
+        );
         if (
           review.receipt.id !== ticket.receiptId ||
           review.receipt.stepAttemptId !== ticket.stepAttemptId ||
           review.receipt.slotId !== ticket.slotId ||
-          review.practice.id !== attempt.assignmentId ||
+          review.practice.id !== practiceId ||
           review.practice.version !== ticket.practiceVersion ||
-          review.confirmation.source !== "whole" ||
-          review.questions.length !== facts.rows.length
+          review.confirmation.source !== ticket.intent.source ||
+          review.questions.length !== ticket.intent.selectedQuestionIds.length
         )
           kernelAttemptUnavailable();
         return review;
       };
       const write = (
+        ticket: DeliveryTicket,
+        row: ResponseRow,
         intent: MarkIntent,
-        review: WholeReview,
+        review: DeliveryReview,
         replay: boolean,
       ) => {
-        const row = facts.rows.find((item) => item.id === intent.responseId);
         const { command } = intent;
         if (
-          !row ||
           !command ||
+          row.id !== intent.responseId ||
           intent.attemptId !== attempt.id ||
           command.operationId !== intent.operationId ||
           command.expectedRevision !== intent.baseRevision ||
@@ -193,7 +208,7 @@ export function projectWholeDeliveryVerdicts(
           return runtime.writeQuestionDeliveryVerdict(
             { role: "reviewer", id: intent.teacherId },
             attempt.id,
-            key,
+            keyOf(ticket),
             command,
           );
         } catch (error) {
@@ -213,13 +228,6 @@ export function projectWholeDeliveryVerdicts(
           permitted = undefined;
         }
       };
-
-      let review = read();
-      let freshReceipt: VerdictReceipt | undefined;
-      if (newIntent !== undefined) {
-        freshReceipt = write(newIntent, review, false);
-        review = read();
-      }
 
       const history = db
         .select()
@@ -243,8 +251,22 @@ export function projectWholeDeliveryVerdicts(
       }
 
       const accepted: { intent: MarkIntent; receipt: VerdictReceipt }[] = [];
-      const rows = facts.rows.map((row) => {
+      const reviews = new Map<string, ReviewedQuestion>();
+      const byQuestion = new Map(
+        facts.rows.map((row) => [row.questionId, row]),
+      );
+      const project = (
+        ticket: DeliveryTicket,
+        row: ResponseRow,
+        review: DeliveryReview,
+        newReceipt?: VerdictReceipt,
+      ) => {
         const question = verdictFor(review, row);
+        reviews.set(row.questionId, {
+          submissionId: review.receipt.id,
+          targetId: review.targetId,
+          verdict: question,
+        });
         const subject = subjectOf(question);
         const automatic = question.automatic?.valid
           ? question.automatic.correct
@@ -258,10 +280,7 @@ export function projectWholeDeliveryVerdicts(
             kernelAttemptUnavailable();
           // 只有已经推进过该修订的操作可重取，读取不执行尚未接受的批改。
           const receipt =
-            newIntent?.operationId === intent.operationId &&
-            newIntent.teacherId === intent.teacherId
-              ? freshReceipt
-              : write(intent, review, true);
+            newReceipt ?? write(ticket, row, intent, review, true);
           if (
             !receipt ||
             receipt.revision !== question.revision ||
@@ -292,14 +311,48 @@ export function projectWholeDeliveryVerdicts(
           finalCorrect:
             question.status === "judged" ? question.effective.correct : null,
         };
-      });
+      };
+      let foundTarget = false;
+      for (const ticket of tickets) {
+        active = ticket;
+        const selected = ticket.intent.selectedQuestionIds.map((id) => {
+          const row = byQuestion.get(id);
+          if (!row || reviews.has(id)) kernelAttemptUnavailable();
+          return row;
+        });
+        let review = read(ticket);
+        const target = selected.find((row) => row.id === newIntent?.responseId);
+        let receipt: VerdictReceipt | undefined;
+        if (newIntent && target) {
+          foundTarget = true;
+          if (verdictFor(review, target).revision === newIntent.baseRevision) {
+            receipt = write(ticket, target, newIntent, review, false);
+            review = read(ticket);
+          }
+        }
+        for (const row of selected)
+          byQuestion.set(
+            row.questionId,
+            project(
+              ticket,
+              row,
+              review,
+              target?.id === row.id ? receipt : undefined,
+            ),
+          );
+      }
+      if (newIntent && !foundTarget) kernelAttemptUnavailable();
+      const rows = [...byQuestion.values()];
       const projected = {
         rows,
-        review,
-        attempt: {
-          ...attempt,
-          ...attemptFinalOutcomeOf(rows, { finalized: true }),
-        },
+        reviews,
+        attempt:
+          attempt.status === "draft"
+            ? attempt
+            : {
+                ...attempt,
+                ...attemptFinalOutcomeOf(rows, { finalized: true }),
+              },
       };
       for (const { intent, receipt } of accepted) {
         const row = rows.find(({ id }) => id === intent.responseId);
