@@ -17,6 +17,8 @@ import {
   type MarkRequest,
   markResponseDataSchema,
   pendingMarkListDataSchema,
+  RESPONSE_BODY_MAX_CHARS,
+  RESPONSE_TITLE_MAX_CHARS,
   type SelfReviewRequest,
   selfReviewDataSchema,
   studentPaperOkSchema,
@@ -25,10 +27,11 @@ import {
   teacherInfoOkSchema,
   wrongQuestionsOkSchema,
 } from "@tutor/contract";
+import { kernelQuestionDeliveryIntentSchema } from "@tutor/contract/kernel-question-delivery";
 import { ZipArchive } from "archiver";
 import { openLearningRuntime } from "learning-kernel";
 import pino from "pino";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createApp } from "../app.ts";
 import { runBackfills } from "../db/backfill.ts";
@@ -2155,6 +2158,531 @@ it.each([
           .get(attempt.id),
       ).toEqual({ n: 1 });
     } finally {
+      instance.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "普通整卷答问经公开入口保存、重开并确认（含客观题：%s）",
+  async (mixed) => {
+    using data = mkdtempDisposableSync(join(tmpdir(), "m05-response-host-"));
+    const instance = openInstance(data.path);
+    try {
+      let app = instance.open(false);
+      const world = await setupAssignment(app);
+      const ids = {
+        text: "m05-response-text",
+        empty: "m05-response-empty",
+        titleOnly: "m05-response-title",
+        ink: "m05-response-ink",
+        both: "m05-response-both",
+        missing: "m05-response-missing",
+      };
+      const reference = "答问参考范文哨兵。";
+      const alternative = "答问备选范文哨兵。";
+      const solution = "答问详解哨兵。";
+      const comment = "教师私有评语哨兵。";
+      vi.stubEnv("NEW_CONTENT_ENABLED", "true");
+      const {
+        units: [unit],
+      } = await importQuestions(app, world.teacher, undefined, [
+        ...(mixed ? choices.slice(0, 6) : []),
+        ...Object.values(ids).flatMap((id) => [
+          `::::question{id=${id} type=response word-min=200}`,
+          "请用一段话说明自己的看法。",
+          ...(id === ids.missing
+            ? []
+            : [
+                ":::answer",
+                reference,
+                ":::",
+                ":::variant",
+                alternative,
+                ":::",
+                ":::solution",
+                solution,
+                ":::",
+              ]),
+          "::::",
+          "",
+        ]),
+      ]);
+      vi.unstubAllEnvs();
+      if (!unit) throw new Error("未导入答问题");
+      const setReview = (studentSelfReviewEnabled: boolean) =>
+        jsonCall(
+          app,
+          "/api/teacher/settings/practice-feedback",
+          world.teacher,
+          "PUT",
+          { studentSelfReviewEnabled },
+        );
+      expect((await setReview(true)).status).toBe(200);
+      const assignment = await assignKernelFixture(
+        app,
+        { ...world, unitId: unit.id },
+        { answerRelease: "after_due", dueAt: "2099-01-01T00:00:00Z" },
+      );
+      const opened = await postAssignment(app, assignment, world.ownerCookie);
+      expect(opened.status, await opened.clone().text()).toBe(200);
+      const attempt = attemptStartOkSchema.parse(await opened.json()).data;
+      expect((await setReview(false)).status).toBe(200);
+      const path = `/api/student/attempts/${attempt.id}`;
+      const forbidPrivate = (raw: unknown) => {
+        for (const privateText of [reference, alternative, solution, comment])
+          expect(JSON.stringify(raw)).not.toContain(privateText);
+      };
+      const readDraft = async () => {
+        const res = await jsonCall(app, path, world.ownerCookie);
+        expect(res.status, await res.clone().text()).toBe(200);
+        const raw: unknown = await res.json();
+        forbidPrivate(raw);
+        assertNoLeak(raw);
+        return attemptDraftOkSchema.parse(raw).data;
+      };
+      const initial = await readDraft();
+      expect(initial.drafts).toEqual({});
+      const questions = initial.units.flatMap((unit) => unit.questions);
+      expect(questions.find(({ id }) => id === ids.text)).toMatchObject({
+        type: "response",
+        wordMin: 200,
+      });
+      const proof = (id: string, baseRevision = 0) => ({
+        questionRevisionId: questions.find((question) => question.id === id)
+          ?.questionRevisionId,
+        expectedFrozenAt: attempt.frozenAt,
+        baseRevision,
+        mutationId: randomUUID(),
+      });
+      const save = (id: string, answer: object, cookie = world.ownerCookie) =>
+        jsonCall(app, `${path}/answers/${id}`, cookie, "PUT", {
+          ...proof(id),
+          answer,
+        });
+      const rawText = {
+        kind: "response",
+        title: " 标题 \t",
+        body: " 正文\r\n\n第二段  ",
+      };
+      const empty = { kind: "response", body: "" };
+      const titleOnly = { kind: "response", title: "只有标题", body: " \t" };
+      const both = { kind: "response", title: "", body: "纸面之外的文字\n" };
+      const answers = {
+        [ids.text]: rawText,
+        [ids.empty]: empty,
+        [ids.titleOnly]: titleOnly,
+        [ids.both]: both,
+        ...(mixed ? { "k17-one": { kind: "choice", index: 0 } } : {}),
+      };
+      for (const cookie of [world.otherCookie, world.teacher]) {
+        const denied = await save(ids.text, rawText, cookie);
+        expect(denied.status).toBe(cookie === world.teacher ? 401 : 403);
+        forbidPrivate(await denied.json());
+      }
+      for (const malformed of [
+        { kind: "response", title: "欠正文" },
+        { kind: "response", body: "文".repeat(RESPONSE_BODY_MAX_CHARS + 1) },
+        {
+          kind: "response",
+          title: "文".repeat(RESPONSE_TITLE_MAX_CHARS + 1),
+          body: "正文",
+        },
+        { kind: "choice", index: 0 },
+      ]) {
+        const rejected = await save(ids.text, malformed);
+        expect(rejected.status, await rejected.clone().text()).toBe(400);
+        forbidPrivate(await rejected.json());
+      }
+      for (const [id, answer] of Object.entries(answers)) {
+        const saved = await save(id, answer);
+        expect(saved.status, await saved.clone().text()).toBe(200);
+        forbidPrivate(await saved.json());
+      }
+      const putInk = async (id: string, base: number) => {
+        const body = inkForm(base === 0 ? 15 : 30);
+        const strokes = body.get("strokes"),
+          snapshot = body.get("snapshot");
+        if (!(strokes instanceof Blob && snapshot instanceof Blob))
+          throw new Error("缺少合成笔迹");
+        body.set("meta", JSON.stringify(proof(id, base)));
+        const response = await app.request(`${path}/ink/${id}`, {
+          method: "PUT",
+          headers: { cookie: world.ownerCookie },
+          body,
+        });
+        return {
+          response,
+          vector: Buffer.from(await strokes.arrayBuffer()),
+          png: Buffer.from(await snapshot.arrayBuffer()),
+        };
+      };
+      const inks = new Map<
+        string,
+        { inkId: string; vector: Buffer; png: Buffer }
+      >();
+      for (const id of [ids.ink, ids.both]) {
+        const { response, vector, png } = await putInk(id, 0);
+        expect(response.status, await response.clone().text()).toBe(200);
+        const { inkId } = wire(
+          z.object({ inkId: z.uuid(), revision: z.literal(1) }),
+        ).parse(await response.json()).data;
+        inks.set(id, { inkId, vector, png });
+      }
+      instance.reopen();
+      app = instance.open(false);
+      const reopened = await postAssignment(app, assignment, world.ownerCookie);
+      expect(reopened.status, await reopened.clone().text()).toBe(200);
+      expect(attemptStartOkSchema.parse(await reopened.json()).data.id).toBe(
+        attempt.id,
+      );
+      const draft = await readDraft();
+      expect(draft.drafts).toEqual(answers);
+      expect(draft.draftRevisions).toMatchObject(
+        Object.fromEntries(Object.keys(answers).map((id) => [id, 1])),
+      );
+      const submit = () =>
+        jsonCall(app, `${path}/submit`, world.ownerCookie, "POST", {
+          revisions: questions.map(({ id, questionRevisionId }) => ({
+            questionId: id,
+            questionRevisionId,
+            expectedAnswerRevision: draft.draftRevisions?.[id] ?? 0,
+          })),
+        });
+      const confirmed = await submit();
+      expect(confirmed.status, await confirmed.clone().text()).toBe(200);
+      const privateResult: unknown = await confirmed.json();
+      forbidPrivate(privateResult);
+      assertNoLeak(privateResult, {
+        allow: ["answer", "answers", "solutionMd"],
+        forbid: [
+          "acceptedByQuestion",
+          "questionAnswerRules",
+          "reviewCriteria",
+          "scoringKey",
+        ],
+      });
+      const hidden = attemptResultOkSchema.parse(privateResult).data;
+      expect(hidden.answersReleased).toBe(false);
+      const rowsOf = (result: typeof hidden) =>
+        result.units.flatMap((unit) => unit.questions);
+      expect(
+        rowsOf(hidden).map(({ questionId, answer, answered }) => [
+          questionId,
+          answer,
+          answered,
+        ]),
+      ).toEqual([
+        ...(mixed ? [["k17-one", answers["k17-one"], true]] : []),
+        [ids.text, rawText, true],
+        [ids.empty, empty, false],
+        [ids.titleOnly, titleOnly, false],
+        [ids.ink, null, true],
+        [ids.both, both, true],
+        [ids.missing, null, false],
+      ]);
+      for (const row of rowsOf(hidden)) {
+        expect(row).toMatchObject({
+          answers: null,
+          solutionMd: null,
+          gradingPolicy: null,
+          autoCorrect: null,
+          finalCorrect: null,
+          teacherComment: null,
+        });
+      }
+
+      const sql = instance.db().$client;
+      const ticket = keyRow
+        .extend({
+          receipt_id: z.string().min(1),
+          intent_json: z.string(),
+        })
+        .parse(
+          sql
+            .prepare(
+              "SELECT operation_id, step_attempt_id, slot_id, receipt_id, intent_json FROM kernel_question_deliveries WHERE attempt_id=?",
+            )
+            .get(attempt.id),
+        );
+      const databasePath = join(data.path, BACKUP_KERNEL_DATABASE);
+      const runtime = openLearningRuntime({
+        databasePath,
+        authorizeConfirmationRecovery: (identity) =>
+          identity.studentId === world.studentId &&
+          identity.activityId === attempt.id &&
+          identity.operationId === ticket.operation_id,
+      });
+      try {
+        const recovery = runtime.recoverQuestionDelivery(
+          { role: "student", id: world.studentId },
+          attempt.id,
+          {
+            protocolVersion: 1,
+            operationId: ticket.operation_id,
+            stepAttemptId: ticket.step_attempt_id,
+          },
+        );
+        expect(recovery.receipt.id).toBe(ticket.receipt_id);
+        expect(
+          recovery.confirmation.questions
+            .filter(({ questionId }) => questionId !== "k17-one")
+            .map(({ questionId, value, revision }) => [
+              questionId,
+              value,
+              revision,
+            ]),
+        ).toEqual([
+          [ids.text, { title: rawText.title, body: rawText.body }, 1],
+          [ids.empty, { body: "" }, 1],
+          [ids.titleOnly, { title: titleOnly.title, body: titleOnly.body }, 1],
+          [ids.ink, null, 0],
+          [ids.both, { title: "", body: both.body }, 1],
+          [ids.missing, null, 0],
+        ]);
+        expect(
+          recovery.evaluation.questions
+            .filter(({ questionId }) => questionId !== "k17-one")
+            .map(({ result }) => result),
+        ).toEqual(Array.from({ length: 6 }, () => ({ status: "needsReview" })));
+      } finally {
+        runtime.close();
+      }
+      using kernelDb = new DatabaseSync(databasePath, { readOnly: true });
+      const definitionOf = (row: unknown): unknown =>
+        JSON.parse(z.object({ definition: z.string() }).parse(row).definition);
+      const questionIds = Object.values(ids);
+      const publication = definitionOf(
+        kernelDb
+          .prepare(
+            `SELECT p.definition FROM practices p JOIN activities a
+          ON p.id=a.practice_id AND p.version=a.practice_version WHERE a.id=?`,
+          )
+          .get(attempt.id),
+      );
+      expect(publication).toMatchObject({
+        questionAnswerRules: Object.fromEntries(
+          questionIds.map((id) => [
+            id,
+            { id: "ownclass-response-body", version: 1 },
+          ]),
+        ),
+      });
+      const key = definitionOf(
+        kernelDb
+          .prepare(
+            `SELECT k.definition FROM scoring_keys k JOIN evaluation_tasks e
+          ON k.id=e.key_id AND k.version=e.key_version WHERE e.submission_id=?`,
+          )
+          .get(ticket.receipt_id),
+      );
+      expect(
+        z
+          .object({ acceptedByQuestion: z.record(z.string(), z.unknown()) })
+          .parse(key).acceptedByQuestion,
+      ).toEqual({
+        ...Object.fromEntries(
+          questionIds.map((id) => [id, { response: "textWithOptionalTitle" }]),
+        ),
+        ...(mixed
+          ? { "k17-one": { response: "choice", acceptedChoice: "0" } }
+          : {}),
+      });
+      expect(
+        kernelDb
+          .prepare(
+            "SELECT unit_id FROM performances WHERE submission_id=? ORDER BY unit_id",
+          )
+          .all(ticket.receipt_id),
+      ).toEqual(
+        [ids.both, ids.text, ...(mixed ? ["k17-one"] : [])]
+          .sort()
+          .map((id) => ({ unit_id: `question:${id}` })),
+      );
+      const { formalInk: anchors } = kernelQuestionDeliveryIntentSchema.parse(
+        JSON.parse(ticket.intent_json),
+      );
+      if (!anchors) throw new Error("答问缺少正式笔迹冻结声明");
+      expect(anchors.map(({ questionId }) => questionId)).toEqual(
+        Object.values(ids),
+      );
+      for (const { questionId, ink } of anchors) {
+        const uploaded = inks.get(questionId);
+        if (!uploaded) {
+          expect(ink).toBeNull();
+          continue;
+        }
+        expect(ink).toMatchObject({
+          inkId: uploaded.inkId,
+          revision: 1,
+          strokeCount: 1,
+        });
+        expect(ink?.strokes.sha256).toBe(
+          createHash("sha256").update(uploaded.vector).digest("hex"),
+        );
+        expect(ink?.png.sha256).toBe(
+          createHash("sha256").update(uploaded.png).digest("hex"),
+        );
+      }
+
+      expect((await submit()).status).toBe(409);
+      for (const [id, base] of [
+        [ids.ink, 1],
+        [ids.missing, 0],
+      ] as const) {
+        const { response } = await putInk(id, base);
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({
+          error: "ALREADY_SUBMITTED",
+        });
+      }
+      expect((await save(ids.both, both)).status).toBe(409);
+      instance.reopen();
+      app = instance.open(false);
+      for (const [id, uploaded] of inks) {
+        const png = await jsonCall(
+          app,
+          `${path}/ink/${id}.png`,
+          world.ownerCookie,
+        );
+        expect(png.status).toBe(200);
+        expect(Buffer.from(await png.arrayBuffer())).toEqual(uploaded.png);
+        const vector = await jsonCall(
+          app,
+          `/api/teacher/ink/${uploaded.inkId}.json.gz`,
+          world.teacher,
+        );
+        expect(vector.status).toBe(200);
+        expect(Buffer.from(await vector.arrayBuffer())).toEqual(
+          uploaded.vector,
+        );
+        const forbidden = await jsonCall(
+          app,
+          `${path}/ink/${id}`,
+          world.otherCookie,
+        );
+        expect(forbidden.status).toBe(403);
+      }
+
+      const pending = await jsonCall(
+        app,
+        `/api/teacher/pending-marks?assignmentId=${assignment}`,
+        world.teacher,
+      );
+      expect(pending.status, await pending.clone().text()).toBe(200);
+      const queue = wire(pendingMarkListDataSchema).parse(
+        await pending.json(),
+      ).data;
+      expect(queue.marks.map(({ questionId }) => questionId)).toEqual([
+        ids.missing,
+      ]);
+      const [manual] = queue.marks;
+      if (!manual) throw new Error("缺少冻结人工评阅行");
+      const mark = await jsonCall(
+        app,
+        `/api/teacher/responses/${manual.responseId}/mark`,
+        world.teacher,
+        "POST",
+        { mark: "wrong", comment, mutationId: randomUUID(), baseRevision: 0 },
+      );
+      expect(mark.status, await mark.clone().text()).toBe(200);
+      forbidPrivate(await finishedResult(app, path, world.ownerCookie));
+      expect((await jsonCall(app, path, world.otherCookie)).status).toBe(403);
+
+      const reviewPath = `${path}/questions/${ids.text}/self-review`;
+      const request = {
+        verdict: "correct",
+        baseRevision: 0,
+        mutationId: randomUUID(),
+      };
+      const withheld = await jsonCall(
+        app,
+        reviewPath,
+        world.ownerCookie,
+        "POST",
+        request,
+      );
+      expect(withheld.status).toBe(403);
+      expect(await withheld.json()).toMatchObject({
+        error: "SELF_REVIEW_NOT_RELEASED",
+      });
+      const publish = await jsonCall(
+        app,
+        `/api/teacher/assignments/${assignment}`,
+        world.teacher,
+        "PATCH",
+        { answerRelease: "on_submit" },
+      );
+      expect(publish.status, await publish.clone().text()).toBe(200);
+      const released = await finishedResult(app, path, world.ownerCookie);
+      expect(released.answersReleased).toBe(true);
+      expect(released.attempt.scoreAuto).toBe(mixed ? 100 : null);
+      const rows = rowsOf(released);
+      if (mixed)
+        expect(
+          rows.find(({ questionId }) => questionId === "k17-one"),
+        ).toMatchObject({ autoCorrect: true, finalCorrect: true });
+      for (const row of rows.filter(
+        ({ questionId }) => questionId !== "k17-one",
+      )) {
+        if (row.questionId === ids.missing) {
+          expect(row).toMatchObject({
+            gradingPolicy: "manual_only",
+            answers: null,
+            autoCorrect: null,
+            finalCorrect: false,
+            teacherComment: comment,
+          });
+          continue;
+        }
+        expect(row).toMatchObject({
+          gradingPolicy: "reference_self",
+          autoCorrect: null,
+          finalCorrect: null,
+          answers: {
+            kind: "response",
+            referenceMd: reference,
+            variantsMd: [alternative],
+          },
+          solutionMd: solution,
+        });
+      }
+      const foreignReview = await jsonCall(
+        app,
+        reviewPath,
+        world.otherCookie,
+        "POST",
+        request,
+      );
+      expect(foreignReview.status).toBe(403);
+      const reviewed = await jsonCall(
+        app,
+        reviewPath,
+        world.ownerCookie,
+        "POST",
+        request,
+      );
+      expect(reviewed.status, await reviewed.clone().text()).toBe(200);
+      expect(
+        wire(selfReviewDataSchema).parse(await reviewed.json()).data.effective,
+      ).toEqual({ source: "self", value: true });
+      const finalSql = instance.db().$client;
+      expect(
+        finalSql
+          .prepare(
+            "SELECT count(*) n FROM kernel_question_deliveries WHERE attempt_id=?",
+          )
+          .get(attempt.id),
+      ).toEqual({ n: 1 });
+      expect(
+        finalSql
+          .prepare(
+            "SELECT count(*) n FROM attempt_settlements WHERE attempt_id=? AND kind='final'",
+          )
+          .get(attempt.id),
+      ).toEqual({ n: 1 });
+    } finally {
+      vi.unstubAllEnvs();
       instance.close();
     }
   },

@@ -23,11 +23,13 @@ import {
   createOwnClassFillEvaluator,
   createOwnClassJudgeEvaluator,
   createOwnClassMultiEvaluator,
+  createOwnClassTitledTextEvaluator,
   type OwnClassChoiceEvaluationScope,
   ownClassDeliveryEvaluatorRef,
 } from "./attempt-choice-evaluation.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
 import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
+import { ownClassResponseAnswerRule } from "./kernel-question-delivery-values.ts";
 import { listAttemptContextSnapshots } from "./material-repository.ts";
 import { jsonOf, snapshotOfRow } from "./snapshot.ts";
 
@@ -151,6 +153,8 @@ export function withKernelRuntime<T>(
       ],
       indexResponseEvaluators: [createOwnClassMultiEvaluator(db, getScope)],
       orderedTextEvaluators: [createOwnClassFillEvaluator(db, getScope)],
+      titledTextEvaluators: [createOwnClassTitledTextEvaluator(db, getScope)],
+      questionAnswerRules: [ownClassResponseAnswerRule],
       responseEvaluators: [
         createOwnClassJudgeEvaluator(db, getScope),
         createOwnClassJudgeEvaluator(

@@ -3,6 +3,7 @@ import {
   judgeScoringSourceSchema,
   multiChoiceScoringSourceSchema,
   orderedTextDeliveryScoringSourceSchema,
+  responseDeliveryScoringSourceSchema,
   singleChoiceScoringSourceSchema,
 } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
@@ -16,6 +17,8 @@ import type {
   ResponseEvaluationInput,
   ResponseEvaluatorRegistration,
   ResponseVerdict,
+  TitledTextEvaluationInput,
+  TitledTextEvaluatorRegistration,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import { responses } from "../db/schema.ts";
@@ -63,7 +66,8 @@ function frozenQuestionForEvaluation(
     | ChoiceEvaluationInput
     | ResponseEvaluationInput
     | IndexResponseEvaluationInput
-    | OrderedTextEvaluationInput,
+    | OrderedTextEvaluationInput
+    | TitledTextEvaluationInput,
   permittedPolicies: readonly GradingPolicy[] = ["auto"],
 ) {
   if (
@@ -237,6 +241,32 @@ export function createOwnClassFillEvaluator(
         JSON.stringify(source.data.acceptedBlanks) !==
           JSON.stringify(input.acceptedBlanks)
       )
+        mismatch();
+      const result = gradeResponseRow(
+        row.gradingPolicy,
+        question,
+        deliveryAnswerOf(row, input.value) ?? undefined,
+      );
+      if (result !== null) mismatch();
+      return { status: "needsReview" };
+    },
+  };
+}
+
+export function createOwnClassTitledTextEvaluator(
+  db: Db,
+  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
+): TitledTextEvaluatorRegistration {
+  return {
+    ...ownClassDeliveryEvaluatorRef,
+    evaluate(input) {
+      const scope = currentScope();
+      if (scope?.lectureId !== undefined) mismatch();
+      const { row, question } = frozenQuestionForEvaluation(db, scope, input, [
+        "manual_only",
+        "reference_self",
+      ]);
+      if (!responseDeliveryScoringSourceSchema.safeParse(question).success)
         mismatch();
       const result = gradeResponseRow(
         row.gradingPolicy,

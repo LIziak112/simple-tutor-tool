@@ -8,6 +8,7 @@ import {
   multiAnswersSchema,
   optionSchema,
   questionTypeSchema,
+  responseAnswersSchema,
 } from "./content.ts";
 
 /**
@@ -100,6 +101,11 @@ export const orderedTextDeliveryScoringSourceSchema = z.union([
   })),
 ]);
 
+export const responseDeliveryScoringSourceSchema = z.object({
+  type: questionTypeSchema.extract(["response"]),
+  answers: responseAnswersSchema.optional(),
+});
+
 const objectiveDeliveryScoringSourceSchema = z.union([
   singleChoiceScoringSourceSchema,
   judgeScoringSourceSchema,
@@ -113,6 +119,7 @@ export const wholeQuestionDeliveryScoringSourcesSchema = z
   .union([
     objectiveDeliveryScoringSourceSchema,
     orderedTextDeliveryScoringSourceSchema,
+    responseDeliveryScoringSourceSchema,
   ])
   .array()
   .min(1);

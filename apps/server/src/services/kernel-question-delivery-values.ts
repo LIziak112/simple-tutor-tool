@@ -2,10 +2,15 @@ import {
   choiceStudentAnswerSchema,
   judgeStudentAnswerSchema,
   questionEvidenceBindings,
+  responseBehavior,
+  responseStudentAnswerSchema,
   type StudentAnswer,
   studentAnswerSchema,
 } from "@tutor/contract";
-import type { QuestionDeliveryDraftInput } from "learning-kernel";
+import type {
+  QuestionAnswerRuleRegistration,
+  QuestionDeliveryDraftInput,
+} from "learning-kernel";
 import type { ResponseRow } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
@@ -13,23 +18,35 @@ import { snapshotOfRow } from "./snapshot.ts";
 
 type Value = QuestionDeliveryDraftInput["value"];
 
+export const ownClassResponseAnswerRuleRef = {
+  id: "ownclass-response-body",
+  version: 1,
+} as const;
+
+export const ownClassResponseAnswerRule = {
+  ...ownClassResponseAnswerRuleRef,
+  response: "textWithOptionalTitle",
+  isAnswered: (value) =>
+    responseBehavior.isAnswered({ ...value, kind: "response" }),
+} satisfies QuestionAnswerRuleRegistration;
+
 export function deliveryAnswerOf(
   row: ResponseRow,
   value: Readonly<Value> | null,
 ): StudentAnswer | null {
   if (value === null) return null;
-  if (typeof value === "object" && !Array.isArray(value))
-    return kernelAttemptUnavailable();
   const question = snapshotOfRow(row);
   const kind = question && questionEvidenceBindings[question.type].answerKind;
   const outcome =
     typeof value === "object"
-      ? studentAnswerSchema.safeParse({
-          kind,
-          indexes: value,
-          values: value,
-          finalAnswer: value.length === 1 ? value[0] : undefined,
-        })
+      ? Array.isArray(value)
+        ? studentAnswerSchema.safeParse({
+            kind,
+            indexes: value,
+            values: value,
+            finalAnswer: value.length === 1 ? value[0] : undefined,
+          })
+        : responseStudentAnswerSchema.safeParse({ ...value, kind })
       : kind === judgeStudentAnswerSchema.shape.kind.value
         ? judgeStudentAnswerSchema.safeParse({ kind, value })
         : choiceStudentAnswerSchema.safeParse({
@@ -59,6 +76,10 @@ export function deliveryValueOf(
   if ("values" in answer) return answer.values;
   if ("finalAnswer" in answer) return [answer.finalAnswer];
   if ("value" in answer) return answer.value;
+  if (answer.kind === "response") {
+    const { body, title } = answer;
+    return title === undefined ? { body } : { body, title };
+  }
   return invalidDeliveryAnswer();
 }
 

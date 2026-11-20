@@ -6,6 +6,7 @@ import {
 import { studentStemMd } from "@tutor/md-dsl";
 import type { PublicationInput } from "learning-kernel";
 import { ownClassDeliveryEvaluatorRef } from "./attempt-choice-evaluation.ts";
+import { ownClassResponseAnswerRuleRef } from "./kernel-question-delivery-values.ts";
 
 export const deliverySlotId = "answers";
 
@@ -39,6 +40,10 @@ export function questionDeliveryPublication(
         key: { response, acceptedBlanks },
       };
     }
+    if (source.type === "response") {
+      const response = "textWithOptionalTitle" as const;
+      return { question: { ...base, response }, key: { response } };
+    }
     if (!("options" in source)) {
       const response = "booleanOrString" as const;
       return {
@@ -66,6 +71,11 @@ export function questionDeliveryPublication(
       key: { response, acceptedIndexes: source.answers.indexes },
     };
   });
+  const answerRules = declared.flatMap(({ question }) =>
+    question.response === "textWithOptionalTitle"
+      ? [[question.id, ownClassResponseAnswerRuleRef] as const]
+      : [],
+  );
   const instructions = "完成练习并提交答案。";
   return {
     practice: {
@@ -75,6 +85,9 @@ export function questionDeliveryPublication(
       title,
       goals: { answer: instructions },
       questions: declared.map((item) => item.question),
+      ...(answerRules.length > 0 && {
+        questionAnswerRules: Object.fromEntries(answerRules),
+      }),
       steps: [
         {
           id: "answer",
