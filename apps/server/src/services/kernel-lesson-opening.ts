@@ -202,13 +202,29 @@ export function openKernelLesson(
   const opening = db.transaction(
     (tx) => {
       verifyScope(db, scope);
+      const latest = db
+        .select({ id: attempts.id, attemptNo: attempts.attemptNo })
+        .from(attempts)
+        .where(
+          and(
+            eq(attempts.studentId, scope.studentId),
+            eq(attempts.lectureId, scope.lectureId),
+            eq(attempts.sourceType, "lesson"),
+            isNull(attempts.abandonedAt),
+          ),
+        )
+        .orderBy(desc(attempts.attemptNo))
+        .get();
       const existing = db
         .select()
         .from(kernelLessonOpenings)
         .where(
           and(
             openingScope(scope),
-            eq(kernelLessonOpenings.attemptNo, attemptNo),
+            eq(
+              kernelLessonOpenings.attemptNo,
+              !prior && latest ? latest.attemptNo : attemptNo,
+            ),
           ),
         )
         .get();
@@ -224,19 +240,6 @@ export function openKernelLesson(
           );
         return existing;
       }
-      const latest = db
-        .select({ id: attempts.id, attemptNo: attempts.attemptNo })
-        .from(attempts)
-        .where(
-          and(
-            eq(attempts.studentId, scope.studentId),
-            eq(attempts.lectureId, scope.lectureId),
-            eq(attempts.sourceType, "lesson"),
-            isNull(attempts.abandonedAt),
-          ),
-        )
-        .orderBy(desc(attempts.attemptNo))
-        .get();
       if (!prior && latest) return undefined;
       if (
         prior &&

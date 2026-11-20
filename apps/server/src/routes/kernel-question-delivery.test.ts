@@ -774,6 +774,10 @@ it("讲练逐题故障后保持题级权限，原回执与余题在同卷过备�
     expect(next.status, await next.clone().text()).toBe(201);
     const nextData = lessonStartOkSchema.parse(await next.json()).data;
     expect(nextData.attempt).toMatchObject({ attemptNo: 2, status: "draft" });
+    expect((await startView()).attempt.id).toBe(nextData.attempt.id);
+    app = instance.open(false, teacher.id);
+    expect((await startView()).attempt.id).toBe(nextData.attempt.id);
+    app = instance.open(true, teacher.id);
     const question = nextData.questions.find((item) => item.id === "k17-one");
     if (!question) throw new Error("重开缺少原题");
     const competing = await Promise.all(
