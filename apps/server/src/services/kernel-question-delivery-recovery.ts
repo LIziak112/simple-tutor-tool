@@ -21,8 +21,7 @@ import {
 } from "./kernel-assignment-runtime.ts";
 import { resolveKernelCourseWorkflow } from "./kernel-course-workflow.ts";
 import {
-  type MarkIntent,
-  projectDeliveryVerdicts,
+  projectKernelVerdicts,
   type ReviewedQuestion,
 } from "./kernel-delivery-verdicts.ts";
 import {
@@ -44,6 +43,7 @@ import {
   ticketFilter,
 } from "./kernel-question-delivery-ticket.ts";
 import { deliveryAnswerOf } from "./kernel-question-delivery-values.ts";
+import type { MarkIntent, VerdictTarget } from "./kernel-verdict-target.ts";
 
 export const actorOf = (attempt: Attempt) =>
   ({ role: "student", id: attempt.studentId }) as const;
@@ -255,7 +255,7 @@ export function recoverDeliveries(
     kernelAttemptUnavailable();
 
   const confirmed = new Set<string>();
-  const reviewedTickets: DeliveryTicket[] = [];
+  const verdictTargets: VerdictTarget[] = [];
   let confirmedAt: string | undefined;
   for (const [slot, receipt] of receipts) {
     const ticket = tickets.find((candidate) => candidate.slotId === slot);
@@ -297,7 +297,13 @@ export function recoverDeliveries(
         .set({ receiptId: receipt.id })
         .where(ticketFilter(ticket))
         .run();
-    reviewedTickets.push({ ...ticket, receiptId: receipt.id });
+    verdictTargets.push({
+      ...ticket,
+      mode: "verdicts",
+      receiptId: receipt.id,
+      questionIds: ticket.intent.selectedQuestionIds,
+      source: ticket.intent.source,
+    });
     if (!confirmedAt || receipt.confirmedAt > confirmedAt)
       confirmedAt = receipt.confirmedAt;
   }
@@ -318,13 +324,13 @@ export function recoverDeliveries(
     });
   }
   const baseline = { attempt, rows: [...rows.values()] };
-  const reviewed = reviewedTickets.length
-    ? projectDeliveryVerdicts(
+  const reviewed = verdictTargets.length
+    ? projectKernelVerdicts(
         db,
         dataDir,
         baseline,
         binding.practiceId,
-        reviewedTickets,
+        verdictTargets,
         markIntent,
       )
     : undefined;

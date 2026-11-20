@@ -260,6 +260,19 @@ it("经正常教师入口创建只有带布尔参考键的内核判断作业", a
       [true, null, null],
       [false, false, false],
     ]);
+    const judgeResponseId = teacherDetail.questions[0]?.responseId;
+    expect(judgeResponseId).toBeDefined();
+    const mark = await call(
+      `/api/teacher/responses/${judgeResponseId}/mark`,
+      world.teacher,
+      "POST",
+      { mark: "wrong", comment: null },
+    );
+    expect(mark.status).toBe(503);
+    expect(await mark.json()).toMatchObject({
+      error: "KERNEL_ATTEMPT_WRITE_UNAVAILABLE",
+    });
+
     const released = await call(
       `/api/teacher/assignments/${assignment}`,
       world.teacher,

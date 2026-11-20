@@ -6,6 +6,7 @@ import {
   type AttemptSubmitRequest,
   attemptResultOkSchema,
   attemptStartOkSchema,
+  markResponseDataSchema,
   type SubmitEvidenceDeclaration,
   teacherAttemptDetailOkSchema,
 } from "@tutor/contract";
@@ -162,7 +163,7 @@ function authorityFacts(attemptId: string, submitted: boolean) {
   });
   const writes = db.$client
     .prepare(
-      "SELECT COUNT(*) AS n FROM responses WHERE attempt_id=? AND (answer_json IS NOT NULL OR answer_revision <> 0 OR answer_mutation_id IS NOT NULL OR auto_correct IS NOT NULL OR final_correct IS NOT NULL)",
+      "SELECT COUNT(*) AS n FROM responses WHERE attempt_id=? AND (answer_json IS NOT NULL OR answer_revision <> 0 OR answer_mutation_id IS NOT NULL OR auto_correct IS NOT NULL OR final_correct IS NOT NULL OR teacher_mark IS NOT NULL)",
     )
     .get(attemptId);
   expect(writes).toEqual({ n: 0 });
@@ -319,19 +320,28 @@ it("V1 原稿、冻结行或答案版本失配后还能正常交 V2，精确重�
   expect(
     Buffer.from(await (await call(imagePath, otherCookie)).arrayBuffer()),
   ).toEqual(Buffer.from(png));
-  await denied(
-    await call(
-      `/api/teacher/responses/${work.first.questionRevisionId}/mark`,
-      teacher,
-      "POST",
-      {
-        mark: "wrong",
-        comment: "不可经旧判分入口写入",
-      },
-    ),
-    503,
-    "KERNEL_ATTEMPT_WRITE_UNAVAILABLE",
+  const mark = await call(
+    `/api/teacher/responses/${work.first.questionRevisionId}/mark`,
+    teacher,
+    "POST",
+    { mark: "wrong", comment: "教师复核原稿" },
   );
+  expect(mark.status, await mark.clone().text()).toBe(200);
+  const body = (await mark.json()) as { data: unknown };
+  expect(markResponseDataSchema.parse(body.data)).toMatchObject({
+    attemptId: work.id,
+    questionId,
+    revision: 1,
+    eventId: expect.any(String),
+    teacherMark: "wrong",
+    finalCorrect: false,
+    scoreFinal: 50,
+  });
+  await denied(await work.submit(request), 409, "ALREADY_SUBMITTED");
+  expect(evidence(work.id)).toEqual([
+    { question_id: questionId, state: "frozen", version_id: v2.versionId },
+    { question_id: work.second.questionId, state: "none", version_id: null },
+  ]);
   authorityFacts(work.id, true);
 });
 

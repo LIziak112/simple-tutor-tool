@@ -15,6 +15,9 @@ import {
   kernelAttemptUnavailable,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
+import { projectConfirmedChoiceVerdicts } from "./kernel-choice-verdicts.ts";
+import type { DeliveryFacts } from "./kernel-question-delivery-recovery.ts";
+import type { MarkIntent } from "./kernel-verdict-target.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
 type ConfirmationScope = ReturnType<typeof confirmationScopeOf>;
@@ -65,7 +68,8 @@ export function recoverKernelConfirmation(
   db: Db,
   runtime: KernelRuntime,
   scope: ConfirmationScope,
-) {
+  review?: { dataDir: string; intent: MarkIntent | undefined },
+): DeliveryFacts {
   return db.$client
     .transaction(() => {
       const attempt = requireOwnAttempt(db, scope.studentId, scope.attemptId);
@@ -93,13 +97,24 @@ export function recoverKernelConfirmation(
         },
       );
       const projected = projectKernelDraftActivity(db, attempt, runtime);
-      return projectKernelConfirmationFacts(
+      const facts = projectKernelConfirmationFacts(
         db,
         projected,
         scope,
         rows,
         recovered,
       );
+      if (review && recovered.confirmation.kind === "choiceConfirmation")
+        return projectConfirmedChoiceVerdicts(
+          db,
+          review.dataDir,
+          facts,
+          scope,
+          recovered.receipt,
+          review.intent,
+        );
+      if (review?.intent) kernelAttemptUnavailable();
+      return facts;
     })
     .immediate();
 }
@@ -127,7 +142,10 @@ export function withKernelConfirmationReader<T>(
         assertConfirmationBinding(selected, binding);
         scope = selected;
         try {
-          return recoverKernelConfirmation(db, runtime, selected);
+          return recoverKernelConfirmation(db, runtime, selected, {
+            dataDir,
+            intent: undefined,
+          });
         } finally {
           scope = undefined;
         }

@@ -6,15 +6,27 @@ import type { Db } from "../db/client.ts";
 import { type Attempt, type ResponseRow, responses } from "../db/schema.ts";
 import { kernelResponseMarks } from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { readAssignmentConfirmationFacts } from "./kernel-assignment-confirmation.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import {
-  type MarkIntent,
   responseMarkKey,
   responseMarkResult,
   subjectOf,
 } from "./kernel-delivery-verdicts.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery-recovery.ts";
-import { deliveryTickets } from "./kernel-question-delivery-ticket.ts";
+import type { MarkIntent } from "./kernel-verdict-target.ts";
+
+function readMarkFacts(
+  db: Db,
+  dataDir: string,
+  attempt: Attempt,
+  intent?: MarkIntent,
+) {
+  return (
+    readQuestionDeliveryFacts(db, dataDir, attempt, dataDir, intent) ??
+    readAssignmentConfirmationFacts(db, dataDir, attempt, intent)
+  );
+}
 
 function loadIntent(db: Db, key: Parameters<typeof responseMarkKey>[0]) {
   return db
@@ -33,10 +45,13 @@ export function stageKernelResponseMark(
   teacherId: string,
   request: MarkRequest,
 ) {
-  if (deliveryTickets(db, attempt.id).length === 0) return undefined;
-  const facts = readQuestionDeliveryFacts(db, dataDir, attempt);
+  const facts = readMarkFacts(db, dataDir, attempt);
   const review = facts?.reviews?.get(response.questionId);
   if (!facts || !review) return undefined;
+  if (review.reviewerId !== teacherId)
+    throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答记录不存在");
+  if (!review.canMark)
+    throw new HttpError(403, "FORBIDDEN", "已无权批改这份作答");
   const row = facts.rows.find((item) => item.id === response.id);
   const { verdict } = review;
   if (!row) kernelAttemptUnavailable();
@@ -174,7 +189,7 @@ export function finishKernelResponseMark(
   const current = loadIntent(db, staged);
   if (!current) kernelAttemptUnavailable();
   if (current.result) return markResponseDataSchema.parse(current.result);
-  readQuestionDeliveryFacts(db, dataDir, attempt, dataDir, current);
+  readMarkFacts(db, dataDir, attempt, current);
   const result = loadIntent(db, staged)?.result;
   if (!result) kernelAttemptUnavailable();
   return markResponseDataSchema.parse(result);

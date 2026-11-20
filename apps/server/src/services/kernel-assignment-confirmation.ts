@@ -59,6 +59,8 @@ import {
   submitQuestionDelivery,
 } from "./kernel-question-delivery.ts";
 
+import type { MarkIntent } from "./kernel-verdict-target.ts";
+
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type OriginalQuestion = ChoiceConfirmationInput["questions"][number];
 
@@ -126,12 +128,23 @@ export function readKernelConfirmationFacts(
   const delivery = readQuestionDeliveryFacts(db, dataDir, attempt);
   if (delivery)
     return delivery.attempt.status === "draft" ? undefined : delivery;
+  return readAssignmentConfirmationFacts(db, dataDir, attempt);
+}
+
+/** 只读旧正式确认，逐题交付由调用方优先分流。 */
+export function readAssignmentConfirmationFacts(
+  db: Db,
+  dataDir: string,
+  attempt: Attempt,
+  intent?: MarkIntent,
+) {
+  if (attempt.sourceType !== "assignment") return undefined;
   recoverKernelChoiceAmendment(db, dataDir, attempt.id);
   const ticket = kernelConfirmationTicketFor(db, attempt.id);
   if (!ticket) return undefined;
   return withTicket(db, dataDir, attempt, ticket, (runtime, activity, scope) =>
     activity.status === "completed"
-      ? recoverKernelConfirmation(db, runtime, scope)
+      ? recoverKernelConfirmation(db, runtime, scope, { dataDir, intent })
       : undefined,
   );
 }
