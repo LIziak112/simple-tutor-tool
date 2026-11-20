@@ -31,6 +31,7 @@ import {
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { useLectureReadingPosition } from "@/features/student/use-lecture-reading-position";
 import { useReadingToolbar } from "@/features/student/use-reading-toolbar";
 import { createEventQueue } from "@/lib/event-queue";
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
@@ -184,10 +185,15 @@ export default function StudentLectureViewPage() {
     [id],
   );
 
+  const rememberSection = useLectureReadingPosition(
+    lectureQuery.isSuccess ? lectureQuery.data : undefined,
+    setCurrentIndex,
+  );
   // T4.0b 位置族：「当前阅读节」切换 → lecture_section_focus（迟滞防抖 §5.0-C13）
   const trackSectionFocus = useCallback(
     (headingIndex: number): void => {
       setCurrentIndex(headingIndex);
+      rememberSection(headingIndex);
       queueRef.current?.track({
         type: "lecture_section_focus",
         clientTs: Date.now(),
@@ -198,7 +204,7 @@ export default function StudentLectureViewPage() {
           : {}),
       });
     },
-    [id],
+    [id, rememberSection],
   );
   useLectureSectionFocus({
     enabled: lectureQuery.data !== undefined,
@@ -208,6 +214,7 @@ export default function StudentLectureViewPage() {
 
   // T4.0b 位置族：目录点击 → lecture_toc_jump（headingIndex 与自动目录下标同源）
   function navigateOutline(headingIndex: number): void {
+    rememberSection(headingIndex, true);
     queueRef.current?.track({
       type: "lecture_toc_jump",
       clientTs: Date.now(),

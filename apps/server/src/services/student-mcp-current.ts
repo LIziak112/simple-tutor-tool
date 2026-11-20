@@ -2,6 +2,7 @@ import {
   type LearningContext,
   type StudentMcpCurrentData,
   studentMcpCurrentDataSchema,
+  studentRecordsQuerySchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -13,6 +14,10 @@ import {
   canLocateStudentMcpQuestion,
   getStudentMcpCurrentContext,
 } from "./ai-companion/student-ai-live-context.ts";
+import {
+  type KernelRecordFacts,
+  withKernelStudentRecordFacts,
+} from "./kernel-student-record-facts.ts";
 import { contextFromMemoAnchor } from "./learning-context-projection.ts";
 import { assertMetadataByteBudget } from "./memo-budget.ts";
 import { practiceSubmittedCounts } from "./pending-mark.ts";
@@ -27,8 +32,9 @@ export function getStudentMcpCurrentV2(
   studentId: string,
   connectionId?: string,
   now = new Date(),
+  dataDir?: string,
 ): StudentMcpCurrentData {
-  return db.transaction(() => {
+  const read = db.$client.transaction(() => {
     const taskContext = getStudentMcpCurrentContext(
       db,
       studentId,
@@ -106,29 +112,49 @@ export function getStudentMcpCurrentV2(
       const context = contexts[0];
       if (context) return output({ status: "current", context });
     }
-    const recent = latestReachableStudentDraft(db, studentId, now);
-    if (!recent) return output({ status: "none" });
-    const submitted =
-      practiceProtocolOf(recent) === "v1"
-        ? practiceSubmittedCounts(db, [recent]).get(recent.id)
-        : undefined;
-    return output({
-      status: "recent_practice",
-      practice: studentMcpPracticeEntryOf(
+    function recentLocation(kernel?: KernelRecordFacts) {
+      const recent = latestReachableStudentDraft(
         db,
-        recent,
-        {
-          answerProgress:
-            recordAnswerProgress(db, [recent]).get(recent.id) ?? null,
-          submissionProgress: submitted
-            ? {
-                submittedCount: submitted.submitted,
-                totalCount: submitted.total,
-              }
-            : null,
-        },
+        studentId,
         now,
-      ),
-    });
+        kernel?.hiddenLessons,
+      );
+      if (!recent) return output({ status: "none" });
+      const submitted =
+        practiceProtocolOf(recent) === "v1"
+          ? practiceSubmittedCounts(db, [recent]).get(recent.id)
+          : undefined;
+      return output({
+        status: "recent_practice",
+        practice: studentMcpPracticeEntryOf(
+          db,
+          recent,
+          {
+            answerProgress:
+              recordAnswerProgress(db, [recent], kernel?.draftChoices).get(
+                recent.id,
+              ) ?? null,
+            submissionProgress: submitted
+              ? {
+                  submittedCount: submitted.submitted,
+                  totalCount: submitted.total,
+                }
+              : null,
+          },
+          now,
+        ),
+      });
+    }
+    // 先恢复已确认但仍标作草稿的卷，再按最近活动选取。
+    return dataDir === undefined
+      ? recentLocation()
+      : withKernelStudentRecordFacts(
+          db,
+          dataDir,
+          studentId,
+          studentRecordsQuerySchema.parse({ status: "draft", limit: 1 }),
+          recentLocation,
+        );
   });
+  return read.immediate();
 }

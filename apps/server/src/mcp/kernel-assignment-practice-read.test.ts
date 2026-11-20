@@ -3,6 +3,8 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   attemptStartOkSchema,
+  type StudentAnswer,
+  studentMcpCurrentDataSchema,
   studentMcpPracticeDataSchema,
   studentMcpPracticeListDataSchema,
   studentMcpPracticeQuestionDataSchema,
@@ -16,6 +18,7 @@ import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   assignKernelFixture,
   postAssignment,
+  removeAssignmentOwner,
   setupAssignment,
 } from "../test/m04-p1/product-fixture.ts";
 import {
@@ -34,7 +37,7 @@ async function status(response: Response, expected: number) {
   return (await response.json()) as unknown;
 }
 
-async function world(backend: "legacy" | "kernel") {
+async function world(backend: "legacy" | "kernel", fill = false) {
   const dataDir = createTestDir();
   resources.push(() => rmSync(dataDir, { recursive: true, force: true }));
   const file = join(dataDir, "product.sqlite");
@@ -57,10 +60,6 @@ async function world(backend: "legacy" | "kernel") {
     });
   let app = open();
   const fixture = await setupAssignment(app);
-  const assignmentId =
-    backend === "legacy"
-      ? fixture.assignmentId
-      : await assignKernelFixture(app, fixture);
   const call = (
     path: string,
     method = "GET",
@@ -72,6 +71,40 @@ async function world(backend: "legacy" | "kernel") {
       headers: { cookie, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+
+  let unitId = fixture.unitId;
+  if (fill) {
+    const imported = (await status(
+      await call(
+        "/api/teacher/import/commit",
+        "POST",
+        {
+          filename: "fill.md",
+          markdown: [
+            "---",
+            "kind: practice",
+            "unit: 清空草稿",
+            "---",
+            "",
+            ':::question{id="mcp-clear-fill" type="fill"}',
+            "第一个正整数：[[1]]",
+            ":::",
+            "",
+            ':::question{id="mcp-clear-extra" type="fill"}',
+            "第二个正整数：[[2]]",
+            ":::",
+          ].join("\n"),
+        },
+        fixture.teacher,
+      ),
+      200,
+    )) as { data: { units: [{ id: string }] } };
+    unitId = imported.data.units[0].id;
+  }
+  const assignmentId =
+    backend === "legacy"
+      ? fixture.assignmentId
+      : await assignKernelFixture(app, { ...fixture, unitId });
 
   const start = attemptStartOkSchema.parse(
     await status(
@@ -97,6 +130,12 @@ async function world(backend: "legacy" | "kernel") {
   }
   const owner = await connection();
   const other = await connection(fixture.otherCookie);
+  async function submit(expected = 200) {
+    await status(
+      await call(`${root}/submit`, "POST", { revisions: await revisions() }),
+      expected,
+    );
+  }
   return {
     start,
     first,
@@ -115,12 +154,12 @@ async function world(backend: "legacy" | "kernel") {
       db = createDb(file);
       app = open();
     },
-    async save(index: number) {
+    async save(answer: StudentAnswer) {
       const [row] = await revisions();
       if (!row) throw new Error("没有冻结题");
       await status(
         await call(`${root}/answers/${row.questionId}`, "PUT", {
-          answer: { kind: "choice", index },
+          answer,
           mutationId: randomUUID(),
           baseRevision: row.expectedAnswerRevision,
           expectedFrozenAt: start.frozenAt,
@@ -129,11 +168,21 @@ async function world(backend: "legacy" | "kernel") {
         200,
       );
     },
-    async submit() {
-      await status(
-        await call(`${root}/submit`, "POST", { revisions: await revisions() }),
-        200,
-      );
+    submit,
+    async interruptConfirmation() {
+      db.$client.exec(`
+        CREATE TRIGGER interrupt_mcp_confirmation BEFORE UPDATE OF status ON attempts
+        WHEN NEW.status <> 'draft'
+        BEGIN SELECT RAISE(ABORT, '测试中断交卷投影'); END
+      `);
+      try {
+        await submit(500);
+      } finally {
+        db.$client.exec("DROP TRIGGER interrupt_mcp_confirmation");
+      }
+    },
+    async removeOwner() {
+      await removeAssignmentOwner(app, { ...fixture, assignmentId });
     },
     async release(released: boolean) {
       const setting = released
@@ -156,6 +205,134 @@ async function world(backend: "legacy" | "kernel") {
 }
 
 it.each(["legacy", "kernel"] as const)(
+  "%s 的 SDK 最近练习跟随保存，草稿与已提交数独立",
+  async (backend) => {
+    const env = await world(backend);
+    const client = await env.connect();
+    const other = await env.connect(env.otherToken);
+    async function location(current = client) {
+      const result = await callToolJson(current, "get_current_context", {
+        responseVersion: 2,
+      });
+      expect(result.isError).toBe(false);
+      assertNoLeak(result.data, {
+        forbid: [
+          "currentAnswer",
+          "scoringKey",
+          "acceptedChoice",
+          "evaluation",
+          "finalCorrect",
+          "stemMd",
+        ],
+      });
+      return studentMcpCurrentDataSchema.parse(result.data).location;
+    }
+    try {
+      expect(await callToolJson(client, "get_current_context", {})).toEqual({
+        isError: false,
+        data: { status: "disabled" },
+      });
+      expect(await location()).toMatchObject({
+        status: "recent_practice",
+        practice: {
+          practiceId: env.start.id,
+          phase: "opened",
+          answerProgress: { answeredCount: 0, totalCount: 2 },
+          submissionProgress: { submittedCount: 0, totalCount: 2 },
+        },
+      });
+      expect(
+        (await callToolJson(client, "list_my_practices", {})).data.total,
+      ).toBe(0);
+      await env.save({ kind: "choice", index: 1 });
+      const answerProgress = { answeredCount: 1, totalCount: 2 };
+      expect(await location()).toMatchObject({
+        status: "recent_practice",
+        practice: {
+          practiceId: env.start.id,
+          answerProgress,
+          submissionProgress: { submittedCount: 0, totalCount: 2 },
+        },
+      });
+      const listed = await callToolJson(client, "list_my_practices", {});
+      expect(listed.isError).toBe(false);
+      expect(studentMcpPracticeListDataSchema.parse(listed.data)).toMatchObject(
+        {
+          practices: [{ practiceId: env.start.id, answerProgress }],
+        },
+      );
+      expect(await location(other)).toEqual({ status: "none" });
+      await env.removeOwner();
+      expect(await location()).toEqual({ status: "none" });
+      await env.revoke();
+      await expect(env.connect()).rejects.toMatchObject({ code: 401 });
+    } finally {
+      await other.close();
+      await client.close();
+    }
+  },
+);
+
+it("内核填空的最近练习跟随保存和清空", async () => {
+  const env = await world("kernel", true);
+  const client = await env.connect();
+  try {
+    for (const values of [["1"], []]) {
+      await env.save({ kind: "fill", values });
+      const answerProgress = { answeredCount: values.length, totalCount: 2 };
+      expect
+        .soft(
+          await callToolJson(client, "get_current_context", {
+            responseVersion: 2,
+          }),
+        )
+        .toMatchObject({
+          isError: false,
+          data: {
+            location: {
+              status: "recent_practice",
+              practice: {
+                practiceId: env.start.id,
+                answerProgress,
+                submissionProgress: { submittedCount: 0, totalCount: 2 },
+              },
+            },
+          },
+        });
+      const listed = await callToolJson(client, "list_my_practices", {});
+      expect(listed.isError).toBe(false);
+      expect(studentMcpPracticeListDataSchema.parse(listed.data)).toMatchObject(
+        {
+          practices: [{ practiceId: env.start.id, answerProgress }],
+        },
+      );
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+it("内核已确认且宿主待投影时，SDK 最近练习首读跳过已确认卷", async () => {
+  const env = await world("kernel");
+  await env.save({ kind: "choice", index: 1 });
+  await env.interruptConfirmation();
+  env.restart();
+  const client = await env.connect();
+  try {
+    expect(
+      await callToolJson(client, "get_current_context", { responseVersion: 2 }),
+    ).toMatchObject({ isError: false, data: { location: { status: "none" } } });
+    const listed = await callToolJson(client, "list_my_practices", {});
+    expect(listed.isError).toBe(false);
+    expect(studentMcpPracticeListDataSchema.parse(listed.data)).toMatchObject({
+      practices: [{ practiceId: env.start.id, phase: "finished" }],
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+it.each(["legacy", "kernel"] as const)(
   "%s 的学生 SDK 按本人当前草稿显示列表进度、目录状态和选项",
   async (backend) => {
     const env = await world(backend);
@@ -170,7 +347,7 @@ it.each(["legacy", "kernel"] as const)(
     } finally {
       await initial.close();
     }
-    await env.save(1);
+    await env.save({ kind: "choice", index: 1 });
     env.restart();
     const client = await env.connect();
     try {
@@ -242,7 +419,7 @@ it.each(["legacy", "kernel"] as const)(
   "%s 交卷后只读本人正式选项，公布收紧、他人和撤销令牌继续严格",
   async (backend) => {
     const env = await world(backend);
-    await env.save(1);
+    await env.save({ kind: "choice", index: 1 });
     await env.submit();
     env.restart();
     const client = await env.connect();

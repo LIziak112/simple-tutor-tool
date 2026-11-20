@@ -135,7 +135,13 @@ export function registerStudentTools(
     studentId,
     connectionId: deps.connectionId,
   });
-  registerStudentLiveFocusTool(server, db, studentId, deps.connectionId);
+  registerStudentLiveFocusTool(
+    server,
+    db,
+    dataDir,
+    studentId,
+    deps.connectionId,
+  );
 
   registerStudentAiTaskTools(server, deps);
   registerStudentAttemptReviewTools(server, deps);

@@ -11,6 +11,7 @@ import { guard, jsonContent } from "./tool-result.ts";
 export function registerStudentLiveFocusTool(
   server: McpServer,
   db: Db,
+  dataDir: string,
   studentId: string,
   connectionId?: string,
 ): void {
@@ -25,7 +26,13 @@ export function registerStudentLiveFocusTool(
     guard((input) =>
       jsonContent(
         input.responseVersion === 2
-          ? getStudentMcpCurrentV2(db, studentId, connectionId)
+          ? getStudentMcpCurrentV2(
+              db,
+              studentId,
+              connectionId,
+              new Date(),
+              dataDir,
+            )
           : aiMcpCurrentContextSchema.parse(
               getStudentMcpCurrentContext(db, studentId, connectionId),
             ),

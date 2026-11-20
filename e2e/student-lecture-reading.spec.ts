@@ -187,6 +187,12 @@ test(
       page.getByRole("link", { name: "返回课程目录" }),
     ).toBeInViewport();
     await page.screenshot({ path: testInfo.outputPath("lecture-desktop.png") });
+    await page.reload();
+    await expect(target).toBeInViewport();
+    await expect(
+      outline.getByRole("button", { name: chapters[2], exact: true }),
+    ).toHaveAttribute("aria-current", "location");
+    await expect(target).not.toBeFocused();
     // 真实滚动会更新目录，而不仅仅是点击后改选中样式。
     await page
       .getByRole("heading", { name: chapters[3], exact: true })

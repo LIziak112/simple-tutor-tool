@@ -84,8 +84,10 @@ export function latestReachableStudentDraft(
   db: Db,
   studentId: string,
   now: Date | string,
+  hiddenLessons?: ReadonlySet<string>,
 ) {
   const excluded = lostAccessDraftIds(db, studentId, now);
+  for (const id of hiddenLessons ?? []) excluded.add(id);
   return db
     .select()
     .from(attempts)
