@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { solveDeliveryScoringSourceSchema } from "@tutor/contract";
+import { finalTextDeliveryScoringSourceSchema } from "@tutor/contract";
 import type { KernelFormalInkAnchor } from "@tutor/contract/kernel-question-delivery";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -25,7 +25,7 @@ export function inkFileAbs(
 export function needsFormalInkAnchor(
   row: Pick<ResponseRow, "attemptId" | "questionId" | "questionSnapshotJson">,
 ): boolean {
-  return solveDeliveryScoringSourceSchema.shape.type.safeParse(
+  return finalTextDeliveryScoringSourceSchema.shape.type.safeParse(
     snapshotOfRow(row)?.type,
   ).success;
 }

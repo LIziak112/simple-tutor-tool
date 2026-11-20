@@ -1325,3 +1325,277 @@ it("普通整卷解答题恢复最终文本及正式笔迹，权威确认后拒�
     instance.close();
   }
 });
+
+it.each([
+  { type: "apply", selfReview: false },
+  { type: "find-error", selfReview: true },
+])(
+  "普通整卷 $type 合成最终文本和正式笔迹经权威确认恢复",
+  async ({ type, selfReview }) => {
+    using data = mkdtempDisposableSync(
+      join(tmpdir(), "m05-handwritten-final-"),
+    );
+    const instance = openInstance(data.path);
+    try {
+      let app = instance.open(false);
+      const world = await setupAssignment(app);
+      const ids = [
+        "m05-final-raw",
+        "m05-final-ink",
+        "m05-final-both",
+        "m05-final-missing",
+      ];
+      const [textOnly, inkOnly, both, missing] = ids;
+      if (!textOnly || !inkOnly || !both || !missing)
+        throw new Error("缺少合成题");
+      const {
+        units: [unit],
+      } = await importQuestions(
+        app,
+        world.teacher,
+        undefined,
+        ids.flatMap((id) => [
+          `::::question{id=${id} type=${type}}`,
+          "说明算式的问题并写出正确结果。",
+          ":::answer",
+          "合成参考",
+          ":::",
+          ":::solution",
+          "合成冻结详解。",
+          ":::",
+          "::::",
+          "",
+        ]),
+      );
+      if (!unit) throw new Error("未导入手写题");
+      const setReview = (enabled: boolean) =>
+        jsonCall(
+          app,
+          "/api/teacher/settings/practice-feedback",
+          world.teacher,
+          "PUT",
+          {
+            studentSelfReviewEnabled: enabled,
+          },
+        );
+      expect((await setReview(selfReview)).status).toBe(200);
+      const assignment = await assignKernelFixture(
+        app,
+        { ...world, unitId: unit.id },
+        {
+          answerRelease: "after_due",
+          dueAt: "2099-01-01T00:00:00Z",
+        },
+      );
+      const opened = await postAssignment(app, assignment, world.ownerCookie);
+      const attempt = attemptStartOkSchema.parse(await opened.json()).data;
+      expect((await setReview(!selfReview)).status).toBe(200);
+      const path = `/api/student/attempts/${attempt.id}`;
+      const draft = async () =>
+        attemptDraftOkSchema.parse(
+          await (await jsonCall(app, path, world.ownerCookie)).json(),
+        ).data;
+      const initial = await draft();
+      const questions = initial.units.flatMap((group) => group.questions);
+      expect(
+        questions.map((question) => [
+          question.id,
+          question.type,
+          question.options,
+        ]),
+      ).toEqual(ids.map((id) => [id, type, undefined]));
+      expect(initial.drafts).toEqual({});
+      const text = { kind: "final", finalAnswer: "  结论\n\t" };
+      const proof = (id: string) => ({
+        questionRevisionId: questions.find((question) => question.id === id)
+          ?.questionRevisionId,
+        expectedFrozenAt: attempt.frozenAt,
+        baseRevision: 0,
+        mutationId: randomUUID(),
+      });
+      for (const id of [textOnly, both]) {
+        const saved = await jsonCall(
+          app,
+          `${path}/answers/${id}`,
+          world.ownerCookie,
+          "PUT",
+          { ...proof(id), answer: text },
+        );
+        expect(saved.status, await saved.clone().text()).toBe(200);
+      }
+      const uploadedInk = new Map<
+        string,
+        { inkId: string; vector: Buffer; png: Buffer }
+      >();
+      for (const [index, id] of [inkOnly, both].entries()) {
+        const body = inkForm(15 + index);
+        const vector = body.get("strokes"),
+          png = body.get("snapshot");
+        if (!(vector instanceof Blob && png instanceof Blob))
+          throw new Error("缺少合成笔迹文件");
+        body.set("meta", JSON.stringify(proof(id)));
+        const saved = await app.request(`${path}/ink/${id}`, {
+          method: "PUT",
+          headers: { cookie: world.ownerCookie },
+          body,
+        });
+        expect(saved.status, await saved.clone().text()).toBe(200);
+        const { inkId } = wire(
+          z.object({ inkId: z.uuid(), revision: z.literal(1) }),
+        ).parse(await saved.json()).data;
+        uploadedInk.set(id, {
+          inkId,
+          vector: Buffer.from(await vector.arrayBuffer()),
+          png: Buffer.from(await png.arrayBuffer()),
+        });
+      }
+      const stored = await draft();
+      expect(stored.drafts).toEqual({ [textOnly]: text, [both]: text });
+      const request = {
+        revisions: questions.map((question) => ({
+          questionId: question.id,
+          questionRevisionId: question.questionRevisionId,
+          expectedAnswerRevision: stored.draftRevisions?.[question.id] ?? 0,
+        })),
+        evidence: questions.map((question) => ({
+          questionId: question.id,
+          state: "none",
+        })),
+      };
+      const submit = await jsonCall(
+        app,
+        `${path}/submit`,
+        world.ownerCookie,
+        "POST",
+        request,
+      );
+      expect(submit.status, await submit.clone().text()).toBe(200);
+      const hidden = attemptResultOkSchema.parse(await submit.json()).data;
+      expect(hidden.answersReleased).toBe(false);
+      expect(
+        hidden.units
+          .flatMap((group) => group.questions)
+          .map((question) => [
+            question.questionId,
+            question.answer,
+            question.answered,
+            question.answers,
+            question.solutionMd,
+            question.gradingPolicy,
+            question.autoCorrect,
+            question.finalCorrect,
+          ]),
+      ).toEqual([
+        [textOnly, text, true, null, null, null, null, null],
+        [inkOnly, null, true, null, null, null, null, null],
+        [both, text, true, null, null, null, null, null],
+        [missing, null, false, null, null, null, null, null],
+      ]);
+      const sql = () => instance.db().$client;
+      const delivery = () =>
+        sql()
+          .prepare(
+            `SELECT receipt_id, intent_json FROM kernel_question_deliveries WHERE attempt_id=?`,
+          )
+          .all(attempt.id);
+      const [storedDelivery] = z
+        .array(
+          z.object({ receipt_id: z.string().min(1), intent_json: z.string() }),
+        )
+        .length(1)
+        .parse(delivery());
+      if (!storedDelivery) throw new Error("缺少权威确认");
+      const anchor = z
+        .object({
+          formalInk: z.array(
+            z.object({
+              questionId: z.string(),
+              ink: z
+                .object({
+                  inkId: z.uuid(),
+                  revision: z.literal(1),
+                  strokes: z.object({ sha256: z.string() }),
+                  png: z.object({ sha256: z.string() }),
+                })
+                .nullable(),
+            }),
+          ),
+        })
+        .parse(JSON.parse(storedDelivery.intent_json));
+      expect(
+        anchor.formalInk.map(({ questionId, ink }) => [
+          questionId,
+          ink?.inkId ?? null,
+        ]),
+      ).toEqual([
+        [textOnly, null],
+        [inkOnly, uploadedInk.get(inkOnly)?.inkId],
+        [both, uploadedInk.get(both)?.inkId],
+        [missing, null],
+      ]);
+      for (const { questionId, ink } of anchor.formalInk) {
+        if (!ink) continue;
+        const bytes = uploadedInk.get(questionId);
+        if (!bytes) throw new Error("冻结笔迹找不到原件");
+        expect(ink.strokes.sha256).toBe(
+          createHash("sha256").update(bytes.vector).digest("hex"),
+        );
+        expect(ink.png.sha256).toBe(
+          createHash("sha256").update(bytes.png).digest("hex"),
+        );
+      }
+      instance.reopen();
+      app = instance.open(false);
+      expect((await jsonCall(app, path, world.otherCookie)).status).toBe(403);
+      const publish = await jsonCall(
+        app,
+        `/api/teacher/assignments/${assignment}`,
+        world.teacher,
+        "PATCH",
+        { answerRelease: "on_submit" },
+      );
+      expect(publish.status, await publish.clone().text()).toBe(200);
+      const released = await finishedResult(app, path, world.ownerCookie);
+      expect(released.answersReleased).toBe(true);
+      const rows = released.units.flatMap((group) => group.questions);
+      for (const [index, row] of rows.entries()) {
+        expect(row).toMatchObject({
+          questionId: ids[index],
+          answers: { kind: "final", answer: "合成参考" },
+          solutionMd: "合成冻结详解。",
+          answer: index === 0 || index === 2 ? text : null,
+          answered: index !== 3,
+          gradingPolicy: selfReview ? "reference_self" : "manual_only",
+          autoCorrect: null,
+          finalCorrect: null,
+        });
+      }
+      for (const [id, ink] of uploadedInk) {
+        const own = await jsonCall(
+          app,
+          `${path}/ink/${id}.png`,
+          world.ownerCookie,
+        );
+        expect(own.status).toBe(200);
+        expect(Buffer.from(await own.arrayBuffer())).toEqual(ink.png);
+        const teacher = await jsonCall(
+          app,
+          `/api/teacher/ink/${ink.inkId}.json.gz`,
+          world.teacher,
+        );
+        expect(teacher.status).toBe(200);
+        expect(Buffer.from(await teacher.arrayBuffer())).toEqual(ink.vector);
+      }
+      expect(delivery()).toEqual([storedDelivery]);
+      expect(
+        sql()
+          .prepare(
+            `SELECT count(*) n FROM attempt_settlements WHERE attempt_id=? AND kind='final'`,
+          )
+          .get(attempt.id),
+      ).toEqual({ n: 1 });
+    } finally {
+      instance.close();
+    }
+  },
+);

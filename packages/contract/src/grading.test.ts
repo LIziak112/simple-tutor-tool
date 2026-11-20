@@ -5,11 +5,13 @@ import {
   handwrittenStudentAnswerSchema,
   judgeStudentAnswerSchema,
   multiStudentAnswerSchema,
+  questionDeliveryScoringSourcesSchema,
   RESPONSE_BODY_MAX_CHARS,
   RESPONSE_TITLE_MAX_CHARS,
   responseStudentAnswerSchema,
   singleChoiceScoringSourceSchema,
   studentAnswerSchema,
+  wholeQuestionDeliveryScoringSourcesSchema,
 } from "./grading";
 
 describe("StudentAnswer：各题型学生答案（T2.5）", () => {
@@ -192,6 +194,32 @@ describe("单选评分来源", () => {
     expect(
       singleChoiceScoringSourceSchema.safeParse({ ...source, ...changes })
         .success,
+    ).toBe(false);
+  });
+});
+
+describe("整卷手写最终文本的评分来源", () => {
+  it.each(["solve", "apply", "find-error"])(
+    "整卷的 %s 使用单槽，讲练范围不变",
+    (type) => {
+      const source = { type, answers: { kind: "final", answer: "原参考" } };
+      expect(wholeQuestionDeliveryScoringSourcesSchema.parse([source])).toEqual(
+        [{ acceptedBlanks: [["原参考"]] }],
+      );
+      expect(
+        wholeQuestionDeliveryScoringSourcesSchema.parse([{ type }]),
+      ).toEqual([{ acceptedBlanks: [[]] }]);
+      expect(
+        questionDeliveryScoringSourcesSchema.safeParse([source]).success,
+      ).toBe(false);
+    },
+  );
+
+  it("开放题使用独立正文，未进入手写最终文本整卷范围", () => {
+    expect(
+      wholeQuestionDeliveryScoringSourcesSchema.safeParse([
+        { type: "response" },
+      ]).success,
     ).toBe(false);
   });
 });

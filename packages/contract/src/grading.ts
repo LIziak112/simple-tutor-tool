@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { questionEvidenceBindings } from "./capability.ts";
 import {
   choiceAnswersSchema,
   fillAnswersSchema,
@@ -82,8 +83,11 @@ export const fillScoringSourceSchema = z.object({
   }),
 });
 
-export const solveDeliveryScoringSourceSchema = z.object({
-  type: questionTypeSchema.extract(["solve"]),
+export const finalTextDeliveryScoringSourceSchema = z.object({
+  type: questionTypeSchema.refine((type) => {
+    const { answerKind, paperRole } = questionEvidenceBindings[type];
+    return answerKind === "final" && paperRole === "answerInk";
+  }),
   answers: finalAnswersSchema.optional(),
 });
 
@@ -91,7 +95,7 @@ export const orderedTextDeliveryScoringSourceSchema = z.union([
   fillScoringSourceSchema.transform(({ answers }) => ({
     acceptedBlanks: answers.blanks,
   })),
-  solveDeliveryScoringSourceSchema.transform(({ answers }) => ({
+  finalTextDeliveryScoringSourceSchema.transform(({ answers }) => ({
     acceptedBlanks: [answers === undefined ? [] : [answers.answer]],
   })),
 ]);
