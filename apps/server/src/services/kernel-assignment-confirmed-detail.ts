@@ -9,6 +9,7 @@ import {
   type OwnClassChoiceEvaluationScope,
   ownClassChoiceEvaluatorRef,
   ownClassJudgeEvaluatorRef,
+  ownClassMultiEvaluatorRef,
 } from "./attempt-choice-evaluation.ts";
 import { projectConfirmedChoiceEvidence } from "./attempt-choice-evidence.ts";
 import { buildResultData } from "./attempt-detail.ts";
@@ -21,13 +22,14 @@ import { projectKernelConfirmedActivity } from "./kernel-assignment-activity.ts"
 import {
   judgeAnswerOf,
   kernelAttemptUnavailable,
+  multiAnswerOf,
   ownClassChoiceAnswerOf,
 } from "./kernel-assignment-runtime.ts";
 import { recordedActiveSecTotal } from "./submission-time.ts";
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type Recovery = ReturnType<
-  Runtime["recoverChoiceConfirmation"] | Runtime["recoverResponseConfirmation"]
+  Runtime["recoverChoiceConfirmation"] | Runtime["recoverResponseConfirmation"] | Runtime["recoverIndexResponseConfirmation"]
 >;
 type Scope = OwnClassChoiceEvaluationScope & { operationId: string };
 type ProjectedVerdict = {
@@ -38,15 +40,14 @@ type ProjectedVerdict = {
 
 function factsOf(recovery: Recovery) {
   if ("responseDraftChangeCounts" in recovery) {
+    const { confirmation } = recovery;
+    const multi = confirmation.kind === "indexResponseConfirmation";
     return {
-      evaluator: ownClassJudgeEvaluatorRef,
+      evaluator: multi ? ownClassMultiEvaluatorRef : ownClassJudgeEvaluatorRef,
       counts: recovery.responseDraftChangeCounts,
-      answers: recovery.confirmation.questions.map(
-        ({ value, ...question }) => ({
-          ...question,
-          answer: judgeAnswerOf(value),
-        }),
-      ),
+      answers: multi
+        ? confirmation.questions.map(({ value, ...question }) => ({ ...question, answer: multiAnswerOf(value) }))
+        : confirmation.questions.map(({ value, ...question }) => ({ ...question, answer: judgeAnswerOf(value) })),
       verdicts: recovery.evaluation.questions.map(
         ({ result, ...question }): ProjectedVerdict => ({
           ...question,

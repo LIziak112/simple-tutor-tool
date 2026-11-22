@@ -21,6 +21,7 @@ import { requireAssignmentRow } from "./attempt-access.ts";
 import {
   createOwnClassChoiceEvaluator,
   createOwnClassJudgeEvaluator,
+  createOwnClassMultiEvaluator,
   type OwnClassChoiceEvaluationScope,
 } from "./attempt-choice-evaluation.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
@@ -102,11 +103,41 @@ export function judgeAnswerOf(value: ResponseValue | null) {
   return value === null ? null : { kind: "judge" as const, value };
 }
 
-export function isJudgeActivity(activity: StudentActivity): boolean {
-  return (
-    "submit" in activity.step &&
-    activity.step.submit.slots.answers?.type === "oneResponsePerQuestion"
-  );
+export function multiAnswerOf(value: readonly number[] | null) {
+  return value === null ? null : { kind: "multi" as const, indexes: [...value] };
+}
+
+export function kernelConflictDraftOf(current: { choice: string | null } | { value: ResponseValue | readonly number[] | null }) {
+  if ("choice" in current)
+    return current.choice === null ? null : ownClassChoiceAnswerOf(current.choice);
+  if (current.value === null) return null;
+  return typeof current.value === "object" ? multiAnswerOf(current.value) : judgeAnswerOf(current.value);
+}
+
+export function kernelActivityAnswerKind(activity: StudentActivity) {
+  const slot = "submit" in activity.step ? activity.step.submit.slots.answers : undefined;
+  if (slot?.type === "oneChoicePerQuestion") return "choice";
+  if (slot?.type === "oneResponsePerQuestion") {
+    return slot.input === "optionIndexArray" ? "multi" : "judge";
+  }
+  return kernelAttemptUnavailable();
+}
+
+export function kernelDraftEntriesOf(activity: StudentActivity) {
+  switch (kernelActivityAnswerKind(activity)) {
+    case "multi":
+      return ("indexResponseDrafts" in activity ? activity.indexResponseDrafts : []).map(
+        ({ value, ...draft }) => ({ ...draft, answer: multiAnswerOf(value) }),
+      );
+    case "judge":
+      return ("responseDrafts" in activity ? activity.responseDrafts : []).map(
+        ({ value, ...draft }) => ({ ...draft, answer: judgeAnswerOf(value) }),
+      );
+    case "choice":
+      return ("choiceDrafts" in activity ? activity.choiceDrafts : []).map(
+        ({ choice, ...draft }) => ({ ...draft, answer: ownClassChoiceAnswerOf(choice) }),
+      );
+  }
 }
 
 export type KernelRuntime = ReturnType<typeof openLearningRuntime>;
@@ -140,6 +171,9 @@ export function withKernelRuntime<T>(
       ],
       responseEvaluators: [
         createOwnClassJudgeEvaluator(db, evaluateScope ?? (() => undefined)),
+      ],
+      indexResponseEvaluators: [
+        createOwnClassMultiEvaluator(db, evaluateScope ?? (() => undefined)),
       ],
     });
     try {

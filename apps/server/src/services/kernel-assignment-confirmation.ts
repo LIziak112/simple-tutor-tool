@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import {
   ChoiceConfirmationConflict,
   type ChoiceConfirmationInput,
+  IndexResponseDraftConflict,
   LearningError,
   type openLearningRuntime,
   ResponseConfirmationConflict,
@@ -42,10 +43,9 @@ import {
 import { buildKernelAssignmentResult } from "./kernel-assignment-confirmed-detail.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
-  isJudgeActivity,
-  judgeAnswerOf,
+  kernelActivityAnswerKind,
   kernelAttemptUnavailable,
-  ownClassChoiceAnswerOf,
+  kernelConflictDraftOf,
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 
@@ -237,14 +237,10 @@ function stage(
 function knownRejection(error: unknown): HttpError | undefined {
   if (
     error instanceof ChoiceConfirmationConflict ||
-    error instanceof ResponseConfirmationConflict
+    error instanceof ResponseConfirmationConflict ||
+    (error instanceof IndexResponseDraftConflict && error.questionId !== undefined)
   ) {
-    const draft =
-      error instanceof ResponseConfirmationConflict
-        ? judgeAnswerOf(error.current.value)
-        : error.current.choice === null
-          ? null
-          : ownClassChoiceAnswerOf(error.current.choice);
+    const draft = kernelConflictDraftOf(error.current);
     return new HttpError(
       409,
       "ANSWER_REVISION_CONFLICT",
@@ -307,9 +303,9 @@ function confirm(
             }
             authorizeOriginals(questions);
             try {
-              const confirmDrafts = isJudgeActivity(activity)
-                ? runtime.confirmResponses
-                : runtime.confirmChoices;
+              const kind = kernelActivityAnswerKind(activity);
+              const confirmDrafts = kind === "multi" ? runtime.confirmIndexResponses :
+                kind === "judge" ? runtime.confirmResponses : runtime.confirmChoices;
               confirmDrafts({ role: "student", id: studentId }, attempt.id, {
                 protocolVersion: 1,
                 stepAttemptId: current.stepAttemptId,

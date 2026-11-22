@@ -1,8 +1,10 @@
-import { singleChoiceScoringSourceSchema } from "@tutor/contract";
+import { type Question, singleChoiceScoringSourceSchema } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
 import type {
   ChoiceEvaluationInput,
   ChoiceEvaluatorRegistration,
+  IndexResponseEvaluationInput,
+  IndexResponseEvaluatorRegistration,
   ResponseEvaluationInput,
   ResponseEvaluatorRegistration,
   ResponseVerdict,
@@ -44,10 +46,21 @@ export const ownClassJudgeEvaluatorRef = {
   version: 1,
 } as const;
 
+export const ownClassMultiEvaluatorRef = {
+  id: "ownclass-multi",
+  version: 1,
+} as const;
+
+export function multiScoringSourceOf({ type, options, answers }: Question) {
+  if (type !== "multi" || answers?.kind !== "multi" || !options?.length ||
+      answers.indexes.some((index) => options[index] === undefined)) return undefined;
+  return { options, indexes: answers.indexes };
+}
+
 function frozenQuestionForEvaluation(
   db: Db,
   scope: OwnClassChoiceEvaluationScope | undefined,
-  input: ChoiceEvaluationInput | ResponseEvaluationInput,
+  input: ChoiceEvaluationInput | ResponseEvaluationInput | IndexResponseEvaluationInput,
 ) {
   if (
     scope === undefined ||
@@ -147,6 +160,27 @@ export function createOwnClassJudgeEvaluator(
       return result === null
         ? { status: "needsReview" }
         : { status: "judged", correct: result };
+    },
+  };
+}
+
+/** 同一冻结题校验多选集合来源；实际判分仍使用产品的集合规则。 */
+export function createOwnClassMultiEvaluator(
+  db: Db,
+  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
+): IndexResponseEvaluatorRegistration {
+  return {
+    ...ownClassMultiEvaluatorRef,
+    evaluate(input) {
+      const { row, question } = frozenQuestionForEvaluation(db, currentScope(), input);
+      const source = multiScoringSourceOf(question);
+      if (!source || source.indexes.length !== input.acceptedIndexes.length ||
+          source.indexes.some((index, position) => index !== input.acceptedIndexes[position]) ||
+          input.value?.some((index) => source.options[index] === undefined)) mismatch();
+      const verdict = gradeResponseRow(row.gradingPolicy, question,
+        input.value === null ? undefined : { kind: "multi", indexes: [...input.value] });
+      if (verdict === null) mismatch();
+      return { status: "judged", correct: verdict };
     },
   };
 }

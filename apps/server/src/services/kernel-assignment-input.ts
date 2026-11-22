@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import type { Assignment, Attempt } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { multiScoringSourceOf } from "./attempt-choice-evaluation.ts";
 import {
   contextEntriesOf,
   frozenGradingPolicyOf,
@@ -82,7 +83,7 @@ function ineligible(): never {
   throw new HttpError(
     422,
     "M04_PRACTICE_INELIGIBLE",
-    "内核作业仅支持无提示的整卷单选或判断练习，判断题须有参考答案且不带材料和题组",
+    "内核作业仅支持无提示且题型一致的整卷单选、判断或多选，判断和多选须有参考答案且不带材料和题组",
   );
 }
 
@@ -149,15 +150,26 @@ export function loadKernelAssignmentQuestions(
     });
     return { kind: "judge" as const, responses, questions, context: [] };
   }
+  if (responses[0]?.question.type === "multi") {
+    if (context.materials.length || context.groups.length) ineligible();
+    const questions = responses.map((row) => {
+      const source = multiScoringSourceOf(row.question);
+      if (!source) ineligible();
+      return {
+        ...common(row),
+        options: indexedOptions(source.options),
+        acceptedIndexes: source.indexes,
+      };
+    });
+    return { kind: "multi" as const, responses, questions, context: [] };
+  }
   const questions = responses.map((row) => {
     const parsed = singleChoiceScoringSourceSchema.safeParse(row.question);
     if (!parsed.success) ineligible();
     const { options, answers } = parsed.data;
     return {
       ...common(row),
-      options: Object.fromEntries(
-        options.map(({ text }, index) => [String(index), text]),
-      ),
+      options: indexedOptions(options),
       acceptedChoice: String(answers.index),
     };
   });
@@ -167,4 +179,8 @@ export function loadKernelAssignmentQuestions(
   if (context.materials.some(({ contentMd }) => contentMd.trim() === ""))
     ineligible();
   return { kind: "choice" as const, responses, questions, context: entries };
+}
+
+function indexedOptions(options: readonly { text: string }[]) {
+  return Object.fromEntries(options.map(({ text }, index) => [String(index), text]));
 }

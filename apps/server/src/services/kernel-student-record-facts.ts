@@ -26,9 +26,9 @@ import {
 } from "./kernel-assignment-confirmation-recovery.ts";
 import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import {
-  judgeAnswerOf,
   type KernelRuntime,
   kernelAttemptUnavailable,
+  kernelDraftEntriesOf,
   readBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 
@@ -210,14 +210,7 @@ export function withKernelStudentRecordFacts<T>(
             confirmed.set(attempt.id, publishedResultOf(result));
           } else {
             if (activity.status !== "active") kernelAttemptUnavailable();
-            const heads =
-              "responseDrafts" in activity
-                ? activity.responseDrafts.filter(
-                    ({ value }) => !isUnanswered(judgeAnswerOf(value)),
-                  )
-                : (("choiceDrafts" in activity
-                    ? activity.choiceDrafts
-                    : undefined) ?? []);
+            const heads = kernelDraftEntriesOf(activity).filter(({ answer }) => !isUnanswered(answer));
             draftChoices.set(
               attempt.id,
               new Set(heads.map(({ questionId }) => questionId)),

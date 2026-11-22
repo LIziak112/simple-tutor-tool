@@ -4,10 +4,12 @@ import {
   attemptAnswerSaveDataSchema,
   choiceStudentAnswerSchema,
   judgeStudentAnswerSchema,
+  multiStudentAnswerSchema,
   type StudentAnswer,
 } from "@tutor/contract";
 import {
   ChoiceDraftConflict,
+  IndexResponseDraftConflict,
   LearningError,
   type openLearningRuntime,
   ResponseDraftConflict,
@@ -35,10 +37,10 @@ import { kernelDraftRowsOf } from "./kernel-assignment-facts.ts";
 import { resolveKernelRefreezeForRead } from "./kernel-assignment-refreeze.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
-  isJudgeActivity,
-  judgeAnswerOf,
+  kernelActivityAnswerKind,
   kernelAttemptUnavailable,
-  ownClassChoiceAnswerOf,
+  kernelConflictDraftOf,
+  kernelDraftEntriesOf,
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 import { recoverKernelChoiceSnapshot } from "./kernel-choice-amendments.ts";
@@ -69,14 +71,10 @@ function throwDraftError(
 ): never {
   if (
     error instanceof ChoiceDraftConflict ||
-    error instanceof ResponseDraftConflict
+    error instanceof ResponseDraftConflict ||
+    error instanceof IndexResponseDraftConflict
   ) {
-    const draft =
-      error instanceof ResponseDraftConflict
-        ? judgeAnswerOf(error.current.value)
-        : error.current.choice === null
-          ? null
-          : ownClassChoiceAnswerOf(error.current.choice);
+    const draft = kernelConflictDraftOf(error.current);
     throw new HttpError(
       409,
       "ANSWER_REVISION_CONFLICT",
@@ -97,6 +95,7 @@ function throwDraftError(
         assertAttemptNotTimedOut(attempt, authorizedAt);
         break;
       case "INVALID_CHOICE":
+      case "INVALID_OPTION_INDEX":
       case "INVALID_QUESTION":
         return invalidAnswer();
       case "QUESTION_REVISION_STALE":
@@ -168,29 +167,27 @@ export function saveAssignmentDraftAnswer(
             questionVersion: row.questionVersion,
           } as const;
           let receipt: ReturnType<
-            Runtime["saveCurrentChoiceDraft"] | Runtime["saveResponseDraft"]
+            Runtime["saveCurrentChoiceDraft"] | Runtime["saveResponseDraft"] | Runtime["saveIndexResponseDraft"]
           >;
           try {
-            if (isJudgeActivity(activity)) {
-              const judge = judgeStudentAnswerSchema.safeParse(answer);
-              if (!judge.success) invalidAnswer();
+            const kind = kernelActivityAnswerKind(activity);
+            if (kind !== "choice") {
               if (mutationId === undefined || baseRevision === undefined)
                 throw new HttpError(
                   400,
                   "VALIDATION_ERROR",
-                  "内核判断作答须提供答案版本和操作标识",
+                  kind === "judge" ? "内核判断作答须提供答案版本和操作标识" : "内核多选作答须提供答案版本和操作标识",
                 );
-              receipt = runtime.saveResponseDraft(
-                principal,
-                attemptId,
-                {
-                  ...position,
-                  value: judge.data.value,
-                  operationId: mutationId,
-                  baseRevision,
-                },
-                mode,
-              );
+              const scope = { ...position, operationId: mutationId, baseRevision };
+              if (kind === "multi") {
+                const multi = multiStudentAnswerSchema.safeParse(answer);
+                if (!multi.success) invalidAnswer();
+                receipt = runtime.saveIndexResponseDraft(principal, attemptId, { ...scope, value: multi.data.indexes }, mode);
+              } else {
+                const judge = judgeStudentAnswerSchema.safeParse(answer);
+                if (!judge.success) invalidAnswer();
+                receipt = runtime.saveResponseDraft(principal, attemptId, { ...scope, value: judge.data.value }, mode);
+              }
             } else {
               const choice = choiceStudentAnswerSchema.safeParse(answer);
               if (!choice.success) invalidAnswer();
@@ -242,12 +239,7 @@ export function readKernelAssignmentDetail(
         (runtime, activity) => {
           if (activity.status !== "active") kernelAttemptUnavailable();
           const projected = projectKernelDraftActivity(db, attempt, runtime);
-          const heads =
-            "responseDrafts" in activity
-              ? activity.responseDrafts
-              : (("choiceDrafts" in activity
-                  ? activity.choiceDrafts
-                  : undefined) ?? []);
+          const heads = kernelDraftEntriesOf(activity);
 
           const etag = draftEtag(db, projected, now, heads);
           if (etag !== null && etag === ifNoneMatch)

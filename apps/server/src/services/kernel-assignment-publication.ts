@@ -11,6 +11,7 @@ import { HttpError } from "../lib/http-error.ts";
 import {
   ownClassChoiceEvaluatorRef,
   ownClassJudgeEvaluatorRef,
+  ownClassMultiEvaluatorRef,
 } from "./attempt-choice-evaluation.ts";
 import type { loadKernelAssignmentQuestions } from "./kernel-assignment-input.ts";
 
@@ -131,28 +132,10 @@ export function kernelAssignmentPublication(
     ]),
   );
   const key = { id: `${assignment.id}-key`, version };
-  const scoringKey =
-    definition.kind === "judge"
-      ? {
-          ...key,
-          acceptedResponses: Object.fromEntries(
-            definition.questions.map(({ id, acceptedResponse }) => [
-              id,
-              acceptedResponse,
-            ]),
-          ),
-        }
-      : {
-          ...key,
-          acceptedChoices: Object.fromEntries(
-            definition.questions.map(({ id, acceptedChoice }) => [
-              id,
-              acceptedChoice,
-            ]),
-          ),
-        };
-  const judge = definition.kind === "judge";
-  const instructions = judge ? "判断每道题。" : "选择每题的一个选项。";
+  const scoringKey = assignmentScoringKey(key, definition);
+  const kind = definition.kind;
+  const instructions = kind === "judge" ? "判断每道题。" :
+    kind === "multi" ? "选择每题所有符合条件的选项。" : "选择每题的一个选项。";
   const slot = {
     source: "questions",
     targetId: "answer",
@@ -179,17 +162,17 @@ export function kernelAssignmentPublication(
           id: "answer",
           instructions,
           tool: {
-            id: judge ? "response-group" : "single-choice-group",
+            id: kind === "choice" ? "single-choice-group" : "response-group",
             version: 1,
           },
           inputs: { questions: { from: "questions" }, ...materialInputs },
           submit: {
             purpose: "finalAnswer",
             slots: {
-              answers: judge
+              answers: kind !== "choice"
                 ? {
                     type: "oneResponsePerQuestion",
-                    input: "booleanOrString",
+                    input: kind === "multi" ? "optionIndexArray" : "booleanOrString",
                     ...slot,
                   }
                 : { type: "oneChoicePerQuestion", ...slot },
@@ -201,9 +184,8 @@ export function kernelAssignmentPublication(
       grading: {
         assessment: {
           from: { stepId: "answer", slotId: "answers" },
-          evaluator: judge
-            ? ownClassJudgeEvaluatorRef
-            : ownClassChoiceEvaluatorRef,
+          evaluator: kind === "choice" ? ownClassChoiceEvaluatorRef :
+            kind === "multi" ? ownClassMultiEvaluatorRef : ownClassJudgeEvaluatorRef,
           keyRef: { id: scoringKey.id, version },
           unit: "question",
           effectiveVerdictOrder: ["teacherReview", "automatic"],
@@ -215,7 +197,7 @@ export function kernelAssignmentPublication(
         student: {
           ownSubmission: {
             scope: "ownConfirmedSubmissions",
-            fields: ["receipt", judge ? "ownResponses" : "ownChoices"],
+            fields: ["receipt", kind === "choice" ? "ownChoices" : "ownResponses"],
             onFinal: [],
           },
         },
@@ -226,4 +208,18 @@ export function kernelAssignmentPublication(
     },
     scoringKey,
   } satisfies PublicationInput;
+}
+
+function assignmentScoringKey(
+  key: { id: string; version: number },
+  definition: ReturnType<typeof loadKernelAssignmentQuestions>,
+) {
+  switch (definition.kind) {
+    case "judge":
+      return { ...key, acceptedResponses: Object.fromEntries(definition.questions.map(({ id, acceptedResponse }) => [id, acceptedResponse])) };
+    case "multi":
+      return { ...key, acceptedIndexes: Object.fromEntries(definition.questions.map(({ id, acceptedIndexes }) => [id, acceptedIndexes])) };
+    case "choice":
+      return { ...key, acceptedChoices: Object.fromEntries(definition.questions.map(({ id, acceptedChoice }) => [id, acceptedChoice])) };
+  }
 }

@@ -4,9 +4,8 @@ import type { Attempt, ResponseRow } from "../db/schema.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
 import { readKernelConfirmationFacts } from "./kernel-assignment-confirmation.ts";
 import {
-  judgeAnswerOf,
   kernelAttemptUnavailable,
-  ownClassChoiceAnswerOf,
+  kernelDraftEntriesOf,
   withBoundKernelActivity,
 } from "./kernel-assignment-runtime.ts";
 import { snapshotOfRow } from "./snapshot.ts";
@@ -66,43 +65,25 @@ export function kernelDraftRowsOf(
       kernelAttemptUnavailable();
     rows.set(row.questionId, { ...row, answerRevision: revision.revision });
   }
-  for (const draft of ("choiceDrafts" in activity
-    ? activity.choiceDrafts
-    : undefined) ?? []) {
+  for (const draft of kernelDraftEntriesOf(activity)) {
     const row = rows.get(draft.questionId);
-    const answer = ownClassChoiceAnswerOf(draft.choice);
+    const question = row && snapshotOfRow(row);
+    const { answer } = draft;
     if (
       draft.slotId !== "answers" ||
       row === undefined ||
+      answer === null ||
+      question?.type !== answer.kind ||
       row.questionVersion !== draft.questionVersion ||
       row.answerJson !== null ||
       draft.revision <= row.answerRevision ||
-      snapshotOfRow(row)?.options?.[answer.index] === undefined
+      (answer.kind === "choice" && question.options?.[answer.index] === undefined) ||
+      (answer.kind === "multi" && answer.indexes.some((index) => question.options?.[index] === undefined))
     )
       kernelAttemptUnavailable();
     rows.set(row.questionId, {
       ...row,
       answerJson: JSON.stringify(answer),
-      answerRevision: draft.revision,
-      changeCount: draft.changeCount,
-    });
-  }
-  for (const draft of ("responseDrafts" in activity
-    ? activity.responseDrafts
-    : undefined) ?? []) {
-    const row = rows.get(draft.questionId);
-    if (
-      draft.slotId !== "answers" ||
-      row === undefined ||
-      row.questionVersion !== draft.questionVersion ||
-      row.answerJson !== null ||
-      draft.revision <= row.answerRevision ||
-      snapshotOfRow(row)?.type !== "judge"
-    )
-      kernelAttemptUnavailable();
-    rows.set(row.questionId, {
-      ...row,
-      answerJson: JSON.stringify(judgeAnswerOf(draft.value)),
       answerRevision: draft.revision,
       changeCount: draft.changeCount,
     });

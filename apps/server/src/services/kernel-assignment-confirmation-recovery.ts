@@ -76,10 +76,10 @@ export function recoverKernelConfirmation(
       const rows = attemptResponseRows(db, attempt.id);
       const first = rows[0];
       if (!first) kernelAttemptUnavailable();
-      const recover =
-        snapshotOfRow(first)?.type === "judge"
-          ? runtime.recoverResponseConfirmation
-          : runtime.recoverChoiceConfirmation;
+      const kind = snapshotOfRow(first)?.type;
+      if (kind !== "choice" && kind !== "judge" && kind !== "multi") kernelAttemptUnavailable();
+      const recover = kind === "multi" ? runtime.recoverIndexResponseConfirmation :
+        kind === "judge" ? runtime.recoverResponseConfirmation : runtime.recoverChoiceConfirmation;
       const recovered = recover(
         { role: "student", id: attempt.studentId },
         attempt.id,
