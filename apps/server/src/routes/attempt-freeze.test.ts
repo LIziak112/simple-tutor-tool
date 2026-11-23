@@ -941,6 +941,8 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
       .all();
     expect(rows).toHaveLength(8);
     expect(rows.every((row) => row.questionSnapshotJson !== null)).toBe(true);
+    // 懒冻结补行与补快照行的判分策略
+    expect(rows.every((row) => row.gradingPolicy === null)).toBe(true);
     // 答案未被懒冻结破坏
     const judgeRow = rows.find((row) => row.questionId === Q.judge);
     expect(JSON.parse(judgeRow?.answerJson ?? "null")).toEqual({
