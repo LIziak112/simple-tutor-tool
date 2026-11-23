@@ -134,8 +134,9 @@ export const responses = sqliteTable(
     practiceRequestDigest: text("practice_request_digest"),
     /**
      * 行级判分策略（tt-05b / QM-03，决策记录 §5.6 D11）：开卷冻结时按题目快照与教师自评设置写入
-     * （frozenGradingPolicyOf 单一出处）——auto / reference_self / manual_only。**NULL =
-     * 旧行旧语义**（历史卷不重释）；值域不加 DB CHECK（teacherMark 同款口径）。
+     * （frozenGradingPolicyOf 单一出处）——auto / reference_self / manual_only。空值只剩
+     * 无可用快照的行（default_grading_policy_v1 回填其余），读侧经 resolveRowGradingPolicy
+     * 回落默认策略；值域不加 DB CHECK（teacherMark 同款口径）。
      */
     gradingPolicy: text("grading_policy").$type<GradingPolicy>(),
     /**

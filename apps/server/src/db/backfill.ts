@@ -8,6 +8,7 @@ import { backfill6980Answered } from "./backfill-answered.ts";
 import { backfillAttemptActivation } from "./backfill-attempt-activation.ts";
 import { backfillAttemptOutcomes } from "./backfill-attempt-outcomes.ts";
 import { backfillAttemptSettlements } from "./backfill-attempt-settlements.ts";
+import { backfillDefaultGradingPolicy } from "./backfill-default-grading-policy.ts";
 import { backfillMemoMetadata } from "./backfill-memo-metadata.ts";
 import type { Db } from "./client";
 import {
@@ -218,6 +219,7 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
         .run();
     });
   }
+  backfillDefaultGradingPolicy(db, now);
   backfillAttemptOutcomes(db, now);
   backfillMemoMetadata(db, now);
   backfillAttemptSettlements(db, now);
