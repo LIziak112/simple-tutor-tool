@@ -1,0 +1,376 @@
+序号,旧ID,旧批次,新表,新行,旧状态
+1,M01-admin-overview,复用 136,模块契约,G02,已验收
+2,M01-admin-settings-read,复用 136,模块契约,G02,已验收
+3,M01-admin-settings-write,复用 136,模块契约,G02,已验收
+4,M01-admin-shared-list,复用 136,模块契约,G02,已验收
+5,M01-admin-shared-remove,复用 136,模块契约,G02,已验收
+6,M01-admin-teacher-create,复用 136,模块契约,G02,已验收
+7,M01-admin-teacher-disable,复用 136,模块契约,G02,已验收
+8,M01-admin-teacher-enable,复用 136,模块契约,G02,已验收
+9,M01-admin-teacher-list,复用 136,模块契约,G02,已验收
+10,M01-admin-teacher-password-reset,复用 136,模块契约,G02,已验收
+11,M01-admin-teacher-update,复用 136,模块契约,G02,已验收
+12,M01-course-catalog-manage,复用 136,模块契约,G05,已验收
+13,M01-course-content-add,复用 136,模块契约,G05,已验收
+14,M01-course-create,复用 136,模块契约,G05,已验收
+15,M01-course-delete,复用 136,模块契约,G05,已验收
+16,M01-course-detail,复用 136,模块契约,G05,已验收
+17,M01-course-item-remove,复用 136,模块契约,G05,已验收
+18,M01-course-item-update,复用 136,模块契约,G05,已验收
+19,M01-course-items-reorder,复用 136,模块契约,G05,已验收
+20,M01-course-list,复用 136,模块契约,G05,已验收
+21,M01-course-members-add,复用 136,模块契约,G05,已验收
+22,M01-course-members-remove,复用 136,模块契约,G05,已验收
+23,M01-course-student-view,复用 136,模块契约,G05,已验收
+24,M01-course-update,复用 136,模块契约,G05,已验收
+25,M01-device-list,复用 136,模块契约,G04,已验收
+26,M01-device-merge,复用 136,模块契约,G04,已验收
+27,M01-device-register,复用 136,模块契约,G04,已验收
+28,M01-device-rename,复用 136,模块契约,G04,已验收
+29,M01-device-sessions-revoke,复用 136,模块契约,G04,已验收
+30,M01-local-key-bindings,复用 136,模块契约,G06,已验收
+31,M01-personal-legacy-location,复用 136,模块契约,G06,已验收
+32,M01-personal-login,复用 136,模块契约,G01,已验收
+33,M01-personal-logout,复用 136,模块契约,G01,已验收
+34,M01-personal-register,复用 136,模块契约,G01,已验收
+35,M01-personal-session-check,复用 136,模块契约,G01,已验收
+36,M01-portal-admin,复用 136,模块契约,G06,已验收
+37,M01-portal-personal-learn,复用 136,模块契约,G06,已验收
+38,M01-portal-personal-manage,复用 136,模块契约,G06,已验收
+39,M01-portal-return,复用 136,模块契约,G06,已验收
+40,M01-portal-select,复用 136,模块契约,G06,已验收
+41,M01-portal-student,复用 136,模块契约,G06,已验收
+42,M01-portal-teacher,复用 136,模块契约,G06,已验收
+43,M01-student-course-list,复用 136,模块契约,G06,已验收
+44,M01-student-course-read,复用 136,模块契约,G06,已验收
+45,M01-student-create,复用 136,模块契约,G03,已验收
+46,M01-student-home,复用 136,模块契约,G06,已验收
+47,M01-student-link-login,复用 136,模块契约,G01,已验收
+48,M01-student-link-reset,复用 136,模块契约,G03,已验收
+49,M01-student-list,复用 136,模块契约,G03,已验收
+50,M01-student-logout,复用 136,模块契约,G01,已验收
+51,M01-student-password-change,复用 136,模块契约,G01,已验收
+52,M01-student-password-login,复用 136,模块契约,G01,已验收
+53,M01-student-password-reset,复用 136,模块契约,G03,已验收
+54,M01-student-session-read,复用 136,模块契约,G01,已验收
+55,M01-student-settings-open,复用 136,模块契约,G06,已验收
+56,M01-student-update,复用 136,模块契约,G03,已验收
+57,M01-teacher-capabilities-read,复用 136,模块契约,G07,已验收
+58,M01-teacher-capabilities-write,复用 136,模块契约,G07,已验收
+59,M01-teacher-login,复用 136,模块契约,G01,已验收
+60,M01-teacher-logout,复用 136,模块契约,G01,已验收
+61,M01-teacher-register,复用 136,模块契约,G01,已验收
+62,M01-teacher-session-read,复用 136,模块契约,G01,已验收
+63,M01-teacher-settings-open,复用 136,模块契约,G06,已验收
+64,M01-teacher-setup,复用 136,模块契约,G01,已验收
+65,M01-teacher-setup-status,复用 136,模块契约,G01,已验收
+66,M01-unassigned-sessions-revoke,复用 136,模块契约,G04,已验收
+67,M01-web-not-found,复用 136,模块契约,G06,已验收
+68,M02-attachment-create,复用 136,模块契约,G15,待复核
+69,M02-attachment-delete,复用 136,模块契约,G15,待复核
+70,M02-attachment-file-read,复用 136,模块契约,G15,待复核
+71,M02-attachment-list,复用 136,模块契约,G15,待复核
+72,M02-attachment-update,复用 136,模块契约,G15,待复核
+73,M02-author-lint,复用 136,模块契约,G16,待复核
+74,M02-content-reorder,复用 136,模块契约,G18,待复核
+75,M02-content-tree-read,复用 136,模块契约,G18,待复核
+76,M02-dsl-answer,1,模块契约,G10,未开始
+77,M02-dsl-blank,1,模块契约,G10,未开始
+78,M02-dsl-box,1,模块契约,G10,未开始
+79,M02-dsl-col,1,模块契约,G10,未开始
+80,M02-dsl-columns,1,模块契约,G10,未开始
+81,M02-dsl-example,1,模块契约,G10,未开始
+82,M02-dsl-fold,1,模块契约,G10,未开始
+83,M02-dsl-graph,1,模块契约,G10,未开始
+84,M02-dsl-group,1,模块契约,G10,未开始
+85,M02-dsl-hint,1,模块契约,G10,未开始
+86,M02-dsl-image,1,模块契约,G10,未开始
+87,M02-dsl-item,1,模块契约,G10,未开始
+88,M02-dsl-mark,1,模块契约,G10,未开始
+89,M02-dsl-material,1,模块契约,G10,未开始
+90,M02-dsl-option,1,模块契约,G10,未开始
+91,M02-dsl-options,1,模块契约,G10,未开始
+92,M02-dsl-question,1,模块契约,G10,未开始
+93,M02-dsl-ref,1,模块契约,G10,未开始
+94,M02-dsl-rubric,1,模块契约,G10,未开始
+95,M02-dsl-seg,1,模块契约,G10,未开始
+96,M02-dsl-solution,1,模块契约,G10,未开始
+97,M02-dsl-spec-read,复用 136,模块契约,G16,待复核
+98,M02-dsl-step,1,模块契约,G10,未开始
+99,M02-dsl-steps,1,模块契约,G10,未开始
+100,M02-dsl-tip,1,模块契约,G10,未开始
+101,M02-dsl-variant,1,模块契约,G10,未开始
+102,M02-dsl-warning,1,模块契约,G10,未开始
+103,M02-import-batch-read,复用 136,模块契约,G16,待复核
+104,M02-import-commit,复用 136,模块契约,G16,待复核
+105,M02-import-lint,复用 136,模块契约,G16,待复核
+106,M02-import-preview,复用 136,模块契约,G16,待复核
+107,M02-import-zip,复用 136,模块契约,G16,待复核
+108,M02-lecture-delete,复用 136,模块契约,G11,待复核
+109,M02-lecture-editor-read,复用 136,模块契约,G11,待复核
+110,M02-lecture-folder-update,复用 136,模块契约,G11,待复核
+111,M02-lecture-markdown-export,复用 136,模块契约,G17,待复核
+112,M02-lecture-pack-export,复用 136,模块契约,G17,待复核
+113,M02-lecture-publish-shared,复用 136,模块契约,G11,待复核
+114,M02-lecture-purge,复用 136,模块契约,G11,待复核
+115,M02-lecture-restore,复用 136,模块契约,G11,待复核
+116,M02-lecture-update,复用 136,模块契约,G11,待复核
+117,M02-lecture-usage,复用 136,模块契约,G11,待复核
+118,M02-library-batch,复用 136,模块契约,G18,待复核
+119,M02-library-catalog-read,复用 136,模块契约,G18,待复核
+120,M02-library-folder-create,复用 136,模块契约,G18,待复核
+121,M02-library-folder-delete,复用 136,模块契约,G18,待复核
+122,M02-library-folder-list,复用 136,模块契约,G18,待复核
+123,M02-library-folder-order,复用 136,模块契约,G18,待复核
+124,M02-library-folder-rename,复用 136,模块契约,G18,待复核
+125,M02-library-lecture-list,复用 136,模块契约,G18,待复核
+126,M02-library-open,复用 136,模块契约,G18,待复核
+127,M02-library-unit-list,复用 136,模块契约,G18,待复核
+128,M02-local-copy-diagnostic,复用 136,模块契约,G16,待复核
+129,M02-local-import-selection,复用 136,模块契约,G16,待复核
+130,M02-material-delete,1,模块契约,G14,未开始
+131,M02-material-read,1,模块契约,G14,未开始
+132,M02-material-update,1,模块契约,G14,未开始
+133,M02-media-blob-read,复用 136,模块契约,G20,待复核
+134,M02-media-upload,复用 136,模块契约,G20,待复核
+135,M02-question-delete,复用 136,模块契约,G13,待复核
+136,M02-question-editor-read,复用 136,模块契约,G13,待复核
+137,M02-question-group-delete,1,模块契约,G13,未开始
+138,M02-question-group-read,1,模块契约,G13,未开始
+139,M02-question-group-update,1,模块契约,G13,未开始
+140,M02-question-search,复用 136,模块契约,G13,待复核
+141,M02-question-update,复用 136,模块契约,G13,待复核
+142,M02-reparse,复用 136,模块契约,G16,待复核
+143,M02-shared-file-delete,复用 136,模块契约,G19,待复核
+144,M02-shared-file-import,复用 136,模块契约,G19,待复核
+145,M02-shared-file-list,复用 136,模块契约,G19,待复核
+146,M02-shared-file-preview,复用 136,模块契约,G19,待复核
+147,M02-student-course-attachment-list,复用 136,模块契约,G15,待复核
+148,M02-unit-delete,复用 136,模块契约,G12,待复核
+149,M02-unit-markdown-export,复用 136,模块契约,G17,待复核
+150,M02-unit-metadata-update,复用 136,模块契约,G12,待复核
+151,M02-unit-pack-export,复用 136,模块契约,G17,待复核
+152,M02-unit-publish-shared,复用 136,模块契约,G12,待复核
+153,M02-unit-purge,复用 136,模块契约,G12,待复核
+154,M02-unit-restore,复用 136,模块契约,G12,待复核
+155,M02-unit-usage,复用 136,模块契约,G12,待复核
+156,M03-attempt-material-read,1,模块契约,G34,有定向证据
+157,M03-lecture-events-write,1,模块契约,G21,未开始
+158,M03-lecture-list,1,模块契约,G21,未开始
+159,M03-lecture-read,1,模块契约,G21,未开始
+160,M03-local-reading-position,1,模块契约,G21,有定向证据
+161,M03-local-reveal,1,模块契约,G21,未开始
+162,M04-assignment-attempt-start,复用 136,模块契约,G31,已验收
+163,M04-assignment-check,复用 136,模块契约,G30,已验收
+164,M04-assignment-create,复用 136,模块契约,G30,已验收
+165,M04-assignment-delete,复用 136,模块契约,G30,已验收
+166,M04-assignment-list,复用 136,模块契约,G30,已验收
+167,M04-assignment-paper-read,复用 136,模块契约,G31,已验收
+168,M04-assignment-read,复用 136,模块契约,G30,已验收
+169,M04-assignment-update,复用 136,模块契约,G30,已验收
+170,M04-attempt-submit,复用 136,模块契约,G31,已验收
+171,M04-attempt-submit-staging-cancel,复用 136,模块契约,G31,已验收
+172,M04-attempt-submit-staging-open,复用 136,模块契约,G31,已验收
+173,M04-attempt-submit-staging-upload,复用 136,模块契约,G31,已验收
+174,M04-student-assignment-list,复用 136,模块契约,G30,已验收
+175,M05-attempt-activate,2,模块契约,G32,未开始
+176,M05-attempt-context-read,1,模块契约,G34,未开始
+177,M05-attempt-detail-read,2,模块契约,G34,未开始
+178,M05-attempt-hint-open,1,模块契约,G34,有定向证据
+179,M05-attempt-paper-read,2,模块契约,G34,未开始
+180,M05-attempt-workflow-update,2,模块契约,G32,未开始
+181,M05-course-attempt-start,2,模块契约,G32,有定向证据
+182,M05-course-unit-landing,2,冒烟,S3,有定向证据
+183,M05-draft-answer-revise,2,模块契约,G33,未开始
+184,M05-draft-answer-save,2,模块契约,G33,未开始
+185,M05-draft-snapshot-revise,2,模块契约,G33,未开始
+186,M05-local-focus-time,2,模块契约,G37,未开始
+187,M05-local-timed-window,2,模块契约,G37,有定向证据
+188,M05-opened-attempt-read,2,模块契约,G32,未开始
+189,M05-practice-feedback-read,4,模块契约,G36,未开始
+190,M05-practice-feedback-settings-read,4,模块契约,G36,未开始
+191,M05-practice-feedback-settings-write,4,模块契约,G36,未开始
+192,M05-practice-question-read,2,模块契约,G35,未开始
+193,M05-practice-question-submit,2,模块契约,G35,未开始
+194,M05-practice-settle,2,模块契约,G35,未开始
+195,M05-practice-settlement-read,2,模块契约,G35,未开始
+196,M05-type-apply,2,题型契约,T-apply,未开始
+197,M05-type-choice,2,题型契约,T-choice,未开始
+198,M05-type-fill,2,题型契约,T-fill,有定向证据
+199,M05-type-find-error,2,题型契约,T-find-error,未开始
+200,M05-type-judge,2,题型契约,T-judge,有定向证据
+201,M05-type-matching,2,题型契约,T-matching,有定向证据
+202,M05-type-multi,2,题型契约,T-multi,有定向证据
+203,M05-type-ordering,2,题型契约,T-ordering,有定向证据
+204,M05-type-response,2,题型契约,T-response,有定向证据
+205,M05-type-solve,2,题型契约,T-solve,有定向证据
+206,M06-annotation-base-compose,3,模块契约,G42,未开始
+207,M06-annotation-base-image-read,3,模块契约,G42,未开始
+208,M06-annotation-base-register,3,模块契约,G42,未开始
+209,M06-annotation-read,3,模块契约,G42,未开始
+210,M06-annotation-seal,3,模块契约,G42,未开始
+211,M06-annotation-write,3,模块契约,G42,未开始
+212,M06-attempt-events-write,3,模块契约,G44,未开始
+213,M06-ink-feel-open,3,模块契约,G41,未开始
+214,M06-ink-profile-create,3,模块契约,G41,未开始
+215,M06-ink-profile-delete,3,模块契约,G41,未开始
+216,M06-ink-profile-list,3,模块契约,G41,未开始
+217,M06-ink-profile-update,3,模块契约,G41,未开始
+218,M06-ink-read,3,模块契约,G40,未开始
+219,M06-ink-save,3,模块契约,G40,未开始
+220,M06-local-canvas-scale,3,模块契约,G40,未开始
+221,M06-local-draft-protect,3,模块契约,G45,有定向证据
+222,M06-local-pen-input,3,模块契约,G40,未开始
+223,M06-local-png-export,3,模块契约,G40,未开始
+224,M06-note-document-read,3,模块契约,G43,未开始
+225,M06-note-evidence-read,3,模块契约,G43,未开始
+226,M06-note-head-read,3,模块契约,G43,未开始
+227,M06-note-heads-read,3,模块契约,G43,未开始
+228,M06-note-image-attach,3,模块契约,G43,未开始
+229,M06-note-image-read,3,模块契约,G43,未开始
+230,M06-note-version-save,3,模块契约,G43,未开始
+231,M06-question-process-append,3,模块契约,G44,未开始
+232,M06-question-process-delete,3,模块契约,G44,未开始
+233,M06-question-process-read,3,模块契约,G44,未开始
+234,M06-question-process-start,3,模块契约,G44,未开始
+235,M06-question-process-status,3,模块契约,G44,未开始
+236,M07-lesson-landing,2,冒烟,S5,未开始
+237,M07-lesson-question-submit,2,模块契约,G46,未开始
+238,M07-lesson-restart,2,模块契约,G46,未开始
+239,M07-lesson-run,2,冒烟,S5,有定向证据
+240,M07-lesson-start,2,模块契约,G46,未开始
+241,M08-rubric-final-save,4,模块契约,G47,有定向证据
+242,M08-rubric-self-save,4,模块契约,G47,有定向证据
+243,M08-self-review-save,4,模块契约,G47,未开始
+244,M09-pending-marks,4,模块契约,G48,未开始
+245,M09-response-mark,4,模块契约,G48,有定向证据
+246,M09-teacher-attempt-detail,4,模块契约,G49,未开始
+247,M09-teacher-attempt-list,4,模块契约,G49,未开始
+248,M09-teacher-response-search,4,模块契约,G49,未开始
+249,M10-correction-create,5,模块契约,G52,未开始
+250,M10-correction-seal,5,模块契约,G52,未开始
+251,M10-learning-context-resolve,5,模块契约,G51,未开始
+252,M10-local-memo-outbox,5,模块契约,G53,未开始
+253,M10-local-result-template,5,模块契约,G51,未开始
+254,M10-local-wrong-filters,5,模块契约,G50,未开始
+255,M10-memo-delete,5,模块契约,G53,未开始
+256,M10-memo-list,5,模块契约,G53,未开始
+257,M10-memo-media-create,5,模块契约,G53,未开始
+258,M10-memo-media-read,5,模块契约,G53,未开始
+259,M10-memo-share-read,5,模块契约,G54,未开始
+260,M10-memo-share-revoke,5,模块契约,G54,未开始
+261,M10-memo-share-write,5,模块契约,G54,未开始
+262,M10-memo-source-read,5,模块契约,G53,未开始
+263,M10-memo-tags-list,5,模块契约,G53,未开始
+264,M10-memo-text-create,5,模块契约,G53,未开始
+265,M10-question-flag-save,5,模块契约,G51,未开始
+266,M10-question-notebook,5,模块契约,G51,未开始
+267,M10-question-record-read,5,模块契约,G51,未开始
+268,M10-records-list,5,模块契约,G51,未开始
+269,M10-shared-memos-list,5,模块契约,G54,未开始
+270,M10-teacher-student-question-review,5,模块契约,G51,未开始
+271,M10-wrong-list,5,模块契约,G50,有定向证据
+272,M10-wrong-practice-start,5,模块契约,G50,未开始
+273,M11-attempt-csv-export,6,模块契约,G57,未开始
+274,M11-attempt-replay,6,模块契约,G55,未开始
+275,M11-course-progress,6,模块契约,G55,未开始
+276,M11-insights-overview,6,模块契约,G55,未开始
+277,M11-learning-pack-export,6,模块契约,G57,未开始
+278,M11-learning-pack-preview,6,模块契约,G57,未开始
+279,M11-local-export-selection,6,模块契约,G57,未开始
+280,M11-question-review-pack-export,6,模块契约,G57,未开始
+281,M11-question-review-pack-preview,6,模块契约,G57,未开始
+282,M11-question-stats,6,模块契约,G55,未开始
+283,M11-report-create,6,模块契约,G56,未开始
+284,M11-report-delete,6,模块契约,G56,未开始
+285,M11-report-list,6,模块契约,G56,未开始
+286,M11-report-read,6,模块契约,G56,未开始
+287,M11-student-insights,6,模块契约,G55,未开始
+288,M12-ai-assignment-policy-read,7,模块契约,G61,未开始
+289,M12-ai-assignment-policy-write,7,模块契约,G61,未开始
+290,M12-ai-attempt-review-actions,7,模块契约,G66,未开始
+291,M12-ai-attempt-review-claim,7,模块契约,G66,未开始
+292,M12-ai-attempt-review-create,7,模块契约,G66,未开始
+293,M12-ai-attempt-review-detail,7,模块契约,G66,未开始
+294,M12-ai-attempt-review-lease-renew,7,模块契约,G66,未开始
+295,M12-ai-attempt-review-list,7,模块契约,G66,未开始
+296,M12-ai-attempt-review-preview,7,模块契约,G66,未开始
+297,M12-ai-attempt-review-submit,7,模块契约,G66,未开始
+298,M12-ai-batch-review-create,7,模块契约,G66,未开始
+299,M12-ai-connection-create,7,模块契约,G60,未开始
+300,M12-ai-connection-delete,7,模块契约,G60,未开始
+301,M12-ai-connection-list,7,模块契约,G60,未开始
+302,M12-ai-connection-model-list,7,模块契约,G60,未开始
+303,M12-ai-connection-probe,7,模块契约,G60,未开始
+304,M12-ai-connection-test,7,模块契约,G60,未开始
+305,M12-ai-connection-update,7,模块契约,G60,未开始
+306,M12-ai-current-context-read,7,模块契约,G68,有定向证据
+307,M12-ai-display-settings,7,模块契约,G62,未开始
+308,M12-ai-live-focus-generation,7,模块契约,G68,未开始
+309,M12-ai-live-focus-publish,7,模块契约,G68,未开始
+310,M12-ai-queue-summary,7,模块契约,G68,未开始
+311,M12-ai-quick-buttons-read,7,模块契约,G62,未开始
+312,M12-ai-quick-buttons-write,7,模块契约,G62,未开始
+313,M12-ai-reply-check,7,模块契约,G64,未开始
+314,M12-ai-reply-checker-assets,7,模块契约,G64,未开始
+315,M12-ai-reply-checker-manifest,7,模块契约,G64,未开始
+316,M12-ai-reply-open,7,模块契约,G64,未开始
+317,M12-ai-reply-submit,7,模块契约,G64,未开始
+318,M12-ai-review-v2-cancel,7,模块契约,G67,未开始
+319,M12-ai-review-v2-create,7,模块契约,G67,未开始
+320,M12-ai-review-v2-detail,7,模块契约,G67,未开始
+321,M12-ai-review-v2-list,7,模块契约,G67,未开始
+322,M12-ai-review-v2-part-claim,7,模块契约,G67,未开始
+323,M12-ai-review-v2-part-lease-renew,7,模块契约,G67,未开始
+324,M12-ai-review-v2-part-submit,7,模块契约,G67,未开始
+325,M12-ai-review-v2-preview,7,模块契约,G67,未开始
+326,M12-ai-rubric-opinion-submit,7,模块契约,G66,未开始
+327,M12-ai-share-body-read,7,模块契约,G65,未开始
+328,M12-ai-share-create,7,模块契约,G65,未开始
+329,M12-ai-share-material-read,7,模块契约,G65,未开始
+330,M12-ai-share-revoke,7,模块契约,G65,未开始
+331,M12-ai-share-status,7,模块契约,G65,未开始
+332,M12-ai-status,7,模块契约,G62,未开始
+333,M12-ai-student-policy-read,7,模块契约,G61,未开始
+334,M12-ai-student-policy-write,7,模块契约,G61,未开始
+335,M12-ai-student-prompts-read,7,模块契约,G62,未开始
+336,M12-ai-student-prompts-write,7,模块契约,G62,未开始
+337,M12-ai-task-archive,7,模块契约,G63,未开始
+338,M12-ai-task-cancel,7,模块契约,G63,未开始
+339,M12-ai-task-claim,7,模块契约,G63,未开始
+340,M12-ai-task-create,7,模块契约,G63,有定向证据
+341,M12-ai-task-detail,7,模块契约,G63,未开始
+342,M12-ai-task-followup,7,模块契约,G63,未开始
+343,M12-ai-task-lease-renew,7,模块契约,G63,未开始
+344,M12-ai-task-list,7,模块契约,G63,未开始
+345,M12-ai-task-material-attach,7,模块契约,G63,未开始
+346,M12-ai-task-pending-update,7,模块契约,G63,有定向证据
+347,M12-ai-task-resume,7,模块契约,G63,未开始
+348,M12-ai-task-retry,7,模块契约,G63,未开始
+349,M12-ai-teacher-attempt-records,7,模块契约,G70,未开始
+350,M12-ai-teacher-prompts-read,7,模块契约,G62,未开始
+351,M12-ai-teacher-prompts-write,7,模块契约,G62,未开始
+352,M12-ai-teacher-settings-read,7,模块契约,G61,未开始
+353,M12-ai-teacher-settings-write,7,模块契约,G61,未开始
+354,M12-ai-teacher-task-material-read,7,模块契约,G70,未开始
+355,M12-ai-teacher-task-read,7,模块契约,G70,未开始
+356,M12-mcp-personal-transport,7,模块契约,G69,未开始
+357,M12-mcp-student-transport,7,模块契约,G69,未开始
+358,M12-mcp-teacher-transport,7,模块契约,G69,未开始
+359,M12-teacher-api-token-read,7,模块契约,G69,未开始
+360,M12-teacher-api-token-reset,7,模块契约,G69,未开始
+361,M13-annotation-maintenance,8,模块契约,G82,未开始
+362,M13-api-not-found,8,冒烟,S7,未开始
+363,M13-backup-download,8,模块契约,G80,未开始
+364,M13-backup-restore,8,模块契约,G80,未开始
+365,M13-backup-snapshots,8,模块契约,G80,未开始
+366,M13-database-upgrade,8,模块契约,G81,有定向证据
+367,M13-demo-seed,8,模块契约,G82,未开始
+368,M13-health,8,冒烟,S7,未开始
+369,M13-http-head,8,冒烟,S7,未开始
+370,M13-local-pwa-update,3,冒烟,S7,未开始
+371,M13-public-config,8,冒烟,S7,未开始
+372,M13-settlement-rehearsal,8,模块契约,G82,未开始
+373,M13-spa-host,8,冒烟,S7,未开始
+374,M13-storage-reclaim,8,模块契约,G82,未开始
+375,M13-time-backfill,8,模块契约,G82,未开始
