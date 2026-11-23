@@ -3416,6 +3416,8 @@ it.each([false, true])(
           [ids.both, { title: "", body: both.body }, 1],
           [ids.missing, null, 0],
         ]);
+        if (recovery.evaluation.status !== "evaluated")
+          throw new Error("内核评估须已在交卷时完成");
         expect(
           recovery.evaluation.questions
             .filter(({ questionId }) => questionId !== "k17-one")
@@ -4217,6 +4219,8 @@ it.each([
         } else {
           if (recovery.assessment !== "automatic")
             throw new Error("有参考配对须保留原评估通道");
+          if (recovery.evaluation.status !== "evaluated")
+            throw new Error("内核评估须已在交卷时完成");
           expect(
             recovery.evaluation.questions
               .filter(({ questionId }) => questionIds.includes(questionId))
@@ -4800,11 +4804,12 @@ it("普通整卷无材料无参考配对按真实零槽位冻结并进入教师�
       ),
       grading: { teacherReview: { questionIds: questionIds.toSorted() } },
     });
+    // 内核 v2（迁移 19）起纯人工题不再写无评分键的空评估任务。
     expect(
       kernel
         .prepare("SELECT key_id FROM evaluation_tasks WHERE submission_id=?")
         .get(ticket.receipt_id),
-    ).toEqual({ key_id: null });
+    ).toBeUndefined();
     const runtime = openLearningRuntime({
       databasePath,
       authorizeConfirmationRecovery: (scope) =>
@@ -5799,6 +5804,8 @@ it.each([true, false])(
           [ids.empty, [], 1],
           [ids.missing, null, 0],
         ]);
+        if (recovery.evaluation.status !== "evaluated")
+          throw new Error("内核评估须已在交卷时完成");
         expect(
           recovery.evaluation.questions
             .filter(({ questionId }) => questionIds.includes(questionId))

@@ -9,7 +9,6 @@ import {
   ChoiceConfirmationConflict,
   type ChoiceConfirmationInput,
   LearningError,
-  type openLearningRuntime,
   ResponseConfirmationConflict,
   type StudentActivity,
 } from "learning-kernel";
@@ -44,6 +43,7 @@ import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   isJudgeActivity,
   judgeAnswerOf,
+  type KernelRuntime,
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
   withBoundKernelActivity,
@@ -61,7 +61,7 @@ import {
 
 import type { MarkIntent } from "./kernel-verdict-target.ts";
 
-type Runtime = ReturnType<typeof openLearningRuntime>;
+type Runtime = KernelRuntime;
 type OriginalQuestion = ChoiceConfirmationInput["questions"][number];
 
 function alreadySubmitted(): never {

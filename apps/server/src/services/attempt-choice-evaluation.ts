@@ -10,18 +10,11 @@ import {
 } from "@tutor/contract";
 import { gradeResponseRow } from "@tutor/grading";
 import type {
-  ChoiceEvaluationInput,
-  ChoiceEvaluatorRegistration,
-  IndexResponseEvaluationInput,
-  IndexResponseEvaluatorRegistration,
-  OrderedTextEvaluationInput,
-  OrderedTextEvaluatorRegistration,
-  ResponseEvaluationInput,
-  ResponseEvaluatorRegistration,
-  ResponseVerdict,
-  TitledTextEvaluationInput,
-  TitledTextEvaluatorRegistration,
+  EvaluationInput,
+  EvaluatorRegistration,
+  VerdictResult,
 } from "learning-kernel";
+import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import { responses } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
@@ -29,7 +22,12 @@ import {
   buildAttemptQuestionWhere,
   requireOwnAttempt,
 } from "./attempt-access.ts";
-import { deliveryAnswerOf } from "./kernel-question-delivery-values.ts";
+import {
+  blanksValue,
+  deliveryAnswerOf,
+  judgeValue,
+  titledValue,
+} from "./kernel-question-delivery-values.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
 export const ownClassChoiceEvaluatorRef = {
@@ -66,12 +64,7 @@ export const ownClassJudgeEvaluatorRef = {
 function frozenQuestionForEvaluation(
   db: Db,
   scope: OwnClassChoiceEvaluationScope | undefined,
-  input:
-    | ChoiceEvaluationInput
-    | ResponseEvaluationInput
-    | IndexResponseEvaluationInput
-    | OrderedTextEvaluationInput
-    | TitledTextEvaluationInput,
+  input: EvaluationInput,
   permittedPolicies: readonly GradingPolicy[] = ["auto"],
 ) {
   if (
@@ -132,177 +125,206 @@ function frozenQuestionForEvaluation(
   return { row, question };
 }
 
-/** 仅供可信回执恢复调用。以宿主冻结行校验评分来源，将实际答案交给统一判分入口。 */
-export function createOwnClassChoiceEvaluator(
-  db: Db,
-  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
-  reference = ownClassChoiceEvaluatorRef as Readonly<{
-    id: string;
-    version: number;
-  }>,
-): ChoiceEvaluatorRegistration {
-  return {
-    ...reference,
-    evaluate(input: ChoiceEvaluationInput): boolean {
-      const { row, question } = frozenQuestionForEvaluation(
-        db,
-        currentScope(),
-        input,
-      );
-      const source = singleChoiceScoringSourceSchema.safeParse(question);
-      if (
-        !source.success ||
-        String(source.data.answers.index) !== input.acceptedChoice
-      )
-        mismatch();
-      const index = input.choice === null ? undefined : Number(input.choice);
-      if (
-        index !== undefined &&
-        (String(index) !== input.choice || !source.data.options[index])
-      )
-        mismatch();
-      const verdict = gradeResponseRow(
-        row.gradingPolicy,
-        question,
-        index === undefined ? undefined : { kind: "choice", index },
-      );
-      if (verdict === null) mismatch();
-      return verdict;
-    },
-  };
-}
-
-export function createOwnClassJudgeEvaluator(
-  db: Db,
-  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
-  reference = ownClassJudgeEvaluatorRef as Readonly<{
-    id: string;
-    version: number;
-  }>,
-): ResponseEvaluatorRegistration {
-  return {
-    ...reference,
-    evaluate(input): ResponseVerdict {
-      const { row, question } = frozenQuestionForEvaluation(
-        db,
-        currentScope(),
-        input,
-      );
-      const source = judgeScoringSourceSchema.safeParse(question);
-      if (
-        !source.success ||
-        source.data.answers.value !== input.acceptedResponse
-      )
-        mismatch();
-      const result = gradeResponseRow(
-        row.gradingPolicy,
-        question,
-        input.value === null
-          ? undefined
-          : { kind: "judge", value: input.value },
-      );
-      return result === null
-        ? { status: "needsReview" }
-        : { status: "judged", correct: result };
-    },
-  };
-}
-
 export const ownClassDeliveryEvaluatorRef = {
   id: "ownclass-question-delivery",
   version: 1,
 } as const;
 
-export function createOwnClassMultiEvaluator(
+type Reference = Readonly<{ id: string; version: number }>;
+type Scope = () => OwnClassChoiceEvaluationScope | undefined;
+type Evaluate = (
   db: Db,
-  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
-): IndexResponseEvaluatorRegistration {
-  return {
-    ...ownClassDeliveryEvaluatorRef,
-    evaluate(input) {
-      const { row, question } = frozenQuestionForEvaluation(
-        db,
-        currentScope(),
-        input,
-      );
-      const source = multiChoiceScoringSourceSchema.safeParse(question);
-      if (
-        !source.success ||
-        JSON.stringify(source.data.answers.indexes) !==
-          JSON.stringify(input.acceptedIndexes) ||
-        input.value?.some((index) => !source.data.options[index])
-      )
-        mismatch();
-      const result = gradeResponseRow(
-        row.gradingPolicy,
-        question,
-        input.value === null
-          ? undefined
-          : { kind: "multi", indexes: [...input.value] },
-      );
-      if (result === null) mismatch();
-      return { status: "judged", correct: result };
-    },
-  };
+  currentScope: Scope,
+  input: EvaluationInput,
+) => VerdictResult;
+
+// 内核按作答形态解析后的原值与本题私有评分键；形态不符一律视为评分来源变化。
+const choiceKeySchema = z.strictObject({ acceptedChoice: z.string() });
+const judgeKeySchema = z.strictObject({ acceptedResponse: z.boolean() });
+const indexKeySchema = z.strictObject({
+  acceptedIndexes: z.array(z.number().int().nonnegative()),
+});
+const blankKeySchema = z.strictObject({
+  acceptedBlanks: z.array(z.array(z.string())),
+});
+const choiceValueSchema = z.string().nullable();
+const judgeValueSchema = judgeValue.nullable();
+const indexValueSchema = z.array(z.number().int().nonnegative()).nullable();
+const blanksValueSchema = blanksValue.nullable();
+const titledValueSchema = titledValue.nullable();
+
+function parsed<T>(schema: z.ZodType<T>, value: unknown): T {
+  const outcome = schema.safeParse(value);
+  if (!outcome.success) mismatch();
+  return outcome.data;
 }
+
+const evaluateChoice: Evaluate = (db, currentScope, input) => {
+  const { row, question } = frozenQuestionForEvaluation(
+    db,
+    currentScope(),
+    input,
+  );
+  const key = parsed(choiceKeySchema, input.key);
+  const choice = parsed(choiceValueSchema, input.value);
+  const source = singleChoiceScoringSourceSchema.safeParse(question);
+  if (
+    !source.success ||
+    String(source.data.answers.index) !== key.acceptedChoice
+  )
+    mismatch();
+  const index = choice === null ? undefined : Number(choice);
+  if (
+    index !== undefined &&
+    (String(index) !== choice || !source.data.options[index])
+  )
+    mismatch();
+  const verdict = gradeResponseRow(
+    row.gradingPolicy,
+    question,
+    index === undefined ? undefined : { kind: "choice", index },
+  );
+  if (verdict === null) mismatch();
+  return { status: "judged", correct: verdict };
+};
+
+const evaluateJudge: Evaluate = (db, currentScope, input) => {
+  const { row, question } = frozenQuestionForEvaluation(
+    db,
+    currentScope(),
+    input,
+  );
+  const key = parsed(judgeKeySchema, input.key);
+  const value = parsed(judgeValueSchema, input.value);
+  const source = judgeScoringSourceSchema.safeParse(question);
+  if (!source.success || source.data.answers.value !== key.acceptedResponse)
+    mismatch();
+  const result = gradeResponseRow(
+    row.gradingPolicy,
+    question,
+    value === null ? undefined : { kind: "judge", value },
+  );
+  return result === null
+    ? { status: "needsReview" }
+    : { status: "judged", correct: result };
+};
+
+const evaluateMulti: Evaluate = (db, currentScope, input) => {
+  const { row, question } = frozenQuestionForEvaluation(
+    db,
+    currentScope(),
+    input,
+  );
+  const key = parsed(indexKeySchema, input.key);
+  const value = parsed(indexValueSchema, input.value);
+  const source = multiChoiceScoringSourceSchema.safeParse(question);
+  if (
+    !source.success ||
+    JSON.stringify(source.data.answers.indexes) !==
+      JSON.stringify(key.acceptedIndexes) ||
+    value?.some((index) => !source.data.options[index])
+  )
+    mismatch();
+  const result = gradeResponseRow(
+    row.gradingPolicy,
+    question,
+    value === null ? undefined : { kind: "multi", indexes: [...value] },
+  );
+  if (result === null) mismatch();
+  return { status: "judged", correct: result };
+};
 
 const orderedTextEvaluationSourceSchema = orderedTextDeliveryScoringSourceSchema
   .or(orderingDeliveryScoringSourceSchema)
   .or(matchingDeliveryScoringSourceSchema);
 
-export function createOwnClassOrderedTextEvaluator(
+const evaluateOrderedText: Evaluate = (db, currentScope, input) => {
+  const scope = currentScope();
+  if (scope?.lectureId !== undefined) mismatch();
+  const { row, question } = frozenQuestionForEvaluation(db, scope, input, [
+    "manual_only",
+    "reference_self",
+  ]);
+  const key = parsed(blankKeySchema, input.key);
+  const value = parsed(blanksValueSchema, input.value);
+  const source = orderedTextEvaluationSourceSchema.safeParse(question);
+  if (
+    !source.success ||
+    JSON.stringify(source.data.acceptedBlanks) !==
+      JSON.stringify(key.acceptedBlanks)
+  )
+    mismatch();
+  const result = gradeResponseRow(
+    row.gradingPolicy,
+    question,
+    deliveryAnswerOf(row, value) ?? undefined,
+  );
+  if (result !== null) mismatch();
+  return { status: "needsReview" };
+};
+
+const evaluateTitledText: Evaluate = (db, currentScope, input) => {
+  const scope = currentScope();
+  if (scope?.lectureId !== undefined) mismatch();
+  const { row, question } = frozenQuestionForEvaluation(db, scope, input, [
+    "manual_only",
+    "reference_self",
+  ]);
+  const value = parsed(titledValueSchema, input.value);
+  if (!responseDeliveryScoringSourceSchema.safeParse(question).success)
+    mismatch();
+  const result = gradeResponseRow(
+    row.gradingPolicy,
+    question,
+    deliveryAnswerOf(row, value) ?? undefined,
+  );
+  if (result !== null) mismatch();
+  return { status: "needsReview" };
+};
+
+/** 作答形态 → 宿主判分实现。逐题交付评估器按内核传入的形态分派。 */
+const evaluatorsByResponseType: Readonly<Record<string, Evaluate>> = {
+  choice: evaluateChoice,
+  booleanOrString: evaluateJudge,
+  optionIndexArray: evaluateMulti,
+  orderedTextBlanks: evaluateOrderedText,
+  textWithOptionalTitle: evaluateTitledText,
+};
+
+function registration(
   db: Db,
-  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
-): OrderedTextEvaluatorRegistration {
+  currentScope: Scope,
+  reference: Reference,
+  responseTypes: readonly string[],
+): EvaluatorRegistration {
   return {
-    ...ownClassDeliveryEvaluatorRef,
+    ...reference,
+    responseTypes,
     evaluate(input) {
-      const scope = currentScope();
-      if (scope?.lectureId !== undefined) mismatch();
-      const { row, question } = frozenQuestionForEvaluation(db, scope, input, [
-        "manual_only",
-        "reference_self",
-      ]);
-      const source = orderedTextEvaluationSourceSchema.safeParse(question);
-      if (
-        !source.success ||
-        JSON.stringify(source.data.acceptedBlanks) !==
-          JSON.stringify(input.acceptedBlanks)
-      )
-        mismatch();
-      const result = gradeResponseRow(
-        row.gradingPolicy,
-        question,
-        deliveryAnswerOf(row, input.value) ?? undefined,
-      );
-      if (result !== null) mismatch();
-      return { status: "needsReview" };
+      const evaluate = responseTypes.includes(input.responseType)
+        ? evaluatorsByResponseType[input.responseType]
+        : undefined;
+      if (!evaluate) mismatch();
+      return evaluate(db, currentScope, input);
     },
   };
 }
 
-export function createOwnClassTitledTextEvaluator(
+/** 仅在宿主设定评分范围后由内核待评任务调用。以宿主冻结行校验评分来源，将实际答案交给统一判分入口。 */
+export function createOwnClassEvaluators(
   db: Db,
-  currentScope: () => OwnClassChoiceEvaluationScope | undefined,
-): TitledTextEvaluatorRegistration {
-  return {
-    ...ownClassDeliveryEvaluatorRef,
-    evaluate(input) {
-      const scope = currentScope();
-      if (scope?.lectureId !== undefined) mismatch();
-      const { row, question } = frozenQuestionForEvaluation(db, scope, input, [
-        "manual_only",
-        "reference_self",
-      ]);
-      if (!responseDeliveryScoringSourceSchema.safeParse(question).success)
-        mismatch();
-      const result = gradeResponseRow(
-        row.gradingPolicy,
-        question,
-        deliveryAnswerOf(row, input.value) ?? undefined,
-      );
-      if (result !== null) mismatch();
-      return { status: "needsReview" };
-    },
-  };
+  currentScope: Scope,
+): EvaluatorRegistration[] {
+  return [
+    registration(db, currentScope, ownClassChoiceEvaluatorRef, ["choice"]),
+    registration(db, currentScope, ownClassJudgeEvaluatorRef, [
+      "booleanOrString",
+    ]),
+    registration(
+      db,
+      currentScope,
+      ownClassDeliveryEvaluatorRef,
+      Object.keys(evaluatorsByResponseType),
+    ),
+  ];
 }

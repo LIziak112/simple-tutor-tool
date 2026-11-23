@@ -66,11 +66,16 @@ export function responseMarkResult(
   });
 }
 
+/** 已判题的生效判定；宿主发布声明了 gradingBasis，缺失即读面不一致。 */
+export function effectiveOf(verdict: QuestionVerdict) {
+  if (verdict.status !== "judged") return undefined;
+  if (!verdict.effective) kernelAttemptUnavailable();
+  return verdict.effective;
+}
+
 export function subjectOf(verdict: QuestionVerdict) {
-  return verdict.status === "judged" &&
-    verdict.effective.source === "teacherReview"
-    ? verdict.effective
-    : undefined;
+  const effective = effectiveOf(verdict);
+  return effective?.source === "teacherReview" ? effective : undefined;
 }
 
 /** 调用方已核验确认归属并持有主库写锁。评语只保存在宿主。 */
@@ -161,8 +166,7 @@ export function projectKernelVerdicts(
         ...row,
         teacherMark: subject ? (subject.correct ? "correct" : "wrong") : null,
         teacherComment: comment,
-        finalCorrect:
-          question.status === "judged" ? question.effective.correct : null,
+        finalCorrect: effectiveOf(question)?.correct ?? null,
       };
     };
     let foundTarget = false;
