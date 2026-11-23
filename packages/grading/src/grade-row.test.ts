@@ -1,6 +1,10 @@
 import {
+  type GradingPolicy,
   type Question,
   questionCapabilityBindings,
+  questionTypeSchema,
+  resolveRowGradingPolicy,
+  resolveSelfReviewState,
   type StudentAnswer,
 } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
@@ -13,6 +17,7 @@ import { gradeResponseRow } from "./grade-row.ts";
  * manual_only）对 reference 相同、等价、不同、空白四种情形都不产生 autoCorrect
  * 主观匹配判定；旧行（gradingPolicy=NULL）与客观题新行（auto）按题型能力表
  * 原规则（solve 等价比较、fill 恒 null、choice/judge/multi 自动判定）。
+ * TASK-f9439bfd 起空/非法策略行一律回落开卷冻结的默认策略，不再保留旧语义。
  */
 
 function makeQuestion(partial: {
@@ -120,43 +125,8 @@ describe("gradeResponseRow：新策略行取消主观匹配（QM-10 细项 1）"
   }
 });
 
-describe("gradeResponseRow：旧行与客观题行按原规则（历史不重释）", () => {
-  it("旧行（gradingPolicy=NULL）solve 等价比较照旧：相同/等价 → true", () => {
-    expect(
-      gradeResponseRow(null, handwrittenWithAnswer("solve"), {
-        kind: "final",
-        finalAnswer: "0.5",
-      }),
-    ).toBe(true);
-    expect(
-      gradeResponseRow(null, handwrittenWithAnswer("solve"), {
-        kind: "final",
-        finalAnswer: "1/2",
-      }),
-    ).toBe(true);
-  });
-
-  it("旧行 solve 不同 → false（等价比较照旧判错）；空白/未答 → null 进待批（现状）", () => {
-    expect(
-      gradeResponseRow(null, handwrittenWithAnswer("solve"), {
-        kind: "final",
-        finalAnswer: "3",
-      }),
-    ).toBe(false);
-    for (const answer of [
-      { kind: "final", finalAnswer: " " } as const,
-      undefined,
-    ]) {
-      expect(
-        gradeResponseRow(null, handwrittenWithAnswer("solve"), answer),
-      ).toBeNull();
-    }
-  });
-
-  it("旧行 fill 恒 null（2026-10-02 决策）与 auto 新行客观题照旧", () => {
-    expect(
-      gradeResponseRow(null, fillWithBlanks, { kind: "fill", values: ["0.5"] }),
-    ).toBeNull();
+describe("gradeResponseRow：客观题 auto 行按原校验器", () => {
+  it("auto 行 choice/judge 照旧，未作答客观题判错（D1）", () => {
     const choice = makeQuestion({
       type: "choice",
       answers: { kind: "choice", index: 0 },
@@ -168,9 +138,7 @@ describe("gradeResponseRow：旧行与客观题行按原规则（历史不重释
     expect(gradeResponseRow("auto", choice, { kind: "choice", index: 1 })).toBe(
       false,
     );
-    // 未作答客观题判错（D1）在 auto 新行保持
     expect(gradeResponseRow("auto", choice, undefined)).toBe(false);
-    // judge/multi 的 auto 新行同样走原校验器
     const judge = makeQuestion({
       type: "judge",
       answers: { kind: "judge", value: true },
@@ -179,8 +147,24 @@ describe("gradeResponseRow：旧行与客观题行按原规则（历史不重释
       gradeResponseRow("auto", judge, { kind: "judge", value: true }),
     ).toBe(true);
   });
+});
 
-  it("旧行客观题（NULL）走原规则——auto 与 NULL 对 judge/choice/multi 等价", () => {
+describe("gradeResponseRow：空/非法策略回落默认策略（TASK-f9439bfd）", () => {
+  it("空策略 solve 行不再走 final 等价比较：与 reference_self 新行同为 null", () => {
+    for (const [, answer] of handwrittenAnswers) {
+      expect(
+        gradeResponseRow(null, handwrittenWithAnswer("solve"), answer),
+      ).toBeNull();
+    }
+  });
+
+  it("空策略 fill 行按默认策略（有参考 reference_self）恒 null", () => {
+    expect(
+      gradeResponseRow(null, fillWithBlanks, { kind: "fill", values: ["0.5"] }),
+    ).toBeNull();
+  });
+
+  it("空策略客观题回落 auto，与冻结 auto 行等价", () => {
     const judge = makeQuestion({
       type: "judge",
       answers: { kind: "judge", value: false },
@@ -191,17 +175,90 @@ describe("gradeResponseRow：旧行与客观题行按原规则（历史不重释
     expect(gradeResponseRow(null, judge, undefined)).toBe(false);
   });
 
-  it("新题型行 NULL（异常数据兜底 manual_only）→ null，不伪造自动判定", () => {
-    const question = makeQuestion({
-      type: "ordering",
-      answers: { kind: "ordering", sequence: ["a", "b"] },
-    });
-    expect(
-      gradeResponseRow(null, question, {
-        kind: "ordering",
-        sequence: ["a", "b"],
-      }),
-    ).toBeNull();
+  /** 每种题型：带参考快照 + 与参考一致的作答（最可能被误判对的输入） */
+  const casesByType: ReadonlyArray<
+    readonly [Question["type"], Question["answers"], StudentAnswer]
+  > = [
+    ["judge", { kind: "judge", value: true }, { kind: "judge", value: true }],
+    ["choice", { kind: "choice", index: 0 }, { kind: "choice", index: 0 }],
+    ["multi", { kind: "multi", indexes: [0] }, { kind: "multi", indexes: [0] }],
+    [
+      "fill",
+      { kind: "fill", blanks: [["1"]] },
+      { kind: "fill", values: ["1"] },
+    ],
+    [
+      "solve",
+      { kind: "final", answer: "1" },
+      { kind: "final", finalAnswer: "1" },
+    ],
+    [
+      "apply",
+      { kind: "final", answer: "1" },
+      { kind: "final", finalAnswer: "1" },
+    ],
+    [
+      "find-error",
+      { kind: "final", answer: "1" },
+      { kind: "final", finalAnswer: "1" },
+    ],
+    [
+      "response",
+      { kind: "response", referenceMd: "参考" },
+      { kind: "response", body: "参考" },
+    ],
+    [
+      "matching",
+      { kind: "matching", pairs: { s1: "o1" } },
+      { kind: "matching", pairs: { s1: "o1" } },
+    ],
+    [
+      "ordering",
+      { kind: "ordering", sequence: ["a"] },
+      { kind: "ordering", sequence: ["a"] },
+    ],
+  ];
+
+  it("covers：每种题型 × 空/非法策略 × 快照有无参考 × 作答有无：不抛错，终态为已判或待处理", () => {
+    expect(casesByType.map(([type]) => type)).toEqual(
+      questionTypeSchema.options,
+    );
+    const stored = [null, undefined, "", "legacy", "AUTO"] as const;
+    for (const [type, answers, answer] of casesByType) {
+      for (const question of [
+        makeQuestion({ type, answers, options: [{ text: "A" }] }),
+        makeQuestion({ type, options: [{ text: "A" }] }),
+      ]) {
+        const policy = resolveRowGradingPolicy(null, question);
+        for (const value of stored) {
+          for (const given of [answer, undefined]) {
+            const result = gradeResponseRow(
+              value as GradingPolicy | null,
+              question,
+              given,
+            );
+            expect([true, false, null]).toContain(result);
+            // 结果与按默认策略冻结的新行逐一相同（无独立旧语义分支）
+            expect(result).toBe(gradeResponseRow(policy, question, given));
+            // 非 auto 策略不产生自动判定（不伪造对错）
+            if (policy !== "auto") expect(result).toBeNull();
+            const state = resolveSelfReviewState({
+              submitted: true,
+              released: true,
+              autoCorrect: result,
+              teacherMark: null,
+              selfReview: null,
+              hasReference: policy === "reference_self",
+            });
+            expect([
+              "auto_judged",
+              "self_pending",
+              "teacher_pending",
+            ]).toContain(state);
+          }
+        }
+      }
+    }
   });
 });
 

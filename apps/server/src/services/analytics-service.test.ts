@@ -33,6 +33,10 @@ import { type SeedDemoResult, seedDemoData } from "./seed-demo";
  *
  * 判分口径（2026-10-02 修订）：fill 全人工批改——种子 u1q3（填空）在所有
  * 作答中恒为 null（待批，不进任何分母、不构成错题），下列各指标数值按此推算。
+ * TASK-f9439bfd 起种子不再造空策略历史行：开卷冻结默认策略（教师默认开启
+ * 自评）→ 带参考的填空与手写题（u1q3/u1q5/u2q3）为 reference_self，交卷不自动
+ * 判、不进教师必批队列（pendingMarkCount），学情 pendingCount 计为待判定；
+ * 唯一的手写题判定来自教师批注（李小红 A1 的 u1q5 判错）。
  */
 
 /** 固定时间基准（周四 → 各相对天数的所属周唯一确定） */
@@ -151,21 +155,21 @@ describe("完成矩阵（D2）", () => {
     const overview = getAnalyticsOverview(db, TEST_TEACHER_ID, q, SEED_NOW);
     const { s1, s2, s3 } = seed.students;
     const { a1, a2, a3, a4 } = seed.assignments;
-    // 陈小明：A1 已交（含填空 → 待批；其余全对）、A2 进行中（草稿）、A3/A4 已批
-    expect(assignmentCell(overview, s1.id, a1.id).status).toBe("submitted");
+    // 陈小明：A1 已交（填空/手写待自评不阻塞 → graded）、A2 进行中（草稿）、A3/A4 已批
+    expect(assignmentCell(overview, s1.id, a1.id).status).toBe("graded");
     expect(assignmentCell(overview, s1.id, a2.id).status).toBe("in-progress");
     expect(assignmentCell(overview, s1.id, a3.id).status).toBe("graded");
     expect(assignmentCell(overview, s1.id, a4.id).status).toBe("graded");
-    // 李小红：A1 已交（教师批注一题后仍含填空待批）、A2 未开始、A3 已交（待批）、A4 已批
-    expect(assignmentCell(overview, s2.id, a1.id).status).toBe("submitted");
+    // 李小红：A1 已交（无教师待批行 → graded）、A2 未开始、A3 已交（未作答手写题待自评 → graded）、A4 已批
+    expect(assignmentCell(overview, s2.id, a1.id).status).toBe("graded");
     expect(assignmentCell(overview, s2.id, a2.id).status).toBe("not-started");
-    expect(assignmentCell(overview, s2.id, a3.id).status).toBe("submitted");
+    expect(assignmentCell(overview, s2.id, a3.id).status).toBe("graded");
     expect(assignmentCell(overview, s2.id, a4.id).status).toBe("graded");
-    // 王小刚：A1/A3 未开始、A2 不在名单（not-assigned）、A4 已交（待批）
+    // 王小刚：A1/A3 未开始、A2 不在名单（not-assigned）、A4 已交（手写题待自评 → graded）
     expect(assignmentCell(overview, s3.id, a1.id).status).toBe("not-started");
     expect(assignmentCell(overview, s3.id, a2.id).status).toBe("not-assigned");
     expect(assignmentCell(overview, s3.id, a3.id).status).toBe("not-started");
-    expect(assignmentCell(overview, s3.id, a4.id).status).toBe("submitted");
+    expect(assignmentCell(overview, s3.id, a4.id).status).toBe("graded");
     // 已交格子带 attemptId（点击跳作答详情）；未开始为 null
     expect(assignmentCell(overview, s1.id, a1.id).attemptId).not.toBeNull();
     expect(assignmentCell(overview, s1.id, a1.id).submittedAt).toBe(
@@ -178,20 +182,20 @@ describe("完成矩阵（D2）", () => {
     const overview = getAnalyticsOverview(db, TEST_TEACHER_ID, q, SEED_NOW);
     const { s1, s2, s3 } = seed.students;
     const { u1, u2 } = seed.units;
-    // 陈小明 U1：首次 + 重做 2 次 = 3 份；三份都含填空 → 各 1 待批、均为
-    // submitted；首次得分 100（scoreFinal 待批为 null，取 scoreAuto=4/4）
+    // 陈小明 U1：首次 + 重做 2 次 = 3 份；填空与手写题待自评、无教师待批 →
+    // 均为 graded；首次得分 60（scoreFinal：3 道客观题对 ÷ 5 题，待自评计分母）
     const s1u1 = unitCell(overview, s1.id, u1.id);
-    expect(s1u1.status).toBe("submitted");
+    expect(s1u1.status).toBe("graded");
     expect(s1u1.attemptCount).toBe(3);
     expect(s1u1.redoCount).toBe(2);
-    expect(s1u1.firstScore).toBe(100);
-    expect(s1u1.pendingCount).toBe(3);
+    expect(s1u1.firstScore).toBe(60);
+    expect(s1u1.pendingCount).toBe(0);
     expect(s1u1.latestSubmittedAt).toBe("2026-09-17T04:00:00.000Z");
-    // 李小红 U1：只做 1 次，得分 25（1/4——填空待批不进分母）
+    // 李小红 U1：只做 1 次，得分 20（1/5——graded 取 scoreFinal，待自评计分母）
     const s2u1 = unitCell(overview, s2.id, u1.id);
     expect(s2u1.attemptCount).toBe(1);
     expect(s2u1.redoCount).toBe(0);
-    expect(s2u1.firstScore).toBe(25);
+    expect(s2u1.firstScore).toBe(20);
     // 王小刚 U1：从未开始
     expect(unitCell(overview, s3.id, u1.id).status).toBe("not-started");
     // 陈小明 U2 未做；李小红 U2 进行中（草稿）；王小刚 U2 未开始
@@ -222,30 +226,30 @@ describe("周趋势（D5 自然周：北京、周一起算、取 submittedAt）"
       correctCount: 0,
       correctRate: null,
     });
-    // 09-07 周：陈小明课程 U1 首次（-20 天 = 09-11 周五），可判 4 题全对
-    //（填空待批不进分母）→ 4/4
+    // 09-07 周：陈小明课程 U1 首次（-20 天 = 09-11 周五），可判 3 道客观题全对
+    //（填空与手写题待自评不进分母）→ 3/3
     expect(trend[1]).toMatchObject({
       attemptCount: 1,
-      judgedCount: 4,
-      correctCount: 4,
+      judgedCount: 3,
+      correctCount: 3,
       correctRate: 1,
     });
     // 09-14 周：陈小明的两份重做（attemptNo 2/3）不进统计（D1）→ 空桶
     expect(trend[2]).toMatchObject({ attemptCount: 0, judgedCount: 0 });
     // 09-21 周：s1A1 + s2A1 + s2Course1 + s2A3 + s2A4（周日属本周）；
-    // 三份含填空卷（U1）各少 1 题可判 → judged 17、correct 10
+    // 填空与手写题待自评不进分母，仅教师判错的 s2A1 u1q5 计入 → judged 14、correct 8
     expect(trend[3]).toMatchObject({
       attemptCount: 5,
-      judgedCount: 17,
-      correctCount: 10,
-      correctRate: 10 / 17,
+      judgedCount: 14,
+      correctCount: 8,
+      correctRate: 8 / 14,
     });
-    // 09-28 周（本周）：s1A4 + s1A3 + s3A4
+    // 09-28 周（本周）：s1A4 + s1A3 + s3A4（手写题 u2q3 待自评不进分母）
     expect(trend[4]).toMatchObject({
       attemptCount: 3,
-      judgedCount: 8,
-      correctCount: 6,
-      correctRate: 0.75,
+      judgedCount: 6,
+      correctCount: 4,
+      correctRate: 4 / 6,
     });
   });
 
@@ -280,8 +284,8 @@ describe("周趋势（D5 自然周：北京、周一起算、取 submittedAt）"
     // 09-21 周只剩 s2A3（-6 天）与 s2A4（-4 天）；s1A1（-9 天）已出窗
     expect(overview.trend[0]).toMatchObject({
       attemptCount: 2,
-      judgedCount: 5,
-      correctCount: 3,
+      judgedCount: 4,
+      correctCount: 2,
     });
     // 矩阵仍显示全部作答（陈小明 U1 三连做不变）
     expect(
@@ -298,52 +302,42 @@ describe("下节课重点（D5 focusDays 与 days 解耦）", () => {
     const focus = overview.focus;
     expect(focus.focusDays).toBe(14);
     expect(focus.from).toBe("2026-09-17T04:00:00.000Z");
-    // 排序：绝对值 3 错居首；有理数加法与有理数的概念各 2 错并列（localeCompare
-    // 按拼音序：「的 de」<「加 jiā」→ 有理数的概念在前）
+    // 排序：绝对值 3 错居首、有理数的概念 2 错、数轴 1 错；有理数加法的手写
+    // 错例只剩教师判错的 s2A1（出 14 天窗口），solve 不再自动判错
     expect(focus.points.map((p) => p.knowledge)).toEqual([
       "绝对值",
       "有理数的概念",
-      "有理数加法",
+      "数轴",
     ]);
-    const [absolute, concept, addition] = focus.points;
-    if (
-      addition === undefined ||
-      absolute === undefined ||
-      concept === undefined
-    ) {
+    const [absolute, concept, axis] = focus.points;
+    if (axis === undefined || absolute === undefined || concept === undefined) {
       throw new Error("重点卡片考点行不足 3 条");
     }
-    // 绝对值：wrong 3、judged 8（数轴单元无填空，口径不变）；代表错题是错误次数
-    // 最多的选择题（示例取最近错例：王小刚 -2 天选 B，晚于李小红的两次 A）
-    expect(absolute).toMatchObject({ wrongCount: 3, judgedCount: 8 });
+    // 绝对值：wrong 3、judged 5（手写题 u2q3 待自评移出分母）；代表错题是错误
+    // 次数最多的选择题（示例取最近错例：王小刚 -2 天选 B，晚于李小红的两次 A）
+    expect(absolute).toMatchObject({ wrongCount: 3, judgedCount: 5 });
     expect(absolute.representative).toMatchObject({
       questionId: seed.questions.u2q2,
       type: "choice",
       answerText: "B",
       studentName: "王小刚",
     });
-    // 有理数加法：填空 2026-10-02 起全人工（三次作答均待批，不算错不进分母）→
-    // wrong 2（s2 两份卷的手写错）、judged 6；代表错题 = 错误次数最多的手写题，
-    // 最近错例是 s2Course1（09-23，最终答案 "3"）
-    expect(addition).toMatchObject({
-      wrongCount: 2,
-      judgedCount: 6,
-      correctRate: 4 / 6,
-    });
-    expect(addition.representative).toMatchObject({
-      questionId: seed.questions.u1q5,
-      type: "solve",
-      studentName: "李小红",
-      answerText: "3",
-      submittedAt: "2026-09-23T04:00:00.000Z",
-    });
-    expect(addition.representative.stemMd).toContain("(-3)+7");
-    expect(addition.representative.attemptId).not.toBe("");
     // 有理数的概念：陈小明 A1 对 1、李小红两卷各错 1 → wrong 2、judged 3
     expect(concept).toMatchObject({
       wrongCount: 2,
       judgedCount: 3,
       correctRate: 1 / 3,
+    });
+    // 数轴：王小刚 A4 判断题错 1、judged 5
+    expect(axis).toMatchObject({
+      wrongCount: 1,
+      judgedCount: 5,
+      correctRate: 0.8,
+    });
+    expect(axis.representative).toMatchObject({
+      questionId: seed.questions.u2q1,
+      type: "judge",
+      studentName: "王小刚",
     });
   });
 
@@ -369,24 +363,24 @@ describe("下节课重点（D5 focusDays 与 days 解耦）", () => {
 describe("待批口径（D4 双断言：不进分母 + 待批数正确）", () => {
   it("题目视角：待批题只进 pendingCount，不进正确率分母", () => {
     const data = getAnalyticsQuestions(db, TEST_TEACHER_ID, q, SEED_NOW);
-    // 数轴练习-3（手写）：5 次提交、2 待批、已判定 3 全对 → 对率 1（不是 3/5）
+    // 数轴练习-3（带参考手写题，reference_self）：5 次提交全部待判定（未自评、
+    // 教师未批）→ 只进 pendingCount，对率 null（不是 0/5）
     const q3 = data.questions.find(
       (item) => item.questionId === seed.questions.u2q3,
     );
     expect(q3).toMatchObject({
       submittedCount: 5,
-      judgedCount: 3,
-      correctCount: 3,
-      pendingCount: 2,
-      correctRate: 1,
+      judgedCount: 0,
+      correctCount: 0,
+      pendingCount: 5,
+      correctRate: null,
     });
   });
 
-  it("总览与画像的待批数：全域 8（六份含填空作答的填空题 + 李小红 A3 与王小刚 A4 的未作答手写题）", () => {
+  it("总览与画像的待批数：教师必批 0（填空与手写题均 reference_self 待自评），画像 pendingCount 计待判定", () => {
     const overview = getAnalyticsOverview(db, TEST_TEACHER_ID, q, SEED_NOW);
-    // 2026-10-02 fill 全人工批改：u1q3 在全部六份作答（陈小明三连做 + 李小红
-    // 课程/A1 + 陈小明 A1）中恒待批，加上原有两道未作答手写题 → 8
-    expect(overview.pendingMarkCount).toBe(8);
+    // 带参考的填空与手写题冻结 reference_self：不进教师必批队列（§5.5.3）
+    expect(overview.pendingMarkCount).toBe(0);
     const s2 = getAnalyticsStudent(
       db,
       TEST_TEACHER_ID,
@@ -394,20 +388,21 @@ describe("待批口径（D4 双断言：不进分母 + 待批数正确）", () =
       q,
       SEED_NOW,
     );
-    // 李小红：A3 手写题 + 两份含填空卷（课程/A1）的填空 → totals.pendingCount=3，
-    // 且这些题不在对率分母（judged 13 = 16 题次 - 3 待批）
+    // 李小红：两份含填空卷（课程/A1）的填空 + 课程首次与 A3/A4 的手写题待判定
+    // → totals.pendingCount=5，且不在对率分母（judged 11 = 16 题次 - 5 待判定；
+    // A1 的手写题经教师判错计入）
     expect(s2.totals).toMatchObject({
-      judgedCount: 13,
-      correctCount: 6,
-      pendingCount: 3,
-      correctRate: 6 / 13,
+      judgedCount: 11,
+      correctCount: 5,
+      pendingCount: 5,
+      correctRate: 5 / 11,
     });
     const absolute = s2.knowledge.find((item) => item.knowledge === "绝对值");
     expect(absolute).toMatchObject({
-      correctCount: 1,
+      correctCount: 0,
       wrongCount: 2,
-      pendingCount: 1,
-      judgedCount: 3,
+      pendingCount: 2,
+      judgedCount: 2,
     });
   });
 });
@@ -439,7 +434,7 @@ describe("重做口径（D1 双断言：不重复计入指标 + 重做次数正�
     });
   });
 
-  it("画像考点只算首次：陈小明「有理数加法」= 4 题次（重做被 D1 排除 + 填空待批不进分母，不是 6/9）", () => {
+  it("画像考点只算首次：陈小明「有理数加法」= 2 题次（重做被 D1 排除 + 填空与手写题待自评不进分母）", () => {
     const s1 = getAnalyticsStudent(
       db,
       TEST_TEACHER_ID,
@@ -451,17 +446,18 @@ describe("重做口径（D1 双断言：不重复计入指标 + 重做次数正�
       (item) => item.knowledge === "有理数加法",
     );
     expect(addition).toMatchObject({
-      judgedCount: 4,
-      correctCount: 4,
+      judgedCount: 2,
+      correctCount: 2,
+      pendingCount: 4,
       correctRate: 1,
     });
-    // 重做概览独立展示：U1 三份、重做 2 次、首次 100（scoreAuto=4/4）
+    // 重做概览独立展示：U1 三份、重做 2 次、首次 60（graded 取 scoreFinal=3/5）
     expect(s1.redo).toHaveLength(1);
     expect(s1.redo[0]).toMatchObject({
       unitTitle: "有理数随堂练习",
       attemptCount: 3,
       redoCount: 2,
-      firstScore: 100,
+      firstScore: 60,
     });
     // 总览 redoCount：窗口内发生的重做（-16/-14 天两次）
     const overview = getAnalyticsOverview(db, TEST_TEACHER_ID, q, SEED_NOW);
@@ -525,11 +521,12 @@ describe("学生画像", () => {
       SEED_NOW,
     );
     expect(s1.studentName).toBe("陈小明");
-    // 16 题次中两道填空（课程首次 + A1）恒待批 → judged 14 全对、pending 2
+    // 16 题次中两道填空 + 四道手写题（课程首次 / A1 / A3 / A4）待自评 →
+    // judged 10 全对、pending 6
     expect(s1.totals).toMatchObject({
-      judgedCount: 14,
-      correctCount: 14,
-      pendingCount: 2,
+      judgedCount: 10,
+      correctCount: 10,
+      pendingCount: 6,
       correctRate: 1,
     });
     // 趋势三个非空周（重做周为空桶）
@@ -600,11 +597,11 @@ describe("学生画像", () => {
     expect(
       s2.lectures[0]?.map.sections.map((section) => section.status),
     ).toEqual(["deep", "not-reached"]);
-    // 重做概览：U1 已交（首次 25 = scoreAuto 1/4，填空待批不出分）+ U2 进行中草稿
+    // 重做概览：U1 已交（graded，首次 20 = scoreFinal 1/5）+ U2 进行中草稿
     expect(
       s2.redo.map((row) => [row.unitTitle, row.attemptCount, row.firstScore]),
     ).toEqual([
-      ["有理数随堂练习", 1, 25],
+      ["有理数随堂练习", 1, 20],
       ["数轴练习", 1, null],
     ]);
   });
@@ -825,13 +822,14 @@ describe("错题列表（T4.2 随契约补齐：D1/D4/D5 口径）", () => {
       SEED_NOW,
     );
     const { u1q1, u1q2, u1q5, u2q2 } = seed.questions;
-    // 期望序：u2q2（A4，09-27）→ 课程首次作答三错（09-23，同刻 questionId 降序）；
-    // 未作答填空 u1q3 2026-10-02 起进待批（finalCorrect=null），不再列入错题
+    // 期望序：u2q2（A4，09-27）→ 课程首次作答两道客观题错（09-23，同刻
+    // questionId 降序）→ A1 教师判错的手写题 u1q5（提交早于课程首次）；课程首次的 u1q5
+    // 待自评（finalCorrect=null），不列入错题
     expect(s2.wrongQuestions.map((row) => row.questionId)).toEqual([
       u2q2,
-      u1q5,
       u1q2,
       u1q1,
+      u1q5,
     ]);
     // 代表作答取最新一次：u2q2 在 A3（09-25）与 A4（09-27）都判错 → 取 A4
     const s2A4 = attemptIdOf({
@@ -845,18 +843,22 @@ describe("错题列表（T4.2 随契约补齐：D1/D4/D5 口径）", () => {
       answerText: "A",
       submittedAt: "2026-09-27T04:00:00.000Z",
     });
-    // 其余三行同属课程首次作答（-8 天）
+    // 第二、三行同属课程首次作答（-8 天）
     const s2Course1 = attemptIdOf({
       studentId: seed.students.s2.id,
       attemptNo: 1,
       unitId: seed.units.u1.id,
     });
     expect(
-      new Set(s2.wrongQuestions.slice(1).map((row) => row.attemptId)),
+      new Set(s2.wrongQuestions.slice(1, 3).map((row) => row.attemptId)),
     ).toEqual(new Set([s2Course1]));
-    // 教师批注判错的手写题（A1 的 u1q5）也在列表，但代表取更新的课程首次作答
+    // 教师批注判错的手写题只来自 A1（课程首次的同题待自评，不构成错题）
+    const s2A1 = attemptIdOf({
+      studentId: seed.students.s2.id,
+      assignmentId: seed.assignments.a1.id,
+    });
     const solveRow = s2.wrongQuestions.find((row) => row.questionId === u1q5);
-    expect(solveRow?.attemptId).toBe(s2Course1);
+    expect(solveRow?.attemptId).toBe(s2A1);
     expect(solveRow?.type).toBe("solve");
   });
 
@@ -942,14 +944,14 @@ describe("课程筛选（D3）", () => {
       "数轴练习",
     ]);
     expect(overview.matrix.students).toHaveLength(3);
-    // 统计只剩 A4 三份（A3 未挂课程、课程 A 作答全部排除）
+    // 统计只剩 A4 三份（A3 未挂课程、课程 A 作答全部排除；手写题待自评不进分母）
     expect(overview.overall).toMatchObject({
-      judgedCount: 8,
-      correctCount: 5,
-      correctRate: 5 / 8,
+      judgedCount: 6,
+      correctCount: 3,
+      correctRate: 3 / 6,
     });
-    // 待批数只剩王小刚 A4 的手写题（李小红 A3 未挂课程，不计入）
-    expect(overview.pendingMarkCount).toBe(1);
+    // 教师必批为 0：A4 的手写题带参考，冻结 reference_self
+    expect(overview.pendingMarkCount).toBe(0);
     // 重点卡片：只剩 U2 错例（绝对值 2 错 / 数轴 1 错）
     expect(
       overview.focus.points.map((p) => [p.knowledge, p.wrongCount]),
@@ -991,12 +993,12 @@ describe("课程筛选（D3）", () => {
 describe("总览汇总与离线占比", () => {
   it("全域汇总（D4 口径）与离线占比（activeSec 加权）", () => {
     const overview = getAnalyticsOverview(db, TEST_TEACHER_ID, q, SEED_NOW);
-    // 35 题次中：2 道未作答手写 + 4 道填空（u1q3×4 份 qualifying 卷）待批 →
-    // judged 29；correct 20（陈小明两道填空原本判对，移出后 22-2）
+    // 35 题次中：4 道填空（u1q3×4 份 qualifying 卷）+ 8 道手写题待自评 →
+    // judged 23（含教师判错的 s2A1 u1q5）；correct 15
     expect(overview.overall).toMatchObject({
-      judgedCount: 29,
-      correctCount: 20,
-      correctRate: 20 / 29,
+      judgedCount: 23,
+      correctCount: 15,
+      correctRate: 15 / 23,
     });
     expect(overview.studentCount).toBe(3);
     expect(overview.offline).toEqual({

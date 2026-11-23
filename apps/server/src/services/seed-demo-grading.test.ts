@@ -50,18 +50,16 @@ function distribution(): Record<string, number> {
 }
 
 describe("演示种子判分分布", () => {
-  it("已交卷历史行按空策略造数：solve 走 final 等价比较、fill 进教师待批", () => {
+  it("已交卷行按开卷冻结的默认策略判分：solve/fill 有参考 → 待自评，客观题照旧", () => {
     expect(distribution()).toEqual({
-      "judge/NULL/自动对": 8,
-      "judge/NULL/自动错": 3,
-      "choice/NULL/自动对": 7,
-      "choice/NULL/自动错": 4,
-      "multi/NULL/自动对": 6,
-      "fill/NULL/教师待批": 6,
-      "solve/NULL/自动对": 7,
-      "solve/NULL/自动错": 1,
-      "solve/NULL/教师判": 1,
-      "solve/NULL/教师待批": 2,
+      "judge/auto/自动对": 8,
+      "judge/auto/自动错": 3,
+      "choice/auto/自动对": 7,
+      "choice/auto/自动错": 4,
+      "multi/auto/自动对": 6,
+      "fill/reference_self/待自评": 6,
+      "solve/reference_self/待自评": 10,
+      "solve/reference_self/教师判": 1,
       "judge/auto/未交": 2,
       "choice/auto/未交": 2,
       "multi/auto/未交": 1,
@@ -70,7 +68,7 @@ describe("演示种子判分分布", () => {
     });
   });
 
-  it("卷级结果：3 份 graded（含 solve 自动判对计分）、8 份 submitted 待批", () => {
+  it("卷级结果：无教师待批行，11 份已交卷全部 graded，待自评行计分母不计分子", () => {
     const rows = db
       .select({ status: attempts.status, scoreFinal: attempts.scoreFinal })
       .from(attempts)
@@ -79,10 +77,17 @@ describe("演示种子判分分布", () => {
       .map((row) => `${row.status}:${row.scoreFinal ?? "null"}`)
       .sort();
     expect(rows).toEqual([
-      "graded:100",
-      "graded:100",
+      "graded:0",
+      "graded:20",
+      "graded:33",
+      "graded:33",
+      "graded:40",
+      "graded:60",
+      "graded:60",
+      "graded:60",
+      "graded:60",
       "graded:67",
-      ...Array<string>(8).fill("submitted:null"),
+      "graded:67",
     ]);
   });
 });

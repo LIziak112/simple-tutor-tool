@@ -10,7 +10,7 @@ import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ApiErr, ReportListData } from "@tutor/contract";
 import { learningPackGoalSchema, notePhaseSchema } from "@tutor/contract";
 import { ZipArchive } from "archiver";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -2434,10 +2434,22 @@ describe("query_student_attempts（T-PR2 MCP-A ①）", () => {
     );
     expect(card.status).toBe("graded");
     // seed 走旧协议整卷交卷：responses.submittedAt 恒 null（列语义），
-    // submittedCount 不作等值断言；对/错/待批三计数覆盖全部有快照的题
-    expect(card.correctCount + card.wrongCount + card.pendingCount).toBe(
-      card.questionCount,
-    );
+    // submittedCount 不作等值断言；对/错/教师待批三计数 + 待自评行（
+    // reference_self 且未判，不进教师待批）覆盖全部有快照的题
+    const selfPending = env.db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.gradingPolicy, "reference_self"),
+          isNull(responses.finalCorrect),
+        ),
+      )
+      .all().length;
+    expect(
+      card.correctCount + card.wrongCount + card.pendingCount + selfPending,
+    ).toBe(card.questionCount);
     expect(card.hasAiReview).toBe(false);
     await client.close();
   });
