@@ -5457,6 +5457,7 @@ it.each([false, true])(
       const withheld = await finishedResult(app, path, world.ownerCookie);
       expect(withheld.answersReleased).toBe(false);
       expect(JSON.stringify(withheld)).not.toContain(comment);
+      // 统一撤销：清除只撤当前生效的教师判定，先回落到上一条仍有效的教师判定（判错）。
       const clear = {
         mark: null,
         comment: null,
@@ -5465,6 +5466,23 @@ it.each([false, true])(
       };
       expect(await checkedMark(first.responseId, clear)).toMatchObject({
         revision: 3,
+        teacherMark: "wrong",
+        finalCorrect: false,
+        attemptStatus: "graded",
+        pendingCount: 0,
+        scoreFinal: mixed ? 67 : 50,
+      });
+      expect(await queue()).toEqual([]);
+      // 再清除一次才撤掉最后一条教师判定，无参考题回到待批。
+      expect(
+        await checkedMark(first.responseId, {
+          ...clear,
+          baseRevision: 3,
+          mutationId: randomUUID(),
+        }),
+      ).toMatchObject({
+        revision: 4,
+        teacherMark: null,
         finalCorrect: null,
         attemptStatus: "submitted",
         pendingCount: 1,

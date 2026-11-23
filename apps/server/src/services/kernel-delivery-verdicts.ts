@@ -96,20 +96,37 @@ export function projectKernelVerdicts(
       .all();
     const latest = new Map<string, MarkResponseData>();
     const pending = new Map<string, MarkIntent>();
+    const accepted: { intent: MarkIntent; result: MarkResponseData }[] = [];
     for (const intent of history) {
       if (!intent.result) {
         pending.set(intent.responseId, intent);
         continue;
       }
       const result = markResponseDataSchema.parse(intent.result);
+      if (!result.eventId) continue;
+      accepted.push({ intent, result });
       if (
-        result.eventId &&
         (result.revision ?? 0) > (latest.get(intent.responseId)?.revision ?? 0)
       )
         latest.set(intent.responseId, result);
     }
+    // 统一撤销：按修订重放已接受的改判，撤销只撤当前生效的一条，回落到上一条仍有效的教师判定。
+    const active = new Map<string, string[]>();
+    for (const { intent, result } of accepted.toSorted(
+      (a, b) => (a.result.revision ?? 0) - (b.result.revision ?? 0),
+    )) {
+      const stack = active.get(intent.responseId) ?? [];
+      if (intent.command?.action === "withdraw") {
+        if (stack.at(-1) !== intent.command.withdrawId)
+          kernelAttemptUnavailable();
+        stack.pop();
+      } else if (result.eventId) stack.push(result.eventId);
+      active.set(intent.responseId, stack);
+    }
+    const activeTeacherMark = (responseId: string) =>
+      active.get(responseId)?.at(-1);
 
-    const accepted: { intent: MarkIntent; receipt: VerdictReceipt }[] = [];
+    const written: { intent: MarkIntent; receipt: VerdictReceipt }[] = [];
     const reviews = new Map<string, ReviewedQuestion>();
     const byQuestion = new Map(facts.rows.map((row) => [row.questionId, row]));
     const project = (
@@ -145,17 +162,15 @@ export function projectKernelVerdicts(
           receipt.questionId !== row.questionId ||
           receipt.submissionId !== review.receipt.id ||
           receipt.targetId !== review.targetId ||
-          (intent.mark === null
-            ? subject !== undefined
+          (intent.command.action === "withdraw"
+            ? intent.command.withdrawId !== activeTeacherMark(row.id) ||
+              subject?.id !== active.get(row.id)?.slice(0, -1).at(-1)
             : subject?.id !== receipt.id)
         )
           kernelAttemptUnavailable();
-        accepted.push({ intent, receipt });
+        written.push({ intent, receipt });
         comment = intent.comment;
-      } else if (
-        (previous?.teacherMark != null && subject?.id !== previous.eventId) ||
-        (previous?.teacherMark == null && subject !== undefined)
-      )
+      } else if (subject?.id !== activeTeacherMark(row.id))
         kernelAttemptUnavailable();
       if (
         automatic !== row.autoCorrect ||
@@ -211,7 +226,7 @@ export function projectKernelVerdicts(
               ...attemptFinalOutcomeOf(rows, { finalized: true }),
             },
     };
-    for (const { intent, receipt } of accepted) {
+    for (const { intent, receipt } of written) {
       const row = rows.find(({ id }) => id === intent.responseId);
       if (!row) kernelAttemptUnavailable();
       db.update(responses)
