@@ -14,10 +14,7 @@ import { HttpError } from "../lib/http-error.ts";
 import { revokedMcpTokenError } from "../mcp/student-auth.ts";
 import { collectStudentPracticeImages } from "../mcp/student-practice-images.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-companion/ai-policy-config-source.ts";
-import {
-  requireStudentAiAttempt,
-  resolveAttemptQuestionAiPolicy,
-} from "./ai-companion/teaching-policy-service.ts";
+import { resolveAttemptQuestionAiPolicy } from "./ai-companion/teaching-policy-service.ts";
 import { studentAttemptContext } from "./attempt-context.ts";
 import { frozenMaterialsForQuestion } from "./attempt-question-materials.ts";
 import { attemptSourceMeta } from "./attempt-rows.ts";
@@ -25,13 +22,15 @@ import { contextFromMemoAnchor } from "./learning-context-projection.ts";
 import { extractMediaImageSrcs } from "./media-service.ts";
 import { assertMemoMetadataBudget } from "./memo-budget.ts";
 import { attemptWorkflowView } from "./practice-workflow-wiring.ts";
-import { answerOf, snapshotOfRow } from "./snapshot.ts";
+import { snapshotOfRow } from "./snapshot.ts";
 import {
   assertStudentMcpPracticeMetadata,
   assertStudentMcpQuestionMetadata,
 } from "./student-mcp-practice-metadata.ts";
 import {
   assertStudentMcpFrozenMembers,
+  studentMcpCurrentAnswer,
+  studentMcpPracticeAttempt,
   studentMcpPublicQuestions,
   studentMcpQuestionMarkdowns,
   studentMcpQuestionsInDisplayOrder,
@@ -86,12 +85,14 @@ export function getStudentMcpPractice(
   studentId: string,
   input: StudentMcpPracticeReadInput,
   now = new Date(),
+  dataDir?: string,
 ) {
-  return db.transaction(() => {
-    const { attempt } = requireStudentAiAttempt(
+  const read = db.$client.transaction(() => {
+    const { attempt, kernel } = studentMcpPracticeAttempt(
       db,
       studentId,
       input.practiceId,
+      dataDir,
     );
     const publicQuestions = studentMcpPublicQuestions(
       db,
@@ -110,6 +111,7 @@ export function getStudentMcpPractice(
     );
     const rows = db
       .select({
+        id: responses.id,
         questionId: responses.questionId,
         submittedAt: responses.submittedAt,
         answerJson: responses.answerJson,
@@ -153,7 +155,7 @@ export function getStudentMcpPractice(
             row.submittedAt !== null || attempt.status !== "draft"
               ? "submitted"
               : inkIds.has(question.id) ||
-                  !isUnanswered(answerOf(row.answerJson))
+                  !isUnanswered(studentMcpCurrentAnswer(row, kernel))
                 ? "answered"
                 : "unanswered",
           settlementSeq: row.settlementSeq,
@@ -163,6 +165,7 @@ export function getStudentMcpPractice(
     assertStudentMcpPracticeMetadata(data);
     return data;
   });
+  return read.immediate();
 }
 
 type PreparedQuestion = Omit<
@@ -172,11 +175,17 @@ type PreparedQuestion = Omit<
 
 function prepareQuestion(
   db: Db,
+  dataDir: string,
   studentId: string,
   input: StudentMcpPracticeQuestionReadInput,
   now: Date,
 ): PreparedQuestion {
-  const { attempt } = requireStudentAiAttempt(db, studentId, input.practiceId);
+  const { attempt, kernel } = studentMcpPracticeAttempt(
+    db,
+    studentId,
+    input.practiceId,
+    dataDir,
+  );
   const publicQuestions = studentMcpPublicQuestions(db, studentId, attempt.id);
   const byId =
     input.questionId === undefined
@@ -254,7 +263,7 @@ function prepareQuestion(
     questionCount: context.session.questionCount,
     question,
     materials,
-    currentAnswer: answerOf(row.answerJson),
+    currentAnswer: studentMcpCurrentAnswer(row, kernel),
     context,
     practiceWorkflow:
       attemptWorkflowView(db, attempt, now)?.practiceWorkflow ?? null,
@@ -288,9 +297,9 @@ export async function getStudentMcpPracticeQuestion(
   isAuthorized: () => boolean,
   now = new Date(),
 ) {
-  const prepared = db.transaction(() =>
-    prepareQuestion(db, studentId, input, now),
-  );
+  const prepared = db.$client
+    .transaction(() => prepareQuestion(db, dataDir, studentId, input, now))
+    .immediate();
   const markdowns = [
     ...studentMcpQuestionMarkdowns(prepared.question),
     ...prepared.materials.map((material) => material.contentMd),
@@ -312,14 +321,15 @@ export async function getStudentMcpPracticeQuestion(
       assertStudentMcpQuestionMetadata({ ...budget, images: metadata }),
   );
   // 文件读取期间可能撤权；回到同步门再决定是否交付已准备的内容。
-  db.transaction(() => {
+  const revalidate = db.$client.transaction(() => {
     if (!isAuthorized()) throw revokedMcpTokenError();
-    const { attempt } = requireAiQuestion(
+    const { attempt, kernel } = studentMcpPracticeAttempt(
       db,
       studentId,
       prepared.practiceId,
-      prepared.question.id,
+      dataDir,
     );
+    requireAiQuestion(db, studentId, prepared.practiceId, prepared.question.id);
     assertStudentMcpFrozenMembers(db, attempt.id);
     const current = contextFromMemoAnchor(
       db,
@@ -343,13 +353,25 @@ export async function getStudentMcpPracticeQuestion(
     );
     if (current === null) return missing();
     assertMemoMetadataBudget({ context: current });
-    if (JSON.stringify(current) !== JSON.stringify(prepared.context))
+    if (
+      JSON.stringify(current) !== JSON.stringify(prepared.context) ||
+      (kernel !== undefined &&
+        (attemptPhaseOf(attempt) !== prepared.phase ||
+          attempt.frozenAt !== prepared.frozenAt ||
+          JSON.stringify(
+            studentMcpCurrentAnswer(
+              questionRow(db, attempt.id, prepared.question.id),
+              kernel,
+            ),
+          ) !== JSON.stringify(prepared.currentAnswer)))
+    )
       throw new HttpError(
         409,
         "LEARNING_CONTEXT_STALE",
         "读取期间来源已变化，请重新读取本题",
       );
   });
+  revalidate.immediate();
   const data = studentMcpPracticeQuestionDataSchema.parse({
     ...prepared,
     imagesIncluded: images.imagesIncluded,

@@ -48,6 +48,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/features/notes/use-note-head", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/notes/use-note-head")>()),
+  useNoteSessionRef: () =>
+    readerId ? { studentId: readerId, origin: window.location.origin } : null,
+}));
+
 const mockedLecture = vi.mocked(fetchStudentLectureApi);
 const mockedPostEvents = vi.mocked(postLectureEventsApi);
 
@@ -90,6 +96,7 @@ const LECTURE: StudentLectureDetail = {
 const scrollIntoViewMock = vi.fn();
 let desktop = true;
 let reducedMotion = false;
+let readerId: string | null;
 
 beforeEach(() => {
   scrollIntoViewMock.mockReset();
@@ -98,6 +105,7 @@ beforeEach(() => {
   mockedPostEvents.mockClear();
   desktop = true;
   reducedMotion = false;
+  readerId = null;
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: query.includes("1024") ? desktop : reducedMotion,
     media: query,
@@ -110,6 +118,7 @@ afterEach(() => {
   // 还原原型，避免影响其他测试文件
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function renderPage(id = LECTURE_ID) {
@@ -121,6 +130,92 @@ function renderPage(id = LECTURE_ID) {
 }
 
 describe("StudentLectureViewPage", () => {
+  describe("普通刷新恢复章节", () => {
+    const routerState = { key: "default", idx: 3, usr: { from: "course" } };
+    const chapterName = "二、有理数的分类";
+
+    beforeEach(() => {
+      window.history.replaceState(routerState, "");
+      readerId = "reader";
+    });
+    afterEach(() => {
+      window.history.replaceState(null, "");
+    });
+
+    it.each([
+      { label: "同一学生和正文版本", restores: true },
+      { label: "另一个学生", nextReader: "other" },
+      { label: "缺少学生身份", nextReader: null },
+      { label: "另一个有效课程", nextLecture: { courseId: "other-course" } },
+      { label: "另一篇讲义", nextLecture: { id: "other-lecture" } },
+      {
+        label: "正文版本更新",
+        nextLecture: { updatedAt: "2026-09-21T10:00:00.000Z" },
+      },
+      { label: "正文返回前已有键盘操作", interrupt: true },
+    ])("$label", async ({ restores, nextReader, nextLecture, interrupt }) => {
+      mockedLecture.mockResolvedValue(LECTURE);
+      const first = renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: chapterName }));
+      expect(window.history.state).toMatchObject(routerState);
+      first.unmount();
+      scrollIntoViewMock.mockClear();
+
+      const navigation = {
+        name: window.location.href,
+        type: "reload",
+        entryType: "navigation",
+        duration: 0,
+        startTime: 0,
+        toJSON: () => ({}),
+      };
+      vi.spyOn(performance, "getEntriesByType").mockReturnValue([navigation]);
+      if (nextReader !== undefined) readerId = nextReader;
+      mockedLecture.mockResolvedValue({ ...LECTURE, ...nextLecture });
+      renderPage();
+      if (interrupt) fireEvent.keyDown(window, { key: "PageDown" });
+      const chapter = await screen.findByRole("button", { name: chapterName });
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        });
+      });
+
+      if (restores) {
+        expect(chapter).toHaveAttribute("aria-current", "location");
+        expect(scrollIntoViewMock).toHaveBeenCalledExactlyOnceWith({
+          block: "start",
+          behavior: "instant",
+        });
+        expect(scrollIntoViewMock.mock.contexts[0]).toBe(
+          screen.getByRole("heading", { name: chapterName }),
+        );
+        expect(
+          screen.getByRole("heading", { name: chapterName }),
+        ).not.toHaveFocus();
+      } else {
+        expect(chapter).not.toHaveAttribute("aria-current");
+        expect(scrollIntoViewMock).not.toHaveBeenCalled();
+      }
+    });
+
+    it.each(["读取", "写入"])("历史状态%s失败时仍可跳章", async (operation) => {
+      mockedLecture.mockResolvedValue(LECTURE);
+      renderPage();
+      const chapter = await screen.findByRole("button", { name: chapterName });
+      const rejected =
+        operation === "读取"
+          ? vi.spyOn(window.history, "state", "get")
+          : vi.spyOn(window.history, "replaceState");
+      rejected.mockImplementationOnce(() => {
+        throw new DOMException("历史状态不可用", "SecurityError");
+      });
+      fireEvent.click(chapter);
+      expect(rejected).toHaveBeenCalledOnce();
+      expect(screen.getByRole("heading", { name: chapterName })).toHaveFocus();
+    });
+  });
+
   it("渲染全文：标题、H2/H3 正文标题与 :::solution 讲解折叠块", async () => {
     mockedLecture.mockResolvedValue(LECTURE);
     renderPage();

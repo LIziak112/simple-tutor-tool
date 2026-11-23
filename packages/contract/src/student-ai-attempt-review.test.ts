@@ -9,6 +9,7 @@ import {
   aiAttemptReviewQuestionSchema,
   aiAttemptReviewReportSchema,
   aiAttemptReviewSnapshotSchema,
+  aiAttemptReviewTaskPublicSchema,
 } from "./student-ai-attempt-review.ts";
 
 /**
@@ -409,4 +410,12 @@ describe("结构化报告与请求口径", () => {
     expect(AI_ATTEMPT_REVIEW_ALLOWED_ACTIONS.failed).toEqual(["retry"]);
     expect(AI_ATTEMPT_REVIEW_MAX_QUESTIONS).toBe(30);
   });
+});
+
+it("整卷任务公开计数可以明确未公布，已公布计数形状仍兼容", () => {
+  const counts = aiAttemptReviewTaskPublicSchema.shape.counts;
+  expect(counts.safeParse(null).success).toBe(true);
+  expect(counts.safeParse(countsOf({})).success).toBe(true);
+  expect(counts.safeParse(undefined).success).toBe(false);
+  expect(aiAttemptReviewCountsSchema.safeParse(null).success).toBe(false);
 });

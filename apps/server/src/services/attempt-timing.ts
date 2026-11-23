@@ -1,10 +1,14 @@
 import {
   ATTEMPT_TIME_UP_GRACE_SEC,
   type AttemptTiming,
+  attemptPhaseOf,
   attemptTimingPhaseOf,
 } from "@tutor/contract";
-import type { Attempt } from "../db/schema";
+import { and, eq, isNull } from "drizzle-orm";
+import type { Db } from "../db/client.ts";
+import { type Attempt, attempts } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { touchAttemptActivity } from "./attempt-activity.ts";
 
 /**
  * 限时测试（个人学习迭代模块 2，2026-11）服务端时钟——唯一实现：
@@ -100,5 +104,38 @@ export function assertSavedAnswersConfirmed(
     locked
       ? "宽限已过，请确认按服务端已保存的作答交卷"
       : "服务端限时状态已变化，请刷新作答页后重试",
+  );
+}
+
+export function startOpenedAttemptTimer(
+  db: Db,
+  attempt: Attempt,
+  timeLimitMinutes: number | undefined,
+): Attempt {
+  if (timeLimitMinutes === undefined || attemptPhaseOf(attempt) !== "opened")
+    return attempt;
+  const now = new Date().toISOString();
+  return db.transaction(
+    (tx) => {
+      const applied =
+        tx
+          .update(attempts)
+          .set(timedColumnsOf(now, timeLimitMinutes))
+          .where(
+            and(
+              eq(attempts.id, attempt.id),
+              eq(attempts.status, "draft"),
+              isNull(attempts.activatedAt),
+              isNull(attempts.abandonedAt),
+            ),
+          )
+          .run().changes > 0;
+      if (applied) touchAttemptActivity(tx, attempt.id, now);
+      return (
+        tx.select().from(attempts).where(eq(attempts.id, attempt.id)).get() ??
+        attempt
+      );
+    },
+    { behavior: "immediate" },
   );
 }

@@ -3,9 +3,9 @@ import {
   HANDWRITTEN_QUESTION_TYPES,
   QUESTION_TYPE_LABELS,
 } from "@tutor/contract";
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { attempts, questions, responses, students } from "../db/schema";
+import { questions, responses } from "../db/schema";
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import {
   answerOf,
@@ -13,6 +13,7 @@ import {
   unitGroupedRows,
 } from "./attempt-service";
 import { timeProjectionsOf } from "./attempt-time-projection";
+import { readCsvAttempts } from "./export-csv-attempts.ts";
 import { batchSerializeStudentAnswerOfRow } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -212,40 +213,16 @@ export function exportCsv(
   teacherId: string,
   publicUrl: string,
   query: ExportCsvQuery,
+  dataDir?: string,
 ): string {
   // 部署根地址去尾斜杠（拼绝对链接用）
   const base = publicUrl.replace(/\/+$/, "");
-  // from/to 与列表接口同一「最近活动时间」轴（已交卷 attempt 即 submittedAt）
-  const lastActivitySql = sql`coalesce(${attempts.submittedAt}, ${attempts.startedAt})`;
-  const where = and(
-    eq(students.teacherId, teacherId),
-    // D13：仅已交卷 attempt（draft 不产生行）
-    ne(attempts.status, "draft"),
-    query.studentId !== undefined
-      ? eq(attempts.studentId, query.studentId)
-      : undefined,
-    query.courseId !== undefined
-      ? eq(attempts.courseId, query.courseId)
-      : undefined,
-    query.assignmentId !== undefined
-      ? eq(attempts.assignmentId, query.assignmentId)
-      : undefined,
-    query.sourceType !== undefined
-      ? eq(attempts.sourceType, query.sourceType)
-      : undefined,
-    query.from !== undefined
-      ? sql`${lastActivitySql} >= ${query.from}`
-      : undefined,
-    query.to !== undefined ? sql`${lastActivitySql} <= ${query.to}` : undefined,
+  const { rows: attemptRows, confirmed } = readCsvAttempts(
+    db,
+    teacherId,
+    query,
+    dataDir,
   );
-  const attemptRows = db
-    .select({ attempt: attempts, studentName: students.displayName })
-    .from(attempts)
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(where)
-    .orderBy(asc(lastActivitySql), asc(attempts.id))
-    .all();
-
   const times = timeProjectionsOf(
     db,
     attemptRows.map(({ attempt }) => attempt.id),
@@ -364,7 +341,11 @@ export function exportCsv(
     // 教师详情同一实现（冻结行自身重建，导出题序=学生看到的题序；懒冻结存量
     // 卷与升级前已交卷沿用题库 join 序）。快照缺失行的题型/难度仅作展示元信息
     // 回落当前 questions，题干/答案等内容一律不回落
-    const groupedRows = unitGroupedRows(db, attempt);
+    const groupedRows = unitGroupedRows(
+      db,
+      attempt,
+      confirmed.get(attempt.id)?.rows,
+    );
     const metaByQuestion = new Map(
       groupedRows.some((group) => group.rows.length > 0)
         ? db

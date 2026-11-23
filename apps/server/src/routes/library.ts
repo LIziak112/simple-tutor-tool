@@ -24,6 +24,7 @@ import {
   noStoreBinaryResponse,
 } from "../lib/binary-response";
 import { parseJsonBody } from "../lib/http-error";
+import { recordResourcePurge } from "../services/backup-restore-facts.ts";
 import {
   batchLibrary,
   createFolder,
@@ -203,7 +204,14 @@ export function createLibraryRoutes(
         return c.json({ ok: true, data: null });
       })
       .delete("/units/:id/purge", (c) => {
-        purgeUnit(db, c.var.teacher.id, c.req.param("id"));
+        const id = c.req.param("id");
+        const teacherId = c.var.teacher.id;
+        db.$client
+          .transaction(() => {
+            purgeUnit(db, teacherId, id);
+            recordResourcePurge(db, "unit", teacherId, id);
+          })
+          .immediate();
         return c.json({ ok: true, data: null });
       })
       .get("/units/:id/usage", (c) => {
@@ -244,7 +252,14 @@ export function createLibraryRoutes(
         return c.json({ ok: true, data: null });
       })
       .delete("/lectures/:id/purge", (c) => {
-        purgeLecture(db, c.var.teacher.id, c.req.param("id"));
+        const id = c.req.param("id");
+        const teacherId = c.var.teacher.id;
+        db.$client
+          .transaction(() => {
+            purgeLecture(db, teacherId, id);
+            recordResourcePurge(db, "lecture", teacherId, id);
+          })
+          .immediate();
         return c.json({ ok: true, data: null });
       })
       .get("/lectures/:id/usage", (c) => {

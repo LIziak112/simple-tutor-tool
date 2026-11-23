@@ -1,4 +1,24 @@
 import { z } from "zod";
+import {
+  orderingBehavior,
+  orderingPublicStructureOf,
+} from "./answer-kinds/index.ts";
+import { questionEvidenceBindings } from "./capability.ts";
+import {
+  choiceAnswersSchema,
+  fillAnswersSchema,
+  finalAnswersSchema,
+  judgeAnswersSchema,
+  matchingAnswersSchema,
+  matchingOptionsSchema,
+  multiAnswersSchema,
+  optionSchema,
+  orderingAnswersSchema,
+  orderingItemSchema,
+  questionTypeSchema,
+  responseAnswersSchema,
+} from "./content.ts";
+import { materialRefSchema } from "./material.ts";
 
 /**
  * 判分输入契约（T2.5 起为权威定义）：学生答案的形态，与 content.ts 的
@@ -33,6 +53,199 @@ export const choiceStudentAnswerSchema = z.object({
   /** 所选项下标（0 起，A=0）；越界由判分函数处理（false 而非异常） */
   index: z.number().int().min(0),
 });
+
+/** 单选评分来源须有标准答案，且正确下标指向实际存在的选项。 */
+export const singleChoiceScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["choice"]),
+    options: optionSchema.array(),
+    answers: choiceAnswersSchema,
+  })
+  .refine(({ options, answers }) => options[answers.index] !== undefined, {
+    path: ["answers", "index"],
+    message: "单选题的正确下标超出选项范围",
+  });
+
+export const judgeScoringSourceSchema = z.object({
+  type: questionTypeSchema.extract(["judge"]),
+  answers: judgeAnswersSchema,
+});
+
+export const multiChoiceScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["multi"]),
+    options: optionSchema.array(),
+    answers: multiAnswersSchema,
+  })
+  .refine(
+    ({ options, answers }) =>
+      answers.indexes.every((index) => options[index] !== undefined),
+    {
+      path: ["answers", "indexes"],
+      message: "多选题的正确下标超出选项范围",
+    },
+  );
+
+export const fillScoringSourceSchema = z.object({
+  type: questionTypeSchema.extract(["fill"]),
+  answers: fillAnswersSchema.extend({
+    blanks: fillAnswersSchema.shape.blanks.min(1),
+  }),
+});
+
+export const finalTextDeliveryScoringSourceSchema = z.object({
+  type: questionTypeSchema.refine((type) => {
+    const { answerKind, paperRole } = questionEvidenceBindings[type];
+    return answerKind === "final" && paperRole === "answerInk";
+  }),
+  answers: finalAnswersSchema.optional(),
+});
+
+export const orderedTextDeliveryScoringSourceSchema = z.union([
+  fillScoringSourceSchema.transform(({ answers }) => ({
+    acceptedBlanks: answers.blanks,
+  })),
+  finalTextDeliveryScoringSourceSchema.transform(({ answers }) => ({
+    acceptedBlanks: [answers === undefined ? [] : [answers.answer]],
+  })),
+]);
+
+export const orderingDeliveryScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["ordering"]),
+    orderingItems: orderingItemSchema.array().min(1),
+    answers: orderingAnswersSchema,
+  })
+  .refine(
+    ({ orderingItems, answers }) =>
+      answers.sequence.length ===
+        orderingItems.filter(({ distractor }) => !distractor).length &&
+      orderingBehavior.inspectShape(
+        answers,
+        orderingPublicStructureOf(orderingItems),
+      ).length === 0,
+    { path: ["answers", "sequence"], message: "排序参考与冻结项不一致" },
+  )
+  .transform((source) => ({
+    ...source,
+    // 冻结参考项逐位编码，评估时据此核对同一题版。
+    acceptedBlanks: source.answers.sequence.map((item) => [item]),
+  }));
+
+export const matchingDeliveryScoringSourceSchema = z
+  .object({
+    type: questionTypeSchema.extract(["matching"]),
+    matchingOptions: matchingOptionsSchema,
+    answers: matchingAnswersSchema,
+  })
+  .refine(
+    ({ matchingOptions, answers }) => {
+      const options = new Set(matchingOptions.options.map(({ id }) => id));
+      const values = Object.values(answers.pairs);
+      return values.length > 0 && values.every((id) => options.has(id));
+    },
+    { path: ["answers", "pairs"], message: "配对参考与冻结选项池不一致" },
+  )
+  .transform((source) => ({
+    ...source,
+    acceptedBlanks: matchingDeliveryValueOf(source.answers.pairs).map((id) => [
+      id,
+    ]),
+  }));
+
+export const matchingTeacherReviewSourceSchema = z.object({
+  type: questionTypeSchema.extract(["matching"]),
+  matchingOptions: matchingOptionsSchema.refine(
+    ({ options }) =>
+      new Set(options.map(({ id }) => id)).size === options.length,
+    { message: "配对选项编号须唯一" },
+  ),
+  materialRefs: materialRefSchema
+    .array()
+    .refine(
+      (refs) =>
+        refs.length === 0 || refs.some(({ slots }) => slots !== undefined),
+      { message: "有材料引用的无参考配对题须声明槽位" },
+    )
+    .optional(),
+  answers: z.undefined().optional(),
+});
+
+const orderingTeacherReviewSourceSchema = z.object({
+  type: questionTypeSchema.extract(["ordering"]),
+  orderingItems: orderingItemSchema
+    .array()
+    .min(1)
+    .refine(
+      (items) =>
+        items.every(
+          ({ distractor, fixedPosition }) =>
+            distractor && fixedPosition === null,
+        ),
+      { message: "无参考排序题的冻结项不得占用排序位置" },
+    ),
+  answers: z.undefined().optional(),
+});
+
+const teacherReviewDeliveryScoringSourceSchema = z.union([
+  matchingTeacherReviewSourceSchema,
+  orderingTeacherReviewSourceSchema,
+]);
+
+export function isTeacherReviewDeliveryScoringSource(
+  source: unknown,
+): source is z.output<typeof teacherReviewDeliveryScoringSourceSchema> {
+  return teacherReviewDeliveryScoringSourceSchema.safeParse(source).success;
+}
+
+export const responseDeliveryScoringSourceSchema = z.object({
+  type: questionTypeSchema.extract(["response"]),
+  answers: responseAnswersSchema.optional(),
+});
+
+export function isResponseDeliveryScoringSource(
+  source: unknown,
+): source is z.output<typeof responseDeliveryScoringSourceSchema> {
+  return responseDeliveryScoringSourceSchema.safeParse(source).success;
+}
+
+const objectiveDeliveryScoringSourceSchema = z.union([
+  singleChoiceScoringSourceSchema,
+  judgeScoringSourceSchema,
+  multiChoiceScoringSourceSchema,
+]);
+
+export const questionDeliveryScoringSourcesSchema =
+  objectiveDeliveryScoringSourceSchema.array().min(1);
+
+export const wholeQuestionDeliveryScoringSourcesSchema = z
+  .union([
+    objectiveDeliveryScoringSourceSchema,
+    orderedTextDeliveryScoringSourceSchema,
+    orderingDeliveryScoringSourceSchema,
+    matchingDeliveryScoringSourceSchema,
+    teacherReviewDeliveryScoringSourceSchema,
+    responseDeliveryScoringSourceSchema,
+  ])
+  .array()
+  .min(1);
+
+export const assignmentScoringSourcesSchema = z.union([
+  singleChoiceScoringSourceSchema
+    .array()
+    .min(1)
+    .transform((questions) => ({
+      slotType: "oneChoicePerQuestion" as const,
+      questions,
+    })),
+  judgeScoringSourceSchema
+    .array()
+    .min(1)
+    .transform((questions) => ({
+      slotType: "oneResponsePerQuestion" as const,
+      questions,
+    })),
+]);
 
 export const multiStudentAnswerSchema = z.object({
   kind: z.literal("multi"),
@@ -88,6 +301,39 @@ export const matchingStudentAnswerSchema = z.object({
   kind: z.literal("matching"),
   pairs: z.record(z.string().min(1), z.string().min(1)),
 });
+
+/** 每对占相邻两个原始字符串，按槽位排序以稳定冻结参考和草稿的编码。 */
+export function matchingDeliveryValueOf(
+  pairs: Readonly<Record<string, string>>,
+): string[] {
+  const entries = Object.entries(pairs).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  return entries.flat();
+}
+
+export const matchingDeliveryAnswerSchema = z
+  .array(z.string().min(1))
+  .transform((value, ctx) => {
+    const pairs = new Map<string, string>();
+    for (let index = 0; index < value.length; index += 2) {
+      const slot = value[index];
+      const option = value[index + 1];
+      if (slot === undefined || option === undefined || pairs.has(slot)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [index],
+          message: "配对原值须逐对保留唯一槽位及其选项",
+        });
+        return z.NEVER;
+      }
+      pairs.set(slot, option);
+    }
+    return {
+      kind: matchingStudentAnswerSchema.shape.kind.value,
+      pairs: Object.fromEntries(pairs),
+    };
+  });
 
 /**
  * ordering 学生答案：已放 itemId 序列。部分序列=草稿合法；无重复、干扰项

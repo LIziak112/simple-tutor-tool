@@ -9,15 +9,35 @@ import {
   aiAttemptReviewReportSchema,
   aiAttemptReviewSnapshotSchema,
 } from "@tutor/contract";
-import { desc, eq, max } from "drizzle-orm";
+import { and, desc, eq, max } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
   type AiAttemptReviewTaskRow,
   aiAttemptReviewResults,
+  attempts,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { isKernelAttempt } from "../kernel-assignment-routing.ts";
 import { jsonOf } from "../snapshot.ts";
+import { attemptAnswersReleased } from "./student-ai-batch.ts";
 import { asDb, type QueueTx } from "./student-ai-shared.ts";
+
+function attemptReviewCountsReleased(db: Db, task: AiAttemptReviewTaskRow) {
+  const attempt = db
+    .select()
+    .from(attempts)
+    .where(
+      and(
+        eq(attempts.id, task.attemptId),
+        eq(attempts.studentId, task.studentId),
+      ),
+    )
+    .get();
+  return (
+    attempt !== undefined &&
+    (!isKernelAttempt(db, attempt) || attemptAnswersReleased(db, attempt))
+  );
+}
 
 /** 公开视图的计数来源：counts_json 反规范化投影（损坏 → AI_ATTEMPT_REVIEW_BROKEN） */
 function countsOfTask(task: AiAttemptReviewTaskRow): AiAttemptReviewCounts {
@@ -40,7 +60,9 @@ export function attemptReviewPublicViewOf(
 ): AiAttemptReviewTaskPublic {
   // counts 是创建时冻结的反规范化投影（counts_json），公开视图不解整体
   // 快照——列表和动作不必为计数解析 256KiB 内部视图
-  const counts = countsOfTask(task);
+  const counts = attemptReviewCountsReleased(asDb(db), task)
+    ? countsOfTask(task)
+    : null;
   const resultAt =
     resultAtOverride === undefined
       ? (asDb(db)

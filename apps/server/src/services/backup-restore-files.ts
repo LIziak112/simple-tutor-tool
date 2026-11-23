@@ -1,7 +1,11 @@
-import { mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, renameSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { DbHandle } from "../db/client";
 import { HttpError } from "../lib/http-error";
+import {
+  beginBackupReplacement,
+  removeBackupTemp,
+} from "./backup-process-guard.ts";
 
 function restoreErrorCode(error: unknown): string {
   if (
@@ -14,36 +18,35 @@ function restoreErrorCode(error: unknown): string {
   return "UNKNOWN";
 }
 
-/** 尽力清理暂存目录，保留业务结果。 */
-export function removeBackupTemp(path: string): void {
-  try {
-    rmSync(path, { recursive: true, force: true });
-  } catch {
-    // 暂存目录清理失败不影响已经确认的恢复结果。
-  }
-}
-
 export function replaceBackupFiles(
   dataDir: string,
   staging: string,
   preservedEntry: string,
   handle: DbHandle,
+  beforeReplace: () => void,
 ): void {
   const oldDir = mkdtempSync(join(dirname(staging), "tutor-restore-old-"));
   const movedOut: string[] = [];
   const movedIn: string[] = [];
   let retainOldDir = false;
+  let guard: ReturnType<typeof beginBackupReplacement> | undefined;
   try {
-    handle.close();
+    guard = beginBackupReplacement(oldDir, staging);
+    beforeReplace();
     let phase = "搬出旧文件";
     try {
-      for (const name of readdirSync(dataDir)) {
-        if (name === preservedEntry) continue;
+      handle.close();
+      const before = readdirSync(dataDir).filter(
+        (name) => name !== preservedEntry,
+      );
+      const incoming = readdirSync(staging);
+      guard.plan(before, incoming);
+      for (const name of before) {
         renameSync(join(dataDir, name), join(oldDir, name));
         movedOut.push(name);
       }
       phase = "放入新文件";
-      for (const name of readdirSync(staging)) {
+      for (const name of incoming) {
         renameSync(join(staging, name), join(dataDir, name));
         movedIn.push(name);
       }
@@ -93,6 +96,13 @@ export function replaceBackupFiles(
       );
     }
   } finally {
-    if (!retainOldDir) removeBackupTemp(oldDir);
+    try {
+      if (!retainOldDir) {
+        guard?.finish();
+        removeBackupTemp(oldDir);
+      }
+    } finally {
+      guard?.release();
+    }
   }
 }

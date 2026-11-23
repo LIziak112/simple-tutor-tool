@@ -18,7 +18,7 @@ export function registerStudentAttemptReviewTools(
   server: McpServer,
   deps: StudentMcpServerDeps,
 ): void {
-  const { db, studentId, hmacSecret } = deps;
+  const { db, dataDir, studentId, hmacSecret } = deps;
   // 5. list_my_attempt_reviews：整体复盘任务只读列表（独立任务类型，不与
   //    逐题任务混排；领取/写回用下列专属工具）
   server.registerTool(
@@ -81,7 +81,7 @@ export function registerStudentAttemptReviewTools(
       const claimed = claimAttemptReviewTask(
         db,
         { studentId, ...(taskId !== undefined ? { taskId } : {}) },
-        { hmacSecret },
+        { hmacSecret, dataDir },
       );
       if (claimed === null) {
         return jsonContent({

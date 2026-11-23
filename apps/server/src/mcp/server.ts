@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
-  ANALYTICS_DAYS_DEFAULT,
-  ANALYTICS_FOCUS_DAYS_DEFAULT,
+  analyticsQuerySchema,
   attemptSourceSchema,
   attemptStatusSchema,
   courseCatalogCommandSchema,
@@ -12,8 +11,6 @@ import {
   notePhaseSchema,
   questionTypeSchema,
   teacherAttemptListQuerySchema,
-  teacherResponseAnswerEditSchema,
-  teacherResponseSnapshotEditSchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
@@ -56,10 +53,6 @@ import {
 } from "../services/report-service";
 import { listStudents } from "../services/student-service";
 import {
-  editTeacherDraftResponse,
-  listTeacherAttempts,
-} from "../services/teacher-attempt-service";
-import {
   commitZipImport,
   decodeImportZipBase64,
   previewZipImport,
@@ -72,8 +65,9 @@ import {
   deleteUnstartedAssignment,
   resolveAssignmentStudentIds,
 } from "./assignment-tools";
+import { registerTeacherDraftEdits } from "./teacher-answer-edit-tool.ts";
+import { queryTeacherAttemptCards } from "./teacher-attempt-cards.ts";
 import {
-  attemptExtrasOf,
   decodeCursorOffset,
   queryStudentResponses,
   resolveToolStudent,
@@ -116,7 +110,7 @@ export interface McpServerDeps {
   readonly teacherId: string;
   /** DSL 规范目录覆盖（createApp options.specDir 透传；缺省按候选顺序解析） */
   readonly specDir?: string | undefined;
-  /** learning-pack now 注入（测试确定性；默认当前时刻） */
+  /** 学情统计与学情包的测试时钟，默认当前时刻。 */
   readonly now?: Date | string | undefined;
 }
 
@@ -292,7 +286,7 @@ export function registerTeacherTools(
   server: McpServer,
   deps: McpServerDeps,
 ): void {
-  const { db, dataDir, teacherId, specDir } = deps;
+  const { db, dataDir, teacherId, specDir, now } = deps;
 
   server.registerTool(
     "get_course_catalog",
@@ -766,11 +760,8 @@ export function registerTeacherTools(
       annotations: { readOnlyHint: true },
     },
     guard(({ courseId, days, focusDays }) => {
-      const data = getAnalyticsQuestions(db, teacherId, {
-        ...(courseId !== undefined ? { courseId } : {}),
-        days: days ?? ANALYTICS_DAYS_DEFAULT,
-        focusDays: focusDays ?? ANALYTICS_FOCUS_DAYS_DEFAULT,
-      });
+      const query = analyticsQuerySchema.parse({ courseId, days, focusDays });
+      const data = getAnalyticsQuestions(db, teacherId, query, now, dataDir);
       return jsonContent(data);
     }),
   );
@@ -934,7 +925,7 @@ export function registerTeacherTools(
   );
 
   // 15. query_student_attempts：学生历次作答卷盘点（T-PR2 MCP-A ①，薄封装
-  // listTeacherAttempts + 每卷增量计数，见 teacher-queries.attemptExtrasOf）
+  // 卡片与每卷增量计数统一在 teacher-attempt-cards 装配）
   server.registerTool(
     "query_student_attempts",
     {
@@ -1019,50 +1010,9 @@ export function registerTeacherTools(
             `查询参数不合法：${firstIssueMessage(parsed.error)}`,
           );
         }
-        const query = parsed.data;
-        const { attempts: cards, total } = listTeacherAttempts(
-          db,
-          teacherId,
-          query,
+        return jsonContent(
+          queryTeacherAttemptCards(db, teacherId, parsed.data, dataDir),
         );
-        const extras = attemptExtrasOf(
-          db,
-          cards.map((card) => card.attemptId),
-        );
-        const offset = decodeCursorOffset(cursor);
-        const nextCursor =
-          offset + cards.length < total ? String(offset + cards.length) : null;
-        return jsonContent({
-          total,
-          nextCursor,
-          attempts: cards.map((card) => ({
-            attemptId: card.attemptId,
-            studentId: card.studentId,
-            studentName: card.studentName,
-            sourceType: card.sourceType,
-            courseId: card.courseId,
-            courseName: card.courseName,
-            assignmentId: card.assignmentId,
-            assignmentTitle: card.assignmentTitle,
-            unitId: card.unitId,
-            unitTitle: card.unitTitle,
-            attemptNo: card.attemptNo,
-            status: card.status,
-            startedAt: card.startedAt,
-            submittedAt: card.submittedAt,
-            activeSec: card.activeSec,
-            unitCount: card.unitCount,
-            questionCount: card.questionCount,
-            scoreAuto: card.scoreAuto,
-            scoreFinal: card.scoreFinal,
-            submittedCount: extras.get(card.attemptId)?.submittedCount ?? 0,
-            correctCount: extras.get(card.attemptId)?.correctCount ?? 0,
-            wrongCount: extras.get(card.attemptId)?.wrongCount ?? 0,
-            pendingCount: card.pendingCount,
-            unsureCount: extras.get(card.attemptId)?.unsureCount ?? 0,
-            hasAiReview: extras.get(card.attemptId)?.hasAiReview ?? false,
-          })),
-        });
       },
     ),
   );
@@ -1162,13 +1112,8 @@ export function registerTeacherTools(
     },
     guard((args) => {
       const studentId = resolveToolStudent(db, teacherId, args.studentId);
-      return jsonContent(
-        queryStudentResponses(db, teacherId, {
-          ...args,
-          studentId,
-          limit: args.limit ?? 50,
-        }),
-      );
+      const query = { ...args, studentId, limit: args.limit ?? 50 };
+      return jsonContent(queryStudentResponses(db, teacherId, query, dataDir));
     }),
   );
 
@@ -1250,25 +1195,5 @@ export function registerTeacherTools(
     }),
   );
 
-  server.registerTool(
-    "update_response_snapshot",
-    {
-      description:
-        "修正未作废草稿卷中未提交、尚无作答材料的题目快照。须保持题号、题型、材料引用和冻结判分策略一致。用 query_student_responses 定位并读取版本，修正与原因同步留痕。",
-      inputSchema: teacherResponseSnapshotEditSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true },
-    },
-    guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
-  );
-
-  server.registerTool(
-    "update_response_answer",
-    {
-      description:
-        "修正未作废草稿卷中未提交题目的草稿答案。用 query_student_responses 定位并读取版本。修正不会提交、判分或计入学生改答次数，原因同步留痕。",
-      inputSchema: teacherResponseAnswerEditSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true },
-    },
-    guard((edit) => jsonContent(editTeacherDraftResponse(db, teacherId, edit))),
-  );
+  registerTeacherDraftEdits(server, db, dataDir, teacherId);
 }

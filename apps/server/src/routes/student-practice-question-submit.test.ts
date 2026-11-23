@@ -10,7 +10,6 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { runMigrations } from "../db/migrate.ts";
 import {
   assignments,
   attemptContextFreezes,
@@ -25,6 +24,7 @@ import {
   createTestDb,
   createTestDbBeforeActivationGuards,
   createTestDir,
+  migrateTestDbFromBeforeActivationGuards,
 } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
@@ -1488,7 +1488,7 @@ describe("M2 整卷混跑（§10.1 末行：已提交行不重判、只判剩余
       )
       .get();
     expect(evidence).toBeDefined();
-    runMigrations(env.db);
+    migrateTestDbFromBeforeActivationGuards(env.db);
     const submitted = await submitAttemptRequest(
       env.app,
       env.aCookie,

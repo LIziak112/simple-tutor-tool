@@ -40,33 +40,17 @@ import {
   renderLearningPackPrompt,
 } from "@tutor/contract";
 import { analyzeLectureStructure } from "@tutor/md-dsl";
-import {
-  and,
-  asc,
-  eq,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  ne,
-  sql,
-} from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
-  assignments,
-  attempts,
   courseItems,
-  courses,
   events,
   type InkRow,
   ink,
   lectures,
   questions,
   type ResponseRow,
-  responses,
-  students,
   units,
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
@@ -87,6 +71,11 @@ import {
   beijingExportStampOf,
   SOURCE_TYPE_TEXT,
 } from "./export-csv";
+import {
+  authorizeLearningPackScope,
+  readLearningPackAttempts,
+  requireOwnedStudent,
+} from "./export-learning-pack-scope.ts";
 import { responseBaseOf } from "./export-response-base";
 import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
@@ -168,62 +157,6 @@ function overLimitMessageOf(
   )} MB 上限。${
     lead === "hint" ? "精简方向：减少" : "请减少"
   }学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。`;
-}
-
-// ---------- 范围校验（D7：域内逐个校验，404 不暴露存在性） ----------
-
-/** 学生域校验：不存在或非本教师 → 404 STUDENT_NOT_FOUND；通过返回展示行 */
-function requireOwnedStudent(
-  db: Db,
-  teacherId: string,
-  studentId: string,
-): { id: string; displayName: string; archivedAt: string | null } {
-  const row = db
-    .select({
-      id: students.id,
-      displayName: students.displayName,
-      archivedAt: students.archivedAt,
-    })
-    .from(students)
-    .where(and(eq(students.id, studentId), eq(students.teacherId, teacherId)))
-    .get();
-  if (row === undefined) {
-    throw new HttpError(404, "STUDENT_NOT_FOUND", "学生不存在");
-  }
-  return row;
-}
-
-/** 课程域校验（D7）：不存在或非本教师 → 404 COURSE_NOT_FOUND */
-function requireOwnedCourse(db: Db, teacherId: string, courseId: string): void {
-  const row = db
-    .select({ id: courses.id })
-    .from(courses)
-    .where(and(eq(courses.id, courseId), eq(courses.teacherId, teacherId)))
-    .get();
-  if (row === undefined) {
-    throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
-  }
-}
-
-/** 作业域校验（D7）：不存在或非本教师 → 404 ASSIGNMENT_NOT_FOUND（软删作业可导出历史） */
-function requireOwnedAssignment(
-  db: Db,
-  teacherId: string,
-  assignmentId: string,
-): void {
-  const row = db
-    .select({ id: assignments.id })
-    .from(assignments)
-    .where(
-      and(
-        eq(assignments.id, assignmentId),
-        eq(assignments.teacherId, teacherId),
-      ),
-    )
-    .get();
-  if (row === undefined) {
-    throw new HttpError(404, "ASSIGNMENT_NOT_FOUND", "作业不存在");
-  }
 }
 
 /** 讲义域校验（D7）：不存在、非本教师或已软删 → 404 LECTURE_NOT_FOUND */
@@ -449,63 +382,23 @@ export function assembleLearningPack(
       : new Date(asOfMs - request.scope.days * DAY_MS).toISOString();
   const m = request.modules;
 
-  // —— 1. 域校验（先验后取，404 不暴露存在性） ——
-  const explicitStudents: Array<{
-    id: string;
-    displayName: string;
-    archivedAt: string | null;
-  }> = [];
-  const seenStudentIds = new Set<string>();
-  for (const studentId of request.scope.studentIds ?? []) {
-    if (seenStudentIds.has(studentId)) continue; // 去重保序（化名编号稳定）
-    seenStudentIds.add(studentId);
-    explicitStudents.push(requireOwnedStudent(db, teacherId, studentId));
-  }
-  if (request.scope.courseId !== undefined) {
-    requireOwnedCourse(db, teacherId, request.scope.courseId);
-  }
-  if (request.scope.assignmentId !== undefined) {
-    requireOwnedAssignment(db, teacherId, request.scope.assignmentId);
-  }
+  const explicitStudents = authorizeLearningPackScope(
+    db,
+    teacherId,
+    request.scope,
+  );
   const lectureRows = m.lectures.map((pick) => ({
     pick,
     lecture: requireOwnedLecture(db, teacherId, pick.lectureId),
   }));
 
-  // —— 2/3. 范围内已交卷 attempt（域过滤 + 窗口 + 交叉筛选） ——
-  const filters = [
-    eq(students.teacherId, teacherId),
-    ne(attempts.status, "draft"), // D15：历次=已交卷历次，draft 不收录
-    isNotNull(attempts.submittedAt),
-    lte(attempts.submittedAt, asOfIso), // T6R.16：asOf 贯穿（缺省=nowIso 零变化）
-    fromIso !== null ? gte(attempts.submittedAt, fromIso) : undefined,
-    request.scope.studentIds !== undefined
-      ? inArray(attempts.studentId, [...seenStudentIds])
-      : undefined,
-    request.scope.assignmentId !== undefined
-      ? eq(attempts.assignmentId, request.scope.assignmentId)
-      : undefined,
-  ].filter((item): item is NonNullable<typeof item> => item !== undefined);
-  const scopeAttempts = db
-    .select({ attempt: attempts })
-    .from(attempts)
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(and(...filters))
-    .orderBy(asc(attempts.submittedAt), asc(attempts.id))
-    .all()
-    .map((row) => row.attempt)
-    .filter((attempt) => {
-      if (request.scope.courseId === undefined) return true;
-      // 作业作答的课程以作业行兜底（T2A.7 同款口径）
-      if (attempt.courseId === request.scope.courseId) return true;
-      if (attempt.assignmentId === null) return false;
-      const assignment = db
-        .select({ courseId: assignments.courseId })
-        .from(assignments)
-        .where(eq(assignments.id, attempt.assignmentId))
-        .get();
-      return assignment?.courseId === request.scope.courseId;
-    });
+  const { scopeAttempts, responsesByAttempt } = readLearningPackAttempts(
+    db,
+    dataDir,
+    teacherId,
+    request.scope,
+    { fromIso, asOfIso },
+  );
 
   // —— 4. 学生名单与化名（D16） ——
   let roster: Array<{
@@ -543,21 +436,6 @@ export function assembleLearningPack(
     );
   });
 
-  // —— 5. 范围内 responses（各 section 共用） ——
-  const responsesByAttempt = new Map<string, ResponseRow[]>();
-  for (const ids of chunk(scopeAttempts.map((attempt) => attempt.id))) {
-    for (const row of db
-      .select()
-      .from(responses)
-      .where(inArray(responses.attemptId, ids))
-      // rowid 序＝attemptResponseRows 同序（复审 C15：预取行喂展示序装配）
-      .orderBy(sql`rowid`)
-      .all()) {
-      const list = responsesByAttempt.get(row.attemptId);
-      if (list === undefined) responsesByAttempt.set(row.attemptId, [row]);
-      else list.push(row);
-    }
-  }
   // 按学生（名单顺序）→ 提交时间排布 attempt（summary 与逐题的遍历序）
   const rosterIndex = new Map(
     roster.map((student, i) => [student.id, i] as const),

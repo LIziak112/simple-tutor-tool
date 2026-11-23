@@ -62,6 +62,19 @@ const mockedAction = vi.mocked(postStudentAiAttemptReviewActionApi);
 const mockedCreate = vi.mocked(createStudentAiAttemptReviewApi);
 const mockedBatchCreate = vi.mocked(createStudentAiBatchReviewApi);
 
+const COUNTS: AiAttemptReviewPreviewData["counts"] = {
+  total: 27,
+  correctCount: 20,
+  incorrectCount: 6,
+  unansweredCount: 1,
+  pendingCount: 0,
+  unknownAnswerCount: 0,
+  hasAnswerCount: 26,
+  missingAnswerCount: 1,
+  gradedCount: 26,
+  accuracyAmongGraded: 20 / 26,
+};
+
 const taskOf = (
   overrides: Partial<AiAttemptReviewTaskPublic> = {},
 ): AiAttemptReviewTaskPublic => ({
@@ -70,18 +83,7 @@ const taskOf = (
   status: "replied",
   purpose: "复盘",
   questionCount: 27,
-  counts: {
-    total: 27,
-    correctCount: 20,
-    incorrectCount: 6,
-    unansweredCount: 1,
-    pendingCount: 0,
-    unknownAnswerCount: 0,
-    hasAnswerCount: 26,
-    missingAnswerCount: 1,
-    gradedCount: 26,
-    accuracyAmongGraded: 20 / 26,
-  },
+  counts: COUNTS,
   snapshotVersion: "v",
   generation: 1,
   retryCount: 0,
@@ -98,7 +100,7 @@ const taskOf = (
 const PREVIEW: AiAttemptReviewPreviewData = {
   attemptId: ATTEMPT_ID,
   questionCount: 27,
-  counts: taskOf().counts,
+  counts: COUNTS,
   fieldNotes: [],
   notes: [],
   opaquePreviewVersion: "pv-1",
@@ -304,6 +306,100 @@ describe("整卷复盘承载：地址驱动", () => {
     ).toBeInTheDocument();
     expect(mockedDetail).not.toHaveBeenCalled();
     expect(mockedAction).not.toHaveBeenCalled();
+  });
+
+  it("重列显示成绩未公布时收起已有统计，发布恢复后重新预览", async () => {
+    mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+    mockedPreview.mockResolvedValue(PREVIEW);
+    const client = new QueryClient();
+    renderAt("?aiReview=panel", client);
+    const panel = within(
+      await screen.findByRole("dialog", { name: "整卷复盘" }),
+    );
+    expect(await panel.findByText(/分母为已判分题数/)).toBeInTheDocument();
+    mockedList.mockResolvedValue({
+      tasks: [
+        taskOf({
+          status: "cancelled",
+          counts: null,
+          allowedActions: ["archive"],
+        }),
+      ],
+      nextCursor: null,
+    });
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: attemptReviewListKey(ATTEMPT_ID),
+      });
+    });
+    expect(await panel.findByText("成绩未公布")).toBeInTheDocument();
+    expect(panel.queryByText(/已判分正确率|判对 20/)).toBeNull();
+    expect(panel.getByRole("button", { name: "归档" })).toBeEnabled();
+    mockedList.mockResolvedValue({
+      tasks: [taskOf({ status: "cancelled", allowedActions: ["archive"] })],
+      nextCursor: null,
+    });
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: attemptReviewListKey(ATTEMPT_ID),
+      });
+    });
+    expect(await panel.findByText(/分母为已判分题数/)).toBeInTheDocument();
+    expect(panel.queryByText("成绩未公布")).toBeNull();
+  });
+
+  it("同一待领取任务的卡片只显示冻结统计，撤回后隐藏，重新公布后原样显示", async () => {
+    const task = taskOf({
+      status: "created",
+      hasResult: false,
+      allowedActions: ["cancel"],
+      questionCount: 2,
+      counts: {
+        total: 2,
+        correctCount: 1,
+        incorrectCount: 1,
+        unansweredCount: 0,
+        pendingCount: 0,
+        unknownAnswerCount: 0,
+        hasAnswerCount: 2,
+        missingAnswerCount: 0,
+        gradedCount: 2,
+        accuracyAmongGraded: 0.5,
+      },
+    });
+    mockedList.mockResolvedValue({ tasks: [task], nextCursor: null });
+    mockedPreview.mockResolvedValue(PREVIEW);
+    const client = new QueryClient();
+    renderAt("?aiReview=panel", client);
+    const tasks = within(
+      await screen.findByRole("list", { name: "整卷复盘任务" }),
+    );
+    const snapshotText = "判对 1 · 判错 1 · 已判分正确率 50%";
+    expect(await tasks.findByText(snapshotText)).toBeInTheDocument();
+    expect(tasks.queryByText(/77%/)).toBeNull();
+
+    mockedList.mockResolvedValue({
+      tasks: [{ ...task, counts: null }],
+      nextCursor: null,
+    });
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: attemptReviewListKey(ATTEMPT_ID),
+      });
+    });
+    expect(await tasks.findByText("成绩未公布")).toBeInTheDocument();
+    expect(tasks.getAllByText(/成绩未公布/)).toHaveLength(1);
+    expect(tasks.queryByText(/判对|正确率/)).toBeNull();
+    expect(tasks.getByRole("button", { name: "取消任务" })).toBeEnabled();
+
+    mockedList.mockResolvedValue({ tasks: [task], nextCursor: null });
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: attemptReviewListKey(ATTEMPT_ID),
+      });
+    });
+    expect(await tasks.findByText(snapshotText)).toBeInTheDocument();
+    expect(tasks.queryByText(/成绩未公布|77%/)).toBeNull();
   });
 
   it("首次发起：确认后只发 1 次整卷任务创建请求，不创建任何逐题任务", async () => {

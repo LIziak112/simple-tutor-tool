@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
+import { BACKUP_SNAPSHOT_NAME_PATTERN } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -309,9 +310,13 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     expect(existsSync(join(dataDir, "tutor.db"))).toBe(true);
 
     // 恢复前自动快照存在（D21 回滚保险）：恢复时刻的旧数据快照在 backups/
-    const names = readdirSync(join(dataDir, BACKUP_DIR_NAME));
+    const names = readdirSync(join(dataDir, BACKUP_DIR_NAME)).filter((name) =>
+      BACKUP_SNAPSHOT_NAME_PATTERN.test(name),
+    );
     const snapshots = listSnapshots(dataDir);
-    expect(snapshots.length).toBe(names.length);
+    expect(snapshots.map(({ filename }) => filename).sort()).toEqual(
+      names.sort(),
+    );
     expect(snapshots.length).toBeGreaterThanOrEqual(3); // 旧手拍 + 下载补拍 + 恢复前保险
   });
 

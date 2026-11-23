@@ -28,7 +28,12 @@ import {
 import { mathifyAiReferenceAnswer } from "@tutor/md-dsl";
 import { asc, eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
-import { type Attempt, aiMessages, responses } from "../../db/schema.ts";
+import {
+  type Attempt,
+  aiMessages,
+  type ResponseRow,
+  responses,
+} from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { frozenMaterialsForQuestion } from "../attempt-question-materials.ts";
 import {
@@ -38,6 +43,9 @@ import {
   structuresOfSnapshot,
 } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
+import { readKernelAttemptFacts } from "../kernel-assignment-facts.ts";
+import { isKernelAttempt } from "../kernel-assignment-routing.ts";
+import { kernelAttemptUnavailable } from "../kernel-assignment-runtime.ts";
 import { snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { getTeacherAiSettings } from "./settings-service.ts";
@@ -177,6 +185,7 @@ export interface AiRecordRef {
 
 /** 装配选项:now 注入测试时刻(确定性);hmacSecret = 服务端密钥(DATA_DIR/secret.key) */
 export interface AiContextBundleOptions {
+  readonly dataDir?: string;
   readonly now?: Date | string;
   readonly hmacSecret: string;
   /** LR-PR5 版本钉住:任务创建时三类材料的 (revision, hash),并入快照与 contextVersion 输入 */
@@ -287,6 +296,40 @@ function promptRulesOf(
   };
 }
 
+/** 只读取已授权冻结行的内核事实。宿主投影尚未追上时拒绝装配。 */
+function authoritativeAnswerOf(
+  db: Db,
+  dataDir: string | undefined,
+  attempt: Attempt,
+  frozen: ResponseRow,
+): string | null {
+  if (!isKernelAttempt(db, attempt)) return frozen.answerJson;
+  if (dataDir === undefined) kernelAttemptUnavailable();
+  try {
+    const facts = readKernelAttemptFacts(db, dataDir, attempt);
+    const row = facts.rows.find((item) => item.id === frozen.id);
+    if (
+      row === undefined ||
+      row.attemptId !== attempt.id ||
+      row.questionId !== frozen.questionId ||
+      row.questionVersion !== frozen.questionVersion ||
+      row.submittedAt !== frozen.submittedAt ||
+      facts.attempt.status !== attempt.status ||
+      facts.attempt.frozenAt !== attempt.frozenAt
+    )
+      kernelAttemptUnavailable();
+    return row.answerJson;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ERR_SQLITE_ERROR"
+    )
+      kernelAttemptUnavailable();
+    throw error;
+  }
+}
+
 /**
  * 装配单题文字上下文(创建与外发两时点共用;每次调用实时裁决)。
  *
@@ -332,7 +375,7 @@ export function buildAiContextBundle(
     attempt,
     responseId,
     snapshot,
-    answerJson: row.answerJson,
+    answerJson: authoritativeAnswerOf(db, options.dataDir, attempt, row),
     unitId: row.unitId,
     now: options.now,
     hmacSecret: options.hmacSecret,

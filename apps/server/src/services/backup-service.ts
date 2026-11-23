@@ -13,14 +13,17 @@ import {
   BACKUP_KEEP_COUNT,
   BACKUP_SNAPSHOT_NAME_PATTERN,
 } from "@tutor/contract";
-import { ZipArchive } from "archiver";
+import type { ZipArchive } from "archiver";
 import Database from "better-sqlite3";
 import type { Logger } from "pino";
 import { verifyBackupRestorePassword } from "../auth/instance-backup-access";
 import type { Db, DbHandle } from "../db/client";
 import { BLOB_BACKUP_REF_COLUMNS } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { captureBackupArchive } from "./backup-download.ts";
+import { removeBackupTemp } from "./backup-process-guard.ts";
 import { replaceBackupFiles } from "./backup-restore-files";
+import { protectStagedRestore } from "./backup-restore-protection.ts";
 import { stageBackupArchive } from "./backup-restore-staging.ts";
 import { beijingExportStampOf } from "./export-csv";
 
@@ -31,17 +34,14 @@ import { beijingExportStampOf } from "./export-csv";
  * 口径（D20，备份 = 全量 DATA_DIR，下载 = 当前时刻全量）：
  * - 日常快照只做 db：`VACUUM INTO data/backups/tutor-<北京时间戳>.db`
  *   （WAL 模式下安全，快照含已提交事务），保留 14 份轮转删最旧；
- * - 下载时恒先补拍一份**当前时刻**快照再实时打包（Opus 实测③-1：
- *   快照只在启动 + 每 24h 拍，复用最新已有快照会让备份 db 最长落后
- *   24h——首启灌种后立刻下载会得到空库；VACUUM INTO 小库毫秒级，
- *   代价可忽略）：快照原名（恢复侧可解析时点）+ blobs/ + shared/ +
- *   secret.key，**排除 backups/ 自身**；
+ * - 下载在主库写锁内捕获主库、新旧业务所需的文件和现有内核库，再从暂存目录打包。
+ *   内核归档附上经指纹验证的固定运行时工件，排除 backups/ 自身；
  * - 恢复是整库操作（多教师同库，无域隔离——一对一自部署既定口径，
  *   契约 backup-api.ts 注释同源）；恢复需操作者本人登录密码（D21）。
  *
  * 恢复顺序与回滚：
  * ① 验密码 → ② 预检并逐块解压到同卷暂存目录，完整校验后重验权限 →
- * ③ 恢复前自动快照（D21 回滚保险，进 14 份轮转）→
+ * ③ 确认没有其他服务进程后做主库快照（进 14 份轮转）并记录本次替换计划 →
  * ⑤ close 数据连接（Windows 文件锁 + WAL 边车）→ DATA_DIR 顶层内容
  *   （除 backups/）整体挪到暂存、新内容 rename 就位，失败按已移动项逐项回滚 →
  * ⑥ 重启数据连接（DbHandle.restart，服务进程不重启）→ ⑦ 恢复摘要
@@ -74,7 +74,7 @@ function backupsDirOf(dataDir: string): string {
  */
 export function createSnapshot(
   dataDir: string,
-  db: Db,
+  db: Pick<Db, "$client">,
   now: Date = new Date(),
 ): string {
   const dir = backupsDirOf(dataDir);
@@ -244,12 +244,7 @@ export interface BackupZip {
 }
 
 /**
- * 组装完整备份 zip（D20，下载 = 当前时刻全量）：恒先补拍一份**当前时刻**
- * db 快照（Opus 实测③-1：避免复用最长落后 24h 的旧快照；VACUUM INTO
- * 小库毫秒级），再打包快照（保留原名）+ blobs/ + shared/ +
- * secret.key（各自存在才打包），排除 backups/ 自身。
- * 流式：返回未 finalize 的 archiver 流，由路由转 web 流边打包边响应，
- * 不整包进内存（blobs 可能很大）。
+ * 捕获下载时的双库与关联文件，保留主库快照原名，从同卷暂存流式打包。
  * now 仅测试注入用（快照名与 zip 名的时间戳来源）。
  */
 export function buildBackupZip(
@@ -257,49 +252,21 @@ export function buildBackupZip(
   db: Db,
   now: Date = new Date(),
 ): BackupZip {
-  createSnapshot(dataDir, db, now);
-  const latest = listSnapshots(dataDir)[0];
-  if (latest === undefined) {
-    // 理论不可达（刚拍完必有最新）；防御性兜底
-    throw new HttpError(500, "INTERNAL", "备份快照不可用");
-  }
-
-  const archive = new ZipArchive({ zlib: { level: 6 } });
-  // 空错误监听：防止流错误成为未处理事件崩溃进程（错误仍会传给消费方）
-  archive.on("error", () => {});
-
-  archive.file(join(backupsDirOf(dataDir), latest.filename), {
-    name: latest.filename,
-  });
-  for (const dirName of ALLOWED_TOP_DIRS) {
-    const dirPath = join(dataDir, dirName);
-    if (existsSync(dirPath)) {
-      archive.directory(dirPath, dirName);
-    }
-  }
-  const secretPath = join(dataDir, SECRET_KEY_NAME);
-  if (existsSync(secretPath)) {
-    archive.file(secretPath, { name: SECRET_KEY_NAME });
-  }
-
-  // 不 await：finalize 写入流即开始，路由把流转成响应体
-  void archive.finalize();
   return {
-    stream: archive,
+    stream: captureBackupArchive({
+      dataDir,
+      backupsDir: backupsDirOf(dataDir),
+      directories: ALLOWED_TOP_DIRS,
+      secretKeyName: SECRET_KEY_NAME,
+      product: db.$client,
+      snapshotProduct: (reader) =>
+        createSnapshot(dataDir, { $client: reader }, now),
+    }),
     filename: `tutor-backup-${beijingExportStampOf(now)}.zip`,
   };
 }
 
 // ---------- 恢复（校验 → 保险快照 → 原子替换 → 重启连接） ----------
-
-/** 尽力清理临时目录（失败忽略——孤儿临时目录无害，不掩盖业务结果） */
-function rmTempBestEffort(path: string): void {
-  try {
-    rmSync(path, { recursive: true, force: true });
-  } catch {
-    // Windows 上偶发 EBUSY：留着等系统临时目录清理，不影响数据正确性
-  }
-}
 
 /**
  * 从备份 zip 恢复整库（D21 全流程，见文件头注释；原子性最高优先级）。
@@ -333,6 +300,7 @@ export async function restoreFromBackup(
   const createdScratchRoot =
     mkdirSync(scratchRoot, { recursive: true }) !== undefined;
   let staging: string | undefined;
+  let preserveStaging = false;
 
   try {
     staging = mkdtempSync(join(scratchRoot, "tutor-restore-"));
@@ -350,18 +318,29 @@ export async function restoreFromBackup(
     }
     recheckPassword();
     recheckAccess?.();
-    // ③ 验证与权限检查均通过后，再创建恢复保险快照。
-    createSnapshot(dataDir, handle.db);
-
-    // ⑤⑥ 按实际移动清单替换和回滚，暂存目录均留在数据挂载卷内。
-    replaceBackupFiles(absoluteDataDir, staging, BACKUP_DIR_NAME, handle);
+    // ③⑤⑥ 取得恢复独占权后拍保险快照，再于同卷按移动清单替换和回滚。
+    const verifiedStaging = staging;
+    replaceBackupFiles(
+      absoluteDataDir,
+      verifiedStaging,
+      BACKUP_DIR_NAME,
+      handle,
+      () => {
+        protectStagedRestore(handle.db, verifiedStaging, DB_FILE_NAME);
+        createSnapshot(dataDir, handle.db);
+      },
+    );
     return {
       ...plan,
       snapshotTime: snapshotTimeOf(plan.dbFilename),
       sessionWarning: true,
     };
+  } catch (error) {
+    preserveStaging =
+      error instanceof HttpError && error.code === "BACKUP_ROLLBACK_FAILED";
+    throw error;
   } finally {
-    if (staging !== undefined) rmTempBestEffort(staging);
+    if (staging !== undefined && !preserveStaging) removeBackupTemp(staging);
     if (createdScratchRoot) {
       try {
         rmdirSync(scratchRoot);

@@ -8,7 +8,7 @@ import { studentPracticeReadEnv } from "../test/student-mcp-practice-fixtures.ts
 import { settleStudentAttempt } from "./attempt-partial.ts";
 import { getAttemptDetail } from "./attempt-service.ts";
 import { createTextMemo } from "./memo-service.ts";
-import { getTeacherAttemptDetail } from "./teacher-attempt-service.ts";
+import { getTeacherAttemptDetail } from "./teacher-attempt-detail.ts";
 
 const opened: Awaited<ReturnType<typeof studentPracticeReadEnv>>[] = [];
 afterEach(async () => {

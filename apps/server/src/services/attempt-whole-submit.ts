@@ -33,6 +33,7 @@ import { validateSubmitRevisions } from "./attempt-submit-revisions.ts";
 import { sealResponseTimeWithin } from "./attempt-time-seal";
 import { assertSavedAnswersConfirmed } from "./attempt-timing";
 import { recordConfirmedSubmit, submissionActivityOf } from "./event-service";
+import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { answerOf, snapshotOfRow } from "./snapshot";
 import {
@@ -124,6 +125,7 @@ function finalizeWholeAttempt(
   request: AttemptSubmitRequest | undefined,
 ): AttemptResultData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireLegacyAttemptWrite(db, attempt);
   if (attempt.status !== "draft") {
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
   }

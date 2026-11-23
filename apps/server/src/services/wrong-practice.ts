@@ -4,23 +4,28 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
 import { attempts, type ResponseRow, students } from "../db/schema";
+import { kernelWrongOpenings } from "../db/schema-kernel-question-delivery.ts";
 import { HttpError } from "../lib/http-error";
 import { frozenGradingPolicyOf } from "./attempt-context.ts";
 import { assertAttemptQuestionLimit } from "./attempt-question-set.ts";
 import {
   type AttemptWorkflowStartOptions,
   attemptSummaryOf,
-  insertFrozenResponse,
   newDraftAttempt,
   requireOwnAttempt,
   workflowStartColumns,
 } from "./attempt-service";
 import { createOnce } from "./create-receipt";
-import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
+import {
+  finishKernelWrongOpening,
+  insertWrongPracticeWithin,
+  reserveKernelWrongOpening,
+  withWrongKernelStorage,
+} from "./kernel-wrong-practice-opening.ts";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import { snapshotOfRow } from "./snapshot";
 import { wrongAttemptContextPlan } from "./wrong-attempt-context.ts";
-import { latestJudgedResponsesByQuestion } from "./wrong-questions";
+import { latestJudgedResponsesByQuestion } from "./wrong-question-rounds.ts";
 
 /**
  * 错题重练组卷（2026-10 学生端闭环的最后一块）——POST /api/student/wrong-practice
@@ -43,7 +48,7 @@ import { latestJudgedResponsesByQuestion } from "./wrong-questions";
  *   版本），gradingPolicy 按来源快照和教师自评设置冻结；
  * - attempt 行：sourceType='wrong'、assignmentId/courseId/unitId 恒 null（契约
  *   superRefine 锁定；无课程归属 → **永不失权**，草稿与记录一直可见）；
- *   attemptNo = 该生已有 wrong 来源 attempt 数 + 1（从 1 起）；不限制同时存在
+ *   attemptNo 按该生已有卷次与待开卷预留递增；不限制同时存在
  *   多份未交卷的 wrong 卷（每次重练都是独立新卷，互不影响，旧草稿从记录页
  *   续作）；
  * - 作答/判分/批改全复用既有机制（AttemptSession、submit、grading、教师待批
@@ -66,36 +71,62 @@ export function startWrongPractice(
   /** 建卷范围快照（#6980-2）：随卷落 practice_scope_json，展示「练的是什么」 */
   scope?: WrongPracticeScope | undefined,
   operationId?: string,
+  dataDir?: string,
+  kernelEnabled = false,
 ): { attempt: AttemptStartData; includedCount: number } {
-  if (operationId) {
-    const saved = createOnce(
-      db,
-      "wrong-practice",
+  const reserve = (store: Db) =>
+    reserveWrongPractice(
+      store,
       studentId,
-      operationId,
-      [questionIds, options, scope],
-      z.object({ id: z.uuid(), includedCount: z.number().int().positive() }),
-      (store) => {
-        const { attempt, includedCount } = startWrongPractice(
-          store,
-          studentId,
-          questionIds,
-          options,
-          scope,
-        );
-        return { id: attempt.id, includedCount };
-      },
+      questionIds,
+      options,
+      scope,
+      dataDir,
+      kernelEnabled && operationId !== undefined,
     );
-    return {
-      attempt: attemptSummaryOf(requireOwnAttempt(db, studentId, saved.id)),
-      includedCount: saved.includedCount,
-    };
-  }
+  const saved = withWrongKernelStorage(db, dataDir, () =>
+    operationId
+      ? createOnce(
+          db,
+          "wrong-practice",
+          studentId,
+          operationId,
+          [questionIds, options, scope],
+          z.object({
+            id: z.uuid(),
+            includedCount: z.number().int().positive(),
+            kernelOpening: z.literal(true).optional(),
+          }),
+          reserve,
+        )
+      : db.$client.transaction(() => reserve(db)).immediate(),
+  );
+  const attempt = saved.kernelOpening
+    ? finishKernelWrongOpening(db, dataDir, saved.id, studentId)
+    : requireOwnAttempt(db, studentId, saved.id);
+  return {
+    attempt: attemptSummaryOf(attempt),
+    includedCount: saved.includedCount,
+  };
+}
+
+function reserveWrongPractice(
+  db: Db,
+  studentId: string,
+  questionIds: readonly string[],
+  options: AttemptWorkflowStartOptions,
+  scope: WrongPracticeScope | undefined,
+  dataDir: string | undefined,
+  kernelEnabled: boolean,
+) {
   // 去重保序（契约不拦重复 id；前端从聚合结果取 id 天然无重复，防御性收敛）
   const uniqueIds = [...new Set(questionIds)];
 
   // 该生错题本聚合内的题 → 最近一次判定作答行（快照来源）
-  const latestByQuestion = latestJudgedResponsesByQuestion(db, studentId);
+  const latestByQuestion = latestJudgedResponsesByQuestion(db, studentId, {
+    questionIds: uniqueIds,
+    ...(dataDir === undefined ? {} : { dataDir }),
+  });
 
   /** 逐题校验：在聚合内且快照可用，否则剔除 */
   const pickOf = (questionId: string): ResponseRow | null => {
@@ -143,76 +174,57 @@ export function startWrongPractice(
         ? { ...scope, questionCount: includedCount }
         : scope;
 
-  return db.transaction((tx) => {
-    // 取最大卷次而不是份数：未激活的空卷清除后份数会变少，按份数算会重号
-    const latestRow = tx
-      .select({ n: sql<number | null>`max(${attempts.attemptNo})` })
-      .from(attempts)
-      .where(
-        and(
-          eq(attempts.studentId, studentId),
-          eq(attempts.sourceType, "wrong"),
-        ),
-      )
-      .get();
-    const attemptNo = (latestRow?.n ?? 0) + 1;
-
-    // T6R.3：行字面量复用 newDraftAttempt（三来源建卷共用；wrong 三归属键恒
-    // null——契约来源不变式，frozenAt=startedAt 建卷即冻结，快照在下方逐题预插）
-    const attempt = newDraftAttempt({
-      id: randomUUID(),
-      studentId,
-      sourceType: "wrong",
-      assignmentId: null,
-      lectureId: null,
-      courseId: null,
-      unitId: null,
-      attemptNo,
-      startedAt: new Date().toISOString(),
-      activateOnCreate: scope?.kind === "ai",
-      // M1b：显式 workflowVersion=1 按教师策略裁决写新协议列；省略旧协议
-      ...workflowStartColumns(db, "wrong", studentId, null, options),
-    });
-    const id = attempt.id;
-    // #6980-2：范围随卷快照落库（快照语义——之后单元/考点改名不影响历史卷标题）
-    tx.insert(attempts)
-      .values({
-        ...attempt,
-        practiceScopeJson:
-          effectiveScope === undefined ? null : JSON.stringify(effectiveScope),
-      })
-      .run();
-    // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
-    // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端
-    // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）。tt-07a：gradingPolicy
-    // 按复制的来源快照与新开卷时的教师设置冻结判分策略。
-    for (const source of plan.usable) {
-      const snapshotJson = source.questionSnapshotJson;
-      const snapshot = snapshotOfRow(source); // pickOf 已校验可解析，防御性收敛
-      if (snapshotJson === null || snapshot === null) continue;
-      insertFrozenResponse(tx, {
-        attemptId: id,
-        questionId: source.questionId,
-        questionVersion: source.questionVersion,
-        questionSnapshotJson: snapshotJson,
-        unitId: null,
-        gradingPolicy: frozenGradingPolicyOf(
-          snapshot,
-          studentSelfReviewEnabled,
-        ),
-      });
-    }
-    // 依赖闭包条目（来源卷快照优先）同事务冻结——开卷途中失败全回滚
-    freezeAttemptContextSnapshotsWithin(
-      tx,
-      id,
-      plan.entries,
-      attempt.startedAt,
-    );
-    const row = tx.select().from(attempts).where(eq(attempts.id, id)).get();
-    if (row === undefined) {
-      throw new HttpError(500, "INTERNAL", "创建作答失败，请重试");
-    }
-    return { attempt: attemptSummaryOf(row), includedCount };
+  // 取最大卷次；待开卷意图和已可见卷共用同一序号。
+  const latestRow = db
+    .select({ n: sql<number | null>`max(${attempts.attemptNo})` })
+    .from(attempts)
+    .where(
+      and(eq(attempts.studentId, studentId), eq(attempts.sourceType, "wrong")),
+    )
+    .get();
+  const latestOpening = db
+    .select({ n: sql<number | null>`max(${kernelWrongOpenings.attemptNo})` })
+    .from(kernelWrongOpenings)
+    .where(eq(kernelWrongOpenings.studentId, studentId))
+    .get();
+  const attempt = newDraftAttempt({
+    id: randomUUID(),
+    studentId,
+    sourceType: "wrong",
+    assignmentId: null,
+    lectureId: null,
+    courseId: null,
+    unitId: null,
+    attemptNo: Math.max(latestRow?.n ?? 0, latestOpening?.n ?? 0) + 1,
+    startedAt: new Date().toISOString(),
+    activateOnCreate: scope?.kind === "ai",
+    ...workflowStartColumns(db, "wrong", studentId, null, options),
   });
+  const draft = {
+    scope: effectiveScope,
+    context: [...plan.entries],
+    responses: plan.usable.flatMap((source) => {
+      const snapshot = snapshotOfRow(source);
+      if (source.questionSnapshotJson === null || snapshot === null) return [];
+      return [
+        {
+          questionId: source.questionId,
+          questionVersion: source.questionVersion,
+          questionSnapshotJson: source.questionSnapshotJson,
+          gradingPolicy: frozenGradingPolicyOf(
+            snapshot,
+            studentSelfReviewEnabled,
+          ),
+        },
+      ];
+    }),
+  };
+  if (
+    kernelEnabled &&
+    dataDir &&
+    reserveKernelWrongOpening(db, dataDir, attempt, teacherId, draft)
+  )
+    return { id: attempt.id, includedCount, kernelOpening: true as const };
+  insertWrongPracticeWithin(db, attempt, draft);
+  return { id: attempt.id, includedCount };
 }

@@ -4,23 +4,25 @@ import {
   type QuestionType,
   questionTypeSchema,
 } from "@tutor/contract";
-import { and, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, responses, students } from "../db/schema";
-import {
-  effectiveVerdictOfRow,
-  effectiveVerdictSourceSql,
-  effectiveVerdictValueSql,
-} from "../services/response-verdict.ts";
+import { effectiveVerdictOfRow } from "../services/response-verdict.ts";
 import { teacherVisibleResponsesWhere } from "../services/teacher-attempt-service";
 import {
-  AI_TASK_EXISTS,
   decodeCursorOffset,
-  NOTES_CORRECTION_EXISTS,
   parseKnowledgeArray,
   resolveToolStudent,
   stemSummaryOf,
 } from "./teacher-queries";
+import {
+  type TeacherResponseFacts,
+  withTeacherResponseFacts,
+} from "./teacher-response-facts.ts";
+import {
+  AI_TASK_EXISTS,
+  NOTES_CORRECTION_EXISTS,
+} from "./teacher-response-refs.ts";
 
 // ---------- question-review（学生主页「错题与存疑」聚合，T-PR4 Web-2②） ----------
 
@@ -41,21 +43,15 @@ export interface QuestionReviewArgs {
  * 判定」——生效的教师判错或自评错误同样计入；
  * 纯未做判错行不算（详情页灰显「未做」的那批）。
  */
-const questionReviewWrongWhere = and(
-  eq(effectiveVerdictValueSql, 0),
-  or(
-    eq(responses.answered, true),
-    inArray(effectiveVerdictSourceSql, ["teacher", "self"]),
-  ),
-);
-
-/** kind → 行级筛选（三档口径见契约 question-review-api.ts 头注释） */
-function questionReviewKindWhere(kind: QuestionReviewKind) {
-  if (kind === "wrong") return questionReviewWrongWhere;
-  if (kind === "unsure") return eq(responses.studentFlag, "unsure");
-  return NOTES_CORRECTION_EXISTS;
+function questionReviewWrongWhere({ columns, verdict }: TeacherResponseFacts) {
+  return and(
+    eq(verdict.value, 0),
+    or(
+      eq(columns.answered, sql`1`),
+      inArray(verdict.source, ["teacher", "self"]),
+    ),
+  );
 }
-
 /** 坏快照行按缺失计：题干 / 题型 / 难度任一取不出合法值即整行跳过（同作答详情口径） */
 function usableReviewRowOf(
   row: {
@@ -96,6 +92,7 @@ export function questionReviewOf(
   teacherId: string,
   studentId: string,
   args: QuestionReviewArgs,
+  dataDir?: string,
 ): {
   total: number;
   nextCursor: string | null;
@@ -104,13 +101,39 @@ export function questionReviewOf(
   // 域校验：不存在或非本教师学生 → 404 STUDENT_NOT_FOUND（不暴露存在性）
   resolveToolStudent(db, teacherId, studentId);
   const offset = decodeCursorOffset(args.cursor);
+  const hostRowsInScope =
+    args.kind === "unsure"
+      ? eq(responses.studentFlag, "unsure")
+      : args.kind === "corrected"
+        ? NOTES_CORRECTION_EXISTS
+        : undefined;
+  return withTeacherResponseFacts(
+    db,
+    dataDir,
+    teacherId,
+    { ...args, studentId },
+    hostRowsInScope,
+    (facts) =>
+      readQuestionReview(db, teacherId, args, offset, hostRowsInScope, facts),
+  );
+}
+
+function readQuestionReview(
+  db: Db,
+  teacherId: string,
+  args: QuestionReviewArgs,
+  offset: number,
+  hostRowsInScope: ReturnType<typeof and>,
+  facts: TeacherResponseFacts,
+) {
   const rows = db
+    .with(facts.overlay, facts.effective)
     .select({
       revisionId: responses.id,
       attemptId: responses.attemptId,
       questionId: responses.questionId,
-      finalCorrect: responses.finalCorrect,
-      autoCorrect: responses.autoCorrect,
+      finalCorrect: facts.columns.finalCorrect,
+      autoCorrect: facts.columns.autoCorrect,
       teacherMark: responses.teacherMark,
       selfReviewVerdict: responses.selfReviewVerdict,
       selfReviewAt: responses.selfReviewAt,
@@ -135,20 +158,15 @@ export function questionReviewOf(
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
     .innerJoin(students, eq(attempts.studentId, students.id))
+    .innerJoin(facts.effective, facts.joinFacts)
     .where(
       and(
         eq(students.teacherId, teacherId),
-        eq(attempts.studentId, studentId),
-        // 共享谓词：排作废卷；draft 卷只纳入单题已提交的行；幽灵行排除
+        facts.attemptsInScope,
         ...teacherVisibleResponsesWhere(),
-        questionReviewKindWhere(args.kind),
-        ...(args.courseId !== undefined
-          ? [eq(attempts.courseId, args.courseId)]
-          : []),
-        ...(args.from !== undefined
-          ? [gte(responses.submittedAt, args.from)]
-          : []),
-        ...(args.to !== undefined ? [lte(responses.submittedAt, args.to)] : []),
+        hostRowsInScope,
+        args.kind === "wrong" ? questionReviewWrongWhere(facts) : undefined,
+        facts.submitted,
       ),
     )
     .all();

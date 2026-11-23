@@ -3,10 +3,11 @@ import {
   type DeviceRegister,
   deviceRegisterSchema,
 } from "@tutor/contract";
-import { and, eq, gt, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, ne, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { devices, sessions } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { recordRevokedSessions } from "./backup-restore-facts.ts";
 import {
   type DeviceOwner,
   ownerWhere,
@@ -241,16 +242,35 @@ export function bindKnownDeviceSession(
     bindDeviceSession(db, owner, id, token);
 }
 
+function deleteRevokedSessions(
+  db: Db,
+  owner: DeviceOwner,
+  ...conditions: SQL[]
+): number {
+  const revoked = db
+    .delete(sessions)
+    .where(and(sessionOwnerWhere(owner), ...conditions))
+    .returning({ id: sessions.id })
+    .all();
+  recordRevokedSessions(db, revoked);
+  return revoked.length;
+}
+
 export function revokeDeviceSessions(
   db: Db,
   owner: DeviceOwner,
   id: string,
 ): number {
-  const row = requireDevice(db, owner, id);
-  return db
-    .delete(sessions)
-    .where(and(sessionOwnerWhere(owner), eq(sessions.deviceId, row.deviceId)))
-    .run().changes;
+  return db.$client
+    .transaction(() => {
+      const row = requireDevice(db, owner, id);
+      return deleteRevokedSessions(
+        db,
+        owner,
+        eq(sessions.deviceId, row.deviceId),
+      );
+    })
+    .immediate();
 }
 
 /** 升级前的会话无设备来源，用户可一次清理，当前会话保留。 */
@@ -259,14 +279,14 @@ export function revokeUnassignedSessions(
   owner: DeviceOwner,
   currentToken: string,
 ): number {
-  return db
-    .delete(sessions)
-    .where(
-      and(
-        sessionOwnerWhere(owner),
+  return db.$client
+    .transaction(() =>
+      deleteRevokedSessions(
+        db,
+        owner,
         isNull(sessions.deviceId),
         ne(sessions.id, currentToken),
       ),
     )
-    .run().changes;
+    .immediate();
 }

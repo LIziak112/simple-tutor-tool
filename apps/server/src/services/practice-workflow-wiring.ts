@@ -5,7 +5,7 @@ import type {
   TeacherPracticeFeedbackPolicy,
 } from "@tutor/contract";
 import { storedAttemptProtocolSchema } from "@tutor/contract";
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -19,6 +19,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { requireVisibleCourseUnit } from "./course-service";
+import { questionDeliveryRestrictions } from "./kernel-question-delivery-binding.ts";
 import { policyOfColumn } from "./practice-feedback-settings-service";
 import {
   type AssignmentFeedbackGrant,
@@ -386,7 +387,11 @@ export function attemptWorkflowView(
       .where(eq(responses.attemptId, attempt.id))
       .all();
   const hasSubmittedQuestion = rows.some((row) => row.submittedAt !== null);
-  const workflow = resolvePracticeWorkflow({
+  const { fixedWhole, noPartialSettlement } = questionDeliveryRestrictions(
+    db,
+    attempt,
+  );
+  const resolved = resolvePracticeWorkflow({
     sourceType: attempt.sourceType,
     lifecycle: "existing",
     stored: {
@@ -397,6 +402,17 @@ export function attemptWorkflowView(
     },
     ...inputs,
   });
+  const workflow: Omit<
+    PracticeWorkflow,
+    "canSettlePartially" | "partialSettlementRestriction"
+  > = fixedWhole
+    ? {
+        ...resolved,
+        canChangeFeedback: false,
+        canSubmitQuestion: false,
+        allowedFeedbackModes: ["after_attempt"],
+      }
+    : resolved;
   // 教师收紧后已提交题重取也按当前 gate 返回受限（计划 §5.4：已下发内容
   // 不宣称重新保密，但后续读取按当前规则；已提交行与成绩本身保留）。
   // feedbackReadable 与题级反馈四态共用同一纯裁决（M2 收敛：此前 wiring 自写
@@ -418,6 +434,7 @@ export function attemptWorkflowView(
     practiceWorkflow: {
       ...workflow,
       canSettlePartially:
+        !noPartialSettlement &&
         attempt.status === "draft" &&
         attempt.timeLimitSec === null &&
         workflow.allowedFeedbackModes.includes("per_question"),
@@ -426,7 +443,8 @@ export function attemptWorkflowView(
           ? "attempt_finished"
           : attempt.timeLimitSec !== null
             ? "timed_attempt"
-            : !workflow.allowedFeedbackModes.includes("per_question")
+            : noPartialSettlement ||
+                !workflow.allowedFeedbackModes.includes("per_question")
               ? "teacher_restricted"
               : null,
     },
@@ -443,116 +461,4 @@ export function attemptWorkflowView(
         }).status === "released",
     })),
   };
-}
-
-/**
- * PATCH /api/student/attempts/:id/workflow：首次任何提交前更改反馈节奏。
- * 全程单事务：重取 attempt 工作流列/教师规则/题级提交事实，CAS 拒陈旧
- * revision（不是纯 === 比对——update 带 WHERE workflowRevision 兜并发）。
- * 拒绝：不存在/跨学生 404、作废 409、lesson 或历史卷 409 WORKFLOW_LEGACY、
- * 已整卷交 409 ALREADY_SUBMITTED、任一题已交 409 QUESTION_ALREADY_SUBMITTED、
- * 课程失权（requireVisibleCourseUnit 分态 403/404）、不允许模式 400。
- */
-export function updateAttemptWorkflow(
-  db: Db,
-  studentId: string,
-  attemptId: string,
-  request: { feedbackMode: PracticeFeedbackMode; workflowRevision: number },
-): AttemptWorkflowView {
-  return db.transaction((tx) => {
-    const attempt = requireOwnActiveAttempt(tx, studentId, attemptId);
-    // lesson 走独立适配路径；历史卷（无工作流版本）不可变更——都不暴露存在性差异
-    if (practiceProtocolOf(attempt) !== "v1") {
-      throw new HttpError(
-        409,
-        "WORKFLOW_LEGACY",
-        "这份作答不支持更改反馈节奏（旧协议或讲练作答）",
-      );
-    }
-    if (attempt.status !== "draft") {
-      throw new HttpError(
-        409,
-        "ALREADY_SUBMITTED",
-        "已交卷的作答不能更改反馈节奏",
-      );
-    }
-    if (attempt.sourceType === "course") {
-      // 课程失权分态校验（403/404），与取卷同口径（同步连接，事务内读一致；
-      // status 已在前文保证 draft，helper 内复查恒过）
-      assertDraftCourseVisible(db, studentId, attempt);
-    }
-    const submittedCount = tx
-      .select({ n: sql<number>`count(*)` })
-      .from(responses)
-      .where(
-        and(
-          eq(responses.attemptId, attemptId),
-          isNotNull(responses.submittedAt),
-        ),
-      )
-      .get();
-    if ((submittedCount?.n ?? 0) > 0) {
-      throw new HttpError(
-        409,
-        "QUESTION_ALREADY_SUBMITTED",
-        "已有题目提交，反馈节奏已固定",
-      );
-    }
-    const view = attemptWorkflowView(db, attempt);
-    if (view === null) {
-      // 早前 legacy 检查后仍缺失＝授权事实异常（如作业行悬挂）：按旧协议降级
-      // 拒绝，不把异常数据打成 500
-      throw new HttpError(
-        409,
-        "WORKFLOW_LEGACY",
-        "这份作答的工作流数据异常，按旧协议处理",
-      );
-    }
-    // 陈旧 revision 优先于模式校验：客户端凭 409 刷新投影，若按旧规则报
-    // 400 会让基于刷新值的 CAS 重试死循环
-    if (attempt.workflowRevision !== request.workflowRevision) {
-      throw new HttpError(
-        409,
-        "WORKFLOW_REVISION_STALE",
-        "反馈节奏已在其他设备修改，请刷新后重试",
-      );
-    }
-    if (
-      !view.practiceWorkflow.allowedFeedbackModes.includes(request.feedbackMode)
-    ) {
-      throw new HttpError(
-        400,
-        "WORKFLOW_MODE_NOT_ALLOWED",
-        "当前规则不允许该反馈节奏",
-      );
-    }
-    // 真实事务 CAS：UPDATE 带 WHERE workflowRevision 命中才算成功（并发下
-    // 第二个同 revision 请求必然 miss → 409），不依赖前置 === 比对
-    const fresh = tx
-      .update(attempts)
-      .set({
-        feedbackMode: request.feedbackMode,
-        workflowRevision: attempt.workflowRevision + 1,
-      })
-      .where(
-        and(
-          eq(attempts.id, attemptId),
-          eq(attempts.workflowRevision, request.workflowRevision),
-        ),
-      )
-      .returning()
-      .get();
-    if (fresh === undefined) {
-      throw new HttpError(
-        409,
-        "WORKFLOW_REVISION_STALE",
-        "反馈节奏已在其他设备修改，请刷新后重试",
-      );
-    }
-    const freshView = attemptWorkflowView(db, fresh);
-    if (freshView === null) {
-      throw new HttpError(500, "INTERNAL", "工作流投影缺失（不应发生）");
-    }
-    return freshView;
-  });
 }

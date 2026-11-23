@@ -36,6 +36,19 @@ const ATTEMPT_ID = "11111111-1111-4111-8111-111111111111";
 const mockedList = vi.mocked(listStudentAiAttemptReviewsApi);
 const mockedPreview = vi.mocked(fetchStudentAiAttemptReviewPreviewApi);
 
+const COUNTS: AiAttemptReviewPreviewData["counts"] = {
+  total: 12,
+  correctCount: 8,
+  incorrectCount: 3,
+  unansweredCount: 1,
+  pendingCount: 0,
+  unknownAnswerCount: 0,
+  hasAnswerCount: 11,
+  missingAnswerCount: 1,
+  gradedCount: 11,
+  accuracyAmongGraded: 8 / 11,
+};
+
 const taskOf = (
   overrides: Partial<AiAttemptReviewTaskPublic>,
 ): AiAttemptReviewTaskPublic => ({
@@ -44,18 +57,7 @@ const taskOf = (
   status: "created",
   purpose: "复盘",
   questionCount: 12,
-  counts: {
-    total: 12,
-    correctCount: 8,
-    incorrectCount: 3,
-    unansweredCount: 1,
-    pendingCount: 0,
-    unknownAnswerCount: 0,
-    hasAnswerCount: 11,
-    missingAnswerCount: 1,
-    gradedCount: 11,
-    accuracyAmongGraded: 8 / 11,
-  },
+  counts: COUNTS,
   snapshotVersion: "v",
   generation: 0,
   retryCount: 0,
@@ -72,7 +74,7 @@ const taskOf = (
 const PREVIEW: AiAttemptReviewPreviewData = {
   attemptId: ATTEMPT_ID,
   questionCount: 12,
-  counts: taskOf({}).counts,
+  counts: COUNTS,
   fieldNotes: [],
   notes: [],
   opaquePreviewVersion: "pv",

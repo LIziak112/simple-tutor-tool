@@ -1,0 +1,155 @@
+import type { AttemptSubmitRequest } from "@tutor/contract";
+import type { ChoiceAmendmentIntent } from "@tutor/contract/choice-amendment-intent";
+import {
+  foreignKey,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  unique,
+} from "drizzle-orm/sqlite-core";
+import type { PublicationInput } from "learning-kernel";
+import type {
+  KernelOpeningDraft,
+  KernelRefreezeDraft,
+} from "../services/kernel-assignment-input.ts";
+import {
+  assignments,
+  attempts,
+  responses,
+  students,
+  teachers,
+} from "./schema.ts";
+
+export {
+  kernelCourseOpenings,
+  kernelLessonOpenings,
+  kernelQuestionDeliveries,
+  kernelResponseMarks,
+  kernelWrongOpenings,
+} from "./schema-kernel-question-delivery.ts";
+
+export const kernelAssignments = sqliteTable("kernel_assignments", {
+  assignmentId: text("assignment_id")
+    .primaryKey()
+    .notNull()
+    .references(() => assignments.id, { onDelete: "cascade" }),
+});
+
+export const kernelAssignmentVersions = sqliteTable(
+  "kernel_assignment_versions",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => kernelAssignments.assignmentId),
+    practiceVersion: integer("practice_version").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.assignmentId, table.practiceVersion] }),
+    unique().on(table.assignmentId, table.fingerprint),
+  ],
+);
+
+export const kernelAttemptBindings = sqliteTable(
+  "kernel_attempt_bindings",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .notNull()
+      .references(() => attempts.id),
+    assignmentId: text("assignment_id").notNull(),
+    practiceVersion: integer("practice_version").notNull(),
+    stepAttemptId: text("step_attempt_id").notNull().unique(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.assignmentId, table.practiceVersion],
+      foreignColumns: [
+        kernelAssignmentVersions.assignmentId,
+        kernelAssignmentVersions.practiceVersion,
+      ],
+    }),
+  ],
+);
+
+export const kernelAssignmentOpenings = sqliteTable(
+  "kernel_assignment_openings",
+  {
+    assignmentId: text("assignment_id").notNull(),
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    practiceVersion: integer("practice_version").notNull(),
+    publication: text("publication_json", { mode: "json" })
+      .$type<PublicationInput>()
+      .notNull(),
+    draft: text("draft_json", { mode: "json" })
+      .$type<KernelOpeningDraft>()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.assignmentId, table.studentId] }),
+    foreignKey({
+      columns: [table.assignmentId, table.practiceVersion],
+      foreignColumns: [
+        kernelAssignmentVersions.assignmentId,
+        kernelAssignmentVersions.practiceVersion,
+      ],
+    }),
+  ],
+);
+
+/** 保存可授权恢复的确认操作与冻结引用，不存答案正文或判定。 */
+export const kernelAttemptConfirmations = sqliteTable(
+  "kernel_attempt_confirmations",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .notNull()
+      .references(() => kernelAttemptBindings.attemptId, {
+        onDelete: "cascade",
+      }),
+    operationId: text("operation_id").notNull().unique(),
+    stepAttemptId: text("step_attempt_id").notNull(),
+    practiceVersion: integer("practice_version").notNull(),
+    request: text("request_json", { mode: "json" })
+      .$type<AttemptSubmitRequest>()
+      .notNull(),
+  },
+);
+
+export const kernelAttemptRefreezes = sqliteTable("kernel_attempt_refreezes", {
+  attemptId: text("attempt_id")
+    .primaryKey()
+    .notNull()
+    .references(() => attempts.id),
+  operationId: text("operation_id").notNull().unique(),
+  stepAttemptId: text("step_attempt_id").notNull(),
+  expectedPracticeVersion: integer("expected_practice_version").notNull(),
+  practiceVersion: integer("practice_version").notNull(),
+  frozenAt: text("frozen_at").notNull(),
+  publication: text("publication_json", { mode: "json" })
+    .$type<PublicationInput>()
+    .notNull(),
+  responses: text("responses_json", { mode: "json" })
+    .$type<KernelRefreezeDraft>()
+    .notNull(),
+});
+
+export const kernelChoiceAmendments = sqliteTable("kernel_choice_amendments", {
+  attemptId: text("attempt_id")
+    .primaryKey()
+    .notNull()
+    .references(() => kernelAttemptBindings.attemptId),
+  operationId: text("operation_id").notNull().unique(),
+  responseId: text("response_id")
+    .notNull()
+    .references(() => responses.id),
+  teacherId: text("teacher_id")
+    .notNull()
+    .references(() => teachers.id),
+  intent: text("intent_json", { mode: "json" })
+    .$type<ChoiceAmendmentIntent>()
+    .notNull(),
+});

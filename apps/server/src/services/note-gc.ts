@@ -8,6 +8,7 @@ import {
   noteVersions,
   submissionEvidence,
 } from "../db/schema";
+import { attemptOriginalReservations } from "../db/schema-attempt-original-reservations.ts";
 import { resolveWithinRoot } from "../lib/blob-io";
 import { sweepAnnotationFiles } from "./annotation-file-gc";
 import { collectBackupReferencedPaths } from "./backup-service";
@@ -88,6 +89,7 @@ export interface NoteGcResult {
  * 保留集合（绝不可删）：
  * - 所有 notes.currentVersionId（工作头/订正检查点头）；
  * - 所有 submission_evidence.version_id（提交原稿）；
+ * - 所有预留中待确认的原稿版本（含未投影和结果未知）；
  * - 安全窗口内创建的全部版本与临时文件（在途上传、丢回执重试窗口——
  *   后者即 mutationId 幂等窗口：版本行被回收后幂等记录随之消失，窗口外
  *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）；
@@ -222,6 +224,14 @@ export function gcNoteVersions(
     if (row.id !== null) keep.add(row.id);
   }
 
+  for (const row of db
+    .select({ id: attemptOriginalReservations.pendingVersionId })
+    .from(attemptOriginalReservations)
+    .where(isNotNull(attemptOriginalReservations.pendingVersionId))
+    .all()) {
+    if (row.id !== null) keep.add(row.id);
+  }
+
   // 单次全表拉取（复审轮⑯：候选筛选与 live 对账同一份数据，消双全表扫描）；
   // serverSavedAt 为定长 UTC ISO，字典序即时间序，内存过滤与 SQL lt 等价
   const versionRows = db
@@ -303,6 +313,14 @@ export function gcNoteVersions(
                 .select({ id: submissionEvidence.id })
                 .from(submissionEvidence)
                 .where(eq(submissionEvidence.versionId, row.id))
+                .get() !== undefined
+            )
+              return false;
+            if (
+              tx
+                .select({ id: attemptOriginalReservations.operationId })
+                .from(attemptOriginalReservations)
+                .where(eq(attemptOriginalReservations.pendingVersionId, row.id))
                 .get() !== undefined
             )
               return false;

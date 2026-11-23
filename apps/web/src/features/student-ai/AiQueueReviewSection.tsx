@@ -8,6 +8,7 @@ import { attemptOriginLineOf, QueueTypeTag, shortTimeOf } from "./AiQueueItem";
 import {
   ATTEMPT_REVIEW_PANEL_TARGET,
   ATTEMPT_REVIEW_STATUS_LABEL,
+  formatAttemptReviewTaskCounts,
 } from "./attempt-review-entry";
 import {
   type useAttemptReviewQueue,
@@ -79,6 +80,9 @@ function ReviewCard({
       <p className="text-sm break-words">
         {origin !== undefined ? `${attemptOriginLineOf(origin)} · ` : ""}覆盖{" "}
         {task.questionCount} 题
+      </p>
+      <p className="text-xs text-muted-foreground">
+        {formatAttemptReviewTaskCounts(task.counts)}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {primary !== null &&

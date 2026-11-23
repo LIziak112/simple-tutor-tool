@@ -27,11 +27,9 @@ import {
   buildReviewPackZip,
   previewReviewPack,
 } from "../services/review-pack-service";
+import { getTeacherAttemptDetail } from "../services/teacher-attempt-detail.ts";
 import { getTeacherAttemptReplay } from "../services/teacher-attempt-replay";
-import {
-  getTeacherAttemptDetail,
-  listTeacherAttempts,
-} from "../services/teacher-attempt-service";
+import { listTeacherAttempts } from "../services/teacher-attempt-service";
 
 /**
  * 教师端作答数据路由（T3.1 + T3.2b + T3.4，需教师会话），由 teacher.ts 挂在
@@ -93,7 +91,7 @@ export function createTeacherAttemptRoutes(
         }
         return c.json({
           ok: true,
-          data: listTeacherAttempts(db, c.var.teacher.id, parsed.data),
+          data: listTeacherAttempts(db, c.var.teacher.id, parsed.data, dataDir),
         });
       })
       .get("/attempts/:id", (c) => {
@@ -103,6 +101,7 @@ export function createTeacherAttemptRoutes(
             db,
             c.var.teacher.id,
             c.req.param("id"),
+            dataDir,
           ),
         });
       })
@@ -232,7 +231,13 @@ export function createTeacherAttemptRoutes(
         const req = await parseJsonBody(c, markRequestSchema);
         return c.json({
           ok: true,
-          data: markResponse(db, c.var.teacher.id, c.req.param("id"), req),
+          data: markResponse(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+            req,
+            dataDir,
+          ),
         });
       })
       .get("/pending-marks", (c) => {
@@ -251,7 +256,7 @@ export function createTeacherAttemptRoutes(
         }
         return c.json({
           ok: true,
-          data: listPendingMarks(db, c.var.teacher.id, parsed.data),
+          data: listPendingMarks(db, c.var.teacher.id, parsed.data, dataDir),
         });
       })
       // T3.4（D13）：CSV 导出文件直出——UTF-8 BOM 前缀让 Excel 直接打开中文不
@@ -274,7 +279,13 @@ export function createTeacherAttemptRoutes(
             `查询参数不合法：${first}`,
           );
         }
-        const csv = exportCsv(db, c.var.teacher.id, publicUrl, parsed.data);
+        const csv = exportCsv(
+          db,
+          c.var.teacher.id,
+          publicUrl,
+          parsed.data,
+          dataDir,
+        );
         const filename = `tutor-export-${beijingExportStampOf()}.csv`;
         return new Response(`${CSV_UTF8_BOM}${csv}`, {
           status: 200,

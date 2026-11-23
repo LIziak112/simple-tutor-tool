@@ -413,6 +413,8 @@ describe("作业详情读取恢复出口", () => {
   });
 
   it("作业结果页重做使用本次选择的时长", async () => {
+    // 真实结果模块的冷编译是测试准备，按钮查找继续使用原等待上限。
+    await import("@/features/attempt/AttemptResultWithDraftCleanup");
     mockedAssignments.mockResolvedValue({
       assignments: [{ ...ASSIGNMENT, status: "graded" }],
     });

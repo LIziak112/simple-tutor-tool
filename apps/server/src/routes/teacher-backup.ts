@@ -20,7 +20,7 @@ import {
  * 由 teacher.ts 挂在 /api/teacher 之下：
  * - GET  /backup/snapshots：最近快照列表（时间倒序；只列 db 快照，供设置页展示）；
  * - GET  /backup/download：完整备份 zip 文件直出（下载前恒先拍一份当前时刻
- *   db 快照 + blobs + shared + secret.key，排除 backups/ 自身）。文件直出
+ *   主库、内核库及正文文件快照，排除 backups/ 自身）。文件直出
  *   非统一壳，处理方式同
  *   /export/learning-pack；archiver 流式打包经 Readable.toWeb 转 web 流，
  *   边打包边响应、不整包进内存（blobs 可能很大）；

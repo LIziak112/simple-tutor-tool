@@ -19,6 +19,10 @@ import {
   selfReviewRecordOf,
   teacherMarkOf,
 } from "./attempt-service";
+import { buildKernelAssignmentResult } from "./kernel-assignment-confirmed-detail.ts";
+import { isKernelAttempt } from "./kernel-assignment-routing.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery-recovery.ts";
 import { snapshotOfRow } from "./snapshot";
 
 /**
@@ -44,9 +48,7 @@ import { snapshotOfRow } from "./snapshot";
  *    递增）；**自评不写 teacherMark、不写 finalCorrect、不推动 graded/
  *    scoreFinal**（D7 三源分立——自评是本人声明，不能伪装成教师或自动判定）。
  *
- * 响应：本题自评记录 + 有效判定投影（effectiveVerdictOf 三层回落）+ 卷汇总
- * （attemptScoreSummaryOf 现算；公布 gate 已过——见 practiceQuestionFeedbackStateOf
- * 组装前提，无受限形态投影需求）。
+ * 响应：本题自评记录、有效判定和卷汇总。内核普通整卷复用结果页的权威投影。
  */
 
 // teacherMarkOf 已移驻 attempt-service（QM-12 有效判定单一出处共用收窄），
@@ -84,120 +86,117 @@ export function submitSelfReview(
   questionId: string,
   req: SelfReviewRequest,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): SelfReviewData {
-  // 1. 归属/作废/课程失权（与取卷同口径——不暴露存在性差异）
-  const attempt = requireUsableAttempt(db, studentId, attemptId);
-  // 2. 行属本 attempt（冻结集合外的题目 404）
-  const row = db
-    .select()
-    .from(responses)
-    .where(buildAttemptQuestionWhere(attemptId, questionId))
-    .get();
-  if (row === undefined) {
-    throw questionNotFound();
-  }
-  // 3. 已提交 + 公布 gate（四态单一出处；非 released 统一 403 不泄露答案状态）
-  const state = practiceQuestionFeedbackStateOf(db, attempt, row, now);
-  if (state.status !== "released") {
-    throw new HttpError(
-      403,
-      "SELF_REVIEW_NOT_RELEASED",
-      "参考答案尚未公布，暂不能自评",
-    );
-  }
-  // 4. 行策略：仅 reference_self 行有自评入口
-  if (row.gradingPolicy !== "reference_self") {
-    throw new HttpError(403, "SELF_REVIEW_NOT_ALLOWED", "这道题不支持自评");
-  }
-  // 5. 参考材料可用（冻结快照可解析且有参考答案——防御异常数据）
-  const snapshot = snapshotOfRow(row);
-  if (snapshot === null || snapshot.answers === undefined) {
-    throw new HttpError(
-      403,
-      "SELF_REVIEW_NOT_ALLOWED",
-      "这道题的参考答案不可用，不能自评",
-    );
-  }
-  // 6-8. 幂等/CAS/教师竞争在事务内裁决（快照单连接下读-写窗口最小，仍按
-  // 事实复核——与 M2 逐题提交同款纪律）
-  const nowIso = new Date(now).toISOString();
-  const written = db.transaction((tx) => {
-    const fresh = tx
-      .select()
-      .from(responses)
-      .where(eq(responses.id, row.id))
-      .get();
-    if (fresh === undefined) {
-      throw questionNotFound();
-    }
-    // 教师竞争：批注先落 → 迟到自评拒绝（先于幂等/CAS——教师优先不可被
-    // 自评重放绕过）
-    if (fresh.teacherMark !== null) {
-      throw new HttpError(
-        409,
-        "SELF_REVIEW_TEACHER_MARKED",
-        "老师已判定这道题，无需自评",
-      );
-    }
-    // 幂等重放：同 mutationId 的网络重试返回首次回执（不重复写、revision
-    // 不递增）；同键异请求是客户端错误——按 CAS 冲突拒绝并附当前事实
-    if (fresh.selfReviewMutationId === req.mutationId) {
-      if (replayConsistentWith(fresh, req)) return fresh;
-      throw selfReviewRevisionConflict(fresh);
-    }
-    // CAS：baseRevision 与当前 revision 比对（先于写入）
-    if (fresh.selfReviewRevision !== req.baseRevision) {
-      throw selfReviewRevisionConflict(fresh);
-    }
-    const updated = tx
-      .update(responses)
-      .set({
-        // undecided = 清除自评记录（幂等写），不是一次写入——记录三列清空、
-        // revision 与幂等键照常推进（§5.5.1）
-        selfReviewVerdict: req.verdict === "undecided" ? null : req.verdict,
-        selfReviewAt: req.verdict === "undecided" ? null : nowIso,
-        selfReviewRevision: fresh.selfReviewRevision + 1,
-        selfReviewMutationId: req.mutationId,
-      })
-      .where(
-        and(
-          eq(responses.id, fresh.id),
-          eq(responses.selfReviewRevision, req.baseRevision),
-          isNull(responses.teacherMark),
-        ),
-      )
-      .returning()
-      .get();
-    if (updated === undefined) {
-      // 并发窗口（同步单连接理论不可达）：按事务内复核后的事实分码重拒
-      const reread = tx
+  return db.transaction(
+    (tx) => {
+      const attempt = requireUsableAttempt(db, studentId, attemptId);
+      const row = tx
         .select()
         .from(responses)
-        .where(eq(responses.id, row.id))
+        .where(buildAttemptQuestionWhere(attemptId, questionId))
         .get();
-      if (reread === undefined) throw questionNotFound();
-      if (reread.teacherMark !== null) {
+      if (row === undefined) throw questionNotFound();
+      if (
+        practiceQuestionFeedbackStateOf(db, attempt, row, now).status !==
+        "released"
+      ) {
+        throw new HttpError(
+          403,
+          "SELF_REVIEW_NOT_RELEASED",
+          "参考答案尚未公布，暂不能自评",
+        );
+      }
+      if (row.gradingPolicy !== "reference_self") {
+        throw new HttpError(403, "SELF_REVIEW_NOT_ALLOWED", "这道题不支持自评");
+      }
+      const snapshot = snapshotOfRow(row);
+      if (snapshot === null || snapshot.answers === undefined) {
+        throw new HttpError(
+          403,
+          "SELF_REVIEW_NOT_ALLOWED",
+          "这道题的参考答案不可用，不能自评",
+        );
+      }
+      // 权威交付不可读时不落自评。恢复和回执组装都在同一个写事务内。
+      const isKernelWholeAssignment =
+        attempt.sourceType === "assignment" && isKernelAttempt(db, attempt);
+      const delivery =
+        isKernelWholeAssignment && dataDir !== undefined
+          ? readQuestionDeliveryFacts(db, dataDir, attempt)
+          : undefined;
+      const confirmed = delivery?.rows.find(
+        (projected) => projected.id === row.id,
+      );
+      if (isKernelWholeAssignment && !confirmed) kernelAttemptUnavailable();
+      if ((confirmed ?? row).teacherMark !== null) {
         throw new HttpError(
           409,
           "SELF_REVIEW_TEACHER_MARKED",
           "老师已判定这道题，无需自评",
         );
       }
-      throw selfReviewRevisionConflict(reread);
-    }
-    return updated;
-  });
+      const replay = row.selfReviewMutationId === req.mutationId;
+      if (
+        replay
+          ? !replayConsistentWith(row, req)
+          : row.selfReviewRevision !== req.baseRevision
+      ) {
+        throw selfReviewRevisionConflict(row);
+      }
 
-  // 响应：本题自评记录 + 有效判定投影 + 卷汇总（自评不写 teacherMark/
-  // finalCorrect/graded——attempt 行无需重读，汇总的 scoreFinal 读行值）
-  const effective: EffectiveVerdict | null = effectiveVerdictOf(
-    written.autoCorrect,
-    teacherMarkOf(written.teacherMark),
-    selfReviewRecordOf(written),
+      const changes = replay
+        ? null
+        : {
+            selfReviewVerdict: req.verdict === "undecided" ? null : req.verdict,
+            selfReviewAt:
+              req.verdict === "undecided" ? null : new Date(now).toISOString(),
+            selfReviewRevision: row.selfReviewRevision + 1,
+            selfReviewMutationId: req.mutationId,
+          };
+      const written = changes
+        ? tx
+            .update(responses)
+            .set(changes)
+            .where(
+              and(
+                eq(responses.id, row.id),
+                eq(responses.selfReviewRevision, req.baseRevision),
+                isNull(responses.teacherMark),
+              ),
+            )
+            .returning()
+            .get()
+        : row;
+      if (!written) throw selfReviewRevisionConflict(row);
+
+      const selfReview = selfReviewRecordOf(written);
+      const effective: EffectiveVerdict | null = effectiveVerdictOf(
+        (confirmed ?? written).autoCorrect,
+        teacherMarkOf((confirmed ?? written).teacherMark),
+        selfReview,
+      );
+      return selfReviewDataSchema.parse({
+        selfReview,
+        effective,
+        summary: delivery
+          ? buildKernelAssignmentResult(
+              db,
+              {
+                ...delivery,
+                rows: changes
+                  ? delivery.rows.map((projected) =>
+                      projected.id === written.id
+                        ? { ...projected, ...changes }
+                        : projected,
+                    )
+                  : delivery.rows,
+              },
+              new Date(now),
+            ).summary
+          : attemptScoreSummaryOf(db, attempt),
+      });
+    },
+    { behavior: "immediate" },
   );
-  return selfReviewDataSchema.parse({
-    selfReview: selfReviewRecordOf(written),
-    effective,
-    summary: attemptScoreSummaryOf(db, attempt),
-  });
 }

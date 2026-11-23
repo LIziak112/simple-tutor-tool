@@ -18,6 +18,9 @@ import {
   resultQuestionOf,
   studentFacingResultOf,
 } from "./attempt-question-projection.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery-recovery.ts";
+import { deliveryTickets } from "./kernel-question-delivery-ticket.ts";
 import {
   attemptAnswersPublished,
   resolvePracticeQuestionFeedbackState,
@@ -161,6 +164,7 @@ export function getPracticeQuestionFeedback(
   attemptId: string,
   questionId: string,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): PracticeQuestionFeedbackData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (practiceProtocolOf(attempt) !== "v1") {
@@ -177,6 +181,26 @@ export function getPracticeQuestionFeedback(
     .get();
   if (row === undefined) {
     throw questionNotFound();
+  }
+  if (
+    dataDir !== undefined &&
+    attempt.sourceType === "assignment" &&
+    practiceQuestionFeedbackStateOf(db, attempt, row, now).status ===
+      "released" &&
+    deliveryTickets(db, attemptId).length > 0
+  ) {
+    const facts = readQuestionDeliveryFacts(db, dataDir, attempt);
+    const confirmed = facts?.rows.find(({ id }) => id === row.id);
+    if (!facts || !confirmed) kernelAttemptUnavailable();
+    return {
+      feedback: practiceQuestionFeedbackOf(
+        db,
+        facts.attempt,
+        confirmed,
+        () => snapshotOfRow(confirmed),
+        now,
+      ),
+    };
   }
   // 快照惰性解析（仅 released 态反馈需要题目内容，未授权态不付解析成本；
   // 已提交行快照损坏时由投影层按 404 拒绝，不静默降级）

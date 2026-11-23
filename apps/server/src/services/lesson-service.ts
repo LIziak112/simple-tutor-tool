@@ -1,18 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type {
-  AttemptQuestionPublic,
-  AttemptResultQuestion,
-  HintOpenedEntry,
-  LessonBlock,
   LessonLandingData,
   LessonRestartRequest,
   LessonStartData,
-  StudentAnswer,
 } from "@tutor/contract";
 import { attemptPhaseOf, isRecordableAttempt } from "@tutor/contract";
 // 学生端题干投影唯一入口在 attempt-service 的 studentFacingResultOf
 //（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
-import { splitLessonBlocks } from "@tutor/md-dsl";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
@@ -22,39 +16,39 @@ import {
   contextEntriesOf,
   liveAttemptContextClosure,
 } from "./attempt-context.ts";
+import { needsTeacherMark } from "./attempt-final-outcome.ts";
 import {
   type AttemptStartClient,
   refreshOpenedAttempt,
 } from "./attempt-opened-refresh.ts";
 import {
-  answerOf,
-  attemptEnabledCapabilities,
-  attemptResponseRows,
-  attemptSummaryOf,
   freezeInputsOfNewAttempt,
   insertFrozenResponses,
-  lessonLiveSummaryOf,
-  lessonQuestionSubmitted,
-  materialSlotOrderOf,
   newDraftAttempt,
-  publicOfSnapshot,
   requireUsableAttempt,
-  resultQuestionOf,
-  studentFacingResultOf,
 } from "./attempt-service";
 import { hasSubstantiveAttemptEvidence } from "./attempt-substantive-evidence.ts";
-import { attemptTimeEstimateOf } from "./attempt-time-estimate";
-import { timeProjectionsOf } from "./attempt-time-projection";
 import { createOnce } from "./create-receipt";
 import { recordAttemptStartEvent } from "./event-service";
-import { openedHintEcho } from "./hint-service";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import { pendingKernelLesson } from "./kernel-lesson-opening.ts";
+import {
+  openKernelLessonFromPage,
+  restartBoundKernelLesson,
+} from "./kernel-lesson-page-entry.ts";
+import {
+  buildLessonStartData,
+  type LessonCourseRef,
+  type LessonLectureRef,
+} from "./kernel-lesson-projection.ts";
+import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
 import { pickEmbeddedUnits } from "./lesson-embedded";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
 import { pendingMarkCounts } from "./pending-mark";
 import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import type { Tx } from "./question-sync";
 import { attemptResultCounts, resultCountsSummary } from "./result-counts";
-import { snapshotOfRow } from "./snapshot";
 import {
   notFound,
   requireVisibleStudentLecture,
@@ -91,21 +85,6 @@ import {
  * 与已提交题的当题结果；未提交题的 answers/solutionMd/hint 内容绝不出现，
  * 泄露矩阵见 routes/student-lesson.test.ts。
  */
-
-/** 讲练页讲义行的结构化投影（requireVisibleStudentLecture 的产物裁剪） */
-interface LessonLectureRef {
-  readonly id: string;
-  readonly title: string;
-  /** 讲义原文（含题块——教师域数据，只供服务端切段，绝不下发） */
-  readonly markdown: string;
-}
-
-/** 讲练开卷的课程上下文（三分谓词产物裁剪） */
-interface LessonCourseRef {
-  readonly id: string;
-  readonly title: string;
-  readonly teacherId: string;
-}
 
 /** restart 的状态冲突（进行中/无作答不可重做；复用 attempt 状态冲突的既有分码） */
 function restartConflict(message: string): HttpError {
@@ -229,105 +208,6 @@ function createLessonAttempt(
   return attempt;
 }
 
-/**
- * 讲练开卷投影组装（start/restart 共用）。blocks 服务端切段；questions 冻结行
- * 公开投影平铺（快照缺失的历史行跳过，不回填）；drafts/hintsOpened 与草稿
- * 视图同口径；released 只含已单题提交的题（当题已释放，stemMd 经
- * studentStemMd 投影）；summary 读侧现算——经 attempt-service 的
- * lessonLiveSummaryOf（与单题提交响应同一实现：已提交行计入对错、未提交计入
- * unanswered，pendingCount 按 D4 finalCorrect 口径只数已提交行）。
- */
-function buildLessonStartData(
-  db: Db,
-  lecture: LessonLectureRef,
-  course: LessonCourseRef,
-  topic: string | null,
-  attempt: Attempt,
-): LessonStartData {
-  const blocks: LessonBlock[] = splitLessonBlocks(lecture.markdown);
-
-  // QM-13：matching 槽位集合按冻结材料槽位序展开（一次取全卷共用）
-  const materialSlots = materialSlotOrderOf(db, attempt.id);
-  const times = timeProjectionsOf(db, [attempt.id]);
-  const questions: AttemptQuestionPublic[] = [];
-  const drafts: Record<string, StudentAnswer> = {};
-  const draftRevisions: Record<string, number> = {};
-  const hintsOpened: Record<string, HintOpenedEntry[]> = {};
-  const released: Record<string, AttemptResultQuestion> = {};
-  const rows = attemptResponseRows(db, attempt.id);
-  const validQuestionIds = new Set<string>();
-  for (const row of rows) {
-    const snapshot = snapshotOfRow(row);
-    if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
-    validQuestionIds.add(row.questionId);
-    questions.push(
-      publicOfSnapshot(snapshot, row.id, {
-        questionVersion: row.questionVersion,
-        materialSlots,
-        // 审查 P2-1：旧快照兜底重抽的解析语境（行内冻结单元归属）
-        unitId: row.unitId,
-      }),
-    );
-    const answer = answerOf(row.answerJson);
-    draftRevisions[row.questionId] = row.answerRevision;
-    if (answer !== null) drafts[row.questionId] = answer;
-    const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
-    if (echo.length > 0) hintsOpened[row.questionId] = echo;
-    if (!lessonQuestionSubmitted(row)) {
-      continue;
-    } // 未单题提交：不进 released、不计对错
-    // 已单题提交 → 当题释放（读当前行值：进行中卷教师可能已批 teacherMark）；
-    // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
-    // 含 [[答案]] 标记的原文不下发）
-    released[row.questionId] = studentFacingResultOf(
-      resultQuestionOf(row, snapshot, {
-        materialSlots,
-        db,
-        time: times.responseTime.get(row.id),
-      }),
-    );
-  }
-  return {
-    time: times.aggregate(attempt.id),
-    timeEstimate: attemptTimeEstimateOf(db, attempt.id),
-    lecture: {
-      id: lecture.id,
-      title: lecture.title,
-      // 嵌入单元的 topic（frontmatter topic 落单元行；零题讲练页无单元 → null）
-      topic,
-      courseId: course.id,
-      courseName: course.title,
-    },
-    blocks,
-    attempt: attemptSummaryOf(attempt),
-    questions,
-    drafts,
-    draftRevisions,
-    hintsOpened,
-    released,
-    summary: lessonLiveSummaryOf(
-      // 开卷本就装载完整行（题目投影需要快照原文）；喂汇总前映射为存在性
-      // 布尔形态（ScoreSummaryRow，不重复搬运快照列语义；QM-12 起补自评
-      // 三列——汇总核心的有效判定需要）
-      rows.map((row) => ({
-        hasSnapshot: validQuestionIds.has(row.questionId),
-        answerJson: row.answerJson,
-        submittedAt: row.submittedAt,
-        autoCorrect: row.autoCorrect,
-        finalCorrect: row.finalCorrect,
-        gradingPolicy: row.gradingPolicy,
-        teacherMark: row.teacherMark,
-        selfReviewVerdict: row.selfReviewVerdict,
-        selfReviewAt: row.selfReviewAt,
-        selfReviewRevision: row.selfReviewRevision,
-        answered: row.answered,
-      })),
-      attempt,
-    ),
-    enabledCapabilities: attemptEnabledCapabilities(db, attempt),
-  };
-}
-
 /** 讲练开卷前置：三分谓词 + 讲练页形态校验 + 嵌入单元，三件产物一次取齐 */
 function requireLessonContext(
   db: Db,
@@ -373,12 +253,40 @@ function requireLessonContext(
  *   缺省取第一个可见该讲练页的课程——attempt.courseId 记录打开时来自哪门课；
  * - 建卷事务外直记 attempt_start 事件（建卷必有，不依赖前端上报）。
  */
+type KernelLessonOptions = { dataDir: string; enabled: boolean };
+
+function projectLessonStart(
+  db: Db,
+  lecture: LessonLectureRef,
+  course: LessonCourseRef,
+  topic: string | null,
+  attempt: Attempt,
+  kernel?: KernelLessonOptions,
+) {
+  const binding = lessonKernelBinding(db, attempt.id);
+  if (!binding)
+    return buildLessonStartData(db, lecture, course, topic, attempt);
+  if (!kernel) kernelAttemptUnavailable();
+  const usable = requireUsableAttempt(db, attempt.studentId, attempt.id);
+  const facts = readQuestionDeliveryFacts(db, kernel.dataDir, usable);
+  if (!facts) kernelAttemptUnavailable();
+  return buildLessonStartData(
+    db,
+    lecture,
+    course,
+    topic,
+    facts.attempt,
+    facts.rows,
+  );
+}
+
 export function startLessonAttempt(
   db: Db,
   studentId: string,
   lectureId: string,
   courseId?: string | undefined,
   client: AttemptStartClient = {},
+  kernel?: KernelLessonOptions,
 ): LessonStartData {
   const { lecture, course, unitId, topic } = requireLessonContext(
     db,
@@ -387,9 +295,37 @@ export function startLessonAttempt(
     courseId,
   );
 
+  const scope = {
+    studentId,
+    lectureId,
+    courseId: course.id,
+    unitId,
+    teacherId: course.teacherId,
+    title: lecture.title,
+  };
+  const kernelAttempt =
+    kernel &&
+    openKernelLessonFromPage(db, kernel, scope, client.snapshotProof === true);
+  if (kernelAttempt)
+    return projectLessonStart(
+      db,
+      lecture,
+      course,
+      topic,
+      kernelAttempt,
+      kernel,
+    );
   const { attempt, created } = db.transaction((tx) => {
     const existing = lessonAttemptsOf(tx, studentId, lectureId);
+    if (kernel && pendingKernelLesson(db, scope))
+      throw new HttpError(
+        409,
+        "LESSON_RESTART_STALE",
+        "讲练正在打开，请稍后重试",
+      );
     const draft = existing.find((row) => row.status === "draft");
+    if (draft && lessonKernelBinding(db, draft.id))
+      return { attempt: draft, created: false };
     if (draft !== undefined && !lessonUnitMoved(db, draft, unitId))
       return {
         attempt: refreshOpenedAttempt(db, draft, client),
@@ -418,7 +354,7 @@ export function startLessonAttempt(
   if (created) {
     recordAttemptStartEvent(db, studentId, attempt.id);
   }
-  return buildLessonStartData(db, lecture, course, topic, attempt);
+  return projectLessonStart(db, lecture, course, topic, attempt, kernel);
 }
 
 // ---------- POST /api/student/lectures/:id/lesson/restart ----------
@@ -441,6 +377,7 @@ export function restartLessonAttempt(
   lectureId: string,
   request?: LessonRestartRequest,
   client: AttemptStartClient = {},
+  kernel?: KernelLessonOptions,
 ): LessonStartData {
   const { lecture, course, unitId, topic } = requireLessonContext(
     db,
@@ -448,10 +385,33 @@ export function restartLessonAttempt(
     lectureId,
   );
 
+  const scope = {
+    studentId,
+    lectureId,
+    courseId: course.id,
+    unitId,
+    teacherId: course.teacherId,
+    title: lecture.title,
+  };
+  const opened =
+    kernel &&
+    restartBoundKernelLesson(
+      db,
+      kernel,
+      scope,
+      lessonAttemptsOf(db, studentId, lectureId),
+      request,
+      client.snapshotProof === true,
+    );
+  if (opened)
+    return projectLessonStart(db, lecture, course, topic, opened, kernel);
+
   const create = (store: Db) =>
     store.transaction((tx) => {
       const existing = lessonAttemptsOf(tx, studentId, lectureId);
       const latest = existing[0];
+      if (latest && lessonKernelBinding(db, latest.id))
+        kernelAttemptUnavailable();
       if (latest === undefined) {
         throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
       }
@@ -500,7 +460,7 @@ export function restartLessonAttempt(
       )
     : create(db);
   const attempt = requireUsableAttempt(db, studentId, id);
-  return buildLessonStartData(db, lecture, course, topic, attempt);
+  return projectLessonStart(db, lecture, course, topic, attempt, kernel);
 }
 
 // ---------- GET /api/student/lectures/:id/lesson/landing ----------
@@ -523,6 +483,7 @@ export function getLessonLanding(
   studentId: string,
   lectureId: string,
   courseId?: string | undefined,
+  dataDir?: string,
 ): LessonLandingData {
   const { lecture, course, unitId, topic } = requireLessonContext(
     db,
@@ -548,10 +509,39 @@ export function getLessonLanding(
     typeDistribution[row.type] = (typeDistribution[row.type] ?? 0) + 1;
   }
 
-  const attemptRows = lessonAttemptsOf(db, studentId, lectureId).filter(
-    isRecordableAttempt,
-  );
+  const sharedPending = new Map<string, number>();
+  const sharedCounts = new Map<
+    string,
+    {
+      correctCount: number;
+      totalCount: number;
+      pendingCount: number;
+      pendingSelfReviewCount: number;
+    }
+  >();
+  const attemptRows = lessonAttemptsOf(db, studentId, lectureId)
+    .map((attempt) => {
+      if (!dataDir || !lessonKernelBinding(db, attempt.id)) return attempt;
+      const usable = requireUsableAttempt(db, studentId, attempt.id);
+      const facts = readQuestionDeliveryFacts(db, dataDir, usable);
+      if (!facts) kernelAttemptUnavailable();
+      const pendingCount = facts.rows.filter(
+        (row) => row.submittedAt !== null && needsTeacherMark(row),
+      ).length;
+      sharedPending.set(attempt.id, pendingCount);
+      if (facts.attempt.status !== "draft")
+        sharedCounts.set(attempt.id, {
+          correctCount: facts.rows.filter((row) => row.finalCorrect === true)
+            .length,
+          totalCount: facts.rows.length,
+          pendingCount,
+          pendingSelfReviewCount: 0,
+        });
+      return facts.attempt;
+    })
+    .filter(isRecordableAttempt);
   const resultCounts = attemptResultCounts(db, attemptRows);
+  for (const [id, counts] of sharedCounts) resultCounts.set(id, counts);
   const submittedRows = attemptRows.filter((row) => row.status !== "draft");
   const ascending = [...submittedRows].sort(
     (a, b) => a.attemptNo - b.attemptNo,
@@ -561,9 +551,8 @@ export function getLessonLanding(
   const scores = ascending.map(scoreOf);
   const nonNullScores = scores.filter((s): s is number => s !== null);
   let pendingCount = 0;
-  for (const value of pendingMarkCounts(db, attemptRows).values()) {
-    pendingCount += value;
-  }
+  for (const [id, value] of pendingMarkCounts(db, attemptRows).entries())
+    pendingCount += sharedPending.get(id) ?? value;
 
   return {
     lectureId: lecture.id,

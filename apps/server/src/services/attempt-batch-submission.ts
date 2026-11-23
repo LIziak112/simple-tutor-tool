@@ -22,10 +22,12 @@ import {
   submitAttempt,
 } from "./attempt-service.ts";
 import { revisionStale } from "./attempt-submit-revisions.ts";
+import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
 import { snapshotOfRow } from "./snapshot.ts";
 
 function requireDraft(db: Db, studentId: string, attemptId: string) {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireLegacyAttemptWrite(db, attempt);
   if (attempt.status !== "draft") {
     throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
   }

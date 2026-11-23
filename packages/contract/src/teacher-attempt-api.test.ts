@@ -323,6 +323,23 @@ describe("markRequestSchema（D3：两字段一次提交 + 评语归一化）", 
       markRequestSchema.safeParse({ mark: "correct", comment: 42 }).success,
     ).toBe(false);
   });
+
+  it("普通题组批改必须成对提供非负修订与合法操作标识", () => {
+    const body = { mark: null, comment: null };
+    expect(
+      markRequestSchema.parse({ ...body, baseRevision: 0, mutationId: UUID }),
+    ).toEqual({ ...body, baseRevision: 0, mutationId: UUID });
+    for (const proof of [
+      { baseRevision: 0 },
+      { mutationId: UUID },
+      { baseRevision: -1, mutationId: UUID },
+      { baseRevision: 1, mutationId: "invalid" },
+    ]) {
+      expect(markRequestSchema.safeParse({ ...body, ...proof }).success).toBe(
+        false,
+      );
+    }
+  });
 });
 
 describe("pendingMarkListQuerySchema（D4 筛选，全可选）", () => {
@@ -416,6 +433,10 @@ describe("teacherMarkErrorCodeSchema", () => {
       "RESPONSE_NOT_FOUND",
       "NOT_SUBMITTED",
       "ATTEMPT_ABANDONED",
+      "VERDICT_CONFLICT",
+      "OPERATION_CONFLICT",
+      "KERNEL_MARK_PENDING",
+      "FORBIDDEN",
       "UNAUTHORIZED",
       "VALIDATION_ERROR",
     ]);
