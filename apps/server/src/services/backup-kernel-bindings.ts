@@ -4,7 +4,10 @@ import {
   attemptSubmitRequestSchema,
   BACKUP_KERNEL_DATABASE,
 } from "@tutor/contract";
-import { choiceAmendmentIntentSchema } from "@tutor/contract/choice-amendment-intent";
+import {
+  auditKindOf,
+  choiceAmendmentIntentSchema,
+} from "@tutor/contract/choice-amendment-intent";
 import type Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { LearningError, verifyActivityBindings } from "learning-kernel";
@@ -169,7 +172,7 @@ function verifyProjection(
           if (studentId === null)
             throw new ZipReadError("备份中的教师草稿勘误缺少作答归属");
           return {
-            kind: intent.kind,
+            kind: auditKindOf(intent),
             activityId: ticket.attemptId,
             studentId,
             stepAttemptId: intent.stepAttemptId,
