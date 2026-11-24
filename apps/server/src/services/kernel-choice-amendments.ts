@@ -5,13 +5,17 @@ import {
   singleChoiceScoringSourceSchema,
   type TeacherResponseEdit,
 } from "@tutor/contract";
-import { choiceAmendmentIntentSchema } from "@tutor/contract/choice-amendment-intent";
+import {
+  auditKindOf,
+  choiceAmendmentIntentSchema,
+} from "@tutor/contract/choice-amendment-intent";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq, isNull } from "drizzle-orm";
 import {
   ChoiceDraftConflict,
   ChoiceSnapshotRevisionConflict,
   LearningError,
+  QuestionDeliveryConflict,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import { attempts, responseEditAudits, responses } from "../db/schema.ts";
@@ -28,6 +32,11 @@ import {
   kernelChoiceAmendmentScope,
   withChoiceAmendmentReviewer,
 } from "./kernel-choice-amendment-scope.ts";
+import {
+  applyDeliveryIntent,
+  stageDeliveryFields,
+  usesQuestionDelivery,
+} from "./kernel-delivery-amendments.ts";
 import {
   editTeacherDraftResponse,
   findTeacherAttempt,
@@ -63,11 +72,22 @@ function amendmentForbidden() {
 function knownRejection(error: unknown) {
   if (
     error instanceof ChoiceDraftConflict ||
-    error instanceof ChoiceSnapshotRevisionConflict
+    error instanceof ChoiceSnapshotRevisionConflict ||
+    error instanceof QuestionDeliveryConflict
   )
     return revisionConflict();
   if (error instanceof LearningError) {
-    if (error.code === "ALREADY_SUBMITTED") return notInProgress();
+    if (
+      error.code === "ALREADY_SUBMITTED" ||
+      error.code === "ACTIVITY_ABANDONED"
+    )
+      return notInProgress();
+    if (error.code === "INVALID_QUESTION" || error.code === "INVALID_KEY")
+      return new HttpError(
+        400,
+        "VALIDATION_ERROR",
+        "题面勘误与冻结题型或评分不一致",
+      );
     if (error.code === "RESPONSE_EVIDENCE_EXISTS")
       return responseEvidenceExists();
   }
@@ -129,20 +149,42 @@ function stage(
         scope,
         { action: "read" },
         (runtime, reviewer) => {
-          const current = (() => {
+          const read = <T>(load: () => T) => {
             try {
-              return runtime.readChoiceDraftForAmendment(
-                reviewer,
-                attempt.id,
-                capability,
-              );
+              return load();
             } catch (error) {
               throw knownRejection(error) ?? error;
             }
-          })();
+          };
+          const delivery = usesQuestionDelivery(runtime, attempt);
+          const current = delivery
+            ? read(() =>
+                runtime.readQuestionDeliveryDraftForAmendment(
+                  reviewer,
+                  attempt.id,
+                  capability,
+                ),
+              )
+            : read(() =>
+                runtime.readChoiceDraftForAmendment(
+                  reviewer,
+                  attempt.id,
+                  capability,
+                ),
+              );
           if (current.revision !== edit.expectedAnswerRevision)
             throw revisionConflict();
           const fields = (() => {
+            if ("value" in current)
+              return stageDeliveryFields(
+                db,
+                runtime,
+                attempt,
+                row,
+                scope.snapshot,
+                edit,
+                current,
+              );
             if ("snapshot" in edit) {
               assertTeacherDraftSnapshot(row, scope.snapshot, edit.snapshot);
               kernelSnapshotContent(edit.snapshot);
@@ -192,15 +234,14 @@ function stage(
 function apply(db: Db, dataDir: string, ticket: Ticket) {
   const { attemptId, teacherId, responseId, operationId } = ticket;
   const intent = choiceAmendmentIntentSchema.parse(ticket.intent);
-  const attempt =
-    intent.kind === "snapshot"
-      ? db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
-      : findTeacherAttempt(db, teacherId, attemptId)?.attempt;
+  const snapshotKind = auditKindOf(intent) === "snapshot";
+  const attempt = snapshotKind
+    ? db.select().from(attempts).where(eq(attempts.id, attemptId)).get()
+    : findTeacherAttempt(db, teacherId, attemptId)?.attempt;
   if (attempt === undefined || attempt.abandonedAt !== null)
     kernelAttemptUnavailable();
   const acceptedOnly =
-    intent.kind === "snapshot" &&
-    !isCurrentChoiceReviewer(db, teacherId, attempt);
+    snapshotKind && !isCurrentChoiceReviewer(db, teacherId, attempt);
   const scope = kernelChoiceAmendmentScope(db, attempt, intent.questionId);
   const { capability, binding, row } = scope;
   if (
@@ -208,7 +249,8 @@ function apply(db: Db, dataDir: string, ticket: Ticket) {
     capability.stepAttemptId !== intent.stepAttemptId ||
     capability.questionVersion !== intent.questionVersion ||
     binding.practiceVersion !== intent.practiceVersion ||
-    (intent.kind === "snapshot" && row.questionSnapshotJson !== intent.prior)
+    ((intent.kind === "snapshot" || intent.kind === "deliverySnapshot") &&
+      row.questionSnapshotJson !== intent.prior)
   )
     kernelAttemptUnavailable();
 
@@ -218,7 +260,7 @@ function apply(db: Db, dataDir: string, ticket: Ticket) {
     teacherId,
     attempt,
     scope,
-    intent.kind === "snapshot"
+    snapshotKind
       ? {
           action: "snapshot",
           operationId,
@@ -235,8 +277,46 @@ function apply(db: Db, dataDir: string, ticket: Ticket) {
           reason: intent.reason,
         };
         const revision = intent.baseRevision + 1;
+        const projectSnapshot = (
+          snapshot: Question,
+          questionVersion: number,
+        ) => {
+          const updated = db
+            .update(responses)
+            .set({
+              questionSnapshotJson: JSON.stringify(snapshot),
+              questionVersion,
+              answerRevision: revision,
+              answerMutationId: operationId,
+            })
+            .where(
+              and(eq(responses.id, responseId), isNull(responses.submittedAt)),
+            )
+            .run();
+          if (updated.changes !== 1) kernelAttemptUnavailable();
+        };
         let previousJson: string | null;
-        if (intent.kind === "snapshot") {
+        if (
+          intent.kind === "deliveryAnswer" ||
+          intent.kind === "deliverySnapshot"
+        ) {
+          const revised = applyDeliveryIntent(
+            db,
+            runtime,
+            attempt,
+            reviewer,
+            row,
+            intent,
+            command,
+          );
+          if (intent.kind === "deliverySnapshot") {
+            if (!revised) kernelAttemptUnavailable();
+            projectSnapshot(intent.snapshot, revised.questionVersion);
+            previousJson = intent.prior;
+          } else
+            previousJson =
+              intent.prior === null ? null : JSON.stringify(intent.prior);
+        } else if (intent.kind === "snapshot") {
           const receipt = runtime.reviseChoiceSnapshot(reviewer, attemptId, {
             ...command,
             ...kernelSnapshotContent(intent.snapshot),
@@ -247,19 +327,7 @@ function apply(db: Db, dataDir: string, ticket: Ticket) {
             receipt.questionVersion !== intent.questionVersion + 1
           )
             kernelAttemptUnavailable();
-          const updated = db
-            .update(responses)
-            .set({
-              questionSnapshotJson: JSON.stringify(intent.snapshot),
-              questionVersion: receipt.questionVersion,
-              answerRevision: receipt.revision,
-              answerMutationId: operationId,
-            })
-            .where(
-              and(eq(responses.id, responseId), isNull(responses.submittedAt)),
-            )
-            .run();
-          if (updated.changes !== 1) kernelAttemptUnavailable();
+          projectSnapshot(intent.snapshot, receipt.questionVersion);
           previousJson = intent.prior;
         } else {
           const choice = String(intent.answer.index);
@@ -277,7 +345,7 @@ function apply(db: Db, dataDir: string, ticket: Ticket) {
             id: operationId,
             responseId,
             teacherId,
-            kind: intent.kind,
+            kind: auditKindOf(intent),
             previousJson,
             reason: intent.reason,
             answerRevision: revision,
@@ -327,7 +395,10 @@ export function recoverKernelChoiceSnapshot(
   attemptId: string,
 ) {
   const ticket = ticketFor(db, attemptId);
-  if (ticket?.intent.kind === "snapshot")
+  if (
+    ticket &&
+    auditKindOf(choiceAmendmentIntentSchema.parse(ticket.intent)) === "snapshot"
+  )
     recoverKernelChoiceAmendment(db, dataDir, attemptId, ticket.operationId);
 }
 
