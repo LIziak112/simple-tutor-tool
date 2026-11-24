@@ -1,7 +1,6 @@
 import { attemptResultDataSchema } from "@tutor/contract";
 import { isUnanswered } from "@tutor/grading";
 import { and, eq, gt } from "drizzle-orm";
-import type { openLearningRuntime } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import { type Attempt, attempts, ink, type ResponseRow } from "../db/schema.ts";
 import { touchAttemptActivity } from "./attempt-activity.ts";
@@ -20,12 +19,14 @@ import {
 import { projectKernelConfirmedActivity } from "./kernel-assignment-activity.ts";
 import {
   judgeAnswerOf,
+  type KernelRuntime,
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
+  requireEvaluated,
 } from "./kernel-assignment-runtime.ts";
 import { recordedActiveSecTotal } from "./submission-time.ts";
 
-type Runtime = ReturnType<typeof openLearningRuntime>;
+type Runtime = KernelRuntime;
 type Recovery = ReturnType<
   Runtime["recoverChoiceConfirmation"] | Runtime["recoverResponseConfirmation"]
 >;
@@ -47,7 +48,7 @@ function factsOf(recovery: Recovery) {
           answer: judgeAnswerOf(value),
         }),
       ),
-      verdicts: recovery.evaluation.questions.map(
+      verdicts: requireEvaluated(recovery.evaluation).questions.map(
         ({ result, ...question }): ProjectedVerdict => ({
           ...question,
           correct: result.status === "judged" ? result.correct : null,
@@ -55,7 +56,7 @@ function factsOf(recovery: Recovery) {
       ),
     };
   }
-  if (!recovery.evaluation) kernelAttemptUnavailable();
+  const evaluation = requireEvaluated(recovery.evaluation);
   return {
     evaluator: ownClassChoiceEvaluatorRef,
     counts: recovery.choiceDraftChangeCounts,
@@ -63,7 +64,7 @@ function factsOf(recovery: Recovery) {
       ...question,
       answer: choice === null ? null : ownClassChoiceAnswerOf(choice),
     })),
-    verdicts: recovery.evaluation.questions,
+    verdicts: evaluation.questions,
   };
 }
 
@@ -75,10 +76,9 @@ export function projectKernelConfirmationFacts(
   rows: readonly ResponseRow[],
   recovery: Recovery,
 ) {
-  const { evaluation } = recovery;
+  const evaluation = requireEvaluated(recovery.evaluation);
   const facts = factsOf(recovery);
   if (
-    !evaluation ||
     evaluation.evaluator.id !== facts.evaluator.id ||
     evaluation.evaluator.version !== facts.evaluator.version ||
     evaluation.questionCount !== rows.length ||

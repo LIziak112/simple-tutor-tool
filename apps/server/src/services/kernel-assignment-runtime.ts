@@ -19,13 +19,8 @@ import { kernelAttemptBindings } from "../db/schema-kernel-assignments.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { requireAssignmentRow } from "./attempt-access.ts";
 import {
-  createOwnClassChoiceEvaluator,
-  createOwnClassJudgeEvaluator,
-  createOwnClassMultiEvaluator,
-  createOwnClassOrderedTextEvaluator,
-  createOwnClassTitledTextEvaluator,
+  createOwnClassEvaluators,
   type OwnClassChoiceEvaluationScope,
-  ownClassDeliveryEvaluatorRef,
 } from "./attempt-choice-evaluation.ts";
 import { attemptResponseRows } from "./attempt-freeze.ts";
 import { matchesKernelMaterialInputs } from "./kernel-assignment-publication.ts";
@@ -109,7 +104,11 @@ export function ownClassChoiceAnswerOf(choice: string) {
 }
 
 export function judgeAnswerOf(value: ResponseValue | null) {
-  return value === null ? null : { kind: "judge" as const, value };
+  if (value === null) return null;
+  // 判断题原值只会是布尔或字符串；内核读面类型更宽，越界即视为读取不一致。
+  if (typeof value !== "boolean" && typeof value !== "string")
+    kernelAttemptUnavailable();
+  return { kind: "judge" as const, value };
 }
 
 export function isJudgeActivity(activity: StudentActivity): boolean {
@@ -119,7 +118,10 @@ export function isJudgeActivity(activity: StudentActivity): boolean {
   );
 }
 
-export type KernelRuntime = ReturnType<typeof openLearningRuntime>;
+export type KernelRuntime = ReturnType<typeof openLearningRuntime> & {
+  /** 执行该次确认的待评任务；评估器拒绝时抛出宿主原错误，其余未完成按暂不可用。 */
+  evaluateSubmission(submissionId: string): void;
+};
 export type KernelAttemptBinding = typeof kernelAttemptBindings.$inferSelect;
 
 type ConfirmationHooks = Pick<
@@ -128,10 +130,7 @@ type ConfirmationHooks = Pick<
   | "authorizeConfirmationRecovery"
   | "authorizeChoiceDraftAmendment"
   | "authorizeChoiceSnapshotRevision"
-  | "authorizeQuestionDeliveryReview"
-  | "authorizeQuestionDeliveryVerdict"
-  | "authorizeChoiceConfirmationReview"
-  | "authorizeChoiceConfirmationVerdict"
+  | "authorizeReview"
   | "hasChoiceSnapshotEvidence"
 > & { evaluateScope?: () => OwnClassChoiceEvaluationScope | undefined };
 
@@ -147,34 +146,40 @@ export function withKernelRuntime<T>(
   try {
     const { evaluateScope, ...authorization } = hooks;
     const getScope = evaluateScope ?? (() => undefined);
-    const runtime = openLearningRuntime({
+    // 内核把评估器异常收成重试计数；保留宿主原错误以便调用方照旧拒绝。
+    let rejection: unknown;
+    const evaluators = createOwnClassEvaluators(db, getScope).map(
+      (evaluator) => ({
+        ...evaluator,
+        evaluate: (input: Parameters<typeof evaluator.evaluate>[0]) => {
+          try {
+            return evaluator.evaluate(input);
+          } catch (error) {
+            rejection = error;
+            throw error;
+          }
+        },
+      }),
+    );
+    const opened = openLearningRuntime({
       ...authorization,
       databasePath,
-      choiceEvaluators: [
-        createOwnClassChoiceEvaluator(db, getScope),
-        createOwnClassChoiceEvaluator(
-          db,
-          getScope,
-          ownClassDeliveryEvaluatorRef,
-        ),
-      ],
-      indexResponseEvaluators: [createOwnClassMultiEvaluator(db, getScope)],
-      orderedTextEvaluators: [createOwnClassOrderedTextEvaluator(db, getScope)],
-      titledTextEvaluators: [createOwnClassTitledTextEvaluator(db, getScope)],
+      evaluators,
       questionAnswerRules: [
         ownClassJudgeAnswerRule,
         ownClassMatchingAnswerRule,
         ownClassOrderingAnswerRule,
         ownClassResponseAnswerRule,
       ],
-      responseEvaluators: [
-        createOwnClassJudgeEvaluator(db, getScope),
-        createOwnClassJudgeEvaluator(
-          db,
-          getScope,
-          ownClassDeliveryEvaluatorRef,
-        ),
-      ],
+    });
+    const runtime: KernelRuntime = Object.assign(opened, {
+      evaluateSubmission(submissionId: string) {
+        rejection = undefined;
+        const summary = opened.evaluatePending({ submissionId });
+        if (summary.retrying + summary.failed + summary.deferred === 0) return;
+        if (rejection instanceof HttpError) throw rejection;
+        kernelAttemptUnavailable();
+      },
     });
     try {
       return run(runtime);
@@ -263,4 +268,24 @@ export function ensureKernelRuntimeStorage(
 ): void {
   if (!existsSync(kernelDatabasePath(dataDir)))
     withKernelRuntime(db, dataDir, allowCreate, () => undefined);
+}
+
+/** 内核恢复只读；仍待评时在当前评分范围内执行该次确认的评估后重读。 */
+export function recoverEvaluated<R extends { receipt: { id: string } }>(
+  runtime: KernelRuntime,
+  recover: () => R,
+  statusOf: (recovered: R) => string | undefined,
+): R {
+  const recovered = recover();
+  if (statusOf(recovered) !== "pending") return recovered;
+  runtime.evaluateSubmission(recovered.receipt.id);
+  return recover();
+}
+
+/** 已确认卷的自动判定须已执行完毕；待评或失败按暂不可用。 */
+export function requireEvaluated<E extends { status: string }>(
+  evaluation: E | undefined,
+): Extract<E, { status: "evaluated" }> {
+  if (evaluation?.status !== "evaluated") kernelAttemptUnavailable();
+  return evaluation as Extract<E, { status: "evaluated" }>;
 }

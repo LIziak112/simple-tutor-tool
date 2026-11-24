@@ -13,6 +13,7 @@ import {
   type KernelAttemptBinding,
   type KernelRuntime,
   kernelAttemptUnavailable,
+  recoverEvaluated,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
 import { projectConfirmedChoiceVerdicts } from "./kernel-choice-verdicts.ts";
@@ -87,14 +88,15 @@ export function recoverKernelConfirmation(
         scoring.data.slotType === "oneResponsePerQuestion"
           ? runtime.recoverResponseConfirmation
           : runtime.recoverChoiceConfirmation;
-      const recovered = recover(
-        { role: "student", id: attempt.studentId },
-        attempt.id,
-        {
-          protocolVersion: 1,
-          stepAttemptId: scope.stepAttemptId,
-          operationId: scope.operationId,
-        },
+      const recovered = recoverEvaluated(
+        runtime,
+        () =>
+          recover({ role: "student", id: attempt.studentId }, attempt.id, {
+            protocolVersion: 1,
+            stepAttemptId: scope.stepAttemptId,
+            operationId: scope.operationId,
+          }),
+        (result) => result.evaluation?.status,
       );
       const projected = projectKernelDraftActivity(db, attempt, runtime);
       const facts = projectKernelConfirmationFacts(

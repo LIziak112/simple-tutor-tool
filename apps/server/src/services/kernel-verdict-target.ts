@@ -1,9 +1,5 @@
 import { eq } from "drizzle-orm";
-import {
-  type AuthorizeQuestionDeliveryReview,
-  type AuthorizeQuestionDeliveryVerdict,
-  LearningError,
-} from "learning-kernel";
+import { LearningError, type ReviewAccess } from "learning-kernel";
 import type { Db } from "../db/client.ts";
 import {
   type Attempt,
@@ -22,8 +18,12 @@ import type { DeliveryTicket } from "./kernel-question-delivery-ticket.ts";
 
 export type MarkIntent = typeof kernelResponseMarks.$inferSelect;
 
-type ReviewScope = Parameters<AuthorizeQuestionDeliveryReview>[0];
 type Mode = "verdicts" | "choiceConfirmation";
+// 宿主目标模式对应内核交付形态；评阅授权须两者一致。
+const deliveryOf = {
+  verdicts: "questionDelivery",
+  choiceConfirmation: "choiceConfirmation",
+} as const satisfies Record<Mode, ReviewAccess["delivery"]>;
 export type VerdictTarget = Pick<
   DeliveryTicket,
   "stepAttemptId" | "operationId" | "slotId" | "practiceVersion"
@@ -124,8 +124,9 @@ export function withVerdictTargets<T>(
         command: NonNullable<MarkIntent["command"]>;
       }
     | undefined;
-  const matches = (scope: ReviewScope, mode: Mode, reviewerId: string) =>
-    active?.target.mode === mode &&
+  const matches = (scope: ReviewAccess, reviewerId: string) =>
+    active !== undefined &&
+    deliveryOf[active.target.mode] === scope.delivery &&
     scope.reviewerId === reviewerId &&
     scope.studentId === attempt.studentId &&
     scope.activityId === attempt.id &&
@@ -133,14 +134,13 @@ export function withVerdictTargets<T>(
     scope.operationId === active.target.operationId &&
     scope.submissionId === active.target.receiptId &&
     scope.slotId === active.target.slotId;
-  const mayRead = (scope: ReviewScope, mode: Mode) =>
-    active !== undefined && matches(scope, mode, active.reviewerId);
+  const mayRead = (scope: ReviewAccess) =>
+    active !== undefined && matches(scope, active.reviewerId);
   const mayWrite = (
-    scope: Parameters<AuthorizeQuestionDeliveryVerdict>[0],
-    mode: Mode,
+    scope: Extract<ReviewAccess, { purpose: "reviseVerdict" }>,
   ) =>
     permitted !== undefined &&
-    matches(scope, mode, permitted.teacherId) &&
+    matches(scope, permitted.teacherId) &&
     scope.targetId === permitted.command.targetId &&
     scope.questionId === permitted.row.questionId &&
     scope.questionVersion === permitted.row.questionVersion &&
@@ -227,12 +227,8 @@ export function withVerdictTargets<T>(
         };
       }),
     {
-      authorizeQuestionDeliveryReview: (scope) => mayRead(scope, "verdicts"),
-      authorizeQuestionDeliveryVerdict: (scope) => mayWrite(scope, "verdicts"),
-      authorizeChoiceConfirmationReview: (scope) =>
-        mayRead(scope, "choiceConfirmation"),
-      authorizeChoiceConfirmationVerdict: (scope) =>
-        mayWrite(scope, "choiceConfirmation"),
+      authorizeReview: (access) =>
+        access.purpose === "readReview" ? mayRead(access) : mayWrite(access),
     },
   );
 }

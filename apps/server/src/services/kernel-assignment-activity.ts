@@ -1,6 +1,5 @@
 import type { AttemptSubmitRequest } from "@tutor/contract";
 import { eq, max } from "drizzle-orm";
-import type { openLearningRuntime } from "learning-kernel";
 import { z } from "zod";
 import { attemptEventReceipts } from "../db/attempt-time-schema.ts";
 import type { Db } from "../db/client.ts";
@@ -16,10 +15,13 @@ import {
   submissionActivityOf,
 } from "./event-service.ts";
 import { kernelConfirmationTicketFor } from "./kernel-assignment-confirmation-ticket.ts";
-import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import {
+  type KernelRuntime,
+  kernelAttemptUnavailable,
+} from "./kernel-assignment-runtime.ts";
 import { submittedTimePatchOf } from "./submission-time.ts";
 
-type Runtime = ReturnType<typeof openLearningRuntime>;
+type Runtime = KernelRuntime;
 type ChangeCounts = ReturnType<
   Runtime["recoverChoiceConfirmation"]
 >["choiceDraftChangeCounts"];
