@@ -1,3 +1,4 @@
+import type { StudentSelfReviewScoring } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
@@ -54,6 +55,7 @@ export type DeliveryFacts = {
   attempt: Attempt;
   rows: ResponseRow[];
   reviews?: Map<string, ReviewedQuestion>;
+  selfReviewScoring?: StudentSelfReviewScoring;
 };
 type Activate = (ticket: DeliveryTicket) => void;
 

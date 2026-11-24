@@ -3,6 +3,7 @@ import {
   isTeacherReviewDeliveryScoringSource,
   type Question,
   questionDeliveryScoringSourcesSchema,
+  type StudentSelfReviewScoring,
   wholeQuestionDeliveryScoringSourcesSchema,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
@@ -31,6 +32,10 @@ export function questionDeliveryPublication(
   mode: "whole" | "perQuestion",
   materialInputs?: Record<string, MaterialInput>,
   teacherReviewWidths?: ReadonlyMap<string, number>,
+  selfAssessment?: {
+    scoring: StudentSelfReviewScoring;
+    questionIds: readonly string[];
+  },
 ) {
   const schema =
     mode === "whole"
@@ -179,6 +184,9 @@ export function questionDeliveryPublication(
         ...(teacherReviewIds.length > 0 && {
           teacherReview: { questionIds: teacherReviewIds },
         }),
+        ...(selfAssessment && {
+          selfReview: { questionIds: [...selfAssessment.questionIds] },
+        }),
       },
       policy: {
         offline: "onlineOnly",
@@ -190,6 +198,9 @@ export function questionDeliveryPublication(
             fields: ["receipt"],
             onFinal: [],
           },
+          ...(selfAssessment && {
+            selfAssessment: { scoring: selfAssessment.scoring },
+          }),
         },
         // 教师逐题批改读生效与自动判定，并改判/撤销。
         reviewer: {

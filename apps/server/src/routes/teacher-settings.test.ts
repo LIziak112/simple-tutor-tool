@@ -170,6 +170,7 @@ describe("GET/PUT /api/teacher/settings/practice-feedback（M1b）", () => {
     expect(((await before.json()) as { data: unknown }).data).toEqual({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     const put = await app.request(PATH, {
       method: "PUT",
@@ -183,15 +184,23 @@ describe("GET/PUT /api/teacher/settings/practice-feedback（M1b）", () => {
       body: JSON.stringify({ studentSelfReviewEnabled: false }),
     });
     expect(disable.status).toBe(200);
+    const separate = await app.request(PATH, {
+      method: "PUT",
+      headers: { cookie: cookieA, "content-type": "application/json" },
+      body: JSON.stringify({ studentSelfReviewScoring: "separate" }),
+    });
+    expect(separate.status).toBe(200);
     const after = await app.request(PATH, { headers: { cookie: cookieA } });
     expect(((await after.json()) as { data: unknown }).data).toEqual({
       practiceFeedbackPolicy: "after_attempt",
       studentSelfReviewEnabled: false,
+      studentSelfReviewScoring: "separate",
     });
     const b = await app.request(PATH, { headers: { cookie: cookieB } });
     expect(((await b.json()) as { data: unknown }).data).toEqual({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
   });
 
@@ -200,6 +209,7 @@ describe("GET/PUT /api/teacher/settings/practice-feedback（M1b）", () => {
     for (const body of [
       { practiceFeedbackPolicy: "on_submit" },
       { studentSelfReviewEnabled: "false" },
+      { studentSelfReviewScoring: "teacher" },
       {},
       { practiceFeedbackPolicy: null },
       { practiceFeedbackPolicy: "after_attempt", steps: true },

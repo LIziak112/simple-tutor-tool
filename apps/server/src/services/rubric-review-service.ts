@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type Rubric,
   type RubricAdjudication,
@@ -23,6 +24,11 @@ import {
 import { readKernelAttemptFacts } from "./kernel-assignment-facts.ts";
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import type { DeliveryFacts } from "./kernel-question-delivery-recovery.ts";
+import {
+  kernelSelfAssessmentOf,
+  writeKernelSelfAssessment,
+} from "./kernel-self-assessment.ts";
 import {
   rubricAgentRecordOf,
   rubricOpinionMarkdownOf,
@@ -44,6 +50,8 @@ import { snapshotOfRow } from "./snapshot";
 interface RubricTarget {
   row: ResponseRow;
   rubric: Rubric;
+  /** 内核整卷的本次交付事实（G47 细则自评写内核用） */
+  delivery?: DeliveryFacts;
 }
 
 interface RubricSaveOptions {
@@ -62,11 +70,14 @@ function requireRubricTarget(
 ): RubricTarget {
   let attempt = requireUsableAttempt(db, studentId, attemptId);
   let row: ResponseRow | undefined;
+  let delivery: DeliveryFacts | undefined;
   if (attempt.sourceType === "assignment" && isKernelAttempt(db, attempt)) {
     if (dataDir === undefined) kernelAttemptUnavailable();
     const facts = readKernelAttemptFacts(db, dataDir, attempt);
     attempt = facts.attempt;
     row = facts.rows.find((response) => response.questionId === questionId);
+    if ("reviews" in facts && facts.reviews instanceof Map)
+      delivery = { attempt, rows: facts.rows, reviews: facts.reviews };
   } else {
     row = db
       .select()
@@ -87,7 +98,7 @@ function requireRubricTarget(
   if (rubric === undefined) {
     throw new HttpError(403, "RUBRIC_NOT_AVAILABLE", "这道题没有量表");
   }
-  return { row, rubric };
+  return { row, rubric, ...(delivery && { delivery }) };
 }
 
 /** 权威交卷恢复、公布裁决和量表落库共用同一宿主写事务。 */
@@ -146,8 +157,24 @@ export function saveRubricSelf(
     attemptId,
     questionId,
     options,
-    ({ row, rubric }, now) => {
+    ({ row, rubric, delivery }, now) => {
       assertRatings(rubric, req.ratings);
+      const kernelSelf = kernelSelfAssessmentOf(delivery, row.questionId);
+      // G47：内核声明自评的题，细则档位随本人自评落内核（证据句与依据留宿主）；
+      // 教师已判后内核拒绝自评，细则自评照旧只存宿主
+      if (
+        delivery &&
+        kernelSelf &&
+        row.teacherMark === null &&
+        options.dataDir !== undefined
+      )
+        writeKernelSelfAssessment(db, options.dataDir, delivery, row, {
+          operation: `rubric-self:${randomUUID()}`,
+          verdict: kernelSelf.verdict,
+          rubric: Object.fromEntries(
+            req.ratings.map(({ id, level }) => [id, level]),
+          ),
+        });
       const record: RubricAssessment = {
         source: "self",
         ratings: req.ratings,

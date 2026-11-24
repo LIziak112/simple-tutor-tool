@@ -3,6 +3,7 @@ import {
   type AttemptScoreSummary,
   effectiveVerdictOf,
   type GradingPolicy,
+  type StudentSelfReviewScoring,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -163,6 +164,7 @@ export function lessonLiveSummaryOf(
  *  （D4 共享谓词），由 buildResultData 组装进完整 AttemptScoreSummary */
 export function scoreSummaryOf(
   rows: readonly AttemptResultQuestion[],
+  selfReviewScoring: StudentSelfReviewScoring = "countAsCorrect",
 ): Omit<AttemptScoreSummary, "scoreFinal" | "pendingCount"> {
   const total = rows.length;
   // #6980-3（审查修复 P1-4）：已答口径统一 responses.answered（判分写点落库），
@@ -173,6 +175,8 @@ export function scoreSummaryOf(
   let wrong = 0;
   let pending = 0;
   let judged = 0;
+  let selfCorrect = 0;
+  let selfWrong = 0;
   for (const item of rows) {
     // 有效判定（公布 gate 已过：selfReview/teacherMark/autoCorrect 均为真实值；
     // 未公布形态的覆写在 buildResultData）
@@ -182,7 +186,11 @@ export function scoreSummaryOf(
       item.selfReview?.record ?? null,
     );
     if (effective === null) pending += 1;
-    else {
+    else if (selfReviewScoring === "separate" && effective.source === "self") {
+      // G47 separate：自评不进 correct/wrong/autoGradable，单列 selfAssessed
+      if (effective.value) selfCorrect += 1;
+      else selfWrong += 1;
+    } else {
       // 可判分分母与答错门正交（v2 口径）：未做判错仍进分母，不计错次
       judged += 1;
       if (effective.value) correct += 1;
@@ -199,5 +207,8 @@ export function scoreSummaryOf(
     pending,
     unanswered: total - answered,
     autoGradable,
+    ...(selfReviewScoring === "separate" && {
+      selfAssessed: { correct: selfCorrect, wrong: selfWrong },
+    }),
   };
 }

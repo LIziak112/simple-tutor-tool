@@ -1,9 +1,13 @@
 import type {
+  StudentSelfReviewScoring,
   TeacherPracticeFeedbackPolicy,
   TeacherPracticeFeedbackSettings,
   TeacherPracticeFeedbackSettingsUpdateRequest,
 } from "@tutor/contract";
-import { teacherPracticeFeedbackPolicySchema } from "@tutor/contract";
+import {
+  studentSelfReviewScoringSchema,
+  teacherPracticeFeedbackPolicySchema,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { teachers } from "../db/schema.ts";
@@ -39,6 +43,7 @@ export function getPracticeFeedbackSettings(
     .select({
       policy: teachers.practiceFeedbackPolicy,
       studentSelfReviewEnabled: teachers.studentSelfReviewEnabled,
+      studentSelfReviewScoring: teachers.studentSelfReviewScoring,
     })
     .from(teachers)
     .where(eq(teachers.id, teacherId))
@@ -49,6 +54,7 @@ export function getPracticeFeedbackSettings(
   return {
     practiceFeedbackPolicy: policyOfColumn(row.policy),
     studentSelfReviewEnabled: row.studentSelfReviewEnabled,
+    studentSelfReviewScoring: scoringOfColumn(row.studentSelfReviewScoring),
   };
 }
 
@@ -65,6 +71,7 @@ export function updatePracticeFeedbackSettings(
     .returning({
       policy: teachers.practiceFeedbackPolicy,
       studentSelfReviewEnabled: teachers.studentSelfReviewEnabled,
+      studentSelfReviewScoring: teachers.studentSelfReviewScoring,
     })
     .get();
   if (updated === undefined) {
@@ -73,6 +80,7 @@ export function updatePracticeFeedbackSettings(
   return {
     practiceFeedbackPolicy: policyOfColumn(updated.policy),
     studentSelfReviewEnabled: updated.studentSelfReviewEnabled,
+    studentSelfReviewScoring: scoringOfColumn(updated.studentSelfReviewScoring),
   };
 }
 
@@ -89,4 +97,25 @@ export function studentSelfReviewEnabledOf(
       .where(eq(teachers.id, teacherId))
       .get()?.enabled === true
   );
+}
+
+/** 列值 → 自评计分；异常持久化值按缺省 countAsCorrect（沿用旧口径）。 */
+function scoringOfColumn(value: string): StudentSelfReviewScoring {
+  return (
+    studentSelfReviewScoringSchema.safeParse(value).data ?? "countAsCorrect"
+  );
+}
+
+/** 建卷时读取所属教师的自评计分；无教师按缺省 countAsCorrect。 */
+export function studentSelfReviewScoringOf(
+  db: Db,
+  teacherId: string | null,
+): StudentSelfReviewScoring {
+  if (teacherId === null) return "countAsCorrect";
+  const row = db
+    .select({ scoring: teachers.studentSelfReviewScoring })
+    .from(teachers)
+    .where(eq(teachers.id, teacherId))
+    .get();
+  return scoringOfColumn(row?.scoring ?? "countAsCorrect");
 }

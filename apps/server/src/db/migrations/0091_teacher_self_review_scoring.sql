@@ -1,0 +1,1 @@
+ALTER TABLE `teachers` ADD `student_self_review_scoring` text DEFAULT 'countAsCorrect' NOT NULL;

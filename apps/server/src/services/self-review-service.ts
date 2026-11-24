@@ -23,6 +23,10 @@ import { buildKernelAssignmentResult } from "./kernel-assignment-confirmed-detai
 import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery-recovery.ts";
+import {
+  KernelSelfAssessmentConflict,
+  writeKernelSelfAssessment,
+} from "./kernel-self-assessment.ts";
 import { snapshotOfRow } from "./snapshot";
 
 /**
@@ -49,6 +53,10 @@ import { snapshotOfRow } from "./snapshot";
  *    scoreFinal**（D7 三源分立——自评是本人声明，不能伪装成教师或自动判定）。
  *
  * 响应：本题自评记录、有效判定和卷汇总。内核普通整卷复用结果页的权威投影。
+ *
+ * G47：内核练法声明了自评（建卷时 reference_self 题 + 教师自评计分设置）的
+ * 整卷，第 8 步先经内核 selfAssess 落来源 self 的自评，再写宿主投影；汇总按
+ * 练法声明的计分口径（separate 时自评单列 summary.selfAssessed）。
  */
 
 // teacherMarkOf 已移驻 attempt-service（QM-12 有效判定单一出处共用收窄），
@@ -154,6 +162,18 @@ export function submitSelfReview(
             selfReviewRevision: row.selfReviewRevision + 1,
             selfReviewMutationId: req.mutationId,
           };
+      if (changes && delivery && dataDir !== undefined) {
+        try {
+          writeKernelSelfAssessment(db, dataDir, delivery, row, {
+            operation: `self-review:${req.mutationId}`,
+            verdict: changes.selfReviewVerdict,
+          });
+        } catch (error) {
+          if (error instanceof KernelSelfAssessmentConflict)
+            throw selfReviewRevisionConflict(row);
+          throw error;
+        }
+      }
       const written = changes
         ? tx
             .update(responses)

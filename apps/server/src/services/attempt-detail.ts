@@ -11,6 +11,7 @@ import type {
   StudentAnswer,
   StudentPaperData,
   StudentPaperUnit,
+  StudentSelfReviewScoring,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -295,6 +296,7 @@ export function buildResultData(
   parsedByQuestion?: ReadonlyMap<string, Question>,
   preloadedRows?: readonly ResponseRow[],
   pendingCountOverride?: number,
+  selfReviewScoring?: StudentSelfReviewScoring,
 ): AttemptResultData {
   const meta = attemptSourceMeta(db, attempt);
   // T7.7：结果视图同口径携带有效启用集（详解内 steps 渲染遵循开关）
@@ -365,7 +367,7 @@ export function buildResultData(
   // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，pending 按
   // answered 口径，scoreFinal / pendingCount 置 null（待批数会泄露批改进度）；
   // 已公布时 scoreFinal 取 attempt 行、pendingCount 走 pendingMarkCount（D4 共享）
-  const fullSummary = scoreSummaryOf(resultQuestions);
+  const fullSummary = scoreSummaryOf(resultQuestions, selfReviewScoring);
   const summary = released
     ? {
         ...fullSummary,

@@ -33,7 +33,10 @@ import {
 } from "./attempt-context.ts";
 import { freezeInputsOfNewAttempt, questionOfRow } from "./attempt-freeze.ts";
 import { newDraftAttempt } from "./new-draft-attempt.ts";
-import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
+import {
+  studentSelfReviewEnabledOf,
+  studentSelfReviewScoringOf,
+} from "./practice-feedback-settings-service.ts";
 import { jsonOf } from "./snapshot.ts";
 
 const kernelCourseScoringSourceSchema = z.union([
@@ -297,6 +300,7 @@ export function loadKernelAssignmentQuestions(
       responses,
       context: entries,
       teacherReviewWidths,
+      selfReviewScoring: studentSelfReviewScoringOf(db, teacherId),
     };
   }
   const { slotType, questions: sources } = parsed.data;

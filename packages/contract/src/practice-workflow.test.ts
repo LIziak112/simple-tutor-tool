@@ -344,17 +344,24 @@ describe("teacherPracticeFeedbackSettingsSchema（M1b）", () => {
       teacherPracticeFeedbackSettingsSchema.parse({
         practiceFeedbackPolicy: "after_attempt",
         studentSelfReviewEnabled: true,
+        studentSelfReviewScoring: "separate",
       }),
     ).toEqual({
       practiceFeedbackPolicy: "after_attempt",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "separate",
     });
     expect(
       teacherPracticeFeedbackSettingsSchema.parse({
         practiceFeedbackPolicy: null,
         studentSelfReviewEnabled: true,
+        studentSelfReviewScoring: "countAsCorrect",
       }),
-    ).toEqual({ practiceFeedbackPolicy: null, studentSelfReviewEnabled: true });
+    ).toEqual({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
+    });
     expect(() =>
       teacherPracticeFeedbackSettingsSchema.parse({
         practiceFeedbackPolicy: "on_submit",

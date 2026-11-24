@@ -1,4 +1,7 @@
-import { attemptResultDataSchema } from "@tutor/contract";
+import {
+  attemptResultDataSchema,
+  type StudentSelfReviewScoring,
+} from "@tutor/contract";
 import { isUnanswered } from "@tutor/grading";
 import { and, eq, gt } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -172,7 +175,13 @@ export function projectKernelConfirmationFacts(
 
 export function buildKernelAssignmentResult(
   db: Db,
-  { attempt, rows }: ReturnType<typeof projectKernelConfirmationFacts>,
+  {
+    attempt,
+    rows,
+    selfReviewScoring,
+  }: ReturnType<typeof projectKernelConfirmationFacts> & {
+    selfReviewScoring?: StudentSelfReviewScoring | undefined;
+  },
   now: Date,
 ) {
   return attemptResultDataSchema.parse(
@@ -183,6 +192,7 @@ export function buildKernelAssignmentResult(
       undefined,
       rows,
       rows.filter(needsTeacherMark).length,
+      selfReviewScoring,
     ),
   );
 }

@@ -151,6 +151,18 @@ export const practiceWorkflowUpdateRequestSchema = z
   .strict();
 
 /**
+ * 学生自评计分（G47）：countAsCorrect = 自评为对计入正确数（缺省，沿用旧口径）；
+ * separate = 正确数只含自动与教师判定，自评对错单列。建卷冻结进内核练法声明。
+ */
+export const studentSelfReviewScoringSchema = z.enum([
+  "separate",
+  "countAsCorrect",
+]);
+export type StudentSelfReviewScoring = z.infer<
+  typeof studentSelfReviewScoringSchema
+>;
+
+/**
  * GET /api/teacher/settings/practice-feedback 响应 data（strict，M1b）：
  * practiceFeedbackPolicy 为 null 表示教师尚未配置——仅对新普通自由练习按
  * student_choice 缺省处理，客户端展示有效默认值，不改历史 attempt。
@@ -159,6 +171,7 @@ export const teacherPracticeFeedbackSettingsSchema = z
   .object({
     practiceFeedbackPolicy: teacherPracticeFeedbackPolicySchema.nullable(),
     studentSelfReviewEnabled: z.boolean(),
+    studentSelfReviewScoring: studentSelfReviewScoringSchema,
   })
   .strict();
 
@@ -169,12 +182,14 @@ export const teacherPracticeFeedbackSettingsUpdateRequestSchema = z
   .object({
     practiceFeedbackPolicy: teacherPracticeFeedbackPolicySchema.optional(),
     studentSelfReviewEnabled: z.boolean().optional(),
+    studentSelfReviewScoring: studentSelfReviewScoringSchema.optional(),
   })
   .strict()
   .refine(
     (value) =>
       value.practiceFeedbackPolicy !== undefined ||
-      value.studentSelfReviewEnabled !== undefined,
+      value.studentSelfReviewEnabled !== undefined ||
+      value.studentSelfReviewScoring !== undefined,
     { message: "请提供至少一项设置" },
   );
 
