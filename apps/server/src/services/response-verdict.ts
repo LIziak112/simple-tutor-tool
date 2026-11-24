@@ -4,7 +4,7 @@ import {
   type SelfReviewRecord,
   type TeacherMark,
 } from "@tutor/contract";
-import { and, inArray, sql } from "drizzle-orm";
+import { and, inArray, type SQLWrapper, sql } from "drizzle-orm";
 import { type ResponseRow, responses } from "../db/schema.ts";
 
 /**
@@ -81,23 +81,30 @@ export const currentSelfReviewWhere = and(
 );
 
 /** SQLite 投影与 effectiveVerdictOf 的教师、自评、自动优先级一致。 */
-export const effectiveVerdictSourceSql = sql<EffectiveVerdict["source"] | null>`
-  case
-    when ${responses.teacherMark} in ('correct', 'wrong') then 'teacher'
-    when ${currentSelfReviewWhere} then 'self'
-    when ${responses.autoCorrect} is not null then 'auto'
-    else null
-  end
-`;
+export function effectiveVerdictSqlOf(autoCorrect: SQLWrapper) {
+  const source = sql<EffectiveVerdict["source"] | null>`
+    case
+      when ${responses.teacherMark} in ('correct', 'wrong') then 'teacher'
+      when ${currentSelfReviewWhere} then 'self'
+      when ${autoCorrect} is not null then 'auto'
+      else null
+    end
+  `;
+  const value = sql<number | null>`
+    case ${source}
+      when 'teacher' then ${responses.teacherMark} = 'correct'
+      when 'self' then ${responses.selfReviewVerdict} = 'correct'
+      when 'auto' then ${autoCorrect}
+      else null
+    end
+  `;
+  return { source, value };
+}
 
-export const effectiveVerdictValueSql = sql<number | null>`
-  case ${effectiveVerdictSourceSql}
-    when 'teacher' then ${responses.teacherMark} = 'correct'
-    when 'self' then ${responses.selfReviewVerdict} = 'correct'
-    when 'auto' then ${responses.autoCorrect}
-    else null
-  end
-`;
+export const {
+  source: effectiveVerdictSourceSql,
+  value: effectiveVerdictValueSql,
+} = effectiveVerdictSqlOf(responses.autoCorrect);
 
 /** 未答且只被自动判错的行按未做计。 */
 export function countsAsWrong(

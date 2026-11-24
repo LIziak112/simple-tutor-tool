@@ -337,7 +337,8 @@ export const aiAttemptReviewTaskPublicSchema = z
     status: aiAttemptReviewStatusSchema,
     purpose: z.string().min(1),
     questionCount: z.number().int().min(1),
-    counts: aiAttemptReviewCountsSchema,
+    /** 未公布时整个统计为 null；内部快照和预览仍须真实计数。 */
+    counts: aiAttemptReviewCountsSchema.nullable(),
     /** 快照身份戳（与领取视图核对用；不含快照内容） */
     snapshotVersion: z.string().min(1),
     /** 出站代次（每次领取 +1；写回 CAS 凭证之一） */

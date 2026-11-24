@@ -6,6 +6,7 @@ import {
   attemptReviewEntryStateOf,
   attemptReviewEntryViewOf,
   attemptReviewHref,
+  formatAttemptReviewTaskCounts,
   pickAttemptReviewTask,
 } from "./attempt-review-entry";
 
@@ -178,4 +179,29 @@ describe("整卷复盘地址", () => {
     expect(url.searchParams.get("aiReview")).toBe(TASK_ID);
     expect(url.searchParams.get("aiFrom")).toBe("/s/home?tab=records");
   });
+});
+
+it("整卷任务只有已判分时才显示正确率，真实的零正确率照常显示", () => {
+  const allPending = {
+    ...COUNTS,
+    total: 2,
+    correctCount: 0,
+    incorrectCount: 0,
+    unansweredCount: 0,
+    pendingCount: 2,
+    hasAnswerCount: 2,
+    missingAnswerCount: 0,
+    gradedCount: 0,
+    accuracyAmongGraded: null,
+  };
+  expect(formatAttemptReviewTaskCounts(allPending)).toBe("判对 0 · 判错 0");
+  expect(
+    formatAttemptReviewTaskCounts({
+      ...allPending,
+      incorrectCount: 2,
+      pendingCount: 0,
+      gradedCount: 2,
+      accuracyAmongGraded: 0,
+    }),
+  ).toBe("判对 0 · 判错 2 · 已判分正确率 0%");
 });

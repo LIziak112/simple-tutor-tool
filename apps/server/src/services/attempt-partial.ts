@@ -23,6 +23,7 @@ import { attemptSourceMeta, frozenRowsInDisplayOrder } from "./attempt-rows.ts";
 import { timeProjectionsOf } from "./attempt-time-projection";
 import { sealResponseTimeWithin } from "./attempt-time-seal";
 import { submissionActivityOf } from "./event-service.ts";
+import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
 import {
   assertDraftCourseVisible,
   attemptWorkflowView,
@@ -144,6 +145,7 @@ export function settleStudentAttempt(
   const seq = db.$client
     .transaction(() => {
       const attempt = requireOwnActiveAttempt(db, studentId, attemptId);
+      requireLegacyAttemptWrite(db, attempt);
       assertDraftCourseVisible(db, studentId, attempt);
       const previous = db
         .select()

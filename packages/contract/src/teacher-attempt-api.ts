@@ -365,17 +365,26 @@ export const TEACHER_COMMENT_MAX = 2000;
  * 允许对任何**已交卷**的题批注/改判（含自动判过的题）；draft attempt → 409
  * NOT_SUBMITTED；非本人教师 → 404 RESPONSE_NOT_FOUND（见 teacherMarkErrorCodeSchema）。
  */
-export const markRequestSchema = z.object({
-  mark: teacherMarkSchema.nullable(),
-  comment: z
-    .string({ message: "comment 必须是字符串" })
-    .max(TEACHER_COMMENT_MAX, `评语最长 ${TEACHER_COMMENT_MAX} 字`)
-    .nullable()
-    .transform((value) => {
-      const trimmed = value === null ? null : value.trim();
-      return trimmed === "" || trimmed === null ? null : trimmed;
-    }),
-});
+export const markRequestSchema = z
+  .object({
+    mark: teacherMarkSchema.nullable(),
+    /** 题组正式改判的修订基线与幂等键须同时传入。旧页面可以同时省略。 */
+    baseRevision: z.number().int().nonnegative().optional(),
+    mutationId: z.uuid().optional(),
+    comment: z
+      .string({ message: "comment 必须是字符串" })
+      .max(TEACHER_COMMENT_MAX, `评语最长 ${TEACHER_COMMENT_MAX} 字`)
+      .nullable()
+      .transform((value) => {
+        const trimmed = value === null ? null : value.trim();
+        return trimmed === "" || trimmed === null ? null : trimmed;
+      }),
+  })
+  .refine(
+    ({ baseRevision, mutationId }) =>
+      (baseRevision === undefined) === (mutationId === undefined),
+    { message: "批改修订与操作标识须同时提供" },
+  );
 
 /**
  * POST /api/teacher/responses/:id/mark 响应 data：批注写回后的最新状态
@@ -384,6 +393,9 @@ export const markRequestSchema = z.object({
  * 剩余待批数（D4 共享谓词口径），前端据此更新批改进度 x/y。
  */
 export const markResponseDataSchema = z.object({
+  /** 题组正式改判当前修订及唯一内核事件。仅评语变化时可无事件。 */
+  revision: z.number().int().nonnegative().optional(),
+  eventId: z.uuid().optional(),
   /** responses.id（批注定位的题） */
   responseId: z.uuid(),
   /** 题目 id（来自 DSL） */

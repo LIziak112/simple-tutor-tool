@@ -15,7 +15,6 @@ import { attempts, type InkRow, ink, responses, students } from "../db/schema";
 import {
   parseGzipOrJsonBytes,
   readFileBytes,
-  resolveWithinRoot,
   writeFileAtomic,
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
@@ -31,6 +30,15 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { assertAttemptNotTimedOut } from "./attempt-timing";
+import { inkFileAbs, needsFormalInkAnchor } from "./formal-ink-attachment.ts";
+import { submissionLocked } from "./kernel-assignment-confirmation-ticket.ts";
+import { lessonKernelBinding } from "./kernel-question-delivery-binding.ts";
+import {
+  assertDeliveredInk,
+  wholeDeliveryInkLocked,
+} from "./kernel-question-delivery-recovery.ts";
+
+export { inkFileAbs } from "./formal-ink-attachment.ts";
 
 /**
  * InkService（T2.8）——手写笔迹的文件存储与元数据管理（架构 §5.2/§5.4）。
@@ -65,24 +73,6 @@ export function safeInkFileName(questionId: string): string {
   }
   // 编码后过长（中文每字符 9 字节，超长 id 会突破文件名 255 上限）：改用内容 hash
   return `q-${createHash("sha256").update(questionId).digest("hex").slice(0, 40)}`;
-}
-
-/**
- * 相对路径（DATA_DIR 内）→ 绝对路径，并校验不越出 blobs/ink 根（纵深防御）。
- * 边界算法在 lib/blob-io.resolveWithinRoot（path.relative 强判定——T6R.4 复审
- * ①换掉旧 startsWith 弱实现：同前缀相邻目录不再可能骗过）；suffix 传空串
- * 表示不做后缀检查（旧签名兼容口径）。
- */
-export function inkFileAbs(
-  dataDir: string,
-  relPath: string,
-  suffix: string | undefined,
-): string {
-  return resolveWithinRoot(dataDir, join("blobs", "ink"), relPath, {
-    // 空/未传 = 不做后缀检查（旧签名兼容口径；真值判定同时收窄类型）
-    ...(suffix ? { suffix } : {}),
-    violationCode: "INK_UNREADABLE",
-  });
 }
 
 /**
@@ -218,7 +208,12 @@ export function saveInk(
         .where(eq(attempts.id, attemptId))
         .get();
       const submitted = tx
-        .select({ at: responses.submittedAt })
+        .select({
+          at: responses.submittedAt,
+          attemptId: responses.attemptId,
+          questionId: responses.questionId,
+          questionSnapshotJson: responses.questionSnapshotJson,
+        })
         .from(responses)
         .where(
           and(
@@ -227,7 +222,15 @@ export function saveInk(
           ),
         )
         .get();
-      if (latest?.status !== "draft" || submitted?.at != null)
+      if (
+        latest?.status !== "draft" ||
+        submitted?.at != null ||
+        (submitted &&
+          needsFormalInkAnchor(submitted) &&
+          wholeDeliveryInkLocked(db, dataDir, attempt)) ||
+        (lessonKernelBinding(db, attemptId) &&
+          submissionLocked(db, dataDir, attempt, questionId))
+      )
         throw new HttpError(
           409,
           "ALREADY_SUBMITTED",
@@ -382,6 +385,7 @@ export function getInkDoc(
 ): InkDoc {
   requireUsableAttempt(db, studentId, attemptId);
   const row = requireInkRow(db, attemptId, questionId);
+  assertDeliveredInk(db, dataDir, row);
   // 读侧换共享 parseGzipOrJsonBytes（复审⑩三得）：免 new Uint8Array 整包
   // 拷贝、gzip/原始 JSON 双格式由机制层统一回退（替代手写二次 try）、
   // 补上读侧解压上限（落盘文件被替换成高压缩炸弹时不解出大 Buffer）
@@ -443,6 +447,7 @@ function readInkPng(
   questionId: string,
 ): InkFile {
   const row = requireInkRow(db, attemptId, questionId);
+  assertDeliveredInk(db, dataDir, row);
   try {
     return {
       bytes: readFileBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
@@ -489,6 +494,7 @@ export function getTeacherInkPng(
   inkId: string,
 ): InkFile {
   const row = requireTeacherInkRow(db, teacherId, inkId);
+  assertDeliveredInk(db, dataDir, row);
   try {
     return {
       bytes: readFileBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
@@ -514,6 +520,7 @@ export function getTeacherInkStrokes(
   inkId: string,
 ): InkFile {
   const row = requireTeacherInkRow(db, teacherId, inkId);
+  assertDeliveredInk(db, dataDir, row);
   try {
     return {
       bytes: readFileBytes(inkFileAbs(dataDir, row.strokesPath, ".json.gz")),

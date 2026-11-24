@@ -18,17 +18,40 @@ import {
 import { studentAttemptContext } from "../services/attempt-context.ts";
 import {
   getStudentAttemptPaper,
+  requireOwnAttempt,
   requireUsableAttempt,
   saveDraftAnswer,
   setStudentFlag,
 } from "../services/attempt-service.ts";
 import { openHint } from "../services/hint-service.ts";
+import { verifyKernelStudentAttempt } from "../services/kernel-assignment-attempt.ts";
+import { saveAssignmentDraftAnswer } from "../services/kernel-assignment-drafts.ts";
 import { respondAttemptDetail } from "./student-attempt-detail.ts";
 import { createStudentLearningContextRoutes } from "./student-learning-context";
 import { createStudentSettlementRoutes } from "./student-settlements.ts";
 
+export const attemptAnswerSavePath = "/attempts/:id/answers/:questionId";
+
+/** 保存请求的校验与已认证学生身份由同一个 HTTP 处理器提供。 */
+export function createStudentAnswerSaveRoutes(db: Db, save = saveDraftAnswer) {
+  return new Hono<StudentEnv>().put(attemptAnswerSavePath, async (c) => {
+    const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
+    return c.json({
+      ok: true,
+      data: save(
+        db,
+        c.var.student.id,
+        c.req.param("id"),
+        c.req.param("questionId"),
+        body.answer,
+        body,
+      ),
+    });
+  });
+}
+
 /** 作答详情、冻结上下文、公开试卷，以及草稿保存、标记、提示这几条带冻结凭据写入的契约出口。 */
-export function createStudentAttemptRoutes(db: Db) {
+export function createStudentAttemptRoutes(db: Db, dataDir: string) {
   return (
     new Hono<StudentEnv>()
       .get("/attempts/opened", (c) => {
@@ -50,29 +73,25 @@ export function createStudentAttemptRoutes(db: Db) {
       })
       .route("/", createStudentLearningContextRoutes(db))
       .route("/", createStudentSettlementRoutes(db))
-      .put("/attempts/:id/answers/:questionId", async (c) => {
-        const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
-        return c.json({
-          ok: true,
-          data: saveDraftAnswer(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-            c.req.param("questionId"),
-            body.answer,
-            body,
-          ),
-        });
-      })
+      .route(
+        "/",
+        createStudentAnswerSaveRoutes(db, (db, ...args) =>
+          saveAssignmentDraftAnswer(db, dataDir, ...args),
+        ),
+      )
       // #6980-4：做题时标注「不会」（进错题本）：仅 draft 可改（交卷后 409），请求/回执只有标志位、不含答案内容（泄露测试 student-flags.test.ts）
       .put("/attempts/:id/flags/:questionId", async (c) => {
         const body = await parseJsonBody(c, attemptFlagRequestSchema);
+        const studentId = c.var.student.id;
+        const attemptId = c.req.param("id");
+        if (requireOwnAttempt(db, studentId, attemptId).sourceType === "wrong")
+          verifyKernelStudentAttempt(db, dataDir, studentId, attemptId);
         return c.json({
           ok: true,
           data: setStudentFlag(
             db,
-            c.var.student.id,
-            c.req.param("id"),
+            studentId,
+            attemptId,
             c.req.param("questionId"),
             body.flag,
             body,
@@ -95,7 +114,13 @@ export function createStudentAttemptRoutes(db: Db) {
         });
       })
       .get("/attempts/:id", (c) =>
-        respondAttemptDetail(c, db, c.var.student.id, c.req.param("id")),
+        respondAttemptDetail(
+          c,
+          db,
+          c.var.student.id,
+          c.req.param("id"),
+          dataDir,
+        ),
       )
       // tt-07a（QM-06）：冻结上下文公开投影（材料/组快照）读取——作答期渲染与
       // 结果回看共用，只读快照不查 live 库（教师改材料/软删不影响已开卷）；坏
@@ -103,6 +128,12 @@ export function createStudentAttemptRoutes(db: Db) {
       // requireUsableAttempt（TT-05b 审查 P2-2 记账：快照读取按 attemptId 直查
       // 不过滤 teacherId，归属防线在路由层——跨域同 attempt id 不可见）
       .get("/attempts/:id/context", (c) => {
+        verifyKernelStudentAttempt(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("id"),
+        );
         requireUsableAttempt(db, c.var.student.id, c.req.param("id"));
         return c.json({
           ok: true,
@@ -115,6 +146,12 @@ export function createStudentAttemptRoutes(db: Db) {
       // 权限，被移出/作业软删后已建作答仍可取卷；course 来源每次校验可见性与
       // 成员资格，D22——course draft 失去访问权 403/404，前端据此按终态停发）
       .get("/attempts/:id/paper", (c) => {
+        verifyKernelStudentAttempt(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("id"),
+        );
         return c.json({
           ok: true,
           data: studentPaperDataSchema.parse(

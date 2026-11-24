@@ -25,7 +25,7 @@ import {
  * （数值字段经 coerce 解析字符串）。返回类型不显式标注 Hono：链式注册把路由
  * 签名累积进推断类型（AppType 前提）。
  */
-export function createTeacherAnalyticsRoutes(db: Db) {
+export function createTeacherAnalyticsRoutes(db: Db, dataDir: string) {
   return new Hono<TeacherEnv>()
     .get("/analytics/overview", (c) => {
       const parsed = analyticsQuerySchema.safeParse({
@@ -38,7 +38,13 @@ export function createTeacherAnalyticsRoutes(db: Db) {
       }
       return c.json({
         ok: true,
-        data: getAnalyticsOverview(db, c.var.teacher.id, parsed.data),
+        data: getAnalyticsOverview(
+          db,
+          c.var.teacher.id,
+          parsed.data,
+          new Date(),
+          dataDir,
+        ),
       });
     })
     .get("/analytics/student/:id", (c) => {
@@ -57,6 +63,8 @@ export function createTeacherAnalyticsRoutes(db: Db) {
           c.var.teacher.id,
           c.req.param("id"),
           parsed.data,
+          new Date(),
+          dataDir,
         ),
       });
     })
@@ -71,7 +79,13 @@ export function createTeacherAnalyticsRoutes(db: Db) {
       }
       return c.json({
         ok: true,
-        data: getAnalyticsQuestions(db, c.var.teacher.id, parsed.data),
+        data: getAnalyticsQuestions(
+          db,
+          c.var.teacher.id,
+          parsed.data,
+          new Date(),
+          dataDir,
+        ),
       });
     });
 }

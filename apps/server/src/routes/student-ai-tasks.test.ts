@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import {
+  aiConnectionCreateOkSchema,
   aiQueueSummaryOkSchema,
   aiTaskDetailOkSchema,
   aiTaskListOkSchema,
   aiTaskOkSchema,
+  aiTaskShareOkSchema,
+  attemptStartOkSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
@@ -43,7 +46,17 @@ import {
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import {
+  assignKernelFixture,
+  postAssignment,
+  setupAssignment,
+} from "../test/m04-p1/product-fixture.ts";
+import {
+  callToolJson,
+  connectMcpClientViaApp,
+} from "../test/mcp-test-utils.ts";
 import { makeNotePng } from "../test/note-fixtures.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
 
 /**
  * SAI-13 学生任务路由测试（B07；B00 §4.2 API 表 + 需求规格 §2/§3.3/§8）。
@@ -142,7 +155,7 @@ afterEach(() => {
 /** 统一 JSON 请求块（GET/POST） */
 async function req(
   app: ReturnType<typeof createApp>,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: string,
   cookie: string | undefined,
   body?: unknown,
@@ -1021,4 +1034,287 @@ it("正文限额：create 超入口预检线 413，不进 JSON 解析", async ()
   );
   await expectErr(res, 413, "AI_TEXT_TOO_LONG");
   expect(w.db.select().from(aiTasks).all()).toHaveLength(0);
+});
+
+async function singleQuestionAiWorld() {
+  const db = createTestDb();
+  active.push(db);
+  const dataDir = createTestDir();
+  const app = createApp({
+    db,
+    dataDir,
+    kernelAssignmentCreationEnabled: true,
+    publicUrl: "http://localhost",
+    isProduction: false,
+    logger: pino({ enabled: false }),
+  });
+  const fixture = await setupAssignment(app);
+  const assignmentId = await assignKernelFixture(app, fixture);
+  const { ownerCookie, teacher, studentId } = fixture;
+  const post = (path: string, body: unknown) =>
+    req(app, "POST", path, ownerCookie, body);
+  const opened = await postAssignment(app, assignmentId, ownerCookie);
+  expect(opened.status).toBe(200);
+  const attempt = attemptStartOkSchema.parse(await opened.json()).data;
+  const [frozen] = await fetchSubmitRevisions(app, ownerCookie, attempt.id);
+  if (frozen === undefined) throw new Error("缺少冻结题");
+  db.update(responses)
+    .set({ teacherComment: "教师私注单题哨兵" })
+    .where(eq(responses.id, frozen.questionRevisionId))
+    .run();
+  const connection = await post("/api/student/ai/connections", {
+    channel: "mcp",
+  });
+  expect(connection.status).toBe(201);
+  const { credential } = aiConnectionCreateOkSchema.parse(
+    await connection.json(),
+  ).data;
+  if (credential === null) throw new Error("缺少学生 MCP 连接凭证");
+  return {
+    app,
+    db,
+    dataDir,
+    post,
+    token: credential.token,
+    taskBody: createBody(attempt.id, {
+      questionId: frozen.questionId,
+      questionRevisionId: frozen.questionRevisionId,
+      channel: "mcp",
+    }),
+
+    submit: async () =>
+      req(
+        app,
+        "POST",
+        `/api/student/attempts/${attempt.id}/submit`,
+        ownerCookie,
+        {
+          revisions: await fetchSubmitRevisions(app, ownerCookie, attempt.id),
+        },
+      ),
+
+    saveAnswer: (index: number, baseRevision: number) =>
+      req(
+        app,
+        "PUT",
+        `/api/student/attempts/${attempt.id}/answers/${frozen.questionId}`,
+        ownerCookie,
+        {
+          answer: { kind: "choice", index },
+          mutationId: randomUUID(),
+          baseRevision,
+          expectedFrozenAt: attempt.frozenAt,
+          questionRevisionId: frozen.questionRevisionId,
+        },
+      ),
+    setMode: (mode: "guided_only" | "post_submit_only") =>
+      req(app, "PUT", `/api/teacher/students/${studentId}/ai-policy`, teacher, {
+        mode,
+      }),
+  };
+}
+
+const singleQuestionTasks = "/api/student/ai/tasks";
+
+async function expectSingleQuestionTask(response: Response, status: number) {
+  expect(response.status, await response.clone().text()).toBe(status);
+  const body = aiTaskOkSchema.parse(await response.json());
+  assertNoLeak(body);
+  expect(JSON.stringify(body)).not.toContain("合成详解甲");
+  expect(JSON.stringify(body)).not.toContain("教师私注单题哨兵");
+  return body.data;
+}
+
+it.each(["create", "update-pending"])(
+  "内核单题 %s 通过受控 MCP 领取本人保存的当前答案",
+  async (operation) => {
+    const w = await singleQuestionAiWorld();
+    expect((await w.setMode("guided_only")).status).toBe(200);
+    const pending =
+      operation === "update-pending"
+        ? await expectSingleQuestionTask(
+            await w.post(singleQuestionTasks, w.taskBody),
+            201,
+          )
+        : undefined;
+    const beforeSnapshot = w.db.select().from(aiTasks).get();
+    if (pending !== undefined)
+      expect(beforeSnapshot?.contextSnapshotJson).toContain(
+        '"studentAnswerText":null',
+      );
+    const saved = await w.saveAnswer(2, 0);
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    expect(
+      w.db
+        .select({ answer: responses.answerJson })
+        .from(responses)
+        .where(eq(responses.id, String(w.taskBody.questionRevisionId)))
+        .get(),
+    ).toEqual({ answer: null });
+
+    const task =
+      pending === undefined
+        ? await expectSingleQuestionTask(
+            await w.post(singleQuestionTasks, w.taskBody),
+            201,
+          )
+        : await expectSingleQuestionTask(
+            await w.post(
+              `${singleQuestionTasks}/${pending.id}/update-pending`,
+              {},
+            ),
+            200,
+          );
+    const replay = await expectSingleQuestionTask(
+      await w.post(singleQuestionTasks, w.taskBody),
+      200,
+    );
+    expect(replay.id).toBe(task.id);
+    expect(w.db.select({ id: aiTasks.id }).from(aiTasks).all()).toEqual([
+      { id: task.id },
+    ]);
+
+    const shared = await w.post(`${singleQuestionTasks}/${task.id}/share`, {});
+    expect(shared.status).toBe(200);
+    const { ticketUrl } = aiTaskShareOkSchema.parse(await shared.json()).data;
+    const ticketPath = new URL(ticketUrl).pathname;
+    const authorizedRead = await w.app.request(ticketPath);
+    expect(authorizedRead.status).toBe(200);
+    const html = await authorizedRead.text();
+    expect(html).toContain('<pre class="md">C（6）</pre>');
+    expect(html).toContain("合成详解甲");
+    expect(html).not.toContain("教师私注单题哨兵");
+
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      w.token,
+      "single-question-ai",
+    );
+    try {
+      expect((await w.setMode("post_submit_only")).status).toBe(200);
+      const args = { taskId: task.id, includeImages: false };
+      const denied = await callToolJson(client, "claim_ai_task", args);
+      expect(denied).toMatchObject({
+        isError: true,
+        data: { error: "AI_POLICY_DISABLED" },
+      });
+      assertNoLeak(denied.data);
+      assertNoLeak(
+        await expectErr(
+          await w.app.request(ticketPath),
+          403,
+          "AI_POLICY_DISABLED",
+        ),
+      );
+
+      expect((await w.setMode("guided_only")).status).toBe(200);
+      const claim = await callToolJson(client, "claim_ai_task", args);
+      expect(claim).toMatchObject({
+        isError: false,
+        data: {
+          modeAtSend: "guided_only",
+          systemPromptMd: expect.stringContaining(
+            "不直接给出最终答案、填空答案或正确选项",
+          ),
+          contextDataMd: expect.stringContaining("合成详解甲"),
+        },
+      });
+      expect(claim.data.contextDataMd).toContain(
+        "## 学生当前作答\n\nC（6）\n\n## 参考内容",
+      );
+      expect(JSON.stringify(claim)).not.toContain("合成详解乙");
+      expect(JSON.stringify(claim)).not.toContain("教师私注单题哨兵");
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+it.each(["缺失", "损坏"])(
+  "单题内核权威库%s时拒绝新建和更新，当前教学策略优先拒绝",
+  async (fault) => {
+    const w = await singleQuestionAiWorld();
+    const pending = await expectSingleQuestionTask(
+      await w.post(singleQuestionTasks, w.taskBody),
+      201,
+    );
+    const snapshot = w.db.select().from(aiTasks).get();
+    expect((await w.saveAnswer(2, 0)).status).toBe(200);
+    const file = join(w.dataDir, "learning-kernel.sqlite");
+    const moved = `${file}.offline`;
+    renameSync(file, moved);
+    try {
+      if (fault === "损坏") writeFileSync(file, "不是 SQLite 库");
+      const nextBody = { ...w.taskBody, mutationId: randomUUID() };
+      const refresh = `${singleQuestionTasks}/${pending.id}/update-pending`;
+      expect((await w.setMode("post_submit_only")).status).toBe(200);
+      assertNoLeak(
+        await expectErr(
+          await w.post(singleQuestionTasks, nextBody),
+          403,
+          "AI_POLICY_DISABLED",
+        ),
+      );
+      assertNoLeak(
+        await expectErr(await w.post(refresh, {}), 403, "AI_POLICY_DISABLED"),
+      );
+      expect((await w.setMode("guided_only")).status).toBe(200);
+      assertNoLeak(
+        await expectErr(
+          await w.post(singleQuestionTasks, nextBody),
+          503,
+          "KERNEL_ATTEMPT_UNAVAILABLE",
+        ),
+      );
+      assertNoLeak(
+        await expectErr(
+          await w.post(refresh, {}),
+          503,
+          "KERNEL_ATTEMPT_UNAVAILABLE",
+        ),
+      );
+      expect(w.db.select().from(aiTasks).all()).toEqual([snapshot]);
+    } finally {
+      renameSync(moved, file);
+    }
+  },
+);
+
+it("单题求助拒绝读取已确认但宿主尚未恢复的作答快照", async () => {
+  const w = await singleQuestionAiWorld();
+  expect((await w.saveAnswer(2, 0)).status).toBe(200);
+  const pending = await expectSingleQuestionTask(
+    await w.post(singleQuestionTasks, w.taskBody),
+    201,
+  );
+  const before = w.db.select().from(aiTasks).get();
+  w.db.$client.exec(`
+    CREATE TRIGGER interrupt_single_ai_projection BEFORE UPDATE OF status ON attempts
+    WHEN NEW.status = 'graded'
+    BEGIN SELECT RAISE(ABORT, 'interrupted single AI projection'); END
+  `);
+  try {
+    expect((await w.submit()).status).toBe(500);
+  } finally {
+    w.db.$client.exec("DROP TRIGGER interrupt_single_ai_projection");
+  }
+  assertNoLeak(
+    await expectErr(
+      await w.post(singleQuestionTasks, {
+        ...w.taskBody,
+        mutationId: randomUUID(),
+      }),
+      503,
+      "KERNEL_ATTEMPT_UNAVAILABLE",
+    ),
+  );
+  assertNoLeak(
+    await expectErr(
+      await w.post(`${singleQuestionTasks}/${pending.id}/update-pending`, {}),
+      503,
+      "KERNEL_ATTEMPT_UNAVAILABLE",
+    ),
+  );
+  expect(w.db.select().from(aiTasks).all()).toEqual([before]);
 });

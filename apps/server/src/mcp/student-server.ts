@@ -135,15 +135,23 @@ export function registerStudentTools(
     studentId,
     connectionId: deps.connectionId,
   });
-  registerStudentLiveFocusTool(server, db, studentId, deps.connectionId);
+  registerStudentLiveFocusTool(
+    server,
+    db,
+    dataDir,
+    studentId,
+    deps.connectionId,
+  );
 
   registerStudentAiTaskTools(server, deps);
   registerStudentAttemptReviewTools(server, deps);
   registerStudentReviewV2Tools(server, deps);
   registerStudentWrongPracticeTools(server, deps);
   registerStudentPracticeTools(server, {
-    list: (input) => listStudentMcpPractices(db, studentId, input),
-    practice: (input) => getStudentMcpPractice(db, studentId, input),
+    list: (input) =>
+      listStudentMcpPractices(db, studentId, input, new Date(), dataDir),
+    practice: (input) =>
+      getStudentMcpPractice(db, studentId, input, new Date(), dataDir),
     question: (input) =>
       getStudentMcpPracticeQuestion(
         db,

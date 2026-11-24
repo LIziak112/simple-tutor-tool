@@ -23,13 +23,15 @@ export function listStudentMcpPractices(
   studentId: string,
   input: StudentMcpPracticeListInput,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): StudentMcpPracticeListData {
-  return db.transaction(() => {
+  const read = db.$client.transaction(() => {
     const { records, total } = listStudentRecords(
       db,
       studentId,
       studentRecordsQuerySchema.parse({ ...input, limit: input.limit ?? 20 }),
       now,
+      dataDir,
     );
     const rows =
       records.length === 0
@@ -76,6 +78,7 @@ export function listStudentMcpPractices(
     assertStudentMcpListMetadata(data);
     return data;
   });
+  return read.immediate();
 }
 
 type PracticeEntry = StudentMcpPracticeListData["practices"][number];

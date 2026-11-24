@@ -220,6 +220,9 @@ importers:
       hono:
         specifier: ^4.13.9
         version: 4.13.9
+      learning-kernel:
+        specifier: file:vendor/learning-kernel-399092fd982232b3c706a740fc8083dd033127906e348d1ef2923e4c5900f9a8.tgz
+        version: file:apps/server/vendor/learning-kernel-399092fd982232b3c706a740fc8083dd033127906e348d1ef2923e4c5900f9a8.tgz
       pino:
         specifier: ^10.3.1
         version: 10.3.1
@@ -5336,6 +5339,11 @@ packages:
   lazystream@1.0.1:
     resolution: {integrity: sha512-b94GiNHQNy6JNTrt5w6zNyffMrNkXZb3KTkCZJb2V1xaEGCk093vkZ2jk3tpaeP33/OiXC+WvK9AxUebnf5nbw==}
     engines: {node: '>= 0.6.3'}
+
+  learning-kernel@file:apps/server/vendor/learning-kernel-399092fd982232b3c706a740fc8083dd033127906e348d1ef2923e4c5900f9a8.tgz:
+    resolution: {integrity: sha512-BfVIg6zF7HNLuNdjLtlLG36r0ZSGelwTKmGgpveqTTfTWmcoTJLmhNR9f+VjrNQt9lZESDEXIgXudf7FouOP2Q==, tarball: file:apps/server/vendor/learning-kernel-399092fd982232b3c706a740fc8083dd033127906e348d1ef2923e4c5900f9a8.tgz}
+    version: 0.1.0
+    engines: {node: 24.19.x}
 
   leven@3.1.0:
     resolution: {integrity: sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A==}
@@ -12018,6 +12026,10 @@ snapshots:
   lazystream@1.0.1:
     dependencies:
       readable-stream: 2.3.8
+
+  learning-kernel@file:apps/server/vendor/learning-kernel-399092fd982232b3c706a740fc8083dd033127906e348d1ef2923e4c5900f9a8.tgz:
+    dependencies:
+      zod: 4.6.5
 
   leven@3.1.0: {}
 

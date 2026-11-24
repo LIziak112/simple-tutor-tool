@@ -30,7 +30,7 @@ export function registerStudentWrongPracticeTools(
   server: McpServer,
   deps: StudentMcpServerDeps,
 ): void {
-  const { db, studentId } = deps;
+  const { db, dataDir, studentId } = deps;
   // 9. list_my_wrong_questions：错题本只读列表（2026-10 AI 组卷配套；只给
   //    组卷决策所需的元数据 + 脱敏题干摘录，不下发答案/详解/本人答案——
   //    AGENTS 第 3/4 条：本工具不是受控 AI 出口，不得携带 answers/solutionMd/
@@ -102,6 +102,7 @@ export function registerStudentWrongPracticeTools(
           },
           new Date(),
           {
+            dataDir,
             ...(courseId !== undefined ? { courseId } : {}),
             ...(sinceDays !== undefined ? { sinceDays } : {}),
           },
@@ -180,6 +181,7 @@ export function registerStudentWrongPracticeTools(
           label: scopeLabel,
         },
         operationId,
+        dataDir,
       );
       // 剔除计数：服务层返回实际冻结题数 vs 去重后的入参数（已静默剔除）
       return jsonContent({

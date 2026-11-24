@@ -17,7 +17,7 @@ import {
  * 见 rubric-review-service；响应即该题最新量表视图（结果页原位刷新）。
  * Agent 意见不走 HTTP，经 MCP submit_rubric_opinion（任务租约）写回。
  */
-export function createStudentRubricRoutes(db: Db) {
+export function createStudentRubricRoutes(db: Db, dataDir: string) {
   return new Hono<StudentEnv>()
     .put("/attempts/:id/questions/:questionId/rubric/self", async (c) => {
       const body = await parseJsonBody(c, rubricSelfRequestSchema);
@@ -31,6 +31,7 @@ export function createStudentRubricRoutes(db: Db) {
               c.req.param("id"),
               c.req.param("questionId"),
               body,
+              { dataDir },
             ),
           ),
         },
@@ -50,6 +51,7 @@ export function createStudentRubricRoutes(db: Db) {
               c.req.param("id"),
               c.req.param("questionId"),
               body,
+              { dataDir },
             ),
           ),
         },

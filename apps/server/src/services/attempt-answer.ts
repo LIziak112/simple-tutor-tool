@@ -24,6 +24,7 @@ import {
 } from "./attempt-activity";
 import { assertFrozenAnswerShape } from "./attempt-question-projection.ts";
 import { assertAttemptNotTimedOut } from "./attempt-timing";
+import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
 import { answerOf, snapshotOfRow } from "./snapshot";
 
 export function saveDraftAnswer(
@@ -39,6 +40,7 @@ export function saveDraftAnswer(
 ): AttemptAnswerSaveData {
   return db.transaction((tx) => {
     const attempt = requireUsableAttempt(db, studentId, attemptId);
+    requireLegacyAttemptWrite(tx, attempt);
     if (attempt.status !== "draft") {
       throw new HttpError(
         409,

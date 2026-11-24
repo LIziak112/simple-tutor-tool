@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, lt, sql } from "drizzle-orm";
+import { and, asc, eq, lt, lte, sql } from "drizzle-orm";
 import {
   attemptEventReceipts,
   attemptTimeProfiles,
@@ -18,6 +18,7 @@ export function sealResponseTimeWithin(
   attemptId: string,
   responseIds: readonly string[],
   sealedAt: string,
+  receivedThroughSeq?: number,
 ): void {
   if (!db.$client.inTransaction) throw new Error("活动封存必须位于提交事务内");
   if (
@@ -73,6 +74,9 @@ export function sealResponseTimeWithin(
       and(
         eq(attemptEventReceipts.attemptId, attemptId),
         lt(attemptEventReceipts.seq, boundary.seq),
+        receivedThroughSeq === undefined
+          ? undefined
+          : lte(attemptEventReceipts.seq, receivedThroughSeq),
       ),
     )
     .orderBy(asc(attemptEventReceipts.seq))

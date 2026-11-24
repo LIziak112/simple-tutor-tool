@@ -20,6 +20,30 @@ export const attemptContextGroupSchema = questionGroupPublicSchema.extend({
   sourceVersion: z.number().int().min(1),
 });
 
+const frozenContextSource = {
+  sourceId: z.string().min(1),
+  sourceVersion: z.int().positive(),
+};
+
+export const attemptContextSnapshotEntrySchema = z
+  .discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("material"),
+      ...frozenContextSource,
+      snapshot: materialPublicSchema,
+    }),
+    z.strictObject({
+      kind: z.literal("group"),
+      ...frozenContextSource,
+      snapshot: questionGroupPublicSchema,
+    }),
+  ])
+  .refine(({ sourceId, snapshot }) => sourceId === snapshot.id);
+
+export type AttemptContextSnapshotEntry = z.infer<
+  typeof attemptContextSnapshotEntrySchema
+>;
+
 /**
  * GET /attempts/:id/context 的响应 data：该卷全部冻结上下文（作答期渲染与
  * 结果回看只读快照——教师改材料/软删不影响已开卷）。排序 (kind, sourceId,

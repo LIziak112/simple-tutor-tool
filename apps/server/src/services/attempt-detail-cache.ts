@@ -17,7 +17,12 @@ import { attemptWorkflowView } from "./practice-workflow-wiring";
 // 备份恢复换底层连接。旧库的修订号即使重合，也不会命中恢复前的详情。
 const connectionVersions = new WeakMap<Db["$client"], string>();
 
-function draftEtag(db: Db, attempt: Attempt, now: Date): string | null {
+export function draftEtag(
+  db: Db,
+  attempt: Attempt,
+  now: Date,
+  authoritativeDrafts?: readonly unknown[],
+): string | null {
   // 遗留题序依赖当前题库，限时详情每次携带服务端时钟，讲练使用独立入口。
   if (
     attempt.status !== "draft" ||
@@ -83,16 +88,22 @@ function draftEtag(db: Db, attempt: Attempt, now: Date): string | null {
     attemptAllowRedo(db, attempt),
     unitTitles,
     rows,
+    ...(authoritativeDrafts === undefined ? [] : [authoritativeDrafts]),
   ];
   return `W/"${createHash("sha256").update(JSON.stringify(revision)).digest("base64url")}"`;
 }
+
+export type ConditionalAttemptDetail = {
+  etag: string | null;
+  detail: AttemptDetailData | null;
+};
 
 export function readConditionalAttemptDetail(
   db: Db,
   studentId: string,
   attemptId: AttemptId,
   ifNoneMatch: string | undefined,
-): { etag: string | null; detail: AttemptDetailData | null } {
+): ConditionalAttemptDetail {
   return db.$client.transaction(() => {
     const now = new Date();
     const attempt = requireUsableAttempt(db, studentId, attemptId);

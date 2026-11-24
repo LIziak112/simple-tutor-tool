@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -13,9 +15,10 @@ import {
   teacherInfoOkSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type { Logger } from "pino";
 import pino from "pino";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import { hashPassword } from "../auth/password.ts";
 import { createTeacherSession } from "../auth/session.ts";
@@ -23,7 +26,14 @@ import { runBackfills } from "../db/backfill.ts";
 import { createDbHandle, type DbHandle } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import { teachers } from "../db/schema.ts";
+import { makeMigrationsFolderUpTo } from "../db/test-utils.ts";
 import { readZipEntries } from "../lib/zip-read.ts";
+import {
+  assignFixture,
+  postAssignment,
+} from "../test/m04-p1/product-fixture.ts";
+import { createStudent, loginStudent } from "../test/note-world.ts";
+import { submitAttemptRequest } from "../test/submit-revisions.ts";
 
 /**
  * 备份与恢复路由测试（T4.5）：鉴权（未登录 401）、快照列表契约、zip 下载
@@ -45,14 +55,29 @@ interface BackupApp {
 
 const apps: BackupApp[] = [];
 
-async function makeBackupApp(authorize = true): Promise<BackupApp> {
+async function makeBackupApp(
+  authorize = true,
+  firstOpenMigrationLimit?: string,
+): Promise<BackupApp> {
   const dataDir = mkdtempSync(join(tmpdir(), "tutor-backup-route-"));
   writeFileSync(join(dataDir, "secret.key"), "ef".repeat(32), "utf8");
   mkdirSync(join(dataDir, "shared"), { recursive: true });
   writeFileSync(join(dataDir, "shared", "共享.md"), "route-v1", "utf8");
 
   const handle = createDbHandle(join(dataDir, "tutor.db"), (fresh) => {
-    runMigrations(fresh);
+    if (firstOpenMigrationLimit) {
+      const migrationsFolder = makeMigrationsFolderUpTo(
+        firstOpenMigrationLimit,
+      );
+      firstOpenMigrationLimit = undefined;
+      try {
+        fresh.$client.pragma("foreign_keys = OFF");
+        migrate(fresh, { migrationsFolder });
+      } finally {
+        fresh.$client.pragma("foreign_keys = ON");
+        rmSync(migrationsFolder, { recursive: true, force: true });
+      }
+    } else runMigrations(fresh);
     runBackfills(fresh);
   });
   const options = {
@@ -474,4 +499,195 @@ describe("POST /api/teacher/backup/restore", () => {
     );
     expect(again.status).toBe(200);
   });
+});
+
+async function importRestoreUnit({ app, cookie }: BackupApp): Promise<string> {
+  const markdown = readFileSync(
+    new URL("../test/m04-p1/fixtures/P0-单选夹具.md", import.meta.url),
+    "utf8",
+  );
+  const response = await request(
+    app,
+    "POST",
+    "/api/teacher/import/commit",
+    cookie,
+    {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ markdown, filename: "restore-unit.md" }),
+    },
+  );
+  expect(response.status, await response.clone().text()).toBe(200);
+  const payload = (await response.json()) as {
+    data: { units: { id: string }[] };
+  };
+  const unit = payload.data.units[0];
+  if (!unit) throw new Error("没有导入待测试单元");
+  return unit.id;
+}
+
+async function downloadRestoreArchive({
+  app,
+  cookie,
+}: BackupApp): Promise<ArrayBuffer> {
+  const backup = await request(
+    app,
+    "GET",
+    "/api/teacher/backup/download",
+    cookie,
+  );
+  expect(backup.status).toBe(200);
+  return backup.arrayBuffer();
+}
+
+function restoreArchive({ app, cookie }: BackupApp, bytes: ArrayBuffer) {
+  const form = new FormData();
+  form.set("zip", new File([new Uint8Array(bytes)], "backup.zip"));
+  form.set("password", TEACHER_PASSWORD);
+  return request(app, "POST", "/api/teacher/backup/restore", cookie, {
+    body: form,
+  });
+}
+
+it("重复恢复同一旧归档时保留已撤销的设备会话和已彻删的资源约束", async () => {
+  const backup = await makeBackupApp(true, "0083_kernel_choice_amendments");
+  const { app, cookie } = backup;
+  const id = await importRestoreUnit(backup);
+  const unit = `/api/teacher/units/${id}`;
+  await createStudent(app, cookie, "合成甲");
+  const keep = await loginStudent(app, "合成甲");
+  const revoke = await loginStudent(app, "合成甲");
+  const device = randomUUID();
+  const register = await request(
+    app,
+    "POST",
+    "/api/student/devices/register",
+    revoke,
+    {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceId: device, type: "desktop" }),
+    },
+  );
+  expect(register.status).toBe(200);
+  expect((await request(app, "GET", `${unit}/export.md`, cookie)).status).toBe(
+    200,
+  );
+  expect((await request(app, "GET", "/api/student/me", revoke)).status).toBe(
+    200,
+  );
+  const archive = await downloadRestoreArchive(backup);
+  runMigrations(backup.handle.db);
+  const removed = await request(
+    app,
+    "POST",
+    `/api/student/devices/${device}/revoke-sessions`,
+    keep,
+  );
+  expect(removed.status).toBe(200);
+  await expect(removed.json()).resolves.toMatchObject({ data: { revoked: 1 } });
+  expect((await request(app, "DELETE", unit, cookie)).status).toBe(200);
+  expect((await request(app, "DELETE", `${unit}/purge`, cookie)).status).toBe(
+    200,
+  );
+  const assertCurrent = async () => {
+    const denied = await request(app, "GET", "/api/student/me", revoke);
+    expect.soft(denied.status).toBe(401);
+    await expect.soft(denied.json()).resolves.toMatchObject({
+      ok: false,
+      error: "UNAUTHORIZED",
+    });
+    const missing = await request(app, "GET", `${unit}/usage`, cookie);
+    expect.soft(missing.status).toBe(404);
+    await expect.soft(missing.json()).resolves.toMatchObject({
+      ok: false,
+      error: "UNIT_NOT_FOUND",
+    });
+    expect
+      .soft((await request(app, "GET", `${unit}/export.md`, cookie)).status)
+      .toBe(404);
+    expect((await request(app, "GET", "/api/student/me", keep)).status).toBe(
+      200,
+    );
+  };
+  await assertCurrent();
+  const restart = vi
+    .spyOn(backup.handle, "restart")
+    .mockImplementationOnce(() => {
+      throw new Error("模拟替换后的首次数据库重开失败");
+    });
+  try {
+    const interrupted = await restoreArchive(backup, archive);
+    expect(interrupted.status).toBe(500);
+    await expect(interrupted.json()).resolves.toMatchObject({
+      ok: false,
+      error: "BACKUP_RESTORE_FAILED",
+    });
+    expect(restart).toHaveBeenCalledTimes(2);
+    await assertCurrent();
+  } finally {
+    restart.mockRestore();
+  }
+  for (const _ of [1, 2]) {
+    const restored = await restoreArchive(backup, archive);
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    await assertCurrent();
+  }
+  const recreated = await importRestoreUnit(backup);
+  expect(recreated).toBe(id);
+  const takenAfterRecreation = await downloadRestoreArchive(backup);
+  expect((await restoreArchive(backup, archive)).status).toBe(200);
+  await assertCurrent();
+  expect((await restoreArchive(backup, takenAfterRecreation)).status).toBe(200);
+  expect((await request(app, "GET", `${unit}/export.md`, cookie)).status).toBe(
+    200,
+  );
+  expect((await request(app, "GET", "/api/student/me", revoke)).status).toBe(
+    401,
+  );
+});
+
+it("待重施的彻删影响归档中的已交作答时拒绝替换并保留现用事实", async () => {
+  const backup = await makeBackupApp();
+  const { app, cookie, dataDir } = backup;
+  const id = await importRestoreUnit(backup);
+  const unit = `/api/teacher/units/${id}`;
+  const studentId = await createStudent(app, cookie, "合成乙");
+  const student = await loginStudent(app, "合成乙");
+  const unused = await downloadRestoreArchive(backup);
+  const assignment = await assignFixture(app, cookie, id, studentId);
+  const started = await postAssignment(app, assignment, student);
+  expect(started.status, await started.clone().text()).toBe(200);
+  const opened = (await started.json()) as { data: { id: string } };
+  const submitted = await submitAttemptRequest(app, student, opened.data.id);
+  expect(submitted.status, await submitted.clone().text()).toBe(200);
+  const dependsOnResource = await downloadRestoreArchive(backup);
+  expect((await restoreArchive(backup, unused)).status).toBe(200);
+  expect((await request(app, "DELETE", unit, cookie)).status).toBe(200);
+  expect((await request(app, "DELETE", `${unit}/purge`, cookie)).status).toBe(
+    200,
+  );
+  const currentFile = join(dataDir, "shared", "共享.md");
+  writeFileSync(currentFile, "只存在于现用库配套文件", "utf8");
+
+  const conflict = await restoreArchive(backup, dependsOnResource);
+  expect.soft(conflict.status).toBe(409);
+  await expect.soft(conflict.json()).resolves.toMatchObject({
+    ok: false,
+    error: "BACKUP_RESTORE_PROTECTION_CONFLICT",
+  });
+  expect.soft(readFileSync(currentFile, "utf8")).toBe("只存在于现用库配套文件");
+  expect
+    .soft((await request(app, "GET", `${unit}/usage`, cookie)).status)
+    .toBe(404);
+  expect
+    .soft(
+      (
+        await request(
+          app,
+          "GET",
+          `/api/student/attempts/${opened.data.id}`,
+          student,
+        )
+      ).status,
+    )
+    .toBe(404);
 });

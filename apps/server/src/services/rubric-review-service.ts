@@ -20,6 +20,9 @@ import {
   questionNotFound,
   requireUsableAttempt,
 } from "./attempt-service";
+import { readKernelAttemptFacts } from "./kernel-assignment-facts.ts";
+import { isKernelAttempt } from "./kernel-assignment-routing.ts";
+import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
 import {
   rubricAgentRecordOf,
   rubricOpinionMarkdownOf,
@@ -43,6 +46,11 @@ interface RubricTarget {
   rubric: Rubric;
 }
 
+interface RubricSaveOptions {
+  dataDir?: string;
+  now?: Date | string;
+}
+
 /** 本人卷 + 行属本卷 + 已提交且公布 + 题有量表；否则按既有码拒绝 */
 function requireRubricTarget(
   db: Db,
@@ -50,13 +58,22 @@ function requireRubricTarget(
   attemptId: string,
   questionId: string,
   now: Date | string,
+  dataDir?: string,
 ): RubricTarget {
-  const attempt = requireUsableAttempt(db, studentId, attemptId);
-  const row = db
-    .select()
-    .from(responses)
-    .where(buildAttemptQuestionWhere(attemptId, questionId))
-    .get();
+  let attempt = requireUsableAttempt(db, studentId, attemptId);
+  let row: ResponseRow | undefined;
+  if (attempt.sourceType === "assignment" && isKernelAttempt(db, attempt)) {
+    if (dataDir === undefined) kernelAttemptUnavailable();
+    const facts = readKernelAttemptFacts(db, dataDir, attempt);
+    attempt = facts.attempt;
+    row = facts.rows.find((response) => response.questionId === questionId);
+  } else {
+    row = db
+      .select()
+      .from(responses)
+      .where(buildAttemptQuestionWhere(attemptId, questionId))
+      .get();
+  }
   if (row === undefined) throw questionNotFound();
   const state = practiceQuestionFeedbackStateOf(db, attempt, row, now);
   if (state.status !== "released") {
@@ -71,6 +88,33 @@ function requireRubricTarget(
     throw new HttpError(403, "RUBRIC_NOT_AVAILABLE", "这道题没有量表");
   }
   return { row, rubric };
+}
+
+/** 权威交卷恢复、公布裁决和量表落库共用同一宿主写事务。 */
+function withRubricTarget(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  options: RubricSaveOptions,
+  save: (target: RubricTarget, now: Date | string) => RubricReview,
+): RubricReview {
+  return db.$client
+    .transaction(() => {
+      const now = options.now ?? new Date();
+      return save(
+        requireRubricTarget(
+          db,
+          studentId,
+          attemptId,
+          questionId,
+          now,
+          options.dataDir,
+        ),
+        now,
+      );
+    })
+    .immediate();
 }
 
 function assertRatings(rubric: Rubric, ratings: readonly RubricRating[]) {
@@ -94,29 +138,31 @@ export function saveRubricSelf(
   attemptId: string,
   questionId: string,
   req: RubricSelfRequest,
-  now: Date | string = new Date(),
+  options: RubricSaveOptions = {},
 ): RubricReview {
-  const { row, rubric } = requireRubricTarget(
+  return withRubricTarget(
     db,
     studentId,
     attemptId,
     questionId,
-    now,
+    options,
+    ({ row, rubric }, now) => {
+      assertRatings(rubric, req.ratings);
+      const record: RubricAssessment = {
+        source: "self",
+        ratings: req.ratings,
+        note: req.note,
+        at: new Date(now).toISOString(),
+      };
+      db.update(responses)
+        .set({ rubricSelfJson: JSON.stringify(record) })
+        .where(eq(responses.id, row.id))
+        .run();
+      const review = rubricReviewOf(db, freshRowOf(db, row.id), { rubric });
+      if (review === null) throw questionNotFound();
+      return review;
+    },
   );
-  assertRatings(rubric, req.ratings);
-  const record: RubricAssessment = {
-    source: "self",
-    ratings: req.ratings,
-    note: req.note,
-    at: new Date(now).toISOString(),
-  };
-  db.update(responses)
-    .set({ rubricSelfJson: JSON.stringify(record) })
-    .where(eq(responses.id, row.id))
-    .run();
-  const review = rubricReviewOf(db, freshRowOf(db, row.id), { rubric });
-  if (review === null) throw questionNotFound();
-  return review;
 }
 
 // ---------- 写：本人裁定 ----------
@@ -127,60 +173,62 @@ export function saveRubricFinal(
   attemptId: string,
   questionId: string,
   req: RubricFinalRequest,
-  now: Date | string = new Date(),
+  options: RubricSaveOptions = {},
 ): RubricReview {
-  const { row, rubric } = requireRubricTarget(
+  return withRubricTarget(
     db,
     studentId,
     attemptId,
     questionId,
-    now,
+    options,
+    ({ row, rubric }, now) => {
+      const current = rubricReviewOf(db, row, { rubric });
+      if (current === null) throw questionNotFound();
+      let ratings: readonly RubricRating[];
+      if (req.decision === "self") {
+        if (current.self === null) {
+          throw new HttpError(
+            409,
+            "RUBRIC_RATINGS_INVALID",
+            "还没有自评，不能保留自评",
+          );
+        }
+        ratings = current.self.ratings;
+      } else if (req.decision === "agent") {
+        if (current.agent === null) {
+          throw new HttpError(
+            409,
+            "RUBRIC_RATINGS_INVALID",
+            "还没有 Agent 意见，不能采纳",
+          );
+        }
+        ratings = current.agent.ratings;
+      } else {
+        if (req.ratings === undefined) {
+          throw new HttpError(
+            400,
+            "RUBRIC_RATINGS_INVALID",
+            "自行改写需要逐项档位",
+          );
+        }
+        assertRatings(rubric, req.ratings);
+        ratings = req.ratings;
+      }
+      const record: RubricAdjudication = {
+        decision: req.decision,
+        ratings: [...ratings],
+        note: req.note,
+        at: new Date(now).toISOString(),
+      };
+      db.update(responses)
+        .set({ rubricFinalJson: JSON.stringify(record) })
+        .where(eq(responses.id, row.id))
+        .run();
+      const review = rubricReviewOf(db, freshRowOf(db, row.id), { rubric });
+      if (review === null) throw questionNotFound();
+      return review;
+    },
   );
-  const current = rubricReviewOf(db, row, { rubric });
-  if (current === null) throw questionNotFound();
-  let ratings: readonly RubricRating[];
-  if (req.decision === "self") {
-    if (current.self === null) {
-      throw new HttpError(
-        409,
-        "RUBRIC_RATINGS_INVALID",
-        "还没有自评，不能保留自评",
-      );
-    }
-    ratings = current.self.ratings;
-  } else if (req.decision === "agent") {
-    if (current.agent === null) {
-      throw new HttpError(
-        409,
-        "RUBRIC_RATINGS_INVALID",
-        "还没有 Agent 意见，不能采纳",
-      );
-    }
-    ratings = current.agent.ratings;
-  } else {
-    if (req.ratings === undefined) {
-      throw new HttpError(
-        400,
-        "RUBRIC_RATINGS_INVALID",
-        "自行改写需要逐项档位",
-      );
-    }
-    assertRatings(rubric, req.ratings);
-    ratings = req.ratings;
-  }
-  const record: RubricAdjudication = {
-    decision: req.decision,
-    ratings: [...ratings],
-    note: req.note,
-    at: new Date(now).toISOString(),
-  };
-  db.update(responses)
-    .set({ rubricFinalJson: JSON.stringify(record) })
-    .where(eq(responses.id, row.id))
-    .run();
-  const review = rubricReviewOf(db, freshRowOf(db, row.id), { rubric });
-  if (review === null) throw questionNotFound();
-  return review;
 }
 
 // ---------- 写：Agent 意见（MCP，走任务租约） ----------

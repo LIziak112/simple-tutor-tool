@@ -419,6 +419,7 @@ export interface CreateAiTaskInput {
 export interface AiTaskServiceOptions {
   /** 快照装配 HMAC 密钥（生产为 DATA_DIR/secret.key；必填无默认） */
   readonly hmacSecret: string;
+  readonly dataDir?: string;
   /** 测试注入时刻（默认当前时间） */
   readonly now?: Date | string;
   /** 配置来源（缺省 sqliteAiPolicyConfigSource；测试可注入） */
@@ -478,30 +479,29 @@ export function createAiTask(
     return { task: existing, created: false };
   }
 
-  // 快照装配（SAI-09 单一入口：实时裁决 + 冻结快照 + contextVersion 材料）
-  const bundle = buildAiContextBundle(
-    db,
-    {
-      studentId: input.studentId,
-      attemptId: input.attemptId,
-      questionId: input.questionId,
-    },
-    {
-      now: now.date,
-      hmacSecret: options.hmacSecret,
-      // LR-PR5 版本钉住：三类材料 (revision, hash) 进快照与 contextVersion
-      recordRefs: learningRecordMaterialRefs(
-        db,
-        input.attemptId,
-        input.questionId,
-      ),
-      ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
-    },
-    configSource,
-  );
-
   return db.transaction(
     (tx) => {
+      // 内核确认恢复须从同一事务的根句柄访问 SQLite。
+      const bundle = buildAiContextBundle(
+        db,
+        {
+          studentId: input.studentId,
+          attemptId: input.attemptId,
+          questionId: input.questionId,
+        },
+        {
+          ...options,
+          now: now.date,
+          // LR-PR5 版本钉住：三类材料 (revision, hash) 进快照与 contextVersion
+          recordRefs: learningRecordMaterialRefs(
+            db,
+            input.attemptId,
+            input.questionId,
+          ),
+          ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
+        },
+        configSource,
+      );
       // 配额（事务内计数，与插入串行）：
       assertAttemptWriteVersion(tx, bundle.attempt);
       assertAttemptWriteProof(
@@ -1697,15 +1697,15 @@ export function refreshPendingAiTask(
       }
       const purpose = snapshotPurposeOf(task);
       const bundle = buildAiContextBundle(
-        asDb(tx),
+        db,
         {
           studentId: task.studentId,
           attemptId: task.attemptId,
           questionId: task.questionId,
         },
         {
+          ...options,
           now: now.date,
-          hmacSecret: options.hmacSecret,
           ...(purpose !== undefined ? { purpose } : {}),
         },
         configSource,

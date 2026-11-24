@@ -34,6 +34,7 @@ import {
   recordQuestionSubmitEvent,
   submissionActivityOf,
 } from "./event-service";
+import { requireLegacyAttemptWrite } from "./kernel-assignment-routing.ts";
 import { practiceProtocolOf } from "./practice-workflow-wiring";
 import { answerOf, snapshotOfRow } from "./snapshot";
 import { submittedTimePatchOf } from "./submission-time.ts";
@@ -102,6 +103,7 @@ function finalizeLessonQuestion(
   now: Date | string,
 ): LessonQuestionSubmitData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireLegacyAttemptWrite(db, attempt);
   if (attempt.sourceType !== "lesson") {
     // M2 协议分流（2026-10-22 计划 §5.3/§10.1）：新协议普通卷收到旧协议形态
     // → 拒绝并提示刷新，不退回整卷无版本写入；历史卷维持 404（讲练专属入口，

@@ -15,6 +15,7 @@ import {
 import { touchAttemptActivity } from "./attempt-activity.ts";
 import { attemptSummaryOf } from "./attempt-summary.ts";
 import { requireVisibleCourseUnit } from "./course-service.ts";
+import { requireNoPendingKernelRefreeze } from "./kernel-assignment-refreeze-guard.ts";
 import { assertDraftCourseVisible } from "./practice-workflow-wiring.ts";
 import { requireVisibleStudentLecture } from "./student-course-service.ts";
 
@@ -32,6 +33,7 @@ export function activateAttempt(
       if (attempt.abandonedAt !== null)
         throw new HttpError(409, "ATTEMPT_ABANDONED", "这份作答已作废");
       assertDraftCourseVisible(db, studentId, attempt);
+      requireNoPendingKernelRefreeze(db, attempt);
       if (attempt.frozenAt !== input.expectedFrozenAt) {
         throw new HttpError(
           409,

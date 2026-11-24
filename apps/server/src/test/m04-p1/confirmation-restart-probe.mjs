@@ -1,0 +1,643 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readdirSync, renameSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import {
+  attemptResultOkSchema,
+  attemptStartOkSchema,
+  teacherAttemptDetailOkSchema,
+} from "@tutor/contract";
+import { eq } from "drizzle-orm";
+import { openLearningRuntime } from "learning-kernel";
+import { createDb } from "../../db/client.ts";
+import { attempts } from "../../db/schema.ts";
+import {
+  kernelAttemptBindings,
+  kernelAttemptConfirmations,
+} from "../../db/schema-kernel-assignments.ts";
+import { withKernelConfirmationReader } from "../../services/kernel-assignment-confirmation-recovery.ts";
+import {
+  makeNotePng,
+  postNoteImage,
+  putNoteForm,
+  putNoteReceipt,
+} from "../note-fixtures.ts";
+import { fetchSubmitRevisions } from "../submit-revisions.ts";
+import {
+  assignKernelFixture,
+  postAssignment,
+  setupAssignment,
+} from "./product-fixture.ts";
+import { createRealServiceFixture } from "./real-service-fixture.mjs";
+
+const service = await createRealServiceFixture();
+const { app, dataDir, boot, stop } = service;
+const kernelPath = join(dataDir, "learning-kernel.sqlite");
+const productPath = join(dataDir, "tutor.db");
+function productRead(read) {
+  const db = createDb(productPath);
+  try {
+    return read(db.$client);
+  } finally {
+    db.$client.close();
+  }
+}
+function inspect(attemptId) {
+  return productRead((db) => ({
+    prepared: db
+      .prepare(
+        "SELECT operation_id, step_attempt_id, json_extract(request_json, '$.activitySeal.receivedThroughSeq') AS activity_cut FROM kernel_attempt_confirmations WHERE attempt_id=?",
+      )
+      .get(attemptId),
+    lifecycle: db
+      .prepare(
+        "SELECT status, submitted_at, score_auto, score_final FROM attempts WHERE id=?",
+      )
+      .get(attemptId),
+    originals: db
+      .prepare(
+        "SELECT state, version_id, pending_version_id FROM attempt_original_reservations WHERE attempt_id=?",
+      )
+      .all(attemptId),
+    evidence: db
+      .prepare(
+        "SELECT question_id, state, version_id FROM submission_evidence WHERE attempt_id=? ORDER BY question_id",
+      )
+      .all(attemptId),
+    time: db
+      .prepare(`
+      SELECT r.active_sec, r.change_count, l.active_sec AS ledger_sec, l.sealed_at
+      FROM responses r LEFT JOIN response_time_ledger l ON l.response_id=r.id
+      WHERE r.attempt_id=? ORDER BY r.question_id
+    `)
+      .all(attemptId),
+    seals: db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM attempt_event_receipts WHERE attempt_id=? AND kind='seal'",
+      )
+      .get(attemptId).n,
+    submitAudit: db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM events WHERE attempt_id=? AND type='submit' AND json_extract(payload_json, '$.confirmed')=1",
+      )
+      .get(attemptId).n,
+    oldAnswers: db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM responses WHERE attempt_id=? AND (answer_json IS NOT NULL OR auto_correct IS NOT NULL OR final_correct IS NOT NULL)",
+      )
+      .get(attemptId).n,
+  }));
+}
+async function expectStatus(response, status, code) {
+  assert.equal(response.status, status, await response.clone().text());
+  if (code !== undefined) {
+    const body = await response.json();
+    assert.equal(body.error, code);
+    assert.ok(!Object.hasOwn(body, "data"));
+  }
+}
+function recover(attemptId, studentId, prepared) {
+  const runtime = openLearningRuntime({
+    databasePath: kernelPath,
+    authorizeConfirmationRecovery: (request) =>
+      request.activityId === attemptId &&
+      request.studentId === studentId &&
+      request.stepAttemptId === prepared.step_attempt_id &&
+      request.operationId === prepared.operation_id,
+  });
+  try {
+    return runtime.recoverChoiceConfirmation(
+      { role: "student", id: studentId },
+      attemptId,
+      {
+        protocolVersion: 1,
+        stepAttemptId: prepared.step_attempt_id,
+        operationId: prepared.operation_id,
+      },
+    );
+  } finally {
+    runtime.close();
+  }
+}
+
+try {
+  const firstPid = await boot(true);
+  const world = await setupAssignment(app);
+  const assignmentId = await assignKernelFixture(app, world);
+  const start = await postAssignment(app, assignmentId, world.ownerCookie);
+  await expectStatus(start, 200);
+  const { id, frozenAt } = attemptStartOkSchema.parse(await start.json()).data;
+  const root = `/api/student/attempts/${id}`;
+  const [q1, q2] = await fetchSubmitRevisions(app, world.ownerCookie, id);
+  const call = (path, cookie = world.ownerCookie, method = "GET", payload) =>
+    app.request(path, {
+      method,
+      headers: { cookie, "content-type": "application/json" },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+    });
+  for (const [question, index] of [
+    [q1, 1],
+    [q2, 2],
+  ]) {
+    await expectStatus(
+      await call(
+        `${root}/answers/${question.questionId}`,
+        world.ownerCookie,
+        "PUT",
+        {
+          answer: { kind: "choice", index },
+          mutationId: randomUUID(),
+          baseRevision: 0,
+          expectedFrozenAt: frozenAt,
+          questionRevisionId: question.questionRevisionId,
+        },
+      ),
+      200,
+    );
+  }
+
+  const activityEpoch = 1_769_000_000_000;
+  const event = (type, second, questionId) => ({
+    type,
+    clientTs: activityEpoch + second * 1000,
+    questionId,
+  });
+  const postEvents = async (events) => {
+    const response = await call(`${root}/events`, world.ownerCookie, "POST", {
+      viewId: "m05-p04-restart",
+      events,
+    });
+    await expectStatus(response, 200);
+    assert.equal((await response.json()).data.accepted, events.length);
+  };
+  await postEvents([
+    event("question_focus", 0, q1.questionId),
+    event("answer_change", 1, q1.questionId),
+    event("answer_change", 2, q1.questionId),
+    event("question_blur", 8, q1.questionId),
+    event("question_focus", 10, q2.questionId),
+    event("answer_change", 11, q2.questionId),
+    event("question_blur", 15, q2.questionId),
+  ]);
+  const lastEventReceipt = () =>
+    productRead(
+      (db) =>
+        db
+          .prepare(
+            "SELECT MAX(seq) AS seq FROM attempt_event_receipts WHERE attempt_id=? AND kind='event'",
+          )
+          .get(id).seq,
+    );
+
+  const v1 = await putNoteReceipt(app, world.ownerCookie, id, q1.questionId, 1);
+  const originalMutation = randomUUID();
+  const v2 = await putNoteReceipt(
+    app,
+    world.ownerCookie,
+    id,
+    q1.questionId,
+    2,
+    { baseRevision: 1, mutationId: originalMutation },
+  );
+  const png = Buffer.from(makeNotePng());
+  const attached = await postNoteImage(
+    app,
+    "student",
+    v2.versionId,
+    png,
+    world.ownerCookie,
+  );
+  await expectStatus(attached, 200);
+  const {
+    data: { imageId },
+  } = await attached.json();
+  const documentPath = `/api/student/note-versions/${v2.versionId}/document`;
+  const imagePath = `/api/student/note-versions/${v2.versionId}/images/${imageId}.png`;
+  const bytes = async (path) => {
+    const response = await call(path);
+    await expectStatus(response, 200);
+    return Buffer.from(await response.arrayBuffer());
+  };
+  const document = await bytes(documentPath);
+  const scratchAt = (
+    questionId,
+    strokes,
+    options,
+    cookie = world.ownerCookie,
+  ) =>
+    app.request(`${root}/notes/${questionId}`, {
+      method: "PUT",
+      headers: { cookie },
+      body: putNoteForm(strokes, options),
+    });
+  const newScratch = (questionId = q1.questionId, baseRevision = 2) =>
+    scratchAt(questionId, 3, { baseRevision });
+  const replayScratch = async () => {
+    const replay = await scratchAt(q1.questionId, 2, {
+      baseRevision: 1,
+      mutationId: originalMutation,
+    });
+    await expectStatus(replay, 200);
+    assert.deepEqual((await replay.json()).data, v2);
+  };
+  const scratchFacts = () => ({
+    rows: productRead((db) =>
+      db
+        .prepare(`
+      SELECT n.question_id,n.current_revision,n.current_version_id,v.revision,v.id
+      FROM notes n JOIN note_versions v ON v.note_id=n.id
+      WHERE n.attempt_id=? AND n.phase='scratch' ORDER BY n.question_id,v.revision
+    `)
+        .all(id),
+    ),
+    blobs: readdirSync(join(dataDir, "blobs", "notes", v2.noteId)).sort(),
+  });
+  const initialScratch = scratchFacts();
+  assert.equal(initialScratch.rows.length, 2);
+
+  const body = {
+    revisions: await fetchSubmitRevisions(app, world.ownerCookie, id),
+    evidence: [
+      {
+        questionId: q1.questionId,
+        state: "frozen",
+        versionId: v2.versionId,
+        revision: v2.revision,
+      },
+      { questionId: q2.questionId, state: "none" },
+    ],
+  };
+  const submit = (payload = body, cookie = world.ownerCookie) =>
+    call(`${root}/submit`, cookie, "POST", payload);
+
+  productRead((db) =>
+    db.exec(`
+    CREATE TRIGGER fail_confirmation_projection
+    BEFORE UPDATE OF status, submitted_at ON attempts
+    WHEN NEW.status <> OLD.status
+    BEGIN SELECT RAISE(ABORT, 'forced P3 confirmation projection interruption'); END
+  `),
+  );
+  const first = await submit();
+  await expectStatus(first, 500);
+  const held = inspect(id);
+  assert.equal(held.lifecycle.status, "draft");
+  assert.equal(held.lifecycle.submitted_at, null);
+  assert.equal(held.oldAnswers, 0);
+  assert.deepEqual(held.evidence, []);
+  assert.deepEqual(held.originals, [
+    {
+      state: "pending",
+      version_id: v2.versionId,
+      pending_version_id: v2.versionId,
+    },
+  ]);
+  assert.ok(held.prepared);
+  assert.ok(lastEventReceipt() > 0);
+  assert.equal(held.prepared.activity_cut, lastEventReceipt());
+  assert.equal(held.seals, 0);
+  assert.equal(held.submitAudit, 0);
+  assert.deepEqual(
+    held.time.map((row) => [row.active_sec, row.change_count, row.ledger_sec]),
+    [
+      [null, 0, null],
+      [null, 0, null],
+    ],
+  );
+  const durable = recover(id, world.studentId, held.prepared);
+  assert.equal(
+    durable.confirmation.questions[0].original.versionId,
+    v2.versionId,
+  );
+  assert.equal(durable.evaluation.correctCount, 2);
+  const different = {
+    ...body,
+    evidence: [
+      { questionId: q1.questionId, state: "missing" },
+      { questionId: q2.questionId, state: "missing" },
+    ],
+  };
+  await expectStatus(await submit(different), 500);
+  assert.deepEqual(inspect(id), held);
+  assert.deepEqual(recover(id, world.studentId, held.prepared), durable);
+  productRead((db) => db.exec("DROP TRIGGER fail_confirmation_projection"));
+
+  await stop();
+  const restartedPid = await boot(false);
+  assert.notEqual(firstPid, restartedPid);
+  const late = await newScratch();
+  const scratchProtection = {
+    interruptedHost: held.lifecycle.status,
+    lateScratch: late.status,
+    scratchRows: scratchFacts().rows.length,
+  };
+  if (late.status !== 409) console.log(JSON.stringify(scratchProtection));
+  await expectStatus(late, 409, "ALREADY_SUBMITTED");
+  await expectStatus(
+    await newScratch(q2.questionId, 0),
+    409,
+    "ALREADY_SUBMITTED",
+  );
+  await expectStatus(
+    await newScratch(q1.questionId, 0),
+    409,
+    "ALREADY_SUBMITTED",
+  );
+  await expectStatus(
+    await scratchAt(
+      q1.questionId,
+      2,
+      {
+        baseRevision: 1,
+        mutationId: originalMutation,
+      },
+      world.otherCookie,
+    ),
+    403,
+    "FORBIDDEN",
+  );
+  await replayScratch();
+  assert.deepEqual(scratchFacts(), initialScratch);
+  await expectStatus(await call(root, world.otherCookie), 403, "FORBIDDEN");
+  await expectStatus(
+    await submit(different, world.otherCookie),
+    403,
+    "FORBIDDEN",
+  );
+  const hiddenKernel = `${kernelPath}.held`;
+  renameSync(kernelPath, hiddenKernel);
+  try {
+    await expectStatus(await call(root), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
+    await expectStatus(await submit(), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
+    await expectStatus(await newScratch(), 503, "KERNEL_ATTEMPT_UNAVAILABLE");
+    await replayScratch();
+    assert.deepEqual(scratchFacts(), initialScratch);
+    assert.deepEqual(inspect(id), held);
+    assert.deepEqual(await bytes(documentPath), document);
+  } finally {
+    renameSync(hiddenKernel, kernelPath);
+  }
+
+  await postEvents([
+    event("question_focus", 20, q2.questionId),
+    event("answer_change", 22, q2.questionId),
+    event("question_blur", 26, q2.questionId),
+  ]);
+  assert.ok(lastEventReceipt() > held.prepared.activity_cut);
+  assert.equal(inspect(id).seals, 0);
+  const withProductDb = (read) => {
+    const db = createDb(productPath);
+    try {
+      return read(db);
+    } finally {
+      db.$client.close();
+    }
+  };
+  const stale = withProductDb((db) => ({
+    attempt: db.select().from(attempts).where(eq(attempts.id, id)).get(),
+    binding: db
+      .select()
+      .from(kernelAttemptBindings)
+      .where(eq(kernelAttemptBindings.attemptId, id))
+      .get(),
+    ticket: db
+      .select()
+      .from(kernelAttemptConfirmations)
+      .where(eq(kernelAttemptConfirmations.attemptId, id))
+      .get(),
+  }));
+  assert.equal(stale.attempt.status, "draft");
+  const teacherPath = `/api/teacher/attempts/${id}`;
+  const teacherActivity = async () => {
+    const response = await call(teacherPath, world.teacher);
+    await expectStatus(response, 200);
+    const { activeSec, questions } = teacherAttemptDetailOkSchema.parse(
+      await response.json(),
+    ).data;
+    return {
+      activeSec,
+      rows: questions.map(({ activeSec: seconds, changeCount }) => [
+        seconds,
+        changeCount,
+      ]),
+    };
+  };
+  const activity = {
+    activeSec: 13,
+    rows: [
+      [8, 2],
+      [5, 1],
+    ],
+  };
+  assert.deepEqual(await teacherActivity(), activity);
+  const reopened = await call(root);
+  await expectStatus(reopened, 200);
+  const detail = attemptResultOkSchema.parse(await reopened.json()).data;
+  assert.equal(detail.attempt.id, id);
+  assert.equal(detail.attempt.submittedAt, durable.receipt.confirmedAt);
+  assert.equal(detail.attempt.scoreAuto, 100);
+  assert.equal(detail.time.metric, "question_activity_sealed");
+  assert.equal(detail.time.activeSec, 13);
+  assert.equal(detail.time.knownCount, 2);
+  assert.deepEqual(
+    detail.units.flatMap(({ questions }) =>
+      questions.map(({ questionRevisionId }) => questionRevisionId),
+    ),
+    [q1.questionRevisionId, q2.questionRevisionId],
+  );
+  const projected = inspect(id);
+  assert.deepEqual(projected.prepared, held.prepared);
+  assert.deepEqual(projected.lifecycle, {
+    status: "graded",
+    submitted_at: durable.receipt.confirmedAt,
+    score_auto: null,
+    score_final: null,
+  });
+  assert.deepEqual(projected.originals, [
+    { state: "projected", version_id: v2.versionId, pending_version_id: null },
+  ]);
+  assert.deepEqual(projected.evidence, [
+    { question_id: q1.questionId, state: "frozen", version_id: v2.versionId },
+    { question_id: q2.questionId, state: "none", version_id: null },
+  ]);
+  assert.equal(projected.oldAnswers, 0);
+  assert.equal(projected.seals, 1);
+  assert.equal(projected.submitAudit, 1);
+  withProductDb((db) =>
+    withKernelConfirmationReader(db, dataDir, (_runtime, read) => {
+      const recovered = read(stale.attempt, stale.binding, stale.ticket);
+      assert.equal(recovered.attempt.status, "graded");
+      assert.equal(recovered.attempt.submittedAt, durable.receipt.confirmedAt);
+    }),
+  );
+  assert.deepEqual(inspect(id), projected);
+  assert.deepEqual(
+    projected.time.map((row) => [
+      row.active_sec,
+      row.change_count,
+      row.ledger_sec,
+      row.sealed_at,
+    ]),
+    [
+      [8, 2, 8, durable.receipt.confirmedAt],
+      [5, 1, 5, durable.receipt.confirmedAt],
+    ],
+  );
+  await postEvents([event("answer_change", 29, q2.questionId)]);
+  assert.deepEqual(await teacherActivity(), activity);
+  assert.deepEqual(inspect(id), projected);
+  await expectStatus(await submit(), 409, "ALREADY_SUBMITTED");
+  await expectStatus(await submit(different), 409, "ALREADY_SUBMITTED");
+  assert.deepEqual(recover(id, world.studentId, projected.prepared), durable);
+  assert.deepEqual(await bytes(documentPath), document);
+  assert.deepEqual(await bytes(imagePath), png);
+  await expectStatus(await newScratch(), 409, "ALREADY_SUBMITTED");
+  await replayScratch();
+  const supplement = await (() => {
+    const form = putNoteForm(1);
+    form.append("phase", "supplement");
+    return app.request(`${root}/notes/${q1.questionId}`, {
+      method: "PUT",
+      headers: { cookie: world.ownerCookie },
+      body: form,
+    });
+  })();
+  await expectStatus(supplement, 200);
+  await expectStatus(
+    await call(
+      `${root}/notes/${q1.questionId}/corrections`,
+      world.ownerCookie,
+      "POST",
+      {
+        copyFromOriginal: true,
+      },
+    ),
+    201,
+  );
+  assert.deepEqual(scratchFacts(), initialScratch);
+  using kernel = new DatabaseSync(kernelPath, { readOnly: true });
+  const counts = kernel
+    .prepare(`SELECT
+    (SELECT COUNT(*) FROM submissions s JOIN step_attempts a ON a.id=s.step_attempt_id WHERE a.activity_id=?) AS submissions,
+    (SELECT COUNT(*) FROM automatic_verdicts WHERE submission_id=?) AS verdicts,
+    (SELECT COUNT(*) FROM completions WHERE activity_id=?) AS completions`)
+    .get(id, durable.receipt.id, id);
+  assert.deepEqual(
+    { ...counts },
+    { submissions: 1, verdicts: 2, completions: 1 },
+  );
+  const secondOpen = await postAssignment(app, assignmentId, world.otherCookie);
+  await expectStatus(secondOpen, 200);
+  const missed = attemptStartOkSchema.parse(await secondOpen.json()).data;
+  const missedRoot = `/api/student/attempts/${missed.id}`;
+  const priorRevisions = await fetchSubmitRevisions(
+    app,
+    world.otherCookie,
+    missed.id,
+  );
+  const [firstMissed] = priorRevisions;
+  productRead((db) =>
+    db.exec(`
+    CREATE TRIGGER fail_first_answer_activity
+    BEFORE UPDATE OF activated_at, last_activity_at ON attempts
+    BEGIN SELECT RAISE(ABORT, 'forced pre-confirmation draft activity interruption'); END
+  `),
+  );
+  const missedPut = await call(
+    `${missedRoot}/answers/${firstMissed.questionId}`,
+    world.otherCookie,
+    "PUT",
+    {
+      answer: { kind: "choice", index: 1 },
+      mutationId: randomUUID(),
+      baseRevision: 0,
+      expectedFrozenAt: missed.frozenAt,
+      questionRevisionId: firstMissed.questionRevisionId,
+    },
+  );
+  await expectStatus(missedPut, 500);
+  const activityFields =
+    "SELECT activated_at, last_activity_at FROM attempts WHERE id=?";
+  assert.deepEqual(
+    productRead((db) => db.prepare(activityFields).get(missed.id)),
+    {
+      activated_at: null,
+      last_activity_at: null,
+    },
+  );
+  const beforeConfirmKernel = openLearningRuntime({ databasePath: kernelPath });
+  let actualFirst;
+  try {
+    const actor = { role: "student", id: world.otherStudentId };
+    const view = beforeConfirmKernel.read(actor, missed.id);
+    assert.deepEqual(
+      view.choiceDrafts.map(({ questionId, revision }) => [
+        questionId,
+        revision,
+      ]),
+      [[firstMissed.questionId, 1]],
+    );
+    actualFirst = beforeConfirmKernel.readChoiceDraftActivity(
+      actor,
+      missed.id,
+    )?.firstChangedAt;
+    assert.ok(actualFirst);
+  } finally {
+    beforeConfirmKernel.close();
+  }
+  productRead((db) => db.exec("DROP TRIGGER fail_first_answer_activity"));
+  await stop();
+  const directSubmitPid = await boot(false);
+  assert.notEqual(directSubmitPid, restartedPid);
+  // 重启后不进详情。仅用先前的冻结凭据和内核已经落库的修订直接交卷。
+  const direct = await call(`${missedRoot}/submit`, world.otherCookie, "POST", {
+    revisions: priorRevisions.map((item, index) =>
+      index === 0 ? { ...item, expectedAnswerRevision: 1 } : item,
+    ),
+  });
+  await expectStatus(direct, 200);
+  const directlyConfirmed = attemptResultOkSchema.parse(
+    await direct.json(),
+  ).data;
+  assert.equal(directlyConfirmed.attempt.scoreAuto, 50);
+  assert.equal(directlyConfirmed.attempt.activatedAt, actualFirst);
+  assert.ok(directlyConfirmed.attempt.submittedAt > actualFirst);
+  assert.deepEqual(
+    productRead((db) => db.prepare(activityFields).get(missed.id)),
+    {
+      activated_at: actualFirst,
+      last_activity_at: directlyConfirmed.attempt.submittedAt,
+    },
+  );
+  console.log(
+    JSON.stringify(
+      {
+        firstPid,
+        restartedPid,
+        interrupted: first.status,
+        scratchProtection,
+        score: detail.attempt.scoreAuto,
+        notes: {
+          first: v1.revision,
+          held: v2.revision,
+          documentBytes: document.length,
+          pngBytes: png.length,
+        },
+        receipt: durable.receipt,
+        counts,
+        activity,
+        submitAudit: projected.submitAudit,
+        directlyConfirmedAfterDraftInterruption: {
+          pid: directSubmitPid,
+          firstChangedAt: actualFirst,
+          submittedAt: directlyConfirmed.attempt.submittedAt,
+        },
+      },
+      null,
+      2,
+    ),
+  );
+} finally {
+  await service.close();
+}

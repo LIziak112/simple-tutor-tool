@@ -36,6 +36,7 @@ WORKDIR /repo
 # importer 的 package.json 在场，因此五个工作区清单都要先拷进来。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json apps/server/package.json
+COPY apps/server/vendor/ apps/server/vendor/
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contract/package.json packages/contract/package.json
 COPY packages/md-dsl/package.json packages/md-dsl/package.json
@@ -70,6 +71,7 @@ WORKDIR /repo
 # 已设为不执行其构建脚本），无需 gcc/make/python 工具链。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json apps/server/package.json
+COPY apps/server/vendor/ apps/server/vendor/
 COPY packages/contract/package.json packages/contract/package.json
 # 同阶段一：根 prepare 脚本须在场（非 git 检出里自动跳过）
 COPY scripts/setup-git-hooks.mjs scripts/setup-git-hooks.mjs

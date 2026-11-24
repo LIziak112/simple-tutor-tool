@@ -1,38 +1,28 @@
 import type { QuestionType } from "@tutor/contract";
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNull,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, gt, gte, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import {
-  aiAttemptReviewTasks,
-  aiTasks,
-  annotations,
-  attempts,
-  ink,
-  notes,
-  questions,
-  responses,
-  students,
-} from "../db/schema";
+import { attempts, questions, responses, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { recordableAttemptWhere } from "../services/attempt-recordability.ts";
 import { timeProjectionsOf } from "../services/attempt-time-projection";
 import {
   currentSelfReviewWhere,
   effectiveVerdictOfRow,
-  effectiveVerdictValueSql,
   selfReviewRecordOf,
 } from "../services/response-verdict.ts";
 import { teacherVisibleResponsesWhere } from "../services/teacher-attempt-service";
+import {
+  type TeacherResponseFacts,
+  type TeacherResponseScope,
+  withTeacherResponseFacts,
+} from "./teacher-response-facts.ts";
+import {
+  AI_TASK_EXISTS,
+  INK_EXISTS,
+  NOTES_CORRECTION_EXISTS,
+  NOTES_SCRATCH_EXISTS,
+  refKeyOf,
+  responseRefsOf,
+} from "./teacher-response-refs.ts";
 
 /**
  * MCP-A 教师侧只读查询装配（教师迭代 T-PR2，方案口径见大厅 #11680 / #11693）：
@@ -48,9 +38,8 @@ import { teacherVisibleResponsesWhere } from "../services/teacher-attempt-servic
  *   teacherVisibleResponsesWhere，T-PR3 与学生主页聚合端点同用）；考点/题型取
  *   responses 建卷冻结快照（analytics-service knowledgeOfResponse 同口径：
  *   快照优先、缺失不回填当前题库）；
- * - 学生主页「错题与存疑」聚合端点（T-PR4 Web-2②，teacher-students 路由消费）
- *   的查询装配也在本文件：与 query_student_responses 共用同一批谓词 / EXISTS /
- *   截断 / 游标 helper，Web 与 MCP 口径永不漂移（方案 §Web-2②）。
+ * - 学生主页「错题与存疑」与逐题检索共用权威作答投影、可见谓词、
+ *   材料存在性筛选及截断和游标规则（方案 §Web-2②）。
  */
 
 /** summary 面题干截断长度（阅读友好截断，不追加省略号避免误当作原文） */
@@ -145,91 +134,10 @@ export function parseKnowledgeArray(raw: string | null): string[] {
   }
 }
 
-// ---------- query_student_attempts 的每卷增量计数 ----------
-
-/** 每卷盘点计数（query_student_attempts 在 listTeacherAttempts 卡片上的增量面） */
-export interface AttemptExtras {
-  /** 单题已提交的行数（draft 卷为部分提交数；已交卷 = 冻结行数） */
-  submittedCount: number;
-  correctCount: number;
-  wrongCount: number;
-  /** 待批数（finalCorrect 为空且快照非空，D4 共享口径） */
-  pendingCount: number;
-  /** 自标「不会」的行数 */
-  unsureCount: number;
-  /** 是否已有整卷 AI 复盘任务（任意状态，创建过即算） */
-  hasAiReview: boolean;
-}
-
-/** 一批卷的增量计数（两条聚合 SQL，避免逐卷 N+1；无 responses 行的卷补零值） */
-export function attemptExtrasOf(
-  db: Db,
-  attemptIds: readonly string[],
-): Map<string, AttemptExtras> {
-  const map = new Map<string, AttemptExtras>();
-  if (attemptIds.length === 0) return map;
-  const ids = [...attemptIds];
-  const counts = db
-    .select({
-      attemptId: responses.attemptId,
-      submitted: sql<number>`coalesce(sum(case when ${responses.submittedAt} is not null then 1 else 0 end), 0)`,
-      correct: sql<number>`coalesce(sum(case when ${responses.finalCorrect} = 1 then 1 else 0 end), 0)`,
-      wrong: sql<number>`coalesce(sum(case when ${responses.finalCorrect} = 0 then 1 else 0 end), 0)`,
-      pending: sql<number>`coalesce(sum(case when ${responses.finalCorrect} is null and ${responses.questionSnapshotJson} is not null then 1 else 0 end), 0)`,
-      unsure: sql<number>`coalesce(sum(case when ${responses.studentFlag} = 'unsure' then 1 else 0 end), 0)`,
-    })
-    .from(responses)
-    .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    .where(and(inArray(responses.attemptId, ids), recordableAttemptWhere()))
-    .groupBy(responses.attemptId)
-    .all();
-  const reviewIds = new Set(
-    db
-      .select({ attemptId: aiAttemptReviewTasks.attemptId })
-      .from(aiAttemptReviewTasks)
-      .where(inArray(aiAttemptReviewTasks.attemptId, ids))
-      .all()
-      .map((row) => row.attemptId),
-  );
-  for (const row of counts) {
-    map.set(row.attemptId, {
-      submittedCount: row.submitted ?? 0,
-      correctCount: row.correct ?? 0,
-      wrongCount: row.wrong ?? 0,
-      pendingCount: row.pending ?? 0,
-      unsureCount: row.unsure ?? 0,
-      hasAiReview: reviewIds.has(row.attemptId),
-    });
-  }
-  for (const id of ids) {
-    if (!map.has(id)) {
-      map.set(id, {
-        submittedCount: 0,
-        correctCount: 0,
-        wrongCount: 0,
-        pendingCount: 0,
-        unsureCount: 0,
-        hasAiReview: reviewIds.has(id),
-      });
-    }
-  }
-  return map;
-}
-
 // ---------- query_student_responses ----------
 
 /** query_student_responses 入参（server.ts 的 inputSchema shape 与之对齐） */
-export interface StudentResponseQueryArgs {
-  includeUnsubmitted?: boolean | undefined;
-  studentId: string;
-  attemptIds?: string[] | undefined;
-  courseId?: string | undefined;
-  questionId?: string | undefined;
-  startedFrom?: string | undefined;
-  startedTo?: string | undefined;
-  /** 单题提交时间下界 / 上界（UTC ISO，字符串比较口径） */
-  from?: string | undefined;
-  to?: string | undefined;
+export interface StudentResponseQueryArgs extends TeacherResponseScope {
   /** 考点精确等于（建卷冻结快照值） */
   knowledge?: string | undefined;
   type?: string | undefined;
@@ -248,122 +156,6 @@ export interface StudentResponseQueryArgs {
   cursor?: string | undefined;
 }
 
-/** 行的引用 id（不内联内容；AI 按 id 另取笔记版本 / 笔迹图 / 标注 / AI 任务） */
-interface ResponseRefs {
-  inkIds: string[];
-  noteVersionIds: string[];
-  annotationIds: string[];
-  aiTaskIds: string[];
-  /** 有 scratch 工作稿笔记行（含 0 版本行——与筛选 EXISTS 同口径） */
-  hasScratchNote: boolean;
-  /** 有 correction 订正笔记行 */
-  hasCorrectionNote: boolean;
-}
-
-/** 存在性筛选用 EXISTS 片段（笔记阶段 / 笔迹 / 标注 / AI 任务） */
-const NOTES_SCRATCH_EXISTS = sql`exists (select 1 from notes n where n.attempt_id = ${responses.attemptId} and n.question_id = ${responses.questionId} and n.phase = 'scratch')`;
-export const NOTES_CORRECTION_EXISTS = sql`exists (select 1 from notes n where n.attempt_id = ${responses.attemptId} and n.question_id = ${responses.questionId} and n.phase = 'correction')`;
-const INK_EXISTS = sql`exists (select 1 from ink i where i.attempt_id = ${responses.attemptId} and i.question_id = ${responses.questionId})`;
-export const AI_TASK_EXISTS = sql`exists (select 1 from ai_tasks t where t.attempt_id = ${responses.attemptId} and t.question_id = ${responses.questionId})`;
-
-/** 行键（attemptId + questionId；同一键多行——同题多次作答——共享引用 id） */
-function refKeyOf(attemptId: string, questionId: string): string {
-  return `${attemptId}\u0000${questionId}`;
-}
-
-/** 一页行的引用 id 批量装配（4 条 IN 查询，避免逐行 EXISTS N+1） */
-function responseRefsOf(
-  db: Db,
-  pairs: readonly { attemptId: string; questionId: string }[],
-): Map<string, ResponseRefs> {
-  const map = new Map<string, ResponseRefs>();
-  if (pairs.length === 0) return map;
-  for (const pair of pairs) {
-    map.set(refKeyOf(pair.attemptId, pair.questionId), {
-      inkIds: [],
-      noteVersionIds: [],
-      annotationIds: [],
-      aiTaskIds: [],
-      hasScratchNote: false,
-      hasCorrectionNote: false,
-    });
-  }
-  const attemptIdList = [...new Set(pairs.map((p) => p.attemptId))];
-  const questionIdList = [...new Set(pairs.map((p) => p.questionId))];
-  for (const row of db
-    .select({
-      id: ink.id,
-      attemptId: ink.attemptId,
-      questionId: ink.questionId,
-    })
-    .from(ink)
-    .where(
-      and(
-        inArray(ink.attemptId, attemptIdList),
-        inArray(ink.questionId, questionIdList),
-      ),
-    )
-    .all()) {
-    map.get(refKeyOf(row.attemptId, row.questionId))?.inkIds.push(row.id);
-  }
-  for (const row of db
-    .select({
-      attemptId: notes.attemptId,
-      questionId: notes.questionId,
-      versionId: notes.currentVersionId,
-      phase: notes.phase,
-    })
-    .from(notes)
-    .where(
-      and(
-        inArray(notes.attemptId, attemptIdList),
-        inArray(notes.questionId, questionIdList),
-      ),
-    )
-    .all()) {
-    const entry = map.get(refKeyOf(row.attemptId, row.questionId));
-    if (entry === undefined) continue;
-    if (row.phase === "scratch") entry.hasScratchNote = true;
-    if (row.phase === "correction") entry.hasCorrectionNote = true;
-    if (row.versionId !== null) entry.noteVersionIds.push(row.versionId);
-  }
-  for (const row of db
-    .select({
-      id: annotations.id,
-      attemptId: annotations.attemptId,
-      questionId: annotations.questionId,
-    })
-    .from(annotations)
-    .where(
-      and(
-        inArray(annotations.attemptId, attemptIdList),
-        inArray(annotations.questionId, questionIdList),
-      ),
-    )
-    .all()) {
-    map
-      .get(refKeyOf(row.attemptId, row.questionId))
-      ?.annotationIds.push(row.id);
-  }
-  for (const row of db
-    .select({
-      id: aiTasks.id,
-      attemptId: aiTasks.attemptId,
-      questionId: aiTasks.questionId,
-    })
-    .from(aiTasks)
-    .where(
-      and(
-        inArray(aiTasks.attemptId, attemptIdList),
-        inArray(aiTasks.questionId, questionIdList),
-      ),
-    )
-    .all()) {
-    map.get(refKeyOf(row.attemptId, row.questionId))?.aiTaskIds.push(row.id);
-  }
-  return map;
-}
-
 /**
  * 逐题作答行检索：主查询一条 SQL（responses ⋈ attempts ⋈ students），过程特征
  * 全在 responses 行；笔记 / 笔迹 / 标注 / AI 任务的存在性筛选用 EXISTS、引用 id
@@ -374,40 +166,17 @@ export function queryStudentResponses(
   db: Db,
   teacherId: string,
   args: StudentResponseQueryArgs,
+  dataDir?: string,
 ): {
   total: number;
   nextCursor: string | null;
   responses: Record<string, unknown>[];
 } {
   const offset = decodeCursorOffset(args.cursor);
-  const conditions = [
-    eq(students.teacherId, teacherId),
-    // studentId 经 resolveToolStudent 解析后必达：缺这条会把「查学生 A」
-    // 放大成「名下全部学生」（多学生教师串档，评审 #11725 必改①）
-    eq(attempts.studentId, args.studentId),
-    // 共享谓词：排作废卷；draft 卷只纳入单题已提交的行；幽灵行排除
-    ...teacherVisibleResponsesWhere(args.includeUnsubmitted),
-    ...(args.attemptIds !== undefined && args.attemptIds.length > 0
-      ? [inArray(responses.attemptId, args.attemptIds)]
-      : []),
-    ...(args.courseId !== undefined
-      ? [eq(attempts.courseId, args.courseId)]
-      : []),
-    ...(args.questionId !== undefined
-      ? [eq(responses.questionId, args.questionId)]
-      : []),
-    ...(args.startedFrom === undefined
-      ? []
-      : [
-          sql`julianday(${attempts.startedAt}) >= julianday(${args.startedFrom})`,
-        ]),
-    ...(args.startedTo === undefined
-      ? []
-      : [
-          sql`julianday(${attempts.startedAt}) <= julianday(${args.startedTo})`,
-        ]),
-    ...(args.from !== undefined ? [gte(responses.submittedAt, args.from)] : []),
-    ...(args.to !== undefined ? [lte(responses.submittedAt, args.to)] : []),
+  const hostRowsInScope = and(
+    args.questionId === undefined
+      ? undefined
+      : eq(responses.questionId, args.questionId),
     ...(args.knowledge !== undefined
       ? [
           sql`exists (select 1 from json_each(${responses.questionSnapshotJson}, '$.knowledge') k where k.value = ${args.knowledge})`,
@@ -418,40 +187,76 @@ export function queryStudentResponses(
           sql`json_extract(${responses.questionSnapshotJson}, '$.type') = ${args.type}`,
         ]
       : []),
-    ...(args.correct === "true" ? [eq(effectiveVerdictValueSql, 1)] : []),
-    ...(args.correct === "false" ? [eq(effectiveVerdictValueSql, 0)] : []),
-    ...(args.correct === "pending" ? [isNull(effectiveVerdictValueSql)] : []),
     ...(args.flaggedUnsure ? [eq(responses.studentFlag, "unsure")] : []),
-    ...(args.answered !== undefined
-      ? [eq(responses.answered, args.answered)]
-      : []),
     ...(args.minActiveSec !== undefined
       ? [gte(responses.activeSec, args.minActiveSec)]
-      : []),
-    ...(args.minChangeCount !== undefined
-      ? [gte(responses.changeCount, args.minChangeCount)]
       : []),
     ...(args.usedHints ? [gt(responses.hintsUsed, 0)] : []),
     ...(args.hasScratchOrInk ? [or(NOTES_SCRATCH_EXISTS, INK_EXISTS)] : []),
     ...(args.hasCorrection ? [NOTES_CORRECTION_EXISTS] : []),
     ...(args.hasAiHelp ? [AI_TASK_EXISTS] : []),
     ...(args.selfReview ? [currentSelfReviewWhere] : []),
-  ];
-  const where = and(...conditions);
+  );
+  return withTeacherResponseFacts(
+    db,
+    dataDir,
+    teacherId,
+    args,
+    hostRowsInScope,
+    (facts) =>
+      readStudentResponsePage(
+        db,
+        teacherId,
+        args,
+        hostRowsInScope,
+        offset,
+        facts,
+      ),
+  );
+}
+
+function readStudentResponsePage(
+  db: Db,
+  teacherId: string,
+  args: StudentResponseQueryArgs,
+  hostRowsInScope: ReturnType<typeof and>,
+  offset: number,
+  facts: TeacherResponseFacts,
+) {
+  const { columns, verdict, overlay, effective, joinFacts } = facts;
+  const where = and(
+    eq(students.teacherId, teacherId),
+    facts.attemptsInScope,
+    ...teacherVisibleResponsesWhere(args.includeUnsubmitted),
+    hostRowsInScope,
+    facts.submitted,
+    args.correct === "true" ? eq(verdict.value, 1) : undefined,
+    args.correct === "false" ? eq(verdict.value, 0) : undefined,
+    args.correct === "pending" ? isNull(verdict.value) : undefined,
+    args.answered === undefined
+      ? undefined
+      : sql`${columns.answered} = ${args.answered ? 1 : 0}`,
+    args.minChangeCount === undefined
+      ? undefined
+      : gte(columns.changeCount, args.minChangeCount),
+  );
 
   const total =
     db
+      .with(overlay, effective)
       .select({ n: sql<number>`count(*)` })
       .from(responses)
       .innerJoin(attempts, eq(responses.attemptId, attempts.id))
       .innerJoin(students, eq(attempts.studentId, students.id))
+      .innerJoin(effective, joinFacts)
       .where(where)
       .get()?.n ?? 0;
 
   const rows = db
+    .with(overlay, effective)
     .select({
       revisionId: responses.id,
-      answerRevision: responses.answerRevision,
+      answerRevision: columns.answerRevision,
       attemptId: responses.attemptId,
       attemptNo: attempts.attemptNo,
       sourceType: attempts.sourceType,
@@ -460,10 +265,10 @@ export function queryStudentResponses(
       assignmentId: attempts.assignmentId,
       unitId: responses.unitId,
       questionId: responses.questionId,
-      submittedAt: responses.submittedAt,
-      answered: responses.answered,
-      autoCorrect: responses.autoCorrect,
-      finalCorrect: responses.finalCorrect,
+      submittedAt: columns.submittedAt,
+      answered: columns.answered,
+      autoCorrect: columns.autoCorrect,
+      finalCorrect: columns.finalCorrect,
       teacherMark: responses.teacherMark,
       studentFlag: responses.studentFlag,
       selfReviewVerdict: responses.selfReviewVerdict,
@@ -471,7 +276,7 @@ export function queryStudentResponses(
       selfReviewRevision: responses.selfReviewRevision,
       activeSec: responses.activeSec,
       hintsUsed: responses.hintsUsed,
-      changeCount: responses.changeCount,
+      changeCount: columns.changeCount,
       type: sql<
         string | null
       >`json_extract(${responses.questionSnapshotJson}, '$.type')`,
@@ -497,8 +302,9 @@ export function queryStudentResponses(
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
     .innerJoin(students, eq(attempts.studentId, students.id))
+    .innerJoin(effective, joinFacts)
     .where(where)
-    .orderBy(sql`${responses.submittedAt} asc`, sql`${responses.id} asc`)
+    .orderBy(asc(columns.submittedAt), asc(responses.id))
     .limit(args.limit)
     .offset(offset)
     .all();

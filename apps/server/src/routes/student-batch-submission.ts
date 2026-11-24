@@ -1,5 +1,6 @@
 import {
   ATTEMPT_BATCH_SUBMISSION_MAX_BYTES,
+  type AttemptSubmitRequest,
   attemptBatchSubmissionBatchSchema,
   attemptBatchSubmissionFinishSchema,
   attemptBatchSubmissionReceiptSchema,
@@ -18,9 +19,37 @@ import {
   stageAttemptSubmissionBatch,
   startAttemptBatchSubmission,
 } from "../services/attempt-batch-submission.ts";
-import { submitAttempt } from "../services/attempt-service.ts";
+import { submitAssignmentAttempt } from "../services/kernel-assignment-confirmation.ts";
 
-export function createStudentBatchSubmissionRoutes(db: Db) {
+export const attemptSubmitPath = "/attempts/:id/submit";
+export type StudentAttemptSubmit<Result> = (
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  now: Date,
+  body: AttemptSubmitRequest,
+) => Result;
+
+export function createStudentAttemptSubmitRoutes<Result>(
+  db: Db,
+  submit: StudentAttemptSubmit<Result>,
+) {
+  return new Hono<StudentEnv>().post(attemptSubmitPath, async (c) => {
+    const body = await parseJsonBodyOrEmpty(c, attemptSubmitRequestSchema);
+    return c.json({
+      ok: true,
+      data: submit(
+        db,
+        c.var.student.id,
+        c.req.param("id"),
+        new Date(),
+        body ?? { revisions: [] },
+      ),
+    });
+  });
+}
+
+export function createStudentBatchSubmissionRoutes(db: Db, dataDir: string) {
   const limitBatch = (method: "POST" | "PUT") => {
     const guard = guardBodyLimit({
       method,
@@ -32,19 +61,12 @@ export function createStudentBatchSubmissionRoutes(db: Db) {
       guard(c, next);
   };
   return new Hono<StudentEnv>()
-    .post("/attempts/:id/submit", async (c) => {
-      const body = await parseJsonBodyOrEmpty(c, attemptSubmitRequestSchema);
-      return c.json({
-        ok: true,
-        data: submitAttempt(
-          db,
-          c.var.student.id,
-          c.req.param("id"),
-          new Date(),
-          body ?? { revisions: [] },
-        ),
-      });
-    })
+    .route(
+      "/",
+      createStudentAttemptSubmitRoutes(db, (db, ...args) =>
+        submitAssignmentAttempt(db, dataDir, ...args),
+      ),
+    )
     .post("/attempts/:id/submit-batches", limitBatch("POST"), async (c) => {
       const input = await parseJsonBody(c, attemptBatchSubmissionStartSchema);
       c.header("Cache-Control", "private, no-store");

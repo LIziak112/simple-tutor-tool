@@ -1,0 +1,31 @@
+{
+  "unitId": "M04P0",
+  "questions": [
+    {
+      "id": "m04-p0-q1",
+      "type": "choice",
+      "version": 1,
+      "stemMd": "2 + 3 等于多少？",
+      "options": ["4", "5", "6"],
+      "answers": { "kind": "choice", "index": 1 },
+      "solutionMd": "合成详解甲：2 加 3 得 5。"
+    },
+    {
+      "id": "m04-p0-q2",
+      "type": "choice",
+      "version": 1,
+      "stemMd": "2 × 4 等于多少？",
+      "options": ["4", "6", "8"],
+      "answers": { "kind": "choice", "index": 2 },
+      "solutionMd": "合成详解乙：2 乘 4 得 8。"
+    }
+  ],
+  "cases": {
+    "complete": [
+      { "kind": "choice", "index": 1 },
+      { "kind": "choice", "index": 0 }
+    ],
+    "empty": [null, null],
+    "partial": [{ "kind": "choice", "index": 1 }, null]
+  }
+}

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // 仅类型导入（编译期擦除，不构成运行时循环）；attempt.ts 反向值引用本文件
 import type { TeacherMark } from "./attempt.ts";
-import type { Question, QuestionType } from "./content.ts";
+import type { Question } from "./content.ts";
 
 /**
  * 自评与判定状态契约（TT-05a 域③，决策记录 §5.5 定稿，QM-01 落地）。
@@ -191,7 +191,7 @@ export function isTeacherPendingState(state: SelfReviewQuestionState): boolean {
 
 // ---------- 新作答策略冻结（§5.6，D11：判分策略按 response 行冻结，不全局改 grade） ----------
 
-/** 行级判分策略（responses.gradingPolicy，可空列；NULL=旧行旧语义） */
+/** 行级判分策略（responses.gradingPolicy；空值经 resolveRowGradingPolicy 回落默认策略） */
 export const gradingPolicySchema = z.enum([
   "auto",
   "reference_self",
@@ -203,7 +203,7 @@ export type GradingPolicy = z.infer<typeof gradingPolicySchema>;
  * 开卷冻结规则（§5.6 表）：新建 attempt 每一行按**题目快照内容**写入策略——
  * 旧客观题恒 auto；主观题型按「有参考答案」二分（有=reference_self：grade 恒
  * null 不进 autoCorrect；无=manual_only：教师待处理）。教师关闭自评时，
- * 开卷将 reference_self 改冻为 manual_only。历史 NULL 行按旧策略读取。
+ * 开卷将 reference_self 改冻为 manual_only（defaultGradingPolicyOf）。
  */
 export function gradingPolicyOf(
   question: Pick<Question, "type" | "answers">,
@@ -225,41 +225,32 @@ export function gradingPolicyOf(
 }
 
 /**
- * 行级判分语义读取规则（单一出处，TT-09/QM-10 消费）：
- * - 新行按冻结值直读（gradingPolicy 非 null）；
- * - 旧行 NULL 按**题型能力表旧语义**解释——历史不重算、不重释（禁止全局改
- *   grade 后意外重释历史）：judge/choice/multi 走既有自动判定；fill 恒 null
- *   进待批（2026-10-02 决策）；solve/apply/find-error 走 final 等价比较
- *   （新开卷行自本契约起冻结为 reference_self，此后不再自动比较）；
- * - 新题型行 NULL 只可能是异常数据（开卷即冻结）：兜底 manual_only——
- *   判定来源枯竭，唯一出口是教师，不伪造自动判定。
+ * 默认判分策略（开卷冻结与空策略回落的单一出处，TASK-f9439bfd）：按快照
+ * gradingPolicyOf，教师关闭自评时 reference_self 改为 manual_only。
  */
-export type RowGradingSemantics =
-  | { readonly kind: "auto" }
-  | { readonly kind: "reference_self" }
-  | { readonly kind: "manual_only" }
-  | { readonly kind: "legacy_fill_manual" }
-  | { readonly kind: "legacy_final_equivalence" };
+export function defaultGradingPolicyOf(
+  question: Pick<Question, "type" | "answers">,
+  studentSelfReviewEnabled: boolean,
+): GradingPolicy {
+  const policy = gradingPolicyOf(question);
+  return !studentSelfReviewEnabled && policy === "reference_self"
+    ? "manual_only"
+    : policy;
+}
 
-export function resolveRowGradingSemantics(
-  gradingPolicy: GradingPolicy | null,
-  snapshotType: QuestionType,
-): RowGradingSemantics {
-  if (gradingPolicy !== null) return { kind: gradingPolicy };
-  switch (snapshotType) {
-    case "judge":
-    case "choice":
-    case "multi":
-      return { kind: "auto" };
-    case "fill":
-      return { kind: "legacy_fill_manual" };
-    case "solve":
-    case "apply":
-    case "find-error":
-      return { kind: "legacy_final_equivalence" };
-    case "response":
-    case "matching":
-    case "ordering":
-      return { kind: "manual_only" };
-  }
+/**
+ * 行级判分策略读取规则（单一出处）：已冻结的合法值原样直读；空值或非法值
+ * （列无 DB CHECK）一律回落默认策略——与同一快照新开卷冻结的策略相同，
+ * 不保留旧语义分支。读侧拿不到教师自评设置时按开卷默认（开启）处理；
+ * reference_self 与 manual_only 对判分结果同为 null，开关只影响落库策略。
+ */
+export function resolveRowGradingPolicy(
+  stored: unknown,
+  question: Pick<Question, "type" | "answers">,
+  studentSelfReviewEnabled = true,
+): GradingPolicy {
+  const parsed = gradingPolicySchema.safeParse(stored);
+  return parsed.success
+    ? parsed.data
+    : defaultGradingPolicyOf(question, studentSelfReviewEnabled);
 }

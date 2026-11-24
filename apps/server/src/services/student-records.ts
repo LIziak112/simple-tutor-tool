@@ -14,17 +14,23 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Db } from "../db/client";
+import { attempts } from "../db/schema";
+import { kernelAssignments } from "../db/schema-kernel-assignments.ts";
 import {
-  type Assignment,
-  assignmentStudents,
-  assignments,
-  attempts,
-} from "../db/schema";
+  kernelCourseOpenings,
+  kernelLessonOpenings,
+} from "../db/schema-kernel-question-delivery.ts";
 import { attemptAnswersPublished } from "./answer-publication.ts";
 import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { assignmentReleaseByIds } from "./attempt-service";
 import { timeProjectionsOf } from "./attempt-time-projection";
 import { requireVisibleCourseUnit } from "./course-service";
+import { isKernelAssignment } from "./kernel-assignment-routing.ts";
+import { boundWrongAttemptId } from "./kernel-question-delivery-binding.ts";
+import {
+  type KernelRecordFacts,
+  withKernelStudentRecordFacts,
+} from "./kernel-student-record-facts.ts";
 import {
   pendingMarkCounts,
   pendingSelfReviewCounts,
@@ -35,6 +41,10 @@ import { recordAnswerProgress } from "./record-answer-progress";
 import { attemptResultCounts } from "./result-counts";
 import { settlementCountsOf } from "./settlement-counts.ts";
 import { studentTeacherIdOf } from "./student-course-service";
+import {
+  reachableAssignmentDrafts,
+  studentRecordSourceWhere,
+} from "./student-record-scope.ts";
 import { sourceOf } from "./teacher-attempt-service";
 
 /**
@@ -78,8 +88,10 @@ export function latestReachableStudentDraft(
   db: Db,
   studentId: string,
   now: Date | string,
+  hiddenLessons?: ReadonlySet<string>,
 ) {
   const excluded = lostAccessDraftIds(db, studentId, now);
+  for (const id of hiddenLessons ?? []) excluded.add(id);
   return db
     .select()
     .from(attempts)
@@ -104,25 +116,9 @@ function assignmentDraftReachable(
   studentId: string,
   assignmentId: string | null,
 ): boolean {
-  if (assignmentId === null) return false;
-  const assignment: Pick<Assignment, "deletedAt"> | undefined = db
-    .select({ deletedAt: assignments.deletedAt })
-    .from(assignments)
-    .where(eq(assignments.id, assignmentId))
-    .get();
-  if (assignment === undefined || assignment.deletedAt !== null) return false;
   return (
-    db
-      .select({ studentId: assignmentStudents.studentId })
-      .from(assignmentStudents)
-      .where(
-        and(
-          eq(assignmentStudents.assignmentId, assignmentId),
-          eq(assignmentStudents.studentId, studentId),
-          isNull(assignmentStudents.removedAt),
-        ),
-      )
-      .get() !== undefined
+    assignmentId !== null &&
+    reachableAssignmentDrafts(db, studentId, assignmentId).get() !== undefined
   );
 }
 
@@ -189,6 +185,30 @@ export function listStudentRecords(
   studentId: string,
   query: StudentRecordsQuery,
   now: Date | string = new Date(),
+  dataDir?: string,
+): StudentRecordsData {
+  if (
+    dataDir === undefined ||
+    (query.sourceType !== undefined &&
+      query.sourceType !== "assignment" &&
+      query.sourceType !== "course" &&
+      query.sourceType !== "wrong") ||
+    (query.assignmentId !== undefined &&
+      !isKernelAssignment(db, query.assignmentId))
+  )
+    return listStudentRecordIndex(db, studentId, query, now);
+
+  return withKernelStudentRecordFacts(db, dataDir, studentId, query, (kernel) =>
+    listStudentRecordIndex(db, studentId, query, now, kernel),
+  );
+}
+
+function listStudentRecordIndex(
+  db: Db,
+  studentId: string,
+  query: StudentRecordsQuery,
+  now: Date | string,
+  kernel?: KernelRecordFacts,
 ): StudentRecordsData {
   // 失权草稿先算出排除集（行级判定无法进主查询的 where，见函数头注释）
   const excluded = lostAccessDraftIds(db, studentId, now);
@@ -197,16 +217,11 @@ export function listStudentRecords(
     eq(attempts.studentId, studentId),
     // 作废卷（2026-10 讲练随时重开）不入记录
     recordableAttemptWhere(),
+    kernel && kernel.hiddenLessons.size > 0
+      ? sql`${attempts.id} not in (select value from json_each(${JSON.stringify([...kernel.hiddenLessons])}))`
+      : undefined,
     excluded.size > 0 ? notInArray(attempts.id, [...excluded]) : undefined,
-    query.sourceType !== undefined
-      ? eq(attempts.sourceType, query.sourceType)
-      : undefined,
-    query.courseId !== undefined
-      ? eq(attempts.courseId, query.courseId)
-      : undefined,
-    query.assignmentId !== undefined
-      ? eq(attempts.assignmentId, query.assignmentId)
-      : undefined,
+    studentRecordSourceWhere(query),
     query.status !== undefined ? eq(attempts.status, query.status) : undefined,
     query.from !== undefined
       ? sql`${lastActivitySql} >= ${query.from}`
@@ -220,8 +235,29 @@ export function listStudentRecords(
     .where(where)
     .get();
   const rows = db
-    .select({ ...getTableColumns(attempts), lastActivityAt: lastActivitySql })
+    .select({
+      ...getTableColumns(attempts),
+      lastActivityAt: lastActivitySql,
+      kernelSourceId: sql<
+        string | null
+      >`coalesce(${kernelAssignments.assignmentId}, ${kernelLessonOpenings.attemptId}, ${kernelCourseOpenings.attemptId}, (${boundWrongAttemptId(db)}))`,
+    })
     .from(attempts)
+    .leftJoin(
+      kernelAssignments,
+      and(
+        eq(attempts.sourceType, "assignment"),
+        eq(kernelAssignments.assignmentId, attempts.assignmentId),
+      ),
+    )
+    .leftJoin(
+      kernelLessonOpenings,
+      eq(kernelLessonOpenings.attemptId, attempts.id),
+    )
+    .leftJoin(
+      kernelCourseOpenings,
+      eq(kernelCourseOpenings.attemptId, attempts.id),
+    )
     .where(where)
     .orderBy(
       ...(query.sort === "started_asc"
@@ -240,18 +276,22 @@ export function listStudentRecords(
 
   // 来源上下文与公布 gate 的输入（teacherId 域内读单元/题目元信息，T2B.5 D10）
   const teacherId = studentTeacherIdOf(db, studentId);
-  const pendingByAttempt = pendingMarkCounts(db, rows);
+  const legacyRows =
+    kernel === undefined
+      ? rows
+      : rows.filter((row) => row.kernelSourceId === null);
+  const pendingByAttempt = pendingMarkCounts(db, legacyRows);
   // 待自评徽章（两线收敛接线：v2 记录行来源，改走 QM 口径批量谓词）
-  const pendingSelfReviewByAttempt = pendingSelfReviewCounts(db, rows);
-  const resultCounts = attemptResultCounts(db, rows);
-  const answerProgress = recordAnswerProgress(db, rows);
+  const pendingSelfReviewByAttempt = pendingSelfReviewCounts(db, legacyRows);
+  const resultCounts = attemptResultCounts(db, legacyRows);
+  const answerProgress = recordAnswerProgress(db, rows, kernel?.draftChoices);
   // M4-D3 进行中进度（§13）：只对 v1 新协议卷批量聚合行级已提交 n/N（一次分组
   // 查询，500 id 一块，与待批数同款模式）；协议判定走 practiceProtocolOf 单一谓词
   const v1Rows = rows.filter((row) => practiceProtocolOf(row) === "v1");
   const progressByAttempt = practiceSubmittedCounts(db, v1Rows);
   const settlementCounts = settlementCountsOf(
     db,
-    rows.map((row) => row.id),
+    legacyRows.map((row) => row.id),
   );
   const assignmentIds = [
     ...new Set(
@@ -271,7 +311,7 @@ export function listStudentRecords(
     db,
     rows.map((r) => r.id),
   );
-  const records: StudentRecordRow[] = rows.map((attempt) => {
+  const publication = rows.map((attempt) => {
     // 公布 gate（T2A.8/D10）：只有 assignment 来源的已交卷记录可能受限；
     // course 恒交卷即公布，draft 无结果可公布（answersReleased=true，显示进行中）
     const assignmentRow =
@@ -286,38 +326,73 @@ export function listStudentRecords(
       },
       now,
     );
-    const progress = progressByAttempt.get(attempt.id);
-    return {
-      ...sourceOf(db, attempt, teacherId ?? ""),
-      time: times.aggregate(attempt.id),
-      attemptId: attempt.id,
-      status: attempt.status,
-      // D2 展示口径 scoreFinal ?? scoreAuto；未公布置 null（显示「待公布」）
-      score: released ? (attempt.scoreFinal ?? attempt.scoreAuto) : null,
-      resultCounts: released ? (resultCounts.get(attempt.id) ?? null) : null,
-      answerProgress: answerProgress.get(attempt.id) ?? null,
-      // D4 共享谓词（2026-10 扩展：行级提交事实——lesson 单题提交与 M2 起
-      // v1 新协议逐题提交——都会写行级 submittedAt，进行中卷的已提交行也计数；
-      // 无行级提交事实的 legacy draft 不在 Map 中 → 0）；未公布置 null（与
-      // D9 结果视图同法）
-      pendingCount: released ? (pendingByAttempt.get(attempt.id) ?? 0) : null,
-      pendingSelfReviewCount: released
-        ? (pendingSelfReviewByAttempt.get(attempt.id) ?? 0)
-        : null,
-      answersReleased: released,
-      settlementCount: settlementCounts.get(attempt.id) ?? 0,
-      lastActivityAt: attempt.lastActivityAt,
-      startedAt: attempt.startedAt,
-      submittedAt: attempt.submittedAt,
-      // M4-D3 进行中进度（§13）：仅 v1 新协议卷携带（draft 行级 n/N；已收尾
-      // 卷整卷口径 n=N）；白名单纯公开进度计数，不含对错/得分/答案
-      ...(progress !== undefined
-        ? {
-            practiceSubmittedCount: progress.submitted,
-            practiceQuestionCount: progress.total,
-          }
-        : {}),
-    };
+    return { attempt, released };
   });
+  const published = kernel?.readPublishedResults(
+    publication
+      .filter(
+        ({ attempt, released }) =>
+          released &&
+          attempt.kernelSourceId !== null &&
+          attempt.status !== "draft",
+      )
+      .map(({ attempt }) => attempt),
+  );
+  const records: StudentRecordRow[] = publication.map(
+    ({ attempt, released }) => {
+      const progress = progressByAttempt.get(attempt.id);
+      const result = released ? published?.get(attempt.id) : undefined;
+      const kernelAttempt =
+        kernel !== undefined && attempt.kernelSourceId !== null;
+      return {
+        ...sourceOf(db, attempt, teacherId ?? ""),
+        time: times.aggregate(attempt.id),
+        attemptId: attempt.id,
+        status: attempt.status,
+        // D2 展示口径 scoreFinal ?? scoreAuto；未公布置 null（显示「待公布」）
+        score: released
+          ? ((kernelAttempt
+              ? result?.score
+              : (attempt.scoreFinal ?? attempt.scoreAuto)) ?? null)
+          : null,
+        resultCounts: released
+          ? ((kernelAttempt
+              ? result?.resultCounts
+              : resultCounts.get(attempt.id)) ?? null)
+          : null,
+        answerProgress: answerProgress.get(attempt.id) ?? null,
+        // D4 共享谓词（2026-10 扩展：行级提交事实——lesson 单题提交与 M2 起
+        // v1 新协议逐题提交——都会写行级 submittedAt，进行中卷的已提交行也计数；
+        // 无行级提交事实的 legacy draft 不在 Map 中 → 0）；未公布置 null（与
+        // D9 结果视图同法）
+        pendingCount: released
+          ? kernelAttempt
+            ? (result?.resultCounts.pendingCount ?? 0)
+            : (pendingByAttempt.get(attempt.id) ?? 0)
+          : null,
+        pendingSelfReviewCount: released
+          ? kernelAttempt
+            ? (result?.resultCounts.pendingSelfReviewCount ?? 0)
+            : (pendingSelfReviewByAttempt.get(attempt.id) ?? 0)
+          : null,
+        answersReleased: released,
+        settlementCount:
+          kernelAttempt && attempt.status !== "draft"
+            ? 1
+            : (settlementCounts.get(attempt.id) ?? 0),
+        lastActivityAt: attempt.lastActivityAt,
+        startedAt: attempt.startedAt,
+        submittedAt: attempt.submittedAt,
+        // M4-D3 进行中进度（§13）：仅 v1 新协议卷携带（draft 行级 n/N；已收尾
+        // 卷整卷口径 n=N）；白名单纯公开进度计数，不含对错/得分/答案
+        ...(progress !== undefined
+          ? {
+              practiceSubmittedCount: progress.submitted,
+              practiceQuestionCount: progress.total,
+            }
+          : {}),
+      };
+    },
+  );
   return { records, total: totalRow?.n ?? 0 };
 }

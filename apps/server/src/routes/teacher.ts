@@ -109,6 +109,7 @@ export function createTeacherRoutes(
   /** 规范目录覆盖（T7.8 教学包快照经 library 路由透传，与 /api/public/spec 同源） */
   specDir?: string | undefined,
   backupOperatorId?: string,
+  kernelAssignmentCreationEnabled?: boolean,
 ) {
   const requireTeacher = createRequireTeacher(db, publicUrl);
   return (
@@ -228,8 +229,11 @@ export function createTeacherRoutes(
       .route("/", createLibraryRoutes(db, dataDir, specDir))
       // T2B.7：共享发布与导入（发布/列表/预览/导入/删除，业务在 shared-service）
       .route("/", createSharedRoutes(db, dataDir))
-      .route("/", createStudentTeacherRoutes(db))
-      .route("/", createAssignmentTeacherRoutes(db))
+      .route("/", createStudentTeacherRoutes(db, dataDir))
+      .route(
+        "/",
+        createAssignmentTeacherRoutes(db, kernelAssignmentCreationEnabled),
+      )
       // T3.1：教师端作答数据页（列表 + 详情，业务在 teacher-attempt-service）
       // T3.4：/export/csv CSV 导出（业务在 export-csv；publicUrl 供笔迹绝对链接）
       // T6R.13：/attempts/:id/questions/:qid/review-pack 单题完整导出（业务在
@@ -237,7 +241,7 @@ export function createTeacherRoutes(
       .route("/", createTeacherAttemptRoutes(db, publicUrl, dataDir))
       // T4.1：学情分析（总览/学生画像/题目视角，业务在 analytics-service；
       // 查询参数 courseId/days/focusDays，口径见契约 analytics-api.ts 的 D1–D7 注释）
-      .route("/", createTeacherAnalyticsRoutes(db))
+      .route("/", createTeacherAnalyticsRoutes(db, dataDir))
       // T4.3：AI 学情数据包导出（preview 清单 + zip 直出，业务在 export-service；
       // 请求体/口径见契约 learning-pack.ts 的 D14–D19 注释）
       .route("/", createTeacherExportRoutes(db, dataDir))

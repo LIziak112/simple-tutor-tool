@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "node ../../packages/md-dsl/scripts/build-ai-reply-checker.ts --copy-server && esbuild src/index.ts --bundle --platform=node --format=esm --sourcemap --outfile=dist/index.js --external:hono --external:@hono/node-server --external:pino --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" && node scripts/copy-migrations.mjs && node scripts/copy-spec.mjs",
+    "build": "node ../../packages/md-dsl/scripts/build-ai-reply-checker.ts --copy-server && esbuild src/index.ts --bundle --platform=node --format=esm --sourcemap --outfile=dist/index.js --external:hono --external:@hono/node-server --external:pino --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" && node scripts/copy-migrations.mjs && node scripts/copy-spec.mjs && node scripts/copy-kernel-archive.mjs",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
@@ -25,6 +25,7 @@
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.3",
     "hono": "^4.13.9",
+    "learning-kernel": "file:vendor/learning-kernel-399092fd982232b3c706a740fc8083dd033127906e348d1ef2923e4c5900f9a8.tgz",
     "pino": "^10.3.1",
     "saxes": "6.0.0",
     "zod": "^4.6.5"

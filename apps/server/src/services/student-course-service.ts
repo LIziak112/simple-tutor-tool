@@ -5,14 +5,11 @@ import type {
   StudentLectureDetail,
   StudentLectureListData,
   StudentLectureSummary,
-  StudentUnitAttemptSummary,
   StudentUnitLandingData,
 } from "@tutor/contract";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
-  type Attempt,
-  attempts,
   courseStudents,
   courses,
   lectures,
@@ -21,12 +18,13 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { recordableAttemptWhere } from "./attempt-recordability.ts";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
-import { pendingMarkCounts } from "./pending-mark.ts";
 import { practiceDefaultsOf } from "./practice-workflow-service";
-import { attemptResultCounts, resultCountsSummary } from "./result-counts";
+import {
+  courseUnitAttemptSummaries,
+  readCourseAttemptFacts,
+} from "./student-course-attempt-facts.ts";
 
 /**
  * 学生端课程与讲义读路径（T2A.5，核心切换：可见性模型从「全量讲义 + deletedAt 过滤」
@@ -156,89 +154,6 @@ export function notFound(): HttpError {
 // ---------- 我的课程（GET /api/student/courses） ----------
 
 /**
- * 某学生在某课程的各单元课程练习作答汇总（D10；只统计 sourceType='course'——
- * 作业作答不计入，互不计次）。返回 unitId → 摘要（含 pendingCount：D4 共享
- * 待批谓词——已交卷 attempt 中 finalCorrect 为空的题数，draft 恒 0；不再叠加
- * answerJson 非空条件，只写笔迹未填最终答案的手写题也计入）。
- */
-export function courseUnitAttemptSummaries(
-  db: Db,
-  studentId: string,
-  courseId: string,
-): Map<string, StudentUnitAttemptSummary> {
-  const rows = db
-    .select()
-    .from(attempts)
-    .where(
-      and(
-        eq(attempts.studentId, studentId),
-        eq(attempts.sourceType, "course"),
-        eq(attempts.courseId, courseId),
-        recordableAttemptWhere(),
-      ),
-    )
-    .orderBy(asc(attempts.attemptNo))
-    .all();
-  if (rows.length === 0) return new Map();
-
-  // 待批题数（按 attempt 聚合后归到单元；draft 恒 0）
-  const pendingByAttempt = pendingMarkCounts(db, rows);
-  const resultCounts = attemptResultCounts(db, rows);
-
-  interface CellState extends StudentUnitAttemptSummary {
-    firstSubmittedSeen: boolean;
-    attemptIds: string[];
-  }
-  const byUnit = new Map<string, CellState>();
-  for (const row of rows) {
-    const unitId = row.unitId ?? "";
-    const cell =
-      byUnit.get(unitId) ??
-      ({
-        count: 0,
-        submittedCount: 0,
-        hasDraft: false,
-        firstScore: null,
-        latestScore: null,
-        bestScore: null,
-        pendingCount: 0,
-        firstSubmittedSeen: false,
-        attemptIds: [],
-      } satisfies CellState);
-    cell.attemptIds.push(row.id);
-    cell.count += 1;
-    cell.pendingCount += pendingByAttempt.get(row.id) ?? 0;
-    const score = row.scoreFinal ?? row.scoreAuto;
-    if (row.status === "draft") {
-      cell.hasDraft = true;
-    } else {
-      cell.submittedCount += 1;
-      // attemptNo 升序遍历：首个交卷即首次得分（无可判分保持 null），
-      // 最后一个交卷即最近得分；最高分取非空得分的最大值（教师侧统计优先用首次分）
-      if (!cell.firstSubmittedSeen) {
-        cell.firstSubmittedSeen = true;
-        cell.firstScore = score;
-      }
-      cell.latestScore = score;
-      if (score !== null) {
-        cell.bestScore = Math.max(cell.bestScore ?? 0, score);
-      }
-    }
-    byUnit.set(unitId, cell);
-  }
-
-  const result = new Map<string, StudentUnitAttemptSummary>();
-  for (const [unitId, cell] of byUnit) {
-    const { firstSubmittedSeen: _omit, attemptIds, ...summary } = cell;
-    result.set(unitId, {
-      ...summary,
-      ...resultCountsSummary(attemptIds, resultCounts),
-    });
-  }
-  return result;
-}
-
-/**
  * 我的课程列表（成员 + 未归档课程，order 升序）。
  * 可见计数取自 listVisibleItems（隐藏条目不计入）；completedUnitCount =
  * 至少交卷 1 次的可见单元数（T2A.6 起接入课程练习作答；作业作答不计入）。
@@ -248,6 +163,7 @@ export function listStudentCourses(
   db: Db,
   studentId: string,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): { courses: StudentCourseSummary[] } {
   const visibleCourses = visibleCoursesOfStudent(db, studentId);
   const courseSummaries: StudentCourseSummary[] = visibleCourses.map(
@@ -255,7 +171,19 @@ export function listStudentCourses(
       const items = listVisibleItems(db, studentId, course.id, now);
       // 讲练页嵌入单元已由 listVisibleItems 过滤（讲练页一件事——2026-10-16）
       const unitItems = items.filter((item) => item.kind === "unit");
-      const summaries = courseUnitAttemptSummaries(db, studentId, course.id);
+      const unitIds = unitItems.flatMap(({ refId }) => (refId ? [refId] : []));
+      const facts = readCourseAttemptFacts(
+        db,
+        studentId,
+        course.id,
+        unitIds,
+        dataDir,
+      );
+      const completedUnits = new Set(
+        facts.rows
+          .filter((attempt) => attempt.status !== "draft")
+          .map(({ unitId }) => unitId),
+      );
       return {
         id: course.id,
         name: course.title,
@@ -264,9 +192,7 @@ export function listStudentCourses(
           .length,
         visibleUnitCount: unitItems.length,
         completedUnitCount: unitItems.filter(
-          (item) =>
-            item.refId !== null &&
-            (summaries.get(item.refId)?.submittedCount ?? 0) > 0,
+          (item) => item.refId !== null && completedUnits.has(item.refId),
         ).length,
       };
     },
@@ -353,6 +279,7 @@ export function getStudentCourseDetail(
   studentId: string,
   courseId: string,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): StudentCourseDetailData {
   const course = requireStudentCourseAccess(db, studentId, courseId);
 
@@ -362,7 +289,9 @@ export function getStudentCourseDetail(
     .map((item) => item.refId as string);
   // 讲练页嵌入单元已由 listVisibleItems 过滤（讲练页一件事，防重复入口——2026-10-16）
   const counts = liveQuestionCounts(db, course.teacherId, unitIds);
-  const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
+  const attemptSummaries = courseUnitAttemptSummaries(
+    readCourseAttemptFacts(db, studentId, courseId, unitIds, dataDir),
+  );
   // 讲义条目的文档形态（2026-10 讲练一体）：lesson 行前端显「讲练」徽标并直达
   // 讲练页；资源行缺失（不应发生）按默认 lecture 兜底（不因此丢条目）
   const lectureIds = items
@@ -421,6 +350,7 @@ export function getStudentUnitLanding(
   courseId: string,
   unitId: string,
   now: Date | string = new Date(),
+  dataDir?: string,
 ): StudentUnitLandingData {
   // 访问权门（D5 + D22；返回值不需要——标题/主题直接取资源当前值）
   requireVisibleCourseUnit(db, studentId, courseId, unitId, now);
@@ -469,23 +399,14 @@ export function getStudentUnitLanding(
     typeDistribution[row.type] = (typeDistribution[row.type] ?? 0) + 1;
   }
 
-  // 历次作答（attemptNo 降序，最近在前）
-  const attemptRows: Attempt[] = db
-    .select()
-    .from(attempts)
-    .where(
-      and(
-        eq(attempts.studentId, studentId),
-        eq(attempts.sourceType, "course"),
-        eq(attempts.courseId, courseId),
-        recordableAttemptWhere(),
-        eq(attempts.unitId, unitId),
-      ),
-    )
-    .orderBy(desc(attempts.attemptNo))
-    .all();
-  const attemptsByUnit = courseUnitAttemptSummaries(db, studentId, courseId);
-  const resultCounts = attemptResultCounts(db, attemptRows);
+  const facts = readCourseAttemptFacts(
+    db,
+    studentId,
+    courseId,
+    [unitId],
+    dataDir,
+  );
+  const attemptsByUnit = courseUnitAttemptSummaries(facts);
 
   return {
     courseId,
@@ -497,12 +418,12 @@ export function getStudentUnitLanding(
     typeDistribution,
     // practice 展示推荐（M5-D2）：只推荐非权限，坏数据按无推荐处理
     practiceRecommendation: practiceDefaultsOf(unit.practiceDefaultsJson),
-    attempts: attemptRows.map((row) => ({
+    attempts: facts.rows.toReversed().map((row) => ({
       attemptId: row.id,
       attemptNo: row.attemptNo,
       status: row.status,
       score: row.scoreFinal ?? row.scoreAuto,
-      resultCounts: resultCounts.get(row.id) ?? null,
+      resultCounts: facts.resultCounts.get(row.id) ?? null,
       startedAt: row.startedAt,
       submittedAt: row.submittedAt,
     })),

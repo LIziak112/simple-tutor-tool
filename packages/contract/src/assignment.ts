@@ -144,6 +144,7 @@ const rejectAfterDuePerQuestion = (
 export const assignmentCreateRequestSchema = z
   .object({
     operationId: createOperationIdSchema.optional(),
+    executionBackend: z.enum(["legacy", "kernel"]).optional(),
     title: assignmentTitleSchema.optional(),
     courseId: z.uuid("courseId 必须是 UUID 格式").nullable().optional(),
     requireCourseMembership: z.boolean().optional(),

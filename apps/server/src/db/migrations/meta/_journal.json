@@ -540,6 +540,97 @@
       "when": 1794682968969,
       "tag": "0076_attempt_activation_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "6",
+      "when": 1795076418607,
+      "tag": "0077_attempt_original_reservations",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "6",
+      "when": 1795083072663,
+      "tag": "0078_kernel_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "6",
+      "when": 1795083720992,
+      "tag": "0079_kernel_attempt_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "6",
+      "when": 1795084712432,
+      "tag": "0080_kernel_assignment_openings",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1795087249503,
+      "tag": "0081_kernel_attempt_confirmations",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "6",
+      "when": 1795089212054,
+      "tag": "0082_kernel_attempt_refreezes",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "6",
+      "when": 1795102053590,
+      "tag": "0083_kernel_choice_amendments",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "6",
+      "when": 1795153192610,
+      "tag": "0084_lethal_raza",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "6",
+      "when": 1795169014689,
+      "tag": "0085_kernel_question_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "6",
+      "when": 1795184186845,
+      "tag": "0086_kernel_response_marks",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "6",
+      "when": 1795199931360,
+      "tag": "0087_kernel_course_openings",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "6",
+      "when": 1795210089623,
+      "tag": "0088_kernel_course_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "6",
+      "when": 1795214184965,
+      "tag": "0089_talented_ogun",
+      "breakpoints": true
     }
   ]
 }

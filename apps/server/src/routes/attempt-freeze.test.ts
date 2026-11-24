@@ -3,6 +3,7 @@ import type { ApiErr, AttemptDraftData } from "@tutor/contract";
 import {
   attemptDraftOkSchema,
   attemptStartOkSchema,
+  gradingPolicyOf,
   studentPaperDataSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
@@ -11,7 +12,6 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { runMigrations } from "../db/migrate.ts";
 import {
   attemptContextFreezes,
   attempts,
@@ -23,6 +23,7 @@ import {
   createTestDb,
   createTestDbBeforeActivationGuards,
   createTestDir,
+  migrateTestDbFromBeforeActivationGuards,
 } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -369,7 +370,7 @@ function downgradeToLegacyDraft(db: Db, attemptId: string): void {
         .run();
     }
   }
-  runMigrations(db);
+  migrateTestDbFromBeforeActivationGuards(db);
 }
 
 describe("T6R.3 建卷冻结：assignment 来源", () => {
@@ -853,6 +854,18 @@ $-1$ 是正数。[[错误]]
 describe("T6R.3 迁移三分支（升级遗留行）", () => {
   it("分支①升级前已交卷：沿用既有交卷快照，不重写、不补冻结标记（frozenAt 保持 null）", async () => {
     const { app, db, aCookie, assignmentId } = await makeEnv(true);
+    const kernelTableNames = [
+      "kernel_assignments",
+      "kernel_attempt_refreezes",
+      "kernel_course_openings",
+    ];
+    const kernelObjects = db.$client.prepare(
+      `SELECT schema, name, type FROM pragma_table_list
+       WHERE name IN (?, ?, ?) ORDER BY name`,
+    );
+    expect(kernelObjects.all(...kernelTableNames)).toEqual(
+      kernelTableNames.map((name) => ({ schema: "temp", name, type: "view" })),
+    );
     const attemptId = await startAttemptId(app, aCookie, assignmentId);
     await putAnswer(app, aCookie, attemptId, Q.judge, {
       kind: "judge",
@@ -870,7 +883,10 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
       .where(eq(attempts.id, attemptId))
       .run();
 
-    runMigrations(db);
+    migrateTestDbFromBeforeActivationGuards(db);
+    expect(kernelObjects.all(...kernelTableNames)).toEqual(
+      kernelTableNames.map((name) => ({ schema: "main", name, type: "table" })),
+    );
     const { res, body } = await getAttempt(app, aCookie, attemptId);
     expect(res.status).toBe(200);
     const result = (body as { data: { summary: { total: number } } }).data;
@@ -926,6 +942,20 @@ describe("T6R.3 迁移三分支（升级遗留行）", () => {
       .all();
     expect(rows).toHaveLength(8);
     expect(rows.every((row) => row.questionSnapshotJson !== null)).toBe(true);
+    // 懒冻结补行与补快照行按开卷冻结规则写入策略，不再留空
+    expect(
+      Object.fromEntries(
+        rows.map((row) => [row.questionId, row.gradingPolicy]),
+      ),
+    ).toEqual(
+      Object.fromEntries(
+        rows.map((row) => [
+          row.questionId,
+          gradingPolicyOf(JSON.parse(row.questionSnapshotJson ?? "{}")),
+        ]),
+      ),
+    );
+    expect(rows.every((row) => row.gradingPolicy !== null)).toBe(true);
     // 答案未被懒冻结破坏
     const judgeRow = rows.find((row) => row.questionId === Q.judge);
     expect(JSON.parse(judgeRow?.answerJson ?? "null")).toEqual({
@@ -1165,7 +1195,8 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
     expect(questions).toHaveLength(6); // fill/findError 缺席（历史题目缺失）
     expect(questions.some((question) => question.id === Q.fill)).toBe(false);
 
-    // 交卷：参与判分 7 题；fillMath 真实待批 1 题（幽灵行不计入）
+    // 交卷：参与判分 6 题；懒冻结按开卷规则冻结策略（教师开启自评 →
+    // solve/apply/fillMath 均 reference_self），待自评 3 题（幽灵行不计入）
     const submitRes = await submitWithCurrentRevisions(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
     const submitted = (await submitRes.json()) as {
@@ -1175,10 +1206,11 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
       };
     };
     expect(submitted.data.summary.total).toBe(6);
-    expect(submitted.data.summary.pending).toBe(1); // 仅 fillMath
-    expect(submitted.data.attempt.status).toBe("submitted");
+    expect(submitted.data.summary.pending).toBe(3);
+    // 无教师待批行 → 交卷即 graded（§5.5.5 新行口径）
+    expect(submitted.data.attempt.status).toBe("graded");
 
-    // 教师待批队列：只有 fillMath 一张真实卡片（幽灵行绝不进队列）
+    // 教师待批队列：待自评题不进必批队列，幽灵行 fill 绝不进队列
     const queue = await app.request("/api/teacher/pending-marks", {
       headers: { cookie: teacherCookie },
     });
@@ -1186,32 +1218,39 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
     const marks = (
       (await queue.json()) as { data: { marks: { questionId: string }[] } }
     ).data.marks;
-    expect(marks.map((m) => m.questionId)).toEqual([Q.fillMath]);
+    expect(marks).toEqual([]);
 
-    // 教师批完 fillMath → 整卷重算排除幽灵行 → graded（不再永卡 submitted）
-    const fillMathRowId = db
-      .select({ id: responses.id })
-      .from(responses)
-      .where(
-        and(
-          eq(responses.attemptId, attemptId),
-          eq(responses.questionId, Q.fillMath),
-        ),
-      )
-      .get()?.id;
-    expect(fillMathRowId).toBeDefined();
-    const mark = await app.request(
-      `/api/teacher/responses/${fillMathRowId}/mark`,
-      {
+    // 教师直接判三题 → 整卷重算排除幽灵行（分母 6 题）
+    let marked:
+      | {
+          data: {
+            attemptStatus: string;
+            pendingCount: number;
+            scoreFinal: number;
+          };
+        }
+      | undefined;
+    for (const questionId of [Q.solve, Q.apply, Q.fillMath]) {
+      const rowId = db
+        .select({ id: responses.id })
+        .from(responses)
+        .where(
+          and(
+            eq(responses.attemptId, attemptId),
+            eq(responses.questionId, questionId),
+          ),
+        )
+        .get()?.id;
+      expect(rowId).toBeDefined();
+      const mark = await app.request(`/api/teacher/responses/${rowId}/mark`, {
         method: "POST",
         headers: { "content-type": "application/json", cookie: teacherCookie },
         body: JSON.stringify({ mark: "correct", comment: null }),
-      },
-    );
-    expect(mark.status).toBe(200);
-    const marked = (await mark.json()) as {
-      data: { attemptStatus: string; pendingCount: number; scoreFinal: number };
-    };
+      });
+      expect(mark.status).toBe(200);
+      marked = (await mark.json()) as typeof marked;
+    }
+    if (marked === undefined) throw new Error("未批改");
     expect(marked.data.attemptStatus).toBe("graded");
     expect(marked.data.pendingCount).toBe(0);
     expect(marked.data.scoreFinal).toBe(100);
@@ -1319,7 +1358,7 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
       .where(eq(attempts.id, wrongAttemptId))
       .run();
 
-    runMigrations(db);
+    migrateTestDbFromBeforeActivationGuards(db);
     // 首次恢复访问：只补标记（frozenAt 回填 startedAt，非当下时刻；非 legacy）
     const { res } = await getAttempt(app, aCookie, wrongAttemptId);
     expect(res.status).toBe(200);

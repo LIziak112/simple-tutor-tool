@@ -294,6 +294,7 @@ export function buildResultData(
   now: Date | string = new Date(),
   parsedByQuestion?: ReadonlyMap<string, Question>,
   preloadedRows?: readonly ResponseRow[],
+  pendingCountOverride?: number,
 ): AttemptResultData {
   const meta = attemptSourceMeta(db, attempt);
   // T7.7：结果视图同口径携带有效启用集（详解内 steps 渲染遵循开关）
@@ -369,7 +370,7 @@ export function buildResultData(
     ? {
         ...fullSummary,
         scoreFinal: attempt.scoreFinal,
-        pendingCount: pendingMarkCount(db, attempt),
+        pendingCount: pendingCountOverride ?? pendingMarkCount(db, attempt),
       }
     : {
         total: fullSummary.total,
