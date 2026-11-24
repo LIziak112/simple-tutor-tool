@@ -29,7 +29,7 @@ export const kernelLessonOpenings = sqliteTable(
     teacherId: text("teacher_id").notNull(),
     unitId: text("unit_id").notNull(),
     operationId: text("operation_id").notNull().unique(),
-    practiceId: text("practice_id").notNull().unique(),
+    practiceId: text("practice_id").notNull(),
     practiceVersion: integer("practice_version").notNull(),
     publication: text("publication_json", { mode: "json" })
       .$type<PublicationInput>()
@@ -44,6 +44,11 @@ export const kernelLessonOpenings = sqliteTable(
   },
   (t) => [
     primaryKey({ columns: [t.studentId, t.lectureId, t.attemptNo] }),
+    // 重开沿用上一轮练法、版本加一（G46）：练法 + 版本唯一。
+    uniqueIndex("kernel_lesson_openings_practice_version_unique").on(
+      t.practiceId,
+      t.practiceVersion,
+    ),
     check(
       "kernel_lesson_opening_bound",
       sql`(${t.attemptId} IS NULL) = (${t.stepAttemptId} IS NULL)`,

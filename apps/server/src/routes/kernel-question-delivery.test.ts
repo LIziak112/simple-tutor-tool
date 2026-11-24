@@ -1618,16 +1618,31 @@ it("材料讲练由正式学生入口绑定逐题交付并冻结材料位置", a
           )
           .get(lectureId),
       );
+    const firstOpening = instance
+      .db()
+      .$client.prepare(
+        "SELECT practice_id,practice_version FROM kernel_lesson_openings WHERE attempt_id=?",
+      )
+      .get(id);
+    expect(firstOpening).toEqual({
+      practice_id: pending.practice_id,
+      practice_version: pending.practice_version - 1,
+    });
     let preparedId: string;
     const runtime = openLearningRuntime({ databasePath: kernelDb });
     try {
-      const receipt = runtime.prepare(actor, {
+      const receipt = runtime.restart(actor, id, {
         protocolVersion: 1,
         operationId: pending.operation_id,
-        practiceId: pending.practice_id,
         practiceVersion: pending.practice_version,
       });
       preparedId = receipt.activityId;
+      expect(runtime.read(actor, preparedId)).toMatchObject({
+        status: "active",
+        redoOf: id,
+        practiceVersion: 2,
+      });
+      expect(runtime.read(actor, id).status).toBe("completed");
     } finally {
       runtime.close();
     }
@@ -1716,6 +1731,158 @@ it("材料讲练由正式学生入口绑定逐题交付并冻结材料位置", a
       .run(frozenRow.snapshot_json, frozenRow.id);
     expect(await frozenContext(id)).toEqual(oldContext);
     expect(kernelMaterials(id)).toEqual(oldPositions);
+  } finally {
+    instance.close();
+    vi.unstubAllEnvs();
+  }
+});
+
+it("讲练进行中重开走内核 restart：旧轮在内核放弃，新轮沿用练法升版并关联来源，重发幂等、旧卷号过期", async () => {
+  vi.stubEnv("NEW_CONTENT_ENABLED", "true");
+  using data = mkdtempDisposableSync(join(tmpdir(), "g46-lesson-restart-"));
+  const instance = openInstance(data.path);
+  try {
+    let app = instance.open(true);
+    const world = await setupAssignment(app);
+    const teacher = teacherInfoOkSchema.parse(
+      await (await jsonCall(app, "/api/teacher/me", world.teacher)).json(),
+    ).data;
+    app = instance.open(true, teacher.id);
+    const studentCall = (path: string, method = "GET", body?: object) =>
+      jsonCall(app, path, world.ownerCookie, method, body);
+    const course = wire(z.object({ id: z.uuid() })).parse(
+      await (
+        await jsonCall(app, "/api/teacher/courses", world.teacher, "POST", {
+          title: "重开讲练班",
+        })
+      ).json(),
+    ).data;
+    await jsonCall(
+      app,
+      `/api/teacher/courses/${course.id}/members`,
+      world.teacher,
+      "POST",
+      { studentIds: [world.studentId] },
+    );
+    const {
+      lectures: [lecture],
+    } = await importQuestions(
+      app,
+      world.teacher,
+      course.id,
+      lessonMaterialQuestions(1),
+    );
+    if (!lecture) throw new Error("未生成讲练");
+    const lesson = `/api/student/lectures/${lecture.id}/lesson`;
+    const opened = await studentCall(
+      `${lesson}/start?courseId=${course.id}`,
+      "POST",
+    );
+    expect(opened.status, await opened.clone().text()).toBe(200);
+    const view = lessonStartOkSchema.parse(await opened.json()).data;
+    const id = view.attempt.id;
+    const [choice, judge] = view.questions;
+    if (!choice || !judge) throw new Error("缺少合成题目");
+    const save = (attemptId: string, question: typeof choice) =>
+      studentCall(
+        `/api/student/attempts/${attemptId}/answers/${question.id}`,
+        "PUT",
+        {
+          answer: { kind: "choice", index: 0 },
+          baseRevision: 0,
+          mutationId: randomUUID(),
+          questionRevisionId: question.questionRevisionId,
+          expectedFrozenAt: view.attempt.frozenAt,
+        },
+      );
+    expect((await save(id, choice)).status).toBe(200);
+    const confirmed = await studentCall(
+      `/api/student/attempts/${id}/questions/${choice.id}/submit`,
+      "POST",
+      {
+        questionRevisionId: choice.questionRevisionId,
+        expectedAnswerRevision: 1,
+        evidence: { questionId: choice.id, state: "none" },
+      },
+    );
+    expect(confirmed.status, await confirmed.clone().text()).toBe(200);
+
+    const request = { expectedAttemptId: id, operationId: randomUUID() };
+    const restart = (body: object) =>
+      studentCall(`${lesson}/restart`, "POST", body);
+    const next = await restart(request);
+    expect(next.status, await next.clone().text()).toBe(201);
+    const nextView = lessonStartOkSchema.parse(await next.json()).data;
+    expect(nextView.attempt).toMatchObject({ attemptNo: 2, status: "draft" });
+    expect(nextView.drafts).toEqual({});
+    const repeated = await restart(request);
+    expect(
+      lessonStartOkSchema.parse(await repeated.json()).data.attempt.id,
+    ).toBe(nextView.attempt.id);
+    const stale = await restart({ ...request, operationId: randomUUID() });
+    expect(stale.status).toBe(409);
+    expect(
+      z.object({ error: z.string() }).parse(await stale.json()).error,
+    ).toBe("LESSON_RESTART_STALE");
+    expect((await save(id, judge)).status).toBe(409);
+    const openingRow = z.object({
+      attempt_no: z.number(),
+      practice_id: z.string(),
+      practice_version: z.number(),
+    });
+
+    const openings = instance
+      .db()
+      .$client.prepare(
+        "SELECT attempt_no,practice_id,practice_version FROM kernel_lesson_openings WHERE lecture_id=? ORDER BY attempt_no",
+      )
+      .all(lecture.id)
+      .map((row) => openingRow.parse(row));
+    expect(openings).toMatchObject([
+      { attempt_no: 1, practice_version: 1 },
+      { attempt_no: 2, practice_version: 2 },
+    ]);
+    expect(new Set(openings.map((row) => row.practice_id)).size).toBe(1);
+    const actor = { role: "student", id: world.studentId } as const;
+    const runtime = openLearningRuntime({
+      databasePath: join(data.path, BACKUP_KERNEL_DATABASE),
+    });
+    try {
+      const abandoned = runtime.read(actor, id);
+      expect(abandoned.status).toBe("abandoned");
+      expect(
+        "questionDeliveries" in abandoned && abandoned.questionDeliveries,
+      ).toHaveLength(1);
+      expect(runtime.read(actor, nextView.attempt.id)).toMatchObject({
+        status: "active",
+        redoOf: id,
+        practiceVersion: 2,
+      });
+    } finally {
+      runtime.close();
+    }
+
+    instance
+      .db()
+      .$client.prepare(
+        "UPDATE kernel_lesson_openings SET publication_json=json_remove(publication_json,'$.practice.policy.student.restart') WHERE attempt_id=?",
+      )
+      .run(nextView.attempt.id);
+    const legacy = await restart({
+      expectedAttemptId: nextView.attempt.id,
+      operationId: randomUUID(),
+    });
+    expect(legacy.status, await legacy.clone().text()).toBe(201);
+    const third = openingRow.parse(
+      instance
+        .db()
+        .$client.prepare(
+          "SELECT attempt_no,practice_id,practice_version FROM kernel_lesson_openings WHERE lecture_id=? AND attempt_no=3",
+        )
+        .get(lecture.id),
+    );
+    expect(third.practice_version).toBe(1);
+    expect(third.practice_id).not.toBe(openings[0]?.practice_id);
   } finally {
     instance.close();
     vi.unstubAllEnvs();

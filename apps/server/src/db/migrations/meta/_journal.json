@@ -631,6 +631,13 @@
       "when": 1795214184965,
       "tag": "0089_talented_ogun",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "6",
+      "when": 1795499965133,
+      "tag": "0090_kernel_lesson_restart_chain",
+      "breakpoints": true
     }
   ]
 }

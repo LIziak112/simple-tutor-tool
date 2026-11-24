@@ -1,0 +1,2 @@
+DROP INDEX `kernel_lesson_openings_practice_id_unique`;--> statement-breakpoint
+CREATE UNIQUE INDEX `kernel_lesson_openings_practice_version_unique` ON `kernel_lesson_openings` (`practice_id`,`practice_version`);
