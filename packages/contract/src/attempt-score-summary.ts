@@ -39,4 +39,14 @@ export const attemptScoreSummarySchema = z.object({
    * 已定，本字段才是「还剩几题没批」的权威计数；公布 gate 截止前置 null 投影）
    */
   pendingCount: z.number().int().min(0).nullable(),
+  /**
+   * 自评单列（G47）：内核练法声明 separate 时才下发——correct/wrong 只含自动与
+   * 教师判定，学生自评对错在此单列；countAsCorrect（缺省）与旧卷不带此键。
+   */
+  selfAssessed: z
+    .object({
+      correct: z.number().int().min(0),
+      wrong: z.number().int().min(0),
+    })
+    .optional(),
 });

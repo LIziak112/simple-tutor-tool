@@ -1,4 +1,7 @@
-import type { TeacherPracticeFeedbackPolicy } from "@tutor/contract";
+import type {
+  StudentSelfReviewScoring,
+  TeacherPracticeFeedbackPolicy,
+} from "@tutor/contract";
 import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +12,7 @@ import { useSettingsSectionDraft } from "./use-settings-section-draft";
 
 const DRAFT_KEY = ["teacher", "practice-feedback-draft"] as const;
 const SELF_REVIEW_DRAFT_KEY = [...DRAFT_KEY, "student-self-review"] as const;
+const SELF_SCORING_DRAFT_KEY = [...DRAFT_KEY, "self-review-scoring"] as const;
 
 const OPTIONS = [
   {
@@ -55,6 +59,15 @@ export function PracticeFeedbackSection({
     (a, b) => a === b,
     "student-self-review",
   );
+  // G47：自评计分口径（缺省 countAsCorrect = 自评为对计入答对）
+  const selfScoring = useSettingsSectionDraft<StudentSelfReviewScoring>(
+    SELF_SCORING_DRAFT_KEY,
+    teacherId,
+    settingsQuery.data?.studentSelfReviewScoring,
+    (a, b) => a === b,
+    "self-review-scoring",
+  );
+  const anyDirty = dirty || selfReview.dirty || selfScoring.dirty;
   return (
     <div className="teacher-config-section">
       <div>
@@ -149,6 +162,32 @@ export function PracticeFeedbackSection({
               }
             />
           </label>
+          <label className="flex min-h-11 cursor-pointer items-center justify-between gap-5 rounded-xl border border-border bg-card px-5 py-5 sm:px-7 sm:py-6">
+            <span className="min-w-0">
+              <span className="block text-[0.9375rem] font-semibold">
+                自评单独计数
+              </span>
+              <span
+                id="self-review-scoring-help"
+                className="mt-1 block max-w-[54ch] text-[0.8125rem] leading-relaxed text-muted-foreground"
+              >
+                仅对新开的卷生效。开启后，答对只统计自动判定与老师批改，学生自评的对错另行计数；关闭时自评为对计入答对。
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              aria-label="自评单独计数"
+              aria-describedby="self-review-scoring-help"
+              className="size-5 shrink-0 accent-[var(--color-primary)]"
+              checked={selfScoring.checked === "separate"}
+              disabled={saveMutation.isPending}
+              onChange={(event) =>
+                selfScoring.setDraft(
+                  event.currentTarget.checked ? "separate" : "countAsCorrect",
+                )
+              }
+            />
+          </label>
           {saveMutation.isError && (
             <p role="alert" className="text-sm text-destructive">
               {saveMutation.error instanceof Error
@@ -161,7 +200,7 @@ export function PracticeFeedbackSection({
             <p role="status" className="text-xs text-muted-foreground">
               {saveMutation.isPending
                 ? "正在保存…"
-                : dirty || selfReview.dirty
+                : anyDirty
                   ? "有未保存的更改"
                   : saveMutation.isSuccess
                     ? "更改已保存"
@@ -170,7 +209,7 @@ export function PracticeFeedbackSection({
             <Button
               busy={saveMutation.isPending}
               className="min-h-11 px-5"
-              disabled={saveMutation.isPending || (!dirty && !selfReview.dirty)}
+              disabled={saveMutation.isPending || !anyDirty}
               onClick={() =>
                 saveMutation.mutate(
                   {
@@ -178,11 +217,15 @@ export function PracticeFeedbackSection({
                     ...(selfReview.dirty && {
                       studentSelfReviewEnabled: selfReview.checked,
                     }),
+                    ...(selfScoring.dirty && {
+                      studentSelfReviewScoring: selfScoring.checked,
+                    }),
                   },
                   {
                     onSuccess: () => {
                       setDraft(null);
                       selfReview.setDraft(null);
+                      selfScoring.setDraft(null);
                     },
                   },
                 )

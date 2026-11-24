@@ -1,12 +1,17 @@
 import type {
+  StudentSelfReviewScoring,
   TeacherPracticeFeedbackPolicy,
   TeacherPracticeFeedbackSettings,
   TeacherPracticeFeedbackSettingsUpdateRequest,
 } from "@tutor/contract";
-import { teacherPracticeFeedbackPolicySchema } from "@tutor/contract";
+import {
+  studentSelfReviewScoringSchema,
+  teacherPracticeFeedbackPolicySchema,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { teachers } from "../db/schema.ts";
+import { teacherSelfReviewScorings } from "../db/schema-teacher-self-review.ts";
 import { HttpError } from "../lib/http-error.ts";
 
 /**
@@ -49,31 +54,38 @@ export function getPracticeFeedbackSettings(
   return {
     practiceFeedbackPolicy: policyOfColumn(row.policy),
     studentSelfReviewEnabled: row.studentSelfReviewEnabled,
+    studentSelfReviewScoring: studentSelfReviewScoringOf(db, teacherId),
   };
 }
 
-/** 部分更新（入参已过契约校验；返回值即新设置） */
+/** 部分更新（入参已过契约校验；返回值即新设置）。自评计分另存一表（G47）。 */
 export function updatePracticeFeedbackSettings(
   db: Db,
   teacherId: string,
   request: TeacherPracticeFeedbackSettingsUpdateRequest,
 ): TeacherPracticeFeedbackSettings {
-  const updated = db
-    .update(teachers)
-    .set(request)
-    .where(eq(teachers.id, teacherId))
-    .returning({
-      policy: teachers.practiceFeedbackPolicy,
-      studentSelfReviewEnabled: teachers.studentSelfReviewEnabled,
-    })
-    .get();
-  if (updated === undefined) {
-    throw new HttpError(404, "NOT_FOUND", "教师不存在");
-  }
-  return {
-    practiceFeedbackPolicy: policyOfColumn(updated.policy),
-    studentSelfReviewEnabled: updated.studentSelfReviewEnabled,
-  };
+  const { studentSelfReviewScoring, ...columns } = request;
+  return db.transaction((tx) => {
+    const found = tx
+      .select({ id: teachers.id })
+      .from(teachers)
+      .where(eq(teachers.id, teacherId))
+      .get();
+    if (found === undefined) {
+      throw new HttpError(404, "NOT_FOUND", "教师不存在");
+    }
+    if (Object.keys(columns).length > 0)
+      tx.update(teachers).set(columns).where(eq(teachers.id, teacherId)).run();
+    if (studentSelfReviewScoring !== undefined)
+      tx.insert(teacherSelfReviewScorings)
+        .values({ teacherId, scoring: studentSelfReviewScoring })
+        .onConflictDoUpdate({
+          target: teacherSelfReviewScorings.teacherId,
+          set: { scoring: studentSelfReviewScoring },
+        })
+        .run();
+    return getPracticeFeedbackSettings(db, teacherId);
+  });
 }
 
 /** 开卷时读取所属教师的自评设置。 */
@@ -88,5 +100,22 @@ export function studentSelfReviewEnabledOf(
       .from(teachers)
       .where(eq(teachers.id, teacherId))
       .get()?.enabled === true
+  );
+}
+
+/** 建卷时读取所属教师的自评计分；未配置或异常值按缺省 countAsCorrect。 */
+export function studentSelfReviewScoringOf(
+  db: Db,
+  teacherId: string | null,
+): StudentSelfReviewScoring {
+  if (teacherId === null) return "countAsCorrect";
+  const row = db
+    .select({ scoring: teacherSelfReviewScorings.scoring })
+    .from(teacherSelfReviewScorings)
+    .where(eq(teacherSelfReviewScorings.teacherId, teacherId))
+    .get();
+  return (
+    studentSelfReviewScoringSchema.safeParse(row?.scoring).data ??
+    "countAsCorrect"
   );
 }

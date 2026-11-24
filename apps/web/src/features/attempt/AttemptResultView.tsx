@@ -165,7 +165,12 @@ export function AttemptResultView({
     () => data.units.flatMap((unit) => unit.questions),
     [data.units],
   );
-  const counts = reviewCounts(flatQuestions, released);
+  const reviewed = reviewCounts(flatQuestions, released);
+  // G47：练法声明自评单列时，答对/答错取服务端口径（只含自动与老师判定）
+  const selfAssessed = released ? summary.selfAssessed : undefined;
+  const counts = selfAssessed
+    ? { ...reviewed, correct: summary.correct, wrong: summary.wrong }
+    : reviewed;
   // 2026-10：本卷错题——直达重练的圈题范围与示数（口径单源 isRetrainable，
   // 与模块 7 按模块「专项重练」同一函数）：有效判定为错且已作答 / 教师已判 /
   // 自评有记录，或标过「不会」。未公布时服务端已把判定键整键 null（数出来必为 0）
@@ -413,7 +418,13 @@ export function AttemptResultView({
                           未答数单独统计，可能与判错或待判断重叠，不能相加。
                         </p>
                       )}
-                      {hasSelfReviewRows && (
+                      {selfAssessed && (
+                        <p className="text-sm leading-relaxed text-muted-foreground lg:col-span-2">
+                          自评对 {selfAssessed.correct} 题 · 自评错{" "}
+                          {selfAssessed.wrong} 题（单独计数，不计入答对/答错）
+                        </p>
+                      )}
+                      {hasSelfReviewRows && !selfAssessed && (
                         <p className="text-sm leading-relaxed text-muted-foreground lg:col-span-2">
                           含对照自评的题目按你的自评计入答对/答错；得分只按自动判定
                           与老师批改计算，自评不是客观测评成绩。

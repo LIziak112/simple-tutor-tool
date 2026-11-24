@@ -14,6 +14,7 @@ import { runBackfills } from "./backfill";
 import { createDb, createDbFromBuffer, type Db } from "./client";
 import { resolveMigrationsFolder, runMigrations } from "./migrate";
 import { lectures, teachers, units } from "./schema";
+import { teacherSelfReviewScorings } from "./schema-teacher-self-review.ts";
 import {
   kernelAssignments,
   kernelAttemptRefreezes,
@@ -79,6 +80,7 @@ const legacyKernelViews = [
   kernelAttemptRefreezes,
   kernelCourseOpenings,
   kernelWrongOpenings,
+  teacherSelfReviewScorings,
 ];
 
 /** 0075 造数阶段让现行路由读取空的内核名单，保留历史主库结构。 */

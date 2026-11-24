@@ -1,4 +1,8 @@
-import { type MarkResponseData, markResponseDataSchema } from "@tutor/contract";
+import {
+  type MarkResponseData,
+  markResponseDataSchema,
+  type StudentSelfReviewScoring,
+} from "@tutor/contract";
 import { and, eq, isNull } from "drizzle-orm";
 import type { VerdictReceipt } from "learning-kernel";
 import type { Db } from "../db/client.ts";
@@ -78,6 +82,23 @@ export function subjectOf(verdict: QuestionVerdict) {
   return effective?.source === "teacherReview" ? effective : undefined;
 }
 
+/**
+ * G47：练法声明了自评的题，自评以内核记录为准（来源 self）；宿主行的
+ * 修订与幂等键只服务客户端 CAS，不改内核事实。
+ */
+function selfReviewOverlay(row: ResponseRow, question: QuestionVerdict) {
+  const self =
+    "selfAssessment" in question ? question.selfAssessment : undefined;
+  if (!self) return {};
+  const selfReviewAt =
+    self.verdict === null
+      ? null
+      : row.selfReviewVerdict === self.verdict && row.selfReviewAt !== null
+        ? row.selfReviewAt
+        : (self.assessedAt ?? row.selfReviewAt);
+  return { selfReviewVerdict: self.verdict, selfReviewAt };
+}
+
 /** 调用方已核验确认归属并持有主库写锁。评语只保存在宿主。 */
 export function projectKernelVerdicts(
   db: Db,
@@ -126,6 +147,7 @@ export function projectKernelVerdicts(
     const activeTeacherMark = (responseId: string) =>
       active.get(responseId)?.at(-1);
 
+    let selfReviewScoring: StudentSelfReviewScoring | undefined;
     const written: { intent: MarkIntent; receipt: VerdictReceipt }[] = [];
     const reviews = new Map<string, ReviewedQuestion>();
     const byQuestion = new Map(facts.rows.map((row) => [row.questionId, row]));
@@ -177,8 +199,11 @@ export function projectKernelVerdicts(
         question.status === "pendingEvaluation"
       )
         kernelAttemptUnavailable();
+      if ("selfAssessment" in review && review.selfAssessment)
+        selfReviewScoring = review.selfAssessment.scoring;
       return {
         ...row,
+        ...selfReviewOverlay(row, question),
         teacherMark: subject ? (subject.correct ? "correct" : "wrong") : null,
         teacherComment: comment,
         finalCorrect: effectiveOf(question)?.correct ?? null,
@@ -218,6 +243,7 @@ export function projectKernelVerdicts(
     const projected = {
       rows,
       reviews,
+      ...(selfReviewScoring && { selfReviewScoring }),
       attempt:
         attempt.status === "draft"
           ? attempt

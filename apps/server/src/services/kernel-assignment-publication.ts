@@ -137,6 +137,22 @@ export function kernelMaterialPublication(
   };
 }
 
+/** G47：冻结为 reference_self 的题交内核自评，计分口径取建卷时教师设置。 */
+function kernelSelfAssessmentOf(
+  definition: Extract<
+    ReturnType<typeof loadKernelAssignmentQuestions>,
+    { slotType: "questionDelivery" }
+  >,
+) {
+  const questionIds = definition.responses.flatMap(
+    ({ question, gradingPolicy }) =>
+      gradingPolicy === "reference_self" ? [question.id] : [],
+  );
+  return questionIds.length > 0
+    ? { scoring: definition.selfReviewScoring, questionIds }
+    : undefined;
+}
+
 export function kernelAssignmentPublication(
   assignment: Assignment,
   version: number,
@@ -157,6 +173,7 @@ export function kernelAssignmentPublication(
         "whole",
         materialInputs,
         definition.teacherReviewWidths,
+        kernelSelfAssessmentOf(definition),
       ),
     } satisfies PublicationInput;
   }
