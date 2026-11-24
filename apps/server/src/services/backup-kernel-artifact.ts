@@ -40,7 +40,7 @@ export function supportsBackupArtifact(sha256: string): boolean {
   return (
     sha256 === current ||
     (current ===
-      "3d1177f837d099ccee494cd45ef94188c399b7449bb3924aafa5b0ef1dbe1383" &&
+      "c44e58eae254ccfdbdb32c9863b140856f6067b6b90be8074b59429f4a2fffc1" &&
       restorablePredecessors.has(sha256))
   );
 }

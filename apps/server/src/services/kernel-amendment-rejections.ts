@@ -36,6 +36,12 @@ export function knownRejection(error: unknown) {
   )
     return revisionConflict();
   if (error instanceof LearningError) {
+    // 冻结题版本已变或同一操作已以不同意图落库：都按「本题已更新」拒绝，暂存意图随之结清。
+    if (
+      error.code === "QUESTION_REVISION_STALE" ||
+      error.code === "OPERATION_CONFLICT"
+    )
+      return revisionConflict();
     if (
       error.code === "ALREADY_SUBMITTED" ||
       error.code === "ACTIVITY_ABANDONED"

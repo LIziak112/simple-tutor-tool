@@ -59,7 +59,7 @@ const kernelName = "learning-kernel.sqlite";
 
 it("G33 归档兼容精确匹配已知固定包", () => {
   expect(readLockedBackupArtifact().sha256).toBe(
-    "3d1177f837d099ccee494cd45ef94188c399b7449bb3924aafa5b0ef1dbe1383",
+    "c44e58eae254ccfdbdb32c9863b140856f6067b6b90be8074b59429f4a2fffc1",
   );
   for (const digest of [
     "0fdbb888b161d6ed22eee3c19f1c8ecb660cee4eec988d1afd5fc9cb8469dfb4",
