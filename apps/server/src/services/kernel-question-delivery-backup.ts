@@ -15,6 +15,7 @@ import {
   verifyKernelCourseRestartSource,
 } from "./kernel-course-opening.ts";
 import { replayKernelLessonOpening } from "./kernel-lesson-opening.ts";
+import { lessonRestartSource } from "./kernel-lesson-restart.ts";
 import { readQuestionDeliveryFacts } from "./kernel-question-delivery.ts";
 import { replayKernelWrongOpening } from "./kernel-wrong-practice-opening.ts";
 import { studentTeacherIdOf } from "./student-course-service.ts";
@@ -52,7 +53,11 @@ export function verifyBackupQuestionDeliveries(
               throw new Error("错题开卷意图的教师域不一致");
             replayKernelWrongOpening(runtime, opening);
           } else if ("lectureId" in opening) {
-            replayKernelLessonOpening(runtime, opening);
+            replayKernelLessonOpening(
+              runtime,
+              opening,
+              lessonRestartSource(db, opening),
+            );
           } else {
             replayKernelCourseOpening(runtime, opening);
           }

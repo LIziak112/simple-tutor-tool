@@ -26,6 +26,12 @@ import {
   kernelAttemptUnavailable,
   withKernelRuntime,
 } from "./kernel-assignment-runtime.ts";
+import {
+  lessonRestartChain,
+  lessonRestartSource,
+  restartKernelLesson,
+  withStudentRestart,
+} from "./kernel-lesson-restart.ts";
 import { deliveryPolicy } from "./kernel-question-delivery-binding.ts";
 import { questionDeliveryPublication } from "./kernel-question-delivery-publication.ts";
 import { freezeAttemptContextSnapshotsWithin } from "./material-repository.ts";
@@ -88,6 +94,7 @@ function verifyScope(db: Db, scope: Scope) {
 export function replayKernelLessonOpening(
   runtime: KernelRuntime,
   opening: Opening,
+  restartSource: string | undefined,
 ) {
   const { practice } = opening.publication;
   if (
@@ -99,12 +106,15 @@ export function replayKernelLessonOpening(
   if (draft.courseId !== opening.courseId) kernelAttemptUnavailable();
   const actor = { role: "student", id: opening.studentId } as const;
   runtime.publish(opening.publication);
-  const receipt = runtime.prepare(actor, {
-    protocolVersion: 1,
-    operationId: opening.operationId,
-    practiceId: opening.practiceId,
-    practiceVersion: opening.practiceVersion,
-  });
+  const receipt =
+    restartSource === undefined
+      ? runtime.prepare(actor, {
+          protocolVersion: 1,
+          operationId: opening.operationId,
+          practiceId: opening.practiceId,
+          practiceVersion: opening.practiceVersion,
+        })
+      : restartKernelLesson(runtime, actor, restartSource, opening);
   const view = runtime.read(actor, receipt.activityId);
   if (
     !("questionDeliveries" in view) ||
@@ -152,7 +162,12 @@ function finishOpening(
         db,
         dataDir,
         false,
-        (runtime) => replayKernelLessonOpening(runtime, current),
+        (runtime) =>
+          replayKernelLessonOpening(
+            runtime,
+            current,
+            lessonRestartSource(db, current),
+          ),
       );
       const attempt = newDraftAttempt({
         sourceType: "lesson",
@@ -273,7 +288,10 @@ export function openKernelLesson(
           "LESSON_RESTART_STALE",
           "讲练已在其他页面打开，请刷新",
         );
-      const practiceId = `lesson:${scope.lectureId}:${randomUUID()}`;
+      const chain = prior && lessonRestartChain(tx, prior.id);
+      const practiceId =
+        chain?.practiceId ?? `lesson:${scope.lectureId}:${randomUUID()}`;
+      const practiceVersion = chain?.practiceVersion ?? 1;
       const { liveRows, teacherId, knowledgeByQuestion } =
         freezeInputsOfNewAttempt(
           db,
@@ -328,18 +346,18 @@ export function openKernelLesson(
           ...scope,
           attemptNo,
           practiceId,
-          practiceVersion: 1,
+          practiceVersion,
           operationId,
-          publication: {
+          publication: withStudentRestart({
             ...materialDefinitions,
             ...questionDeliveryPublication(
               { id: practiceId, title: scope.title },
-              1,
+              practiceVersion,
               draft.responses,
               "perQuestion",
               materialInputs,
             ),
-          },
+          }),
           draft,
         })
         .returning()
