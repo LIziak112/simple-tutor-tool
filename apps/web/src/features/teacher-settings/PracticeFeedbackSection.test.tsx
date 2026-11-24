@@ -51,6 +51,7 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
     mockedFetch.mockResolvedValue({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     renderSection();
     expect(await screen.findByLabelText("由学生选择")).toBeChecked();
@@ -62,6 +63,7 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
     mockedFetch.mockResolvedValue({
       practiceFeedbackPolicy: "after_attempt",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     renderSection();
     expect(await screen.findByLabelText("交卷后公布")).toBeChecked();
@@ -82,10 +84,12 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
     mockedFetch.mockResolvedValue({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     mockedSave.mockResolvedValue({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: false,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     renderSection();
     const toggle = await screen.findByRole("checkbox", {
@@ -102,10 +106,31 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
     );
   });
 
+  it("自评单独计数默认关闭，开启后只保存计分口径", async () => {
+    mockedFetch.mockResolvedValue({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
+    });
+    renderSection();
+    const toggle = await screen.findByRole("checkbox", {
+      name: "自评单独计数",
+    });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "保存更改" }));
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith({
+        studentSelfReviewScoring: "separate",
+      }),
+    );
+  });
+
   it("保存失败保留更改，可重试", async () => {
     mockedFetch.mockResolvedValue({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     mockedSave.mockRejectedValue(new Error("网络错误"));
     renderSection();
@@ -123,6 +148,7 @@ describe("PracticeFeedbackSection（M1b 练习反馈默认策略）", () => {
     mockedFetch.mockResolvedValue({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     const first = renderSection(client, "teacher-one");
     fireEvent.click(await screen.findByLabelText("交卷后公布"));
