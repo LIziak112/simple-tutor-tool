@@ -1149,7 +1149,7 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     expect(res.status).toBe(200);
     expect(attemptResultOkSchema.parse(body).data.answersReleased).toBe(false);
   });
-  it("全对组合：逐题 autoCorrect=true，scoreAuto=100，summary 齐全；全客观题卷交卷即 graded（D2/D3）", async () => {
+  it("全对组合（空判分策略行）：客观题逐题 autoCorrect=true、手写题回落默认策略进待批；scoreAuto=100，卷停留 submitted（D2/D3）", async () => {
     // 2026-10-02 fill 全人工批改起换 NO_FILL_MD 卷（两道 fill → judge/choice）：
     // 「全对 → 交卷即 graded」的断言语义需要整卷可自动判分（含 fill 的卷恒进待批，
     // 见「部分错/未答组合」用例的 fill=null 断言）
@@ -1169,35 +1169,45 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     const body = (await res.json()) as unknown;
     expect(attemptResultOkSchema.safeParse(body).success).toBe(true);
     const data = (body as { data: AttemptResultData }).data;
-    // D3：交卷同时写 finalCorrect=autoCorrect，全部非 null → 直接 graded；
-    // D2：scoreFinal = 8/8 = 100（此时与 scoreAuto 分母相同、数值相等）
-    expect(data.attempt.status).toBe("graded");
+    // 空策略行回落默认策略（TASK-f9439bfd）：本卷教师未开自评，三道手写题
+    // （solve/apply/find-error）冻结同款 manual_only，不再走 final 等价比较；
+    // D3：客观题 finalCorrect=autoCorrect，手写题待批 → 卷停留 submitted
+    expect(data.attempt.status).toBe("submitted");
     expect(data.attempt.scoreAuto).toBe(100);
     const attemptRow = db
       .select()
       .from(attempts)
       .where(eq(attempts.id, attemptId))
       .get();
-    expect(attemptRow?.status).toBe("graded");
-    expect(attemptRow?.scoreFinal).toBe(100);
+    expect(attemptRow?.status).toBe("submitted");
+    expect(attemptRow?.scoreFinal).toBeNull();
+    expect(
+      db
+        .select({ policy: responses.gradingPolicy })
+        .from(responses)
+        .where(eq(responses.attemptId, attemptId))
+        .all()
+        .every((row) => row.policy === null),
+    ).toBe(true);
     expect(data.summary).toEqual({
       total: 8,
       answered: 8,
-      correct: 8,
+      correct: 5,
       wrong: 0,
-      pending: 0,
+      pending: 3,
       unanswered: 0,
-      autoGradable: 8,
-      // D9：全部判定完成 → scoreFinal=100、待批 0
-      scoreFinal: 100,
-      pendingCount: 0,
+      autoGradable: 5,
+      scoreFinal: null,
+      pendingCount: 3,
     });
-    // 展开全部题目后逐题断言（every 对空数组恒真，units 为空时会真空通过）：
-    // 总数 8 与 summary.total 呼应，再逐题 autoCorrect=true
+    // 展开全部题目后逐题断言（every 对空数组恒真，units 为空时会真空通过）
     const allQuestions = data.units.flatMap((unit) => unit.questions);
     expect(allQuestions).toHaveLength(8);
+    const handwritten = new Set<string>([Q.solve, Q.apply, Q.findError]);
     for (const q of allQuestions) {
-      expect(q.autoCorrect, `题目 ${q.questionId} 应判对`).toBe(true);
+      expect(q.autoCorrect, `题目 ${q.questionId}`).toBe(
+        handwritten.has(q.questionId) ? null : true,
+      );
     }
   });
 
@@ -1238,7 +1248,8 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     );
 
     expect(byId.get(Q.judge)?.autoCorrect).toBe(true);
-    expect(byId.get(Q.solve)?.autoCorrect).toBe(true); // -3 与 \frac 写法数值等价
+    // 空策略 solve 回落默认策略（manual_only）：即使与参考数值等价也不自动判
+    expect(byId.get(Q.solve)?.autoCorrect).toBeNull();
     expect(byId.get(Q.multi)?.autoCorrect).toBe(false); // 漏选 → false
     expect(byId.get(Q.choice)?.autoCorrect).toBe(false); // 未答客观题 → false（D1）
     expect(byId.get(Q.fill)?.autoCorrect).toBeNull(); // fill 全人工批改：答了也不自动判
@@ -1246,16 +1257,16 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     expect(byId.get(Q.apply)?.autoCorrect).toBeNull(); // 未答手写 → null（进待批）
     expect(byId.get(Q.findError)?.autoCorrect).toBeNull();
 
-    // scoreAuto = 答对 2 / 可自动判分 4（judge/solve 对、multi 漏选错、未答 choice
-    // 错；两道 fill 不进分母）= 50（四舍五入百分比）
-    expect(data.attempt.scoreAuto).toBe(50);
-    expect(data.summary.correct).toBe(2);
+    // scoreAuto = 答对 1 / 可自动判分 3（judge 对、multi 漏选错、未答 choice
+    // 错；两道 fill 与三道手写题不进分母）= 33（四舍五入百分比）
+    expect(data.attempt.scoreAuto).toBe(33);
+    expect(data.summary.correct).toBe(1);
     // 未答 choice 判错但未做，不计答错（#6980-3 口径统一）
     expect(data.summary.wrong).toBe(1);
-    expect(data.summary.pending).toBe(4);
+    expect(data.summary.pending).toBe(5);
     expect(data.summary.unanswered).toBe(4);
-    expect(data.summary.autoGradable).toBe(4);
-    // 存在待批（两道 fill + 两道手写）→ attempt 保持 submitted、scoreFinal=null（D2/D3）
+    expect(data.summary.autoGradable).toBe(3);
+    // 存在待批（两道 fill + 三道手写）→ attempt 保持 submitted、scoreFinal=null（D2/D3）
     expect(data.attempt.status).toBe("submitted");
 
     // 未答题也写了 responses 行（answerJson=null、快照非空、版本冻结）
@@ -1282,7 +1293,7 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       .where(eq(attempts.id, attemptId))
       .get();
     expect(attemptRow?.status).toBe("submitted");
-    expect(attemptRow?.scoreAuto).toBe(50);
+    expect(attemptRow?.scoreAuto).toBe(33);
     expect(attemptRow?.scoreFinal).toBeNull();
   });
 
@@ -1971,6 +1982,13 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
     }
     expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
 
+    // 空策略行回落默认策略：三道手写题进教师待批，教师判对后才可能 graded
+    for (const questionId of [Q.solve, Q.apply, Q.findError]) {
+      await teacherMark(app, teacherCookie, db, attemptId, questionId, {
+        mark: "correct",
+        comment: null,
+      });
+    }
     // 教师改判一道自动判过的题（错 + 评语）——D3：允许对已判定题批注
     await teacherMark(app, teacherCookie, db, attemptId, Q.choice, {
       mark: "wrong",
@@ -1990,9 +2008,11 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
     expect(choice?.finalCorrect).toBe(false); // 教师判定优先（D3）
     expect(choice?.autoCorrect).toBe(true); // 自动判定原值保留
     // 其余未批注题：teacherMark/teacherComment null，finalCorrect=autoCorrect
+    const marked = new Set<string>([Q.choice, Q.solve, Q.apply, Q.findError]);
     const others = data.units
       .flatMap((unit) => unit.questions)
-      .filter((q) => q.questionId !== Q.choice);
+      .filter((q) => !marked.has(q.questionId));
+    expect(others).toHaveLength(4);
     for (const q of others) {
       expect(q.teacherMark).toBeNull();
       expect(q.teacherComment).toBeNull();
@@ -2046,7 +2066,13 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
       await putAnswer(app, cookie, attemptId, questionId, answer);
     }
     expect((await postSubmit(app, cookie, attemptId)).status).toBe(200);
-    // 截止前教师已改判 + 评语（库里已批好，学生侧不泄露）
+    // 截止前教师已批完手写题并改判 + 评语（库里已批好，学生侧不泄露）
+    for (const questionId of [Q.solve, Q.apply, Q.findError]) {
+      await teacherMark(app, teacherCookie, db, attemptId, questionId, {
+        mark: "correct",
+        comment: null,
+      });
+    }
     await teacherMark(app, teacherCookie, db, attemptId, Q.choice, {
       mark: "wrong",
       comment: "改判：符号看错了。",

@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import { selfReviewDataSchema } from "./attempt.ts";
-import type { QuestionType } from "./content.ts";
+import {
+  type Question,
+  type QuestionType,
+  questionTypeSchema,
+} from "./content.ts";
 import { contentErrorCodeSchema } from "./content-api.ts";
 import {
+  defaultGradingPolicyOf,
   effectiveVerdictOf,
   finalCorrectOf,
   gradingPolicyOf,
+  gradingPolicySchema,
   isTeacherPendingState,
-  resolveRowGradingSemantics,
+  resolveRowGradingPolicy,
   resolveSelfReviewState,
   type SelfReviewRecord,
   selfReviewRecordSchema,
@@ -274,42 +280,76 @@ describe("新作答策略冻结（§5.6：开卷按题目快照逐行写入，D1
   });
 });
 
-describe("旧行读取规则（§5.6：gradingPolicy NULL 按题型能力表旧语义解释，历史不重解释）", () => {
-  it("旧行（NULL）：客观=auto；fill=恒 null 进待批；solve/apply/find-error=final 等价比较（现状）", () => {
-    expect(resolveRowGradingSemantics(null, "judge")).toEqual({
-      kind: "auto",
-    });
-    expect(resolveRowGradingSemantics(null, "choice")).toEqual({
-      kind: "auto",
-    });
-    expect(resolveRowGradingSemantics(null, "multi")).toEqual({ kind: "auto" });
-    expect(resolveRowGradingSemantics(null, "fill")).toEqual({
-      kind: "legacy_fill_manual",
-    });
-    expect(resolveRowGradingSemantics(null, "solve")).toEqual({
-      kind: "legacy_final_equivalence",
-    });
-    expect(resolveRowGradingSemantics(null, "apply")).toEqual({
-      kind: "legacy_final_equivalence",
-    });
-    expect(resolveRowGradingSemantics(null, "find-error")).toEqual({
-      kind: "legacy_final_equivalence",
-    });
+/** 每种题型一份带参考的快照（covers 用例：快照缺 answers 时去掉该键） */
+const referenceByType: Record<QuestionType, Question["answers"]> = {
+  judge: { kind: "judge", value: true },
+  choice: { kind: "choice", index: 0 },
+  multi: { kind: "multi", indexes: [0] },
+  fill: { kind: "fill", blanks: [["1"]] },
+  solve: { kind: "final", answer: "x" },
+  apply: { kind: "final", answer: "x" },
+  "find-error": { kind: "final", answer: "x" },
+  response: { kind: "response", referenceMd: "参考" },
+  matching: { kind: "matching", pairs: { s1: "o1" } },
+  ordering: { kind: "ordering", sequence: ["item-1"] },
+};
+
+/** 空 / 缺失 / 非法的存量策略值（列为无 CHECK 的 TEXT，可存任意文本） */
+const emptyOrInvalidStored: readonly unknown[] = [
+  null,
+  undefined,
+  "",
+  "legacy",
+  "AUTO",
+  42,
+];
+
+describe("默认判分策略回落（TASK-f9439bfd：空策略一律回落开卷冻结的默认策略）", () => {
+  it("默认策略 = 开卷冻结规则：教师关闭自评时 reference_self 改为 manual_only", () => {
+    const fill = { type: "fill" as const, answers: referenceByType.fill };
+    expect(defaultGradingPolicyOf(fill, true)).toBe("reference_self");
+    expect(defaultGradingPolicyOf(fill, false)).toBe("manual_only");
+    expect(
+      defaultGradingPolicyOf({ type: "judge", answers: undefined }, false),
+    ).toBe("auto");
   });
 
-  it("新行按冻结值直读；新题型行 NULL（异常数据）兜底 manual_only（判定来源枯竭，唯一出口教师）", () => {
-    expect(resolveRowGradingSemantics("auto", "judge")).toEqual({
-      kind: "auto",
-    });
-    expect(resolveRowGradingSemantics("reference_self", "response")).toEqual({
-      kind: "reference_self",
-    });
-    expect(resolveRowGradingSemantics("manual_only", "matching")).toEqual({
-      kind: "manual_only",
-    });
-    expect(resolveRowGradingSemantics(null, "response")).toEqual({
-      kind: "manual_only",
-    });
+  it("每种题型 × 空/非法策略 × 快照有无参考 × 自评开关：都回落为完整的默认策略", () => {
+    for (const type of questionTypeSchema.options) {
+      for (const answers of [referenceByType[type], undefined]) {
+        const question = { type, answers };
+        for (const enabled of [true, false]) {
+          for (const stored of emptyOrInvalidStored) {
+            const policy = resolveRowGradingPolicy(stored, question, enabled);
+            expect(gradingPolicySchema.options).toContain(policy);
+            expect(policy).toBe(defaultGradingPolicyOf(question, enabled));
+          }
+        }
+        // 开关缺省（调用方拿不到教师设置）按开卷默认值 true
+        expect(resolveRowGradingPolicy(null, question)).toBe(
+          gradingPolicyOf(question),
+        );
+      }
+    }
+  });
+
+  it("已冻结的合法策略原样直读，不按快照重算", () => {
+    const fill = { type: "fill" as const, answers: referenceByType.fill };
+    for (const stored of gradingPolicySchema.options) {
+      expect(resolveRowGradingPolicy(stored, fill, true)).toBe(stored);
+    }
+  });
+
+  it("全部缺失（空策略 + 快照无参考 + 开关缺省）：客观题 auto、主观题 manual_only", () => {
+    for (const type of questionTypeSchema.options) {
+      expect(
+        resolveRowGradingPolicy(undefined, { type, answers: undefined }),
+      ).toBe(
+        type === "judge" || type === "choice" || type === "multi"
+          ? "auto"
+          : "manual_only",
+      );
+    }
   });
 });
 

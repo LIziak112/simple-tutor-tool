@@ -9,7 +9,7 @@ import type {
 import {
   attemptContextGroupSchema,
   attemptContextMaterialSchema,
-  gradingPolicyOf,
+  defaultGradingPolicyOf,
 } from "@tutor/contract";
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -41,7 +41,7 @@ import { jsonOf } from "./snapshot.ts";
  * 缺依赖（索引指向的材料/组不存在或已软删）→ 开卷 fail closed 显式报错
  * （ATTEMPT_CONTEXT_BROKEN），不静默跳过、不拿 live 资源替补旧卷内容。
  *
- * 开卷按题目快照和所属教师的自评设置冻结 gradingPolicy。历史卷读取原策略。
+ * 开卷按题目快照和所属教师的自评设置冻结 gradingPolicy；空策略行回落同一默认策略。
  */
 
 /** 依赖闭包产物：材料与组行（教师域 live、未软删，按 id 稳定序） */
@@ -222,10 +222,7 @@ export function frozenGradingPolicyOf(
   question: Question,
   studentSelfReviewEnabled: boolean,
 ): GradingPolicy {
-  const policy = gradingPolicyOf(question);
-  return !studentSelfReviewEnabled && policy === "reference_self"
-    ? "manual_only"
-    : policy;
+  return defaultGradingPolicyOf(question, studentSelfReviewEnabled);
 }
 
 // ---------- 读路径：冻结快照的学生公开投影（tt-07a / QM-06） ----------

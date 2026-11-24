@@ -28,6 +28,7 @@ import {
   loadAttemptQuestions,
 } from "./attempt-question-set.ts";
 import { hintsOfJson } from "./hint-service";
+import { studentSelfReviewEnabledOf } from "./practice-feedback-settings-service.ts";
 import type { Tx } from "./question-sync";
 import { jsonOf } from "./snapshot";
 
@@ -55,8 +56,8 @@ export interface FrozenResponseInsert {
   readonly unitId: string | null;
   /**
    * 行级判分策略（tt-07a / QM-06，§5.6）：开卷按题目快照写入
-   * （frozenGradingPolicyOf 单一出处）；缺省 null = 旧行旧语义（懒冻结
-   * 补行）。
+   * （frozenGradingPolicyOf 单一出处）。缺省 null 仅留给拿不到快照策略的
+   * 调用方，读侧经 resolveRowGradingPolicy 回落默认策略。
    */
   readonly gradingPolicy?: GradingPolicy | null;
 }
@@ -134,8 +135,8 @@ export function insertFrozenResponses(
 function backfillFrozenResponses(
   tx: Tx,
   attemptId: string,
-  liveRows: readonly QuestionRow[],
-  knowledgeByQuestion: ReadonlyMap<string, string[]>,
+  { liveRows, knowledgeByQuestion }: ReturnType<typeof freezeInputsOfAttempt>,
+  selfReview: boolean,
 ): void {
   const existingByQuestion = new Map(
     tx
@@ -150,9 +151,10 @@ function backfillFrozenResponses(
       .map((row) => [row.questionId, row] as const),
   );
   for (const row of liveRows) {
-    const snapshotJson = JSON.stringify(
-      questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []),
-    );
+    const snapshot = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
+    const snapshotJson = JSON.stringify(snapshot);
+    // 懒冻结与新开卷同一冻结规则（TASK-f9439bfd：不再写空策略）
+    const gradingPolicy = frozenGradingPolicyOf(snapshot, selfReview);
     const existing = existingByQuestion.get(row.id);
     if (existing === undefined) {
       insertFrozenResponse(tx, {
@@ -161,6 +163,7 @@ function backfillFrozenResponses(
         questionVersion: row.version,
         questionSnapshotJson: snapshotJson,
         unitId: row.unitId,
+        gradingPolicy,
       });
     } else if (existing.snapshot === null) {
       tx.update(responses)
@@ -168,6 +171,7 @@ function backfillFrozenResponses(
           questionVersion: row.version,
           questionSnapshotJson: snapshotJson,
           unitId: row.unitId,
+          gradingPolicy,
         })
         .where(eq(responses.id, existing.id))
         .run();
@@ -253,7 +257,8 @@ export function ensureAttemptFrozen(db: Db, attempt: Attempt): Attempt {
     );
   }
   // 读在事务外（同连接同线程，与事务内一致）；事务内只做幂等复核与写入
-  const { liveRows, knowledgeByQuestion } = freezeInputsOfAttempt(db, attempt);
+  const inputs = freezeInputsOfAttempt(db, attempt);
+  const selfReview = studentSelfReviewEnabledOf(db, inputs.teacherId);
   return (
     db.transaction((tx) => {
       const fresh = tx
@@ -268,7 +273,7 @@ export function ensureAttemptFrozen(db: Db, attempt: Attempt): Attempt {
       ) {
         return fresh ?? attempt;
       }
-      backfillFrozenResponses(tx, attempt.id, liveRows, knowledgeByQuestion);
+      backfillFrozenResponses(tx, attempt.id, inputs, selfReview);
       tx.update(attempts)
         .set({ frozenAt: new Date().toISOString(), legacyUnverified: true })
         .where(eq(attempts.id, attempt.id))

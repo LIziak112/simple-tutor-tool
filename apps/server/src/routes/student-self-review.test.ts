@@ -19,7 +19,7 @@ import { submitAttemptRequest } from "../test/submit-revisions";
 /**
  * QM-10（TT-09a）服务级验收：取消主观匹配与自评后端。
  * - 细项 1/3：新策略行（开卷冻结 gradingPolicy）fill 与 solve/apply/find-error
- *   交卷不自动匹配（reference 相同/等价/不同/空白恒 null）；历史 NULL 行保留旧口径；
+ *   交卷不自动匹配（reference 相同/等价/不同/空白恒 null）；空策略行回落默认策略；
  * - 细项 7：graded 放宽（§5.5.5：全部行已提交且无教师待处理行即 graded，
  *   不用空值把完成卷改成教师必批）；reference_self 行不进教师待批队列；
  * - 细项 4/5/6：自评端点校验链、CAS/幂等、教师与自评竞争、assertNoLeak。
@@ -211,7 +211,7 @@ async function startAttempt(
   return ((await res.json()) as { data: { id: string } }).data.id;
 }
 
-/** 模拟升级前已经开出的卷，保留空判分策略。 */
+/** 模拟升级前已经开出的卷（空判分策略行）。 */
 function makeHistoricalAttempt(db: Db, attemptId: string): void {
   db.update(responses)
     .set({ gradingPolicy: null })
@@ -336,7 +336,7 @@ it("教师关闭自评只影响新卷，原自评题转待批且参考答案照�
   assertNoLeak(body, { forbid: ["answers", "solutionMd", "hints"] });
 });
 
-describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不重释", () => {
+describe("QM-10 细项1/3：新策略行交卷不自动匹配，空策略行回落默认策略", () => {
   it("reference 相同/等价/不同/空白：新策略 fill 与 solve 均 autoCorrect=null", async () => {
     const { app, db, teacherCookie, unitId } = await makeQm10App();
     const studentId = await createStudent(app, teacherCookie, "张三");
@@ -398,7 +398,7 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
     expect(rowOf(db, attemptId, Q.solveWithRef).autoCorrect).toBeNull();
   });
 
-  it("历史行（gradingPolicy=NULL）：solve 等价比较照旧、fill 恒 null、choice 照旧", async () => {
+  it("空策略行（gradingPolicy=NULL）回落默认策略：solve 不再等价比较、fill 恒 null、choice 照旧", async () => {
     const { app, db, teacherCookie, unitId } = await makeQm10App();
     const studentId = await createStudent(app, teacherCookie, "李四");
     const assignmentId = await createAssignment(
@@ -417,8 +417,8 @@ describe("QM-10 细项1/3：新策略行交卷不自动匹配，旧行历史不�
     await saveAllAnswers(app, aCookie, attemptId);
     const res = await submitAttemptRequest(app, aCookie, attemptId);
     expect(res.status).toBe(200);
-    // 历史口径零变化：solve 与参考相同 → true（等价比较），fill 恒 null
-    expect(rowOf(db, attemptId, Q.solveWithRef).autoCorrect).toBe(true);
+    // 与参考相同的 solve 也不自动判（默认策略 reference_self / manual_only）
+    expect(rowOf(db, attemptId, Q.solveWithRef).autoCorrect).toBeNull();
     expect(rowOf(db, attemptId, Q.fill).autoCorrect).toBeNull();
     expect(rowOf(db, attemptId, Q.choice).autoCorrect).toBe(true);
     expect(rowOf(db, attemptId, Q.solveNoRef).autoCorrect).toBeNull();
@@ -567,7 +567,7 @@ describe("QM-10 细项7：graded 放宽与教师待批边界（§5.5.5/§5.5.3�
     expect(pending).not.toContain(Q.fill);
   });
 
-  it("历史卷（旧行 NULL）graded 口径零变化：有待批行停留 submitted，待批队列含旧行", async () => {
+  it("空策略旧协议卷交卷：主观题一律不自动判，solve 不因等价比较出判定", async () => {
     const { app, db, teacherCookie, unitId } = await makeQm10App();
     const studentId = await createStudent(app, teacherCookie, "李四");
     const assignmentId = await createAssignment(
@@ -583,14 +583,11 @@ describe("QM-10 细项7：graded 放宽与教师待批边界（§5.5.5/§5.5.3�
     await saveAllAnswers(app, aCookie, attemptId);
     const res = await submitAttemptRequest(app, aCookie, attemptId);
     expect(res.status).toBe(200);
-    // 旧口径：fill 与无参考 solve finalCorrect null → submitted（不放宽）
-    const attempt = attemptRowOf(db, attemptId);
-    expect(attempt.status).toBe("submitted");
-    // 旧行按原语义进待批队列（fill 恒 null 进待批、无参考 solve 待批）
-    const pending = await pendingMarkQuestionIds(app, teacherCookie);
-    expect(pending).toContain(Q.fill);
-    expect(pending).toContain(Q.solveNoRef);
-    expect(pending).not.toContain(Q.solveWithRef); // solve 等价判 true 不待批
+    for (const questionId of [Q.fill, Q.solveWithRef, Q.solveNoRef]) {
+      expect(rowOf(db, attemptId, questionId).autoCorrect).toBeNull();
+      expect(rowOf(db, attemptId, questionId).finalCorrect).toBeNull();
+    }
+    expect(attemptRowOf(db, attemptId).status).toBe("submitted");
   });
 });
 

@@ -34,7 +34,7 @@ it("只修正冻结且已收尾的可确定派生状态，并与完成标记原�
       .where(eq(attempts.id, attemptId))
       .run();
     db.update(responses)
-      .set({ autoCorrect: true, finalCorrect: true })
+      .set({ gradingPolicy: "auto", autoCorrect: true, finalCorrect: true })
       .where(eq(responses.attemptId, attemptId))
       .run();
     return attemptId;
@@ -57,6 +57,12 @@ it("只修正冻结且已收尾的可确定派生状态，并与完成标记原�
   db.update(responses)
     .set({ gradingPolicy: "manual_only" })
     .where(eq(responses.attemptId, impossibleAuto))
+    .run();
+  // 空策略行在默认策略回填后只剩无快照行；有快照仍为空即不可核实
+  const nullPolicy = seed(validSnapshot);
+  db.update(responses)
+    .set({ gradingPolicy: null })
+    .where(eq(responses.attemptId, nullPolicy))
     .run();
   const rowOf = (id: string) =>
     db.select().from(attempts).where(eq(attempts.id, id)).get();
@@ -88,6 +94,7 @@ it("只修正冻结且已收尾的可确定派生状态，并与完成标记原�
     invalidVerdict,
     unverified,
     impossibleAuto,
+    nullPolicy,
   ]) {
     expect(rowOf(id)).toMatchObject({
       status: "submitted",
