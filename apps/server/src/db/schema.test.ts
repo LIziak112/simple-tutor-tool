@@ -193,7 +193,6 @@ describe("teachers / sessions 表读写", () => {
       apiToken: null,
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
-      studentSelfReviewScoring: "countAsCorrect" as const,
       createdAt: new Date().toISOString(),
     };
     db.insert(teachers).values(t1).run();
@@ -227,7 +226,6 @@ describe("teachers / sessions 表读写", () => {
       apiToken: null,
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
-      studentSelfReviewScoring: "countAsCorrect" as const,
       createdAt,
     };
     db.insert(teachers).values(teacher).run();
@@ -270,7 +268,6 @@ describe("teachers / sessions 表读写", () => {
       apiToken: null,
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
-      studentSelfReviewScoring: "countAsCorrect" as const,
       createdAt: new Date().toISOString(),
     };
     db.insert(teachers).values(row).run();
@@ -1354,7 +1351,6 @@ describe("ai_tasks / ai_task_materials 表（SAI-05 任务与材料）", () => {
       apiToken: null,
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
-      studentSelfReviewScoring: "countAsCorrect" as const,
       createdAt: new Date().toISOString(),
     };
     db.insert(teachers).values(teacherB).run();

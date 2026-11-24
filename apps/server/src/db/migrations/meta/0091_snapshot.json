@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4a8afa2f-f649-49a0-b124-4cb5129128e3",
+  "id": "aa1a6fc5-c6d7-4acc-bf34-de4b22c804f0",
   "prevId": "a13c25d6-8e94-4ae6-a99f-ef3d574d39cc",
   "tables": {
     "ai_connections": {
@@ -4103,6 +4103,44 @@
         }
       }
     },
+    "teacher_self_review_scorings": {
+      "name": "teacher_self_review_scorings",
+      "columns": {
+        "teacher_id": {
+          "name": "teacher_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scoring": {
+          "name": "scoring",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "teacher_self_review_scorings_teacher_id_teachers_id_fk": {
+          "name": "teacher_self_review_scorings_teacher_id_teachers_id_fk",
+          "tableFrom": "teacher_self_review_scorings",
+          "tableTo": "teachers",
+          "columnsFrom": [
+            "teacher_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "teachers": {
       "name": "teachers",
       "columns": {
@@ -4170,14 +4208,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": true
-        },
-        "student_self_review_scoring": {
-          "name": "student_self_review_scoring",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'countAsCorrect'"
         },
         "account_kind": {
           "name": "account_kind",

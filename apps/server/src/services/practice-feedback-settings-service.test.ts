@@ -5,6 +5,7 @@ import { teachers } from "../db/schema";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils";
 import {
   getPracticeFeedbackSettings,
+  studentSelfReviewScoringOf,
   updatePracticeFeedbackSettings,
 } from "./practice-feedback-settings-service";
 
@@ -45,6 +46,7 @@ describe("getPracticeFeedbackSettings", () => {
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
   });
 
@@ -54,11 +56,13 @@ describe("getPracticeFeedbackSettings", () => {
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "after_attempt",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     setColumn(db, TEST_TEACHER_ID, "student_choice");
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "student_choice",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
   });
 
@@ -68,6 +72,7 @@ describe("getPracticeFeedbackSettings", () => {
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "after_attempt",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
   });
 
@@ -89,10 +94,12 @@ describe("updatePracticeFeedbackSettings", () => {
     expect(updated).toEqual({
       practiceFeedbackPolicy: "after_attempt",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     expect(getPracticeFeedbackSettings(db, OTHER_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: null,
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
   });
 
@@ -107,11 +114,38 @@ describe("updatePracticeFeedbackSettings", () => {
     expect(updated).toEqual({
       practiceFeedbackPolicy: "student_choice",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
     expect(getPracticeFeedbackSettings(db, TEST_TEACHER_ID)).toEqual({
       practiceFeedbackPolicy: "student_choice",
       studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "countAsCorrect",
     });
+  });
+
+  it("自评计分单独保存并可改回缺省，他师仍是缺省（G47）", () => {
+    const db = createTestDb();
+    withOtherTeacher(db);
+    expect(
+      updatePracticeFeedbackSettings(db, TEST_TEACHER_ID, {
+        studentSelfReviewScoring: "separate",
+      }),
+    ).toEqual({
+      practiceFeedbackPolicy: null,
+      studentSelfReviewEnabled: true,
+      studentSelfReviewScoring: "separate",
+    });
+    expect(studentSelfReviewScoringOf(db, TEST_TEACHER_ID)).toBe("separate");
+    expect(studentSelfReviewScoringOf(db, OTHER_TEACHER_ID)).toBe(
+      "countAsCorrect",
+    );
+    expect(studentSelfReviewScoringOf(db, null)).toBe("countAsCorrect");
+    updatePracticeFeedbackSettings(db, TEST_TEACHER_ID, {
+      studentSelfReviewScoring: "countAsCorrect",
+    });
+    expect(studentSelfReviewScoringOf(db, TEST_TEACHER_ID)).toBe(
+      "countAsCorrect",
+    );
   });
 
   it("教师不存在 → 404，不写任何行", () => {

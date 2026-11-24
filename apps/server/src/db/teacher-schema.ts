@@ -1,7 +1,4 @@
-import type {
-  StudentSelfReviewScoring,
-  TeacherPracticeFeedbackPolicy,
-} from "@tutor/contract";
+import type { TeacherPracticeFeedbackPolicy } from "@tutor/contract";
 import {
   integer,
   sqliteTable,
@@ -50,11 +47,6 @@ export const teachers = sqliteTable(
     })
       .notNull()
       .default(true),
-    /** 学生自评计分（G47）：countAsCorrect 计入正确数（缺省）/ separate 单列。 */
-    studentSelfReviewScoring: text("student_self_review_scoring")
-      .$type<StudentSelfReviewScoring>()
-      .notNull()
-      .default("countAsCorrect"),
     /** 账号类型（模块 0）：class 班级账号（存量行默认）/ personal 个人账号（见 auth/personal-auth-service.ts） */
     accountKind: text("account_kind")
       .$type<"class" | "personal">()
