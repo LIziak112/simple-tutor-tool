@@ -191,7 +191,12 @@ export function questionDeliveryPublication(
             onFinal: [],
           },
         },
-        reviewer: { scope: "assignedReviewer", fields: [], actions: [] },
+        // 教师逐题批改读生效与自动判定，并改判/撤销。
+        reviewer: {
+          scope: "assignedReviewer",
+          fields: ["gradingBasis"],
+          actions: ["reviseQuestionVerdict"],
+        },
         manager: { scope: "assigningTeacher", actions: [] },
       },
     },

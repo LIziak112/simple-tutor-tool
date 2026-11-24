@@ -9,7 +9,6 @@ import {
 import {
   ChoiceDraftConflict,
   LearningError,
-  type openLearningRuntime,
   ResponseDraftConflict,
 } from "learning-kernel";
 import type { Db } from "../db/client.ts";
@@ -38,6 +37,7 @@ import { isKernelAttempt } from "./kernel-assignment-routing.ts";
 import {
   isJudgeActivity,
   judgeAnswerOf,
+  type KernelRuntime,
   kernelAttemptUnavailable,
   ownClassChoiceAnswerOf,
   withBoundKernelActivity,
@@ -50,7 +50,7 @@ import {
 import { assertDraftCourseVisible } from "./practice-workflow-wiring.ts";
 import { answerOf, snapshotOfRow } from "./snapshot.ts";
 
-type Runtime = ReturnType<typeof openLearningRuntime>;
+type Runtime = KernelRuntime;
 type DraftProof = Pick<
   AttemptAnswerSaveRequest,
   "baseRevision" | "mutationId" | "expectedFrozenAt" | "questionRevisionId"

@@ -248,7 +248,14 @@ export function kernelAssignmentPublication(
             onFinal: [],
           },
         },
-        reviewer: { scope: "assignedReviewer", fields: [], actions: [] },
+        // 单选确认卷有教师逐题改判（读生效与自动判定、改判/撤销）；判断卷无内核评阅入口。
+        reviewer: responseSlot
+          ? { scope: "assignedReviewer", fields: [], actions: [] }
+          : {
+              scope: "assignedReviewer",
+              fields: ["gradingBasis"],
+              actions: ["reviseQuestionVerdict"],
+            },
         manager: { scope: "assigningTeacher", actions: [] },
         externalAi: "disabled",
       },

@@ -22,7 +22,11 @@ import {
   recordQuestionSubmitEvent,
 } from "./event-service.ts";
 import type { KernelRuntime } from "./kernel-assignment-runtime.ts";
-import { kernelAttemptUnavailable } from "./kernel-assignment-runtime.ts";
+import {
+  kernelAttemptUnavailable,
+  recoverEvaluated,
+  requireEvaluated,
+} from "./kernel-assignment-runtime.ts";
 import type { DeliveryTicket } from "./kernel-question-delivery-ticket.ts";
 import { deliveryAnswerOf } from "./kernel-question-delivery-values.ts";
 import { snapshotOfRow } from "./snapshot.ts";
@@ -36,7 +40,14 @@ export function declaredDeliveryRecovery(
   attemptId: string,
   key: Parameters<KernelRuntime["recoverQuestionDelivery"]>[2],
 ) {
-  return runtime.recoverQuestionDelivery(actor, attemptId, key, "declared");
+  return recoverEvaluated(
+    runtime,
+    () => runtime.recoverQuestionDelivery(actor, attemptId, key, "declared"),
+    (recovered) =>
+      recovered.assessment === "automatic"
+        ? recovered.evaluation.status
+        : undefined,
+  );
 }
 
 export function projectDeliveryRows(
@@ -54,7 +65,9 @@ export function projectDeliveryRows(
     kernelAttemptUnavailable();
   const { receipt, confirmation, review } = recovery;
   const evaluation =
-    recovery.assessment === "automatic" ? recovery.evaluation : undefined;
+    recovery.assessment === "automatic"
+      ? requireEvaluated(recovery.evaluation)
+      : undefined;
   const formalInk = new Set(
     db
       .select({ id: ink.questionId })

@@ -14,9 +14,10 @@ import {
   studentAnswerSchema,
 } from "@tutor/contract";
 import type {
-  QuestionAnswerRuleRegistration,
+  QuestionAnswerRule,
   QuestionDeliveryDraftInput,
 } from "learning-kernel";
+import { z } from "zod";
 import type { Db } from "../db/client.ts";
 import type { ResponseRow } from "../db/schema.ts";
 import { HttpError } from "../lib/http-error.ts";
@@ -26,6 +27,15 @@ import { snapshotOfRow } from "./snapshot.ts";
 
 type Value = QuestionDeliveryDraftInput["value"];
 
+// 内核已按作答形态解析原值；这里只把 unknown 收窄回该形态。
+export const judgeValue = z.union([z.boolean(), z.string()]);
+export const titledValue = z
+  .strictObject({ body: z.string(), title: z.string().optional() })
+  .transform(({ body, title }): { body: string; title?: string } =>
+    title === undefined ? { body } : { body, title },
+  );
+export const blanksValue = z.array(z.string());
+
 export const ownClassJudgeAnswerRuleRef = {
   id: "ownclass-judge-value",
   version: 1,
@@ -33,9 +43,10 @@ export const ownClassJudgeAnswerRuleRef = {
 
 export const ownClassJudgeAnswerRule = {
   ...ownClassJudgeAnswerRuleRef,
-  response: "booleanOrString",
-  isAnswered: (value) => judgeBehavior.isAnswered({ kind: "judge", value }),
-} satisfies QuestionAnswerRuleRegistration;
+  responseType: "booleanOrString",
+  isAnswered: (value: unknown) =>
+    judgeBehavior.isAnswered({ kind: "judge", value: judgeValue.parse(value) }),
+} satisfies QuestionAnswerRule;
 
 export const ownClassResponseAnswerRuleRef = {
   id: "ownclass-response-body",
@@ -44,10 +55,13 @@ export const ownClassResponseAnswerRuleRef = {
 
 export const ownClassResponseAnswerRule = {
   ...ownClassResponseAnswerRuleRef,
-  response: "textWithOptionalTitle",
-  isAnswered: (value) =>
-    responseBehavior.isAnswered({ ...value, kind: "response" }),
-} satisfies QuestionAnswerRuleRegistration;
+  responseType: "textWithOptionalTitle",
+  isAnswered: (value: unknown) =>
+    responseBehavior.isAnswered({
+      ...titledValue.parse(value),
+      kind: "response",
+    }),
+} satisfies QuestionAnswerRule;
 
 export const ownClassOrderingAnswerRuleRef = {
   id: "ownclass-ordering-sequence",
@@ -56,10 +70,13 @@ export const ownClassOrderingAnswerRuleRef = {
 
 export const ownClassOrderingAnswerRule = {
   ...ownClassOrderingAnswerRuleRef,
-  response: "orderedTextBlanks",
-  isAnswered: (value) =>
-    orderingBehavior.isAnswered({ kind: "ordering", sequence: [...value] }),
-} satisfies QuestionAnswerRuleRegistration;
+  responseType: "orderedTextBlanks",
+  isAnswered: (value: unknown) =>
+    orderingBehavior.isAnswered({
+      kind: "ordering",
+      sequence: blanksValue.parse(value),
+    }),
+} satisfies QuestionAnswerRule;
 
 export const ownClassMatchingAnswerRuleRef = {
   id: "ownclass-matching-pairs",
@@ -68,10 +85,10 @@ export const ownClassMatchingAnswerRuleRef = {
 
 export const ownClassMatchingAnswerRule = {
   ...ownClassMatchingAnswerRuleRef,
-  response: "orderedTextBlanks",
-  isAnswered: (value) =>
+  responseType: "orderedTextBlanks",
+  isAnswered: (value: unknown) =>
     matchingBehavior.isAnswered(matchingDeliveryAnswerSchema.parse(value)),
-} satisfies QuestionAnswerRuleRegistration;
+} satisfies QuestionAnswerRule;
 
 export function deliveryAnswerOf(
   row: ResponseRow,

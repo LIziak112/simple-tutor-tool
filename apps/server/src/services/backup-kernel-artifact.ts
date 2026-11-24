@@ -14,6 +14,7 @@ function lockedArtifact() {
 }
 
 const restorablePredecessors = new Set([
+  "20908afb18deb0f71a3a13e5904565c54946cac3b8643d29241c7ae6ea87e838",
   "daeda182a5e2a423f636edb121027f9bddf978d8c37cd845d69d0a4c2b988cb2",
   "f7d7d26bde2d0173db6a7e6661bf61384bba56e2267b8fd351c26983a55c8826",
   "c87fecad78eff549a23f5424d91872e584b3cee1ee633b29ad0dd2c1422fce4f",
@@ -31,13 +32,13 @@ const restorablePredecessors = new Set([
   "2c8255c8ad471ef3cb52d206b3ae854312497b275f20f27a86329e25cc3b834f",
 ]);
 
-/** K27 支持已验旧归档。归档中的包仅用于离线比对。 */
+/** K28 支持已验旧归档。归档中的包仅用于离线比对。 */
 export function supportsBackupArtifact(sha256: string): boolean {
   const current = lockedArtifact().sha256;
   return (
     sha256 === current ||
     (current ===
-      "20908afb18deb0f71a3a13e5904565c54946cac3b8643d29241c7ae6ea87e838" &&
+      "399092fd982232b3c706a740fc8083dd033127906e348d1ef2923e4c5900f9a8" &&
       restorablePredecessors.has(sha256))
   );
 }
