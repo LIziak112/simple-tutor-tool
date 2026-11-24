@@ -14,9 +14,11 @@ import {
   responses,
 } from "./schema.ts";
 
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
 const KEY = "reconcile_attempt_outcomes_v1";
 
-type OutcomeSource = Pick<
+export type OutcomeSource = Pick<
   ResponseRow,
   | "gradingPolicy"
   | "submittedAt"
@@ -29,14 +31,59 @@ function hasTrustworthyGrading(row: OutcomeSource): boolean {
   const teacherMark = teacherMarkOf(row.teacherMark);
   return (
     row.hasSnapshot &&
-    (row.gradingPolicy === null ||
-      gradingPolicySchema.safeParse(row.gradingPolicy).success) &&
+    gradingPolicySchema.safeParse(row.gradingPolicy).success &&
     (row.teacherMark === null || teacherMark !== null) &&
     ((row.gradingPolicy !== "reference_self" &&
       row.gradingPolicy !== "manual_only") ||
       row.autoCorrect === null) &&
     row.finalCorrect === finalCorrectOf(teacherMark, row.autoCorrect)
   );
+}
+
+export interface OutcomeCandidate {
+  readonly id: string;
+  readonly status: string;
+  readonly scoreAuto: number | null;
+  readonly scoreFinal: number | null;
+}
+
+/** 卷级派生状态与分数的判分行读取（重算单一入口的输入）。 */
+export function outcomeRowsOf(tx: Tx, attemptId: string): OutcomeSource[] {
+  return tx
+    .select({
+      hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
+      gradingPolicy: responses.gradingPolicy,
+      submittedAt: responses.submittedAt,
+      teacherMark: responses.teacherMark,
+      autoCorrect: responses.autoCorrect,
+      finalCorrect: responses.finalCorrect,
+    })
+    .from(responses)
+    .where(eq(responses.attemptId, attemptId))
+    .all();
+}
+
+/**
+ * 已收尾卷按行内判分事实重算 status / scoreFinal / scoreAuto（与交卷、批改
+ * 同一口径 attemptFinalOutcomeOf + scoreAutoOf），有变化才写。
+ */
+export function rescoreFinalizedAttempt(
+  tx: Tx,
+  candidate: OutcomeCandidate,
+  group: readonly OutcomeSource[],
+): void {
+  const outcome = attemptFinalOutcomeOf(group, { finalized: true });
+  const scoreAuto = scoreAutoOf(group);
+  if (
+    outcome.status === candidate.status &&
+    outcome.scoreFinal === candidate.scoreFinal &&
+    scoreAuto === candidate.scoreAuto
+  )
+    return;
+  tx.update(attempts)
+    .set({ ...outcome, scoreAuto })
+    .where(eq(attempts.id, candidate.id))
+    .run();
 }
 
 /** 仅重算已收尾、冻结完整且判分来源可核实的卷级派生状态和分数。 */
@@ -85,32 +132,10 @@ export function backfillAttemptOutcomes(db: Db, now: Date): void {
         if (candidates.length === 0) break;
         for (const candidate of candidates) {
           afterId = candidate.id;
-          const group = tx
-            .select({
-              hasSnapshot: hasUsableQuestionSnapshotSql.mapWith(Boolean),
-              gradingPolicy: responses.gradingPolicy,
-              submittedAt: responses.submittedAt,
-              teacherMark: responses.teacherMark,
-              autoCorrect: responses.autoCorrect,
-              finalCorrect: responses.finalCorrect,
-            })
-            .from(responses)
-            .where(eq(responses.attemptId, candidate.id))
-            .all();
+          const group = outcomeRowsOf(tx, candidate.id);
           if (group.length === 0 || !group.every(hasTrustworthyGrading))
             continue;
-          const outcome = attemptFinalOutcomeOf(group, { finalized: true });
-          const scoreAuto = scoreAutoOf(group);
-          if (
-            outcome.status === candidate.status &&
-            outcome.scoreFinal === candidate.scoreFinal &&
-            scoreAuto === candidate.scoreAuto
-          )
-            continue;
-          tx.update(attempts)
-            .set({ ...outcome, scoreAuto })
-            .where(eq(attempts.id, candidate.id))
-            .run();
+          rescoreFinalizedAttempt(tx, candidate, group);
         }
       }
       tx.insert(dataMigrations)

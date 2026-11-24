@@ -17,7 +17,7 @@ export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
 } {
   return attemptFinalOutcomeOf(
     finalCorrects.map((finalCorrect) => ({
-      gradingPolicy: null,
+      gradingPolicy: "auto",
       submittedAt: null,
       finalCorrect,
     })),
@@ -38,6 +38,11 @@ export function needsTeacherMark(
   return row.gradingPolicy !== "reference_self" && row.finalCorrect === null;
 }
 
+/**
+ * SQL 侧同一谓词。空策略只剩无可用快照的行（迁移 default_grading_policy_v1
+ * 与开卷/懒冻结均写入默认策略），isNull 仅为三值逻辑下的空值安全，
+ * 待批计数另由 hasUsableQuestionSnapshotSql 排除这些行。
+ */
 export const needsTeacherMarkSql = and(
   isNull(responses.finalCorrect),
   or(

@@ -470,11 +470,6 @@ export async function seedDemoData(
     plan: AttemptPlan,
     submitAtIso: string,
   ): void => {
-    // 演示中的已交卷历史按旧策略造数，包含历史自动判分与待批。
-    db.update(responses)
-      .set({ gradingPolicy: null })
-      .where(eq(responses.attemptId, attemptId))
-      .run();
     const answers = plan.answers ?? new Map<string, StudentAnswer>();
     for (const questionId of plan.questionIds) {
       const answer = answers.get(questionId);
